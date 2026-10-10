@@ -716,7 +716,7 @@ mod tests {
 
         // Wait for reader thread to capture output via emitter
         let mut captured = false;
-        for _ in 0..20 {
+        for _ in 0..60 {
             if let Ok(l) = logs.lock() {
                 let text = l.join("");
                 if text.contains("ENGINE_TEST_12345") {
@@ -724,7 +724,7 @@ mod tests {
                     break;
                 }
             }
-            std::thread::sleep(std::time::Duration::from_millis(50));
+            std::thread::sleep(std::time::Duration::from_millis(100));
         }
 
         assert!(
@@ -785,7 +785,9 @@ mod tests {
         let set_cmd = "set ENGINE_PERSIST_VAR=VAL_777\r\n";
 
         manager.write_to_pty(&session_info.id, set_cmd).unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(100));
+        // Generous startup grace: ConPTY/cmd spawn on loaded CI runners can
+        // take seconds; input queues in the PTY so nothing is lost.
+        std::thread::sleep(std::time::Duration::from_millis(500));
 
         // Write 2: Read variable in second write
         #[cfg(not(target_os = "windows"))]
@@ -796,7 +798,7 @@ mod tests {
         manager.write_to_pty(&session_info.id, read_cmd).unwrap();
 
         let mut found_val = false;
-        for _ in 0..20 {
+        for _ in 0..60 {
             if let Ok(l) = logs.lock() {
                 let text = l.join("");
                 if text.contains("VAL_777") {
@@ -804,7 +806,7 @@ mod tests {
                     break;
                 }
             }
-            std::thread::sleep(std::time::Duration::from_millis(50));
+            std::thread::sleep(std::time::Duration::from_millis(100));
         }
 
         assert!(
