@@ -760,6 +760,14 @@ mod tests {
             .create_pty(
                 emitter,
                 PtyCreateOptions {
+                    // Pin cmd.exe on Windows: the default profile prefers
+                    // pwsh when installed, but this test uses cmd syntax
+                    // (`set` / `%VAR%`) which PowerShell does not implement.
+                    #[cfg(target_os = "windows")]
+                    shell_path: Some(
+                        std::env::var("ComSpec").unwrap_or_else(|_| "cmd.exe".to_string()),
+                    ),
+                    #[cfg(not(target_os = "windows"))]
                     shell_path: None,
                     args: None,
                     cwd: None,
