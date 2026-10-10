@@ -180,8 +180,8 @@ function HeroTerminal() {
         <div style={{ color: '#67e8f9' }}>
           <p style={{ fontWeight: 600, color: '#a5f3fc' }}>Official Kai Release Installers (v0.1.0):</p>
           <p>• Windows: .exe (NSIS Installer), .msi (64-bit Package)</p>
-          <p>• Linux: .deb (Ubuntu/Debian x64 &amp; ARM64), .AppImage, RPM, Flatpak</p>
-          <p>• macOS: .dmg (Apple Silicon M1-M4 &amp; Intel Macs)</p>
+          <p>• Linux: .deb (Ubuntu/Debian x64 &amp; ARM64), .AppImage (x64 &amp; ARM64)</p>
+          <p>• macOS: .dmg (Apple Silicon M1-M4)</p>
         </div>
       );
     } else if (input === 'version' || input === 'kai --version' || input === 'kai -v') {
@@ -279,7 +279,7 @@ function SiteContent() {
     { q: 'Does Kai collect telemetry or log terminal output?', a: 'No. Kai enforces a strict Zero Telemetry policy. Your keystrokes, environment variables, command history, and session data remain strictly local to your machine.' },
     { q: 'How does local AI CLI integration work?', a: 'Kai automatically probes your local system PATH for AI tools you already have installed (such as Codex CLI, Claude Code, or Gemini CLI). It does not bundle heavy external AI binaries or force subscriptions.' },
     { q: 'Why use Tauri 2 + Rust instead of Electron?', a: 'By leveraging Tauri 2 and native Rust PTY streams (portable-pty), Kai consumes under 30MB of RAM at idle compared to 300MB+ for typical Electron terminal emulators, delivering faster startup times and lower CPU usage.' },
-    { q: 'Which operating systems and package formats are supported?', a: 'Kai provides native installers for Windows (.exe NSIS, .msi), Linux (.deb x64/ARM64, .AppImage, Flatpak, RPM, Snap), and macOS (.dmg for Apple Silicon M1-M4 and Intel Macs).' },
+    { q: 'Which operating systems and package formats are supported?', a: 'Kai provides native installers for Windows (.exe NSIS, .msi), Linux (.deb x64/ARM64, .AppImage x64/ARM64), and macOS (.dmg for Apple Silicon M1-M4).' },
   ];
 
   return (
@@ -405,11 +405,12 @@ function SiteContent() {
               <div style={{ padding: '0.65rem', borderRadius: '12px', backgroundColor: 'var(--accent-green-bg)' }}><Terminal size={28} color="var(--accent-green-fg)" /></div>
               <div><h3 style={{ margin: 0 }}>Linux</h3><span style={{ fontSize: '0.825rem', color: 'var(--text-secondary)' }}>Ubuntu / Debian / Arch / Fedora</span></div>
             </div>
-            <p style={{ marginBottom: '1.75rem' }}>Debian `.deb` packages (x64 &amp; ARM64), standalone `.AppImage`, RPM, Flatpak, &amp; Snap templates.</p>
+            <p style={{ marginBottom: '1.75rem' }}>Debian `.deb` packages (x64 &amp; ARM64) and standalone `.AppImage` builds, each compiled natively on GitHub runners.</p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-              <a className="t-dl t-dl--accent-green" href={`${LATEST_RELEASE_URL}/download/Kai_0.1.0_amd64.deb`}><span>Debian / Ubuntu Package (.deb x64)</span><Download size={16} /></a>
-              <a className="t-dl" href={`${LATEST_RELEASE_URL}/download/Kai_0.1.0_amd64.AppImage`}><span>Portable Linux AppImage (.AppImage)</span><Download size={16} /></a>
-              <a className="t-dl" href={`${LATEST_RELEASE_URL}/download/Kai_0.1.0_arm64.deb`}><span>Debian ARM64 Package (.deb ARM64)</span><Download size={16} /></a>
+              <a className="t-dl t-dl--accent-green" href={`${LATEST_RELEASE_URL}/download/kai_0.1.0_amd64.deb`}><span>Debian / Ubuntu Package (.deb x64)</span><Download size={16} /></a>
+              <a className="t-dl" href={`${LATEST_RELEASE_URL}/download/kai_0.1.0_amd64.AppImage`}><span>Portable Linux AppImage (.AppImage x64)</span><Download size={16} /></a>
+              <a className="t-dl" href={`${LATEST_RELEASE_URL}/download/kai_0.1.0_arm64.deb`}><span>Debian ARM64 Package (.deb ARM64)</span><Download size={16} /></a>
+              <a className="t-dl" href={`${LATEST_RELEASE_URL}/download/kai_0.1.0_arm64.AppImage`}><span>Portable Linux AppImage (.AppImage ARM64)</span><Download size={16} /></a>
             </div>
           </Card>
 
@@ -418,10 +419,9 @@ function SiteContent() {
               <div style={{ padding: '0.65rem', borderRadius: '12px', backgroundColor: 'var(--accent-purple-bg)' }}><Globe size={28} color="var(--accent-purple-fg)" /></div>
               <div><h3 style={{ margin: 0 }}>macOS</h3><span style={{ fontSize: '0.825rem', color: 'var(--text-secondary)' }}>macOS 12.0+ Monterey or later</span></div>
             </div>
-            <p style={{ marginBottom: '1.75rem' }}>Native builds for Apple Silicon (M1/M2/M3/M4) and Intel x86_64 Macs. Supports Zsh, Bash, and Fish shells.</p>
+            <p style={{ marginBottom: '1.75rem' }}>Native Apple Silicon build (M1/M2/M3/M4). Supports Zsh, Bash, and Fish shells.</p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
               <a className="t-dl t-dl--accent-purple" href={`${LATEST_RELEASE_URL}/download/Kai_0.1.0_aarch64.dmg`}><span>Apple Silicon DMG (M1/M2/M3/M4)</span><Download size={16} /></a>
-              <a className="t-dl" href={`${LATEST_RELEASE_URL}/download/Kai_0.1.0_x64.dmg`}><span>Intel Mac DMG (x86_64)</span><Download size={16} /></a>
             </div>
           </Card>
         </div>
