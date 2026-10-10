@@ -1,0 +1,179 @@
+pub mod ai_cli;
+pub mod diagnostics;
+pub mod error;
+pub mod git;
+pub mod pty;
+pub mod shell;
+
+#[cfg(feature = "tauri")]
+use std::sync::Arc;
+
+#[cfg(feature = "tauri")]
+use ai_cli::{
+    check_custom_ai_cli_path, detect_ai_cli_details, detect_ai_clis, AiCliDetails, AiCliStatus,
+};
+
+#[cfg(feature = "tauri")]
+use diagnostics::{build_diagnostics, AiCliSummary};
+
+#[cfg(feature = "tauri")]
+use git::{get_git_info, run_git_action, GitInfo};
+
+#[cfg(feature = "tauri")]
+use pty::{PtyCreateOptions, PtyManager, PtySessionInfo};
+#[cfg(feature = "tauri")]
+use shell::{detect_available_shells, open_in_editor, ShellProfile};
+#[cfg(feature = "tauri")]
+use tauri::{AppHandle, State};
+
+#[cfg(feature = "tauri")]
+#[tauri::command]
+pub fn get_available_shells() -> Vec<ShellProfile> {
+    detect_available_shells()
+}
+
+#[cfg(feature = "tauri")]
+#[tauri::command]
+pub fn get_ai_cli_status() -> Vec<AiCliStatus> {
+    detect_ai_clis()
+}
+
+#[cfg(feature = "tauri")]
+#[tauri::command]
+pub fn get_ai_cli_details() -> Vec<AiCliDetails> {
+    detect_ai_cli_details()
+}
+
+#[cfg(feature = "tauri")]
+#[tauri::command]
+pub fn check_ai_cli_path(id: String, custom_path: String) -> Result<AiCliDetails, String> {
+    check_custom_ai_cli_path(&id, &custom_path)
+}
+
+#[cfg(feature = "tauri")]
+#[tauri::command]
+pub fn get_git_info_cmd(cwd: String) -> GitInfo {
+    get_git_info(&cwd)
+}
+
+#[cfg(feature = "tauri")]
+#[tauri::command]
+pub fn run_git_action_cmd(cwd: String, action: String) -> Result<String, String> {
+    run_git_action(&cwd, &action)
+}
+
+#[cfg(feature = "tauri")]
+#[tauri::command]
+pub fn open_project_in_editor(
+    editor_path: Option<String>,
+    cwd: String,
+) -> Result<String, error::TerminalError> {
+    open_in_editor(editor_path.as_deref(), &cwd)
+}
+
+#[cfg(feature = "tauri")]
+#[tauri::command]
+pub fn get_diagnostics(state: State<'_, PtyManager>) -> diagnostics::DiagnosticsReport {
+    let sessions = state.list_sessions();
+    let shells = detect_available_shells();
+    let ai_clis: Vec<AiCliSummary> = detect_ai_cli_details()
+        .into_iter()
+        .map(|d| AiCliSummary {
+            id: d.id,
+            available: d.available,
+            version: d.version,
+        })
+        .collect();
+    build_diagnostics(shells.len(), sessions.len(), ai_clis)
+}
+
+#[cfg(feature = "tauri")]
+#[tauri::command]
+pub fn create_pty(
+    app_handle: AppHandle,
+    state: State<'_, PtyManager>,
+    options: PtyCreateOptions,
+) -> Result<PtySessionInfo, error::TerminalError> {
+    let emitter = Arc::new(pty::TauriEventEmitter { app_handle });
+    state.create_pty(emitter, options)
+}
+
+#[cfg(feature = "tauri")]
+#[tauri::command]
+pub fn write_to_pty(
+    state: State<'_, PtyManager>,
+    id: String,
+    data: String,
+) -> Result<(), error::TerminalError> {
+    state.write_to_pty(&id, &data)
+}
+
+#[cfg(feature = "tauri")]
+#[tauri::command]
+pub fn resize_pty(
+    state: State<'_, PtyManager>,
+    id: String,
+    cols: u16,
+    rows: u16,
+) -> Result<(), error::TerminalError> {
+    state.resize_pty(&id, cols, rows)
+}
+
+#[cfg(feature = "tauri")]
+#[tauri::command]
+pub fn close_pty(state: State<'_, PtyManager>, id: String) -> Result<(), error::TerminalError> {
+    state.close_pty(&id)
+}
+
+#[cfg(feature = "tauri")]
+#[tauri::command]
+pub fn get_session_info(state: State<'_, PtyManager>, id: String) -> Option<PtySessionInfo> {
+    state.get_session_info(&id)
+}
+
+#[cfg(feature = "tauri")]
+#[tauri::command]
+pub fn list_sessions(state: State<'_, PtyManager>) -> Vec<PtySessionInfo> {
+    state.list_sessions()
+}
+
+#[cfg(feature = "tauri")]
+pub fn run() {
+    let pty_manager = PtyManager::new();
+
+    tauri::Builder::default()
+        .manage(pty_manager)
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { .. } = event {
+                // Reap all active PTY child processes when window is closed
+                use tauri::Manager;
+                let state: State<'_, PtyManager> = window.state();
+                state.close_all();
+            }
+        })
+        .invoke_handler(tauri::generate_handler![
+            get_available_shells,
+            get_ai_cli_status,
+            get_ai_cli_details,
+            check_ai_cli_path,
+            get_git_info_cmd,
+            run_git_action_cmd,
+            open_project_in_editor,
+            get_diagnostics,
+            create_pty,
+            write_to_pty,
+            resize_pty,
+            close_pty,
+            get_session_info,
+            list_sessions
+        ])
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            if let tauri::RunEvent::ExitRequested { .. } = event {
+                // Reap all active PTY child processes on application shutdown
+                let state: State<'_, PtyManager> = app_handle.state();
+                state.close_all();
+            }
+        });
+}

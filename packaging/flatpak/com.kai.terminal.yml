@@ -1,0 +1,27 @@
+app-id: com.kai.terminal
+runtime: org.freedesktop.Platform
+runtime-version: '23.08'
+sdk: org.freedesktop.Sdk
+command: kai
+separate-locales: false
+
+finish-args:
+  # Terminal emulator needs access to PTY driver and host filesystem
+  - --share=ipc
+  - --socket=x11
+  - --socket=wayland
+  - --device=all
+  - --filesystem=host
+  - --talk-name=org.freedesktop.Notifications
+
+modules:
+  - name: kai
+    buildsystem: simple
+    build-commands:
+      - npm ci
+      - npm run build
+      - cargo build --manifest-path src-tauri/Cargo.toml --release --no-default-features
+      - install -D -m 755 src-tauri/target/release/cross-platform-terminal-backend /app/bin/kai
+    sources:
+      - type: dir
+        path: ../..

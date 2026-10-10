@@ -1,0 +1,87 @@
+name: Deploy Marketing Website to GitHub Pages
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+    paths:
+      - "website/**"
+      - ".github/workflows/deploy-website.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+jobs:
+  # ------------------------------------------------------------------
+  # 1. Build & Validate Website
+  # ------------------------------------------------------------------
+  build-gate:
+    name: Build & Validate Website
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js v20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install website dependencies
+        run: |
+          cd website
+          npm install
+
+      - name: TypeScript Typecheck & Production Build
+        run: |
+          cd website
+          npm run build
+          touch dist/.nojekyll
+
+      - name: Upload Build Output Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: website-dist-bundle
+          path: website/dist
+          if-no-files-found: error
+
+  # ------------------------------------------------------------------
+  # 2. Deploy to GitHub Pages
+  # ------------------------------------------------------------------
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build-gate
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download Build Output Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: website-dist-bundle
+          path: website/dist
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+
+      - name: Upload Pages Artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: "website/dist"
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

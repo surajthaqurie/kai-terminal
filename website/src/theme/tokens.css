@@ -1,0 +1,142 @@
+/* ============================================================
+   Kai Design Tokens — single source of truth
+   Themes: :root / [data-theme="dark"] (default) + [data-theme="light"]
+   ============================================================ */
+
+:root,
+[data-theme='dark'] {
+  color-scheme: dark;
+
+  /* ——— Typography ——— */
+  --font-sans: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --text-display: clamp(2.4rem, 5vw, 3.75rem);
+  --text-h2: clamp(1.75rem, 3.2vw, 2.5rem);
+  --text-h3: 1.25rem;
+  --text-body-lg: 1.125rem;
+  --text-body: 0.95rem;
+  --text-small: 0.85rem;
+  --text-xs: 0.75rem;
+
+  /* ——— Shape ——— */
+  --radius-xs: 4px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --radius-full: 9999px;
+
+  /* ——— Brand (constant across themes) ——— */
+  --brand-300: #22d3ee;
+  --brand-400: #38bdf8;
+  --brand-500: #06b6d4;
+  --brand-600: #2563eb;
+  --brand-gradient: linear-gradient(135deg, #06b6d4, #2563eb);
+  --brand-glow: 0 8px 24px rgba(6, 182, 212, 0.4);
+
+  --accent-purple-fg: #c084fc;
+  --accent-purple-bg: rgba(168, 85, 247, 0.12);
+  --accent-purple-border: rgba(168, 85, 247, 0.3);
+  --accent-green-fg: #4ade80;
+  --accent-green-bg: rgba(74, 222, 128, 0.12);
+  --accent-green-border: rgba(74, 222, 128, 0.3);
+  --accent-amber-fg: #fbbf24;
+  --accent-amber-bg: rgba(245, 158, 11, 0.14);
+  --accent-cyan-fg: #22d3ee;
+  --accent-cyan-bg: rgba(6, 182, 212, 0.12);
+  --accent-cyan-border: rgba(6, 182, 212, 0.3);
+
+  /* ——— Semantic surfaces (dark) ——— */
+  --bg-canvas: #070a12;
+  --bg-canvas-2: #05070e;
+  --bg-surface: #0b1120;
+  --bg-raised: #0e1626;
+  --bg-sunken: #04060c;
+  --bg-overlay: rgba(7, 10, 18, 0.82);
+
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --border-default: rgba(255, 255, 255, 0.09);
+  --border-strong: rgba(255, 255, 255, 0.16);
+
+  --text-primary: #f8fafc;
+  --text-secondary: #94a3b8;
+  --text-tertiary: #64748b;
+  --text-inverse: #090d16;
+
+  --btn-secondary-bg: rgba(255, 255, 255, 0.05);
+  --btn-secondary-border: rgba(255, 255, 255, 0.12);
+  --btn-secondary-fg: #f1f5f9;
+
+  --card-bg: rgba(15, 23, 42, 0.65);
+  --card-bg-solid: #0e1626;
+  --hero-glow: radial-gradient(
+    circle,
+    rgba(6, 182, 212, 0.14) 0%,
+    rgba(59, 130, 246, 0.08) 40%,
+    transparent 70%
+  );
+  --title-gradient: linear-gradient(135deg, #ffffff 20%, #cbd5e1 60%, #38bdf8 100%);
+
+  --shadow-sm: 0 4px 16px rgba(6, 182, 212, 0.35);
+  --shadow-lg: 0 25px 60px -15px rgba(0, 0, 0, 0.8);
+  --shadow-card: 0 12px 35px rgba(0, 0, 0, 0.35);
+  --terminal-glow: 0 0 35px rgba(6, 182, 212, 0.15);
+
+  --ring: rgba(6, 182, 212, 0.45);
+  --scroll-track: #090d16;
+  --scroll-thumb: #1e293b;
+}
+
+[data-theme='light'] {
+  color-scheme: light;
+
+  --bg-canvas: #f4f6fb;
+  --bg-canvas-2: #eef1f7;
+  --bg-surface: #ffffff;
+  --bg-raised: #ffffff;
+  --bg-sunken: #e9edf4;
+  --bg-overlay: rgba(255, 255, 255, 0.82);
+
+  --border-subtle: #edf0f6;
+  --border-default: #e2e8f0;
+  --border-strong: #cbd5e1;
+
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-tertiary: #94a3b8;
+  --text-inverse: #ffffff;
+
+  --btn-secondary-bg: #ffffff;
+  --btn-secondary-border: #e2e8f0;
+  --btn-secondary-fg: #0f172a;
+
+  --card-bg: #ffffff;
+  --card-bg-solid: #ffffff;
+  --hero-glow: radial-gradient(
+    circle,
+    rgba(6, 182, 212, 0.16) 0%,
+    rgba(59, 130, 246, 0.1) 42%,
+    transparent 70%
+  );
+  --title-gradient: linear-gradient(135deg, #0f172a 10%, #334155 55%, #0284c7 100%);
+
+  --shadow-sm: 0 6px 20px rgba(2, 132, 199, 0.22);
+  --shadow-lg: 0 24px 60px -20px rgba(15, 23, 42, 0.25);
+  --shadow-card: 0 12px 32px rgba(15, 23, 42, 0.08);
+  --terminal-glow: 0 0 0 rgba(0, 0, 0, 0);
+
+  --accent-purple-fg: #7e22ce;
+  --accent-purple-bg: rgba(168, 85, 247, 0.1);
+  --accent-purple-border: rgba(168, 85, 247, 0.35);
+  --accent-green-fg: #15803d;
+  --accent-green-bg: rgba(34, 197, 94, 0.1);
+  --accent-green-border: rgba(34, 197, 94, 0.35);
+  --accent-cyan-fg: #0e7490;
+  --accent-cyan-bg: rgba(6, 182, 212, 0.1);
+  --accent-cyan-border: rgba(6, 182, 212, 0.35);
+
+  --ring: rgba(2, 132, 199, 0.4);
+  --scroll-track: #eef1f7;
+  --scroll-thumb: #cbd5e1;
+}

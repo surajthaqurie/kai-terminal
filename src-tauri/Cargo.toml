@@ -1,0 +1,29 @@
+[package]
+name = "cross-platform-terminal-backend"
+version = "0.1.0"
+description = "Cross-Platform Kai Rust Backend"
+authors = ["Kai Team"]
+license = "MIT"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2.0.0", features = [], optional = true }
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+portable-pty = "0.8"
+tokio = { version = "1.40", features = ["full"] }
+uuid = { version = "1.10", features = ["v4", "fast-rng"] }
+thiserror = "1.0"
+tauri = { version = "2.1.0", features = [], optional = true }
+
+[features]
+default = ["tauri"]
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

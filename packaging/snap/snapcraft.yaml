@@ -1,0 +1,29 @@
+name: kai
+base: core22
+version: '0.1.0'
+summary: A modern cross-platform terminal for Windows, Linux, and macOS.
+description: |
+  Kai is a standalone cross-platform terminal emulator built with Tauri 2,
+  Rust, React, TypeScript, and xterm.js. Works with or without local AI CLIs.
+
+grade: stable
+confinement: classic
+
+apps:
+  kai:
+    command: bin/kai
+    plugs:
+      - home
+      - network
+      - desktop
+      - x11
+
+parts:
+  kai:
+    plugin: nil
+    override-build: |
+      npm ci
+      npm run build
+      cargo build --manifest-path src-tauri/Cargo.toml --release --no-default-features
+      mkdir -p $CRAFT_PART_INSTALL/bin
+      cp src-tauri/target/release/cross-platform-terminal-backend $CRAFT_PART_INSTALL/bin/kai

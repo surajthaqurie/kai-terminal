@@ -1,8 +1,8 @@
 # Kai Terminal
 
-[![CI](https://github.com/surajthaqurie/kai/actions/workflows/ci.yml/badge.svg)](https://github.com/surajthaqurie/kai/actions)
+[![CI](https://github.com/surajthaqurie/kai-terminal/actions/workflows/ci.yml/badge.svg)](https://github.com/surajthaqurie/kai-terminal/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Download](https://img.shields.io/github/v/release/surajthaqurie/kai?label=download)](https://github.com/surajthaqurie/kai/releases/latest)
+[![Download](https://img.shields.io/github/v/release/surajthaqurie/kai-terminal?label=download)](https://github.com/surajthaqurie/kai-terminal/releases/latest)
 
 > One terminal. Every platform.
 
@@ -37,7 +37,7 @@ Kai runs locally without requiring cloud accounts, telemetry, or runtime depende
 
 ## Downloading Installers
 
-Pre-built binary installers are automatically published to [GitHub Releases](https://github.com/surajthaqurie/kai/releases/latest) when a version tag is created:
+Pre-built binary installers are automatically published to [GitHub Releases](https://github.com/surajthaqurie/kai-terminal/releases/latest) when a version tag is created:
 
 - **Linux:** Download `.deb` or `.AppImage`
 - **Windows:** Download `.exe` or `.msi`
@@ -64,7 +64,7 @@ Pre-built binary installers are automatically published to [GitHub Releases](htt
 
 1. **Clone the repository and install dependencies:**
    ```bash
-   git clone https://github.com/surajthaqurie/kai.git
+   git clone https://github.com/surajthaqurie/kai-terminal.git
    cd kai
    npm install
    ```

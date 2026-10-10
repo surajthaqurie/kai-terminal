@@ -1,0 +1,102 @@
+name: Cross-Platform Terminal CI
+
+on:
+  push:
+    branches: [main, master, "feature/**"]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  matrix-test-and-build:
+    name: Build & Test (${{ matrix.target-name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target-name: linux-x86_64
+            binary-ext: ""
+          - os: windows-latest
+            target-name: windows-x86_64
+            binary-ext: ".exe"
+          - os: macos-14
+            target-name: macos-aarch64
+            binary-ext: ""
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js v20 environment
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+          cache-dependency-path: "package-lock.json"
+
+      - name: Install Rust stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri"
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libssl-dev libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - name: Install Frontend Dependencies
+        run: npm ci
+
+      - name: Frontend Code Formatting Check
+        run: npm run format:check
+
+      - name: Frontend TypeScript Typecheck
+        run: npm run typecheck
+
+      - name: Frontend Vitest Unit Tests
+        run: npm run test
+
+      - name: Rust Backend Formatting Check
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
+
+      - name: Rust Backend Clippy Lint
+        run: cargo clippy --no-default-features --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+
+      - name: Rust Backend Unit Tests (Isolated)
+        run: cargo test --no-default-features --manifest-path src-tauri/Cargo.toml --lib
+
+      - name: OS-Dependent Real PTY Integration Tests
+        run: cargo test --no-default-features --manifest-path src-tauri/Cargo.toml --test pty_integration_tests -- --nocapture
+
+      - name: Verify no signing secrets are committed
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Fail if anything that looks like a private key or password assignment is tracked in git.
+          if git grep -n -i -E "BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|WINDOWS_CERTIFICATE_PASSWORD\s*=\s*['\"][^'\"]+|APPLE_PASSWORD\s*=\s*['\"][^'\"]+" -- ':!package-lock.json' ':!dist/**' -- .; then
+            echo "Possible committed secret material found above. Keep credentials in GitHub Actions secrets only."
+            exit 1
+          fi
+          echo "Secret scan passed: no private keys or passwords tracked."
+
+      - name: Build Web Frontend Bundle
+        run: npm run build
+
+      - name: Build Rust Desktop Application Binary
+        run: cargo build --manifest-path src-tauri/Cargo.toml --release --no-default-features
+
+      - name: Upload Desktop Binary Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-binary-${{ matrix.target-name }}
+          path: |
+            src-tauri/target/release/cross-platform-terminal-backend${{ matrix.binary-ext }}
+          if-no-files-found: error

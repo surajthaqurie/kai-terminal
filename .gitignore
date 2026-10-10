@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+website/node_modules/
+
+# Build outputs
+dist/
+website/dist/
+src-tauri/target/
+
+# IDE / OS files
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+
+# Local env files
+.env
+.env.local
