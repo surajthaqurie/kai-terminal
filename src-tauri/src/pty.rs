@@ -1003,9 +1003,23 @@ mod tests {
         );
         #[cfg(target_os = "windows")]
         let payload = "echo PASTE_MARKER_OK\r\n".to_string();
-        manager.write_to_pty(&info.id, &payload).unwrap();
+        // Pace delivery in small chunks with drain pauses: macOS discards
+        // input that overflows its small canonical-mode queue (~4 KB), so a
+        // single ~26 KB burst loses the trailing marker there while Linux
+        // (64 KB queue) absorbs it. Chunking preserves exact byte order.
+        const PASTE_CHUNK_BYTES: usize = 2048;
+        let mut remaining = payload.as_str();
+        while !remaining.is_empty() {
+            let mut end = PASTE_CHUNK_BYTES.min(remaining.len());
+            while !remaining.is_char_boundary(end) {
+                end -= 1;
+            }
+            manager.write_to_pty(&info.id, &remaining[..end]).unwrap();
+            remaining = &remaining[end..];
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
         let mut found = false;
-        for _ in 0..40 {
+        for _ in 0..120 {
             if let Ok(l) = logs.lock() {
                 if l.join("").contains("PASTE_MARKER_OK") {
                     found = true;
