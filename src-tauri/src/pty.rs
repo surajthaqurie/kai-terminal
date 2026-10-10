@@ -1017,7 +1017,7 @@ mod tests {
         // input that overflows its small canonical-mode queue (~4 KB), so a
         // single ~26 KB burst loses the trailing marker there while Linux
         // (64 KB queue) absorbs it. Chunking preserves exact byte order.
-        const PASTE_CHUNK_BYTES: usize = 2048;
+        const PASTE_CHUNK_BYTES: usize = 1024;
         let mut remaining = payload.as_str();
         while !remaining.is_empty() {
             let mut end = PASTE_CHUNK_BYTES.min(remaining.len());
@@ -1026,7 +1026,7 @@ mod tests {
             }
             manager.write_to_pty(&info.id, &remaining[..end]).unwrap();
             remaining = &remaining[end..];
-            std::thread::sleep(std::time::Duration::from_millis(10));
+            std::thread::sleep(std::time::Duration::from_millis(40));
         }
         let mut found = false;
         for _ in 0..120 {

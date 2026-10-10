@@ -68,6 +68,17 @@ impl TerminalEventEmitter for TestEventEmitter {
     }
 }
 
+fn default_test_shell() -> Option<String> {
+    #[cfg(target_os = "windows")]
+    {
+        Some(std::env::var("ComSpec").unwrap_or_else(|_| "cmd.exe".to_string()))
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        None
+    }
+}
+
 // ---------------------------------------------------------------------------
 // 1. PTY Creation and Shell Startup
 // ---------------------------------------------------------------------------
@@ -86,7 +97,7 @@ fn test_01_pty_creation_and_shell_startup() {
         .create_pty(
             Arc::new(emitter.clone()),
             PtyCreateOptions {
-                shell_path: None,
+                shell_path: default_test_shell(),
                 args: None,
                 cwd: None,
                 cols: 90,
@@ -95,6 +106,8 @@ fn test_01_pty_creation_and_shell_startup() {
             },
         )
         .expect("Failed to create default shell PTY session");
+
+    std::thread::sleep(Duration::from_millis(500));
 
     assert!(
         !session_info.id.is_empty(),
@@ -131,7 +144,7 @@ fn test_02_persistent_shell_variables() {
         .create_pty(
             Arc::new(emitter.clone()),
             PtyCreateOptions {
-                shell_path: None,
+                shell_path: default_test_shell(),
                 args: None,
                 cwd: None,
                 cols: 80,
@@ -148,7 +161,7 @@ fn test_02_persistent_shell_variables() {
     let set_var_cmd = "set STATE_VAR_123=PERSISTENT_DATA_VALUE\r\n";
 
     manager.write_to_pty(&session.id, set_var_cmd).unwrap();
-    std::thread::sleep(Duration::from_millis(150));
+    std::thread::sleep(Duration::from_millis(500));
 
     // Write 2: Access variable in second command
     #[cfg(not(target_os = "windows"))]
@@ -178,7 +191,7 @@ fn test_03_input_output_correctness() {
         .create_pty(
             Arc::new(emitter.clone()),
             PtyCreateOptions {
-                shell_path: None,
+                shell_path: default_test_shell(),
                 args: None,
                 cwd: None,
                 cols: 80,
@@ -188,11 +201,13 @@ fn test_03_input_output_correctness() {
         )
         .expect("Failed to spawn PTY session");
 
+    std::thread::sleep(Duration::from_millis(500));
+
     let special_payload = "ECHO_SPEC_CHARS:!@#$%^&*()_+-=[]{}|;:,.<>?/~`";
     #[cfg(not(target_os = "windows"))]
     let echo_cmd = format!("echo '{}'\n", special_payload);
     #[cfg(target_os = "windows")]
-    let echo_cmd = format!("echo {}\r\n", special_payload);
+    let echo_cmd = format!("echo \"{}\"\r\n", special_payload);
 
     manager.write_to_pty(&session.id, &echo_cmd).unwrap();
 
@@ -216,7 +231,7 @@ fn test_04_ansi_colors_and_unicode() {
         .create_pty(
             Arc::new(emitter.clone()),
             PtyCreateOptions {
-                shell_path: None,
+                shell_path: default_test_shell(),
                 args: None,
                 cwd: None,
                 cols: 100,
@@ -262,7 +277,7 @@ fn test_05_terminal_resizing() {
         .create_pty(
             Arc::new(emitter),
             PtyCreateOptions {
-                shell_path: None,
+                shell_path: default_test_shell(),
                 args: None,
                 cwd: None,
                 cols: 80,
@@ -310,7 +325,7 @@ fn test_06_long_running_interactive_processes() {
         .create_pty(
             Arc::new(emitter.clone()),
             PtyCreateOptions {
-                shell_path: None,
+                shell_path: default_test_shell(),
                 args: None,
                 cwd: None,
                 cols: 80,
@@ -352,7 +367,7 @@ fn test_07_ctrl_c_and_supported_signals() {
         .create_pty(
             Arc::new(emitter.clone()),
             PtyCreateOptions {
-                shell_path: None,
+                shell_path: default_test_shell(),
                 args: None,
                 cwd: None,
                 cols: 80,
@@ -366,10 +381,10 @@ fn test_07_ctrl_c_and_supported_signals() {
     #[cfg(not(target_os = "windows"))]
     let sleep_cmd = "sleep 30\n";
     #[cfg(target_os = "windows")]
-    let sleep_cmd = "timeout /t 30\r\n";
+    let sleep_cmd = "ping 127.0.0.1 -n 30 >nul\r\n";
 
     manager.write_to_pty(&session.id, sleep_cmd).unwrap();
-    std::thread::sleep(Duration::from_millis(200));
+    std::thread::sleep(Duration::from_millis(500));
 
     // Send Ctrl+C interrupt (\x03)
     manager.interrupt_pty(&session.id).unwrap();
@@ -402,7 +417,7 @@ fn test_08_high_volume_output_and_memory() {
         .create_pty(
             Arc::new(emitter.clone()),
             PtyCreateOptions {
-                shell_path: None,
+                shell_path: default_test_shell(),
                 args: None,
                 cwd: None,
                 cols: 100,
@@ -411,6 +426,8 @@ fn test_08_high_volume_output_and_memory() {
             },
         )
         .expect("Failed to spawn PTY session");
+
+    std::thread::sleep(Duration::from_millis(500));
 
     // Generate high-volume loop output (500 iterations yielding ~25 KB output)
     #[cfg(not(target_os = "windows"))]
@@ -501,7 +518,7 @@ fn test_10_multiple_simultaneous_sessions() {
             .create_pty(
                 Arc::new(emitter.clone()),
                 PtyCreateOptions {
-                    shell_path: None,
+                    shell_path: default_test_shell(),
                     args: None,
                     cwd: None,
                     cols: 80,
@@ -565,7 +582,7 @@ fn test_11_child_process_cleanup() {
         .create_pty(
             Arc::new(emitter),
             PtyCreateOptions {
-                shell_path: None,
+                shell_path: default_test_shell(),
                 args: None,
                 cwd: None,
                 cols: 80,
@@ -616,7 +633,7 @@ fn test_12_application_startup_and_shutdown() {
                 .create_pty(
                     Arc::new(emitter),
                     PtyCreateOptions {
-                        shell_path: None,
+                        shell_path: default_test_shell(),
                         args: None,
                         cwd: None,
                         cols: 80,
