@@ -269,63 +269,92 @@ code, kbd, samp, pre { overflow-wrap: anywhere; word-break: break-word; }
 .t-dl--accent-green { background-color: var(--accent-green-bg); color: var(--accent-green-fg); border-color: var(--accent-green-border); font-weight: 600; }
 .t-dl--accent-purple { background-color: var(--accent-purple-bg); color: var(--accent-purple-fg); border-color: var(--accent-purple-border); font-weight: 600; }
 
-/* ——— Platform Group Cards ——— */
-.t-platform-card {
-  display: flex; flex-direction: column; height: 100%;
+/* ——— Professional Platform Section (Releases & Direct Downloads) ——— */
+.t-platform-list {
+  display: flex; flex-direction: column; gap: 1.5rem; margin-bottom: 2.5rem;
+}
+.t-platform-box {
   border-radius: var(--radius-lg); background-color: var(--bg-surface);
   border: 1px solid var(--border-default); box-shadow: var(--shadow-card);
-  padding: 1.5rem; transition: border-color 0.2s ease, transform 0.2s ease;
+  padding: 1.75rem 2rem; transition: border-color 0.2s ease;
 }
-.t-platform-card:hover { border-color: var(--border-strong); }
-.t-platform-card[data-platform='apple'] { border-top: 3px solid var(--accent-cyan-fg); }
-.t-platform-card[data-platform='linux'] { border-top: 3px solid var(--accent-green-fg); }
-.t-platform-card[data-platform='windows'] { border-top: 3px solid var(--accent-purple-fg); }
-
-.t-platform-subgroup {
-  margin-top: 0.85rem; padding-top: 0.85rem;
-  border-top: 1px dashed var(--border-subtle);
+.t-platform-box:hover { border-color: var(--border-strong); }
+.t-platform-header {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 1rem; padding-bottom: 1.15rem; border-bottom: 1px solid var(--border-subtle);
+  flex-wrap: wrap;
 }
-.t-platform-subgroup-title {
-  font-family: var(--font-mono); font-size: 0.72rem; font-weight: 700;
-  color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.05em;
-  margin-bottom: 0.5rem; display: flex; align-items: center; gap: 0.4rem;
+.t-platform-title-wrap {
+  display: flex; flex-direction: column; gap: 0.25rem;
 }
-.t-dl-row {
-  display: flex; align-items: center; justify-content: space-between; gap: 0.75rem;
-  padding: 0.65rem 0.85rem; border-radius: var(--radius-sm);
+.t-platform-title {
+  margin: 0; font-size: 1.25rem; font-weight: 700;
+  letter-spacing: -0.01em; color: var(--text-primary);
+}
+.t-platform-subtitle {
+  font-size: 0.82rem; color: var(--text-secondary); margin: 0; line-height: 1.45;
+}
+.t-platform-badge {
+  font-family: var(--font-mono); font-size: 0.74rem; font-weight: 600;
+  padding: 0.25rem 0.65rem; border-radius: 999px;
+  background-color: var(--btn-secondary-bg); border: 1px solid var(--border-default);
+  color: var(--text-secondary); align-self: flex-start;
+}
+.t-platform-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 0.85rem; margin-top: 1.15rem;
+}
+.t-dl-card {
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  padding: 0.85rem 1.1rem; border-radius: var(--radius-sm);
   background-color: var(--btn-secondary-bg); border: 1px solid var(--border-subtle);
   text-decoration: none; color: var(--text-primary); transition: all 0.15s ease;
-  margin-bottom: 0.5rem;
 }
-.t-dl-row:last-child { margin-bottom: 0; }
-.t-dl-row:hover {
+.t-dl-card:hover {
   border-color: var(--accent-cyan-border); background-color: var(--accent-cyan-bg);
   transform: translateY(-1px);
 }
-.t-platform-card[data-platform='linux'] .t-dl-row:hover {
-  border-color: var(--accent-green-border); background-color: var(--accent-green-bg);
+.t-dl-card-info {
+  display: flex; flex-direction: column; gap: 0.2rem; min-width: 0;
 }
-.t-platform-card[data-platform='windows'] .t-dl-row:hover {
-  border-color: var(--accent-purple-border); background-color: var(--accent-purple-bg);
+.t-dl-card-title-row {
+  display: flex; align-items: center; gap: 0.45rem; flex-wrap: wrap;
 }
-.t-dl-row-main { display: flex; flex-direction: column; min-width: 0; }
-.t-dl-row-title { font-size: 0.82rem; font-weight: 600; color: var(--text-primary); }
-.t-dl-row-file {
-  font-family: var(--font-mono); font-size: 0.72rem; color: var(--text-tertiary);
+.t-dl-card-title {
+  font-size: 0.86rem; font-weight: 600; color: var(--text-primary);
+}
+.t-dl-card-file {
+  font-family: var(--font-mono); font-size: 0.73rem; color: var(--text-tertiary);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.t-dl-row-action { display: inline-flex; align-items: center; gap: 0.4rem; flex-shrink: 0; font-size: 0.75rem; }
+.t-dl-card-btn {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  padding: 0.35rem 0.75rem; border-radius: var(--radius-sm);
+  font-size: 0.76rem; font-weight: 600; font-family: var(--font-mono);
+  background-color: var(--bg-canvas); border: 1px solid var(--border-default);
+  color: var(--text-primary); flex-shrink: 0; transition: all 0.15s ease;
+}
+.t-dl-card:hover .t-dl-card-btn {
+  background-color: var(--accent-cyan-fg); border-color: var(--accent-cyan-fg);
+  color: #040810;
+}
 .t-format-tag {
-  font-family: var(--font-mono); font-size: 0.7rem; font-weight: 700;
+  font-family: var(--font-mono); font-size: 0.68rem; font-weight: 700;
   padding: 0.1rem 0.4rem; border-radius: 4px;
   background-color: var(--bg-canvas); border: 1px solid var(--border-default);
   color: var(--text-secondary);
 }
-.t-req-list {
-  list-style: none; padding: 0; margin: 0.75rem 0 0; display: flex; flex-direction: column; gap: 0.35rem;
+.t-platform-footer {
+  margin-top: 1.25rem; padding-top: 1rem;
+  border-top: 1px solid var(--border-subtle);
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 1.25rem; flex-wrap: wrap;
 }
-.t-req-list li {
-  display: flex; align-items: center; gap: 0.4rem; font-size: 0.75rem; color: var(--text-tertiary);
+.t-platform-cmd-wrap {
+  display: flex; align-items: center; gap: 0.5rem; flex: 1; min-width: 260px;
+}
+.t-platform-note {
+  font-size: 0.78rem; color: var(--text-tertiary); margin: 0; line-height: 1.45;
 }
 .t-log-bullets {
   list-style: disc inside; margin: 0.4rem 0 0; padding: 0;

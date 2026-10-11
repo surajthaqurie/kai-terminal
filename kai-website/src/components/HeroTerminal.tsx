@@ -7,11 +7,11 @@ export function HeroTerminal({ version }: { version: string }) {
     Array<{ cmd: string; output: React.ReactNode }>
   >([
     {
-      cmd: 'kai --status',
+      cmd: 'kai status',
       output: (
         <div style={{ color: '#34d399' }}>
-          <p>✔ engine {version} · portable-pty 0.8 · xterm.js 60fps</p>
-          <p>✔ tabs isolated · zero telemetry · MIT</p>
+          <p>✔ Kai {version} is ready</p>
+          <p>✔ Fast and private · Free</p>
         </div>
       ),
     },
@@ -30,32 +30,32 @@ export function HeroTerminal({ version }: { version: string }) {
     } else if (['status', 'kai --status', 'kai status'].includes(input)) {
       reply = (
         <div style={{ color: '#34d399' }}>
-          <p>✔ engine operational · ConPTY / POSIX pty</p>
-          <p>✔ render: xterm.js canvas @ 60fps · ~30MB idle</p>
-          <p>✔ project intelligence: schema v1 · 7 MCP tools available</p>
+          <p>✔ Kai is working well</p>
+          <p>✔ Fast display · Low memory (~30MB)</p>
+          <p>✔ Ready to help your AI tool</p>
         </div>
       );
     } else if (['mcp', 'kai mcp', 'kai mcp .'].includes(input)) {
       reply = (
         <div style={{ color: '#34d399' }}>
-          <p>[kai-mcp] stdio JSON-RPC server listening</p>
-          <p style={{ color: '#a78bfa' }}>tools: kai_project_info · kai_search_code · kai_find_symbol · kai_get_context</p>
-          <p style={{ color: '#94a3b8', fontSize: '0.75rem' }}>latency &lt; 10ms · read-only workspace boundary enforced</p>
+          <p>[kai] Ready to help your AI tool</p>
+          <p style={{ color: '#a78bfa' }}>Can: find code · explain files · answer questions</p>
+          <p style={{ color: '#94a3b8', fontSize: '0.75rem' }}>Fast · Private · Nothing leaves your computer</p>
         </div>
       );
     } else if (input.startsWith('kai query') || input.startsWith('query')) {
       reply = (
         <div style={{ color: '#38bdf8' }}>
-          <p>✔ task: "Explain PtyManager state machine"</p>
-          <p>✔ retrieved: 4 relevant files, 14 symbols, 0 secrets</p>
-          <p style={{ color: '#34d399' }}>✔ token footprint: 1,420 tokens (68% savings vs raw dump)</p>
+          <p>✔ question: "Where is the login code?"</p>
+          <p>✔ found: 4 files, only the needed parts</p>
+          <p style={{ color: '#34d399' }}>✔ low cost: 68% cheaper than sharing all files</p>
         </div>
       );
     } else if (['claude', 'codex', 'gemini', 'copilot', 'opencode', 'aider', 'windsurf', 'cline', 'ai'].includes(input) || input.startsWith('kai agent') || input.startsWith('kai ')) {
       reply = (
         <div style={{ color: '#d8b4fe' }}>
           <p>codex <span style={{ color: '#34d399' }}>✓</span> · claude <span style={{ color: '#34d399' }}>✓</span> · gemini <span style={{ color: '#34d399' }}>✓</span> · copilot <span style={{ color: '#34d399' }}>✓</span> · opencode <span style={{ color: '#34d399' }}>✓</span> · aider <span style={{ color: '#34d399' }}>✓</span></p>
-          <p style={{ color: '#94a3b8', fontSize: '0.75rem' }}>run 'kai agent setup &lt;agent&gt;' for instant zero-config stdio MCP wiring.</p>
+          <p style={{ color: '#94a3b8', fontSize: '0.75rem' }}>Connect one with: kai agent setup &lt;name&gt;. Example: kai agent setup claude.</p>
         </div>
       );
     } else if (['downloads', 'download', 'install'].includes(input)) {
@@ -66,7 +66,7 @@ export function HeroTerminal({ version }: { version: string }) {
         </div>
       );
     } else if (['version', 'kai --version'].includes(input)) {
-      reply = <p style={{ color: '#67e8f9' }}>kai {version} — Tauri 2.1 + Rust · MIT</p>;
+      reply = <p style={{ color: '#67e8f9' }}>Kai {version} — Free and private</p>;
     } else if (['ls', 'dir'].includes(input)) {
       reply = <p style={{ color: '#94a3b8' }}>src/ src-tauri/ packaging/ Cargo.toml package.json</p>;
     } else if (input === 'clear' || input === 'cls') {

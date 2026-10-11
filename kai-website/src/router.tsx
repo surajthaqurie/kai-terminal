@@ -10,24 +10,24 @@ export type RoutePath = (typeof ROUTES)[number];
 
 export const ROUTE_META: Record<string, { title: string; description: string }> = {
   '/': {
-    title: 'kai — One terminal. Every platform.',
-    description: 'kai is a fast, keyboard-first terminal for Windows, Linux and macOS. Native Rust PTY, GPU render, local AI CLIs. Free, MIT, zero telemetry.',
+    title: 'Kai — Simple fast terminal for everyone',
+    description: 'Kai is a simple, fast terminal for Windows, Linux and Mac. Easy setup in 30 seconds. Works with your AI tools. Free and private.',
   },
   '/download': {
-    title: 'Download kai — Windows, Linux, macOS',
-    description: 'Get native kai builds: Windows .exe/.msi, Linux .deb/.AppImage, macOS .dmg. Free MIT, zero telemetry, built on GitHub Actions.',
+    title: 'Download Kai — Free for Windows, Linux, Mac',
+    description: 'Download Kai for your system in 30 seconds. Simple setup, free forever, private by design.',
   },
   '/changelog': {
-    title: 'Changelog — kai releases',
-    description: 'Every kai release plus pending unreleased changes, synced automatically from GitHub Releases and changesets.',
+    title: "What's new — Kai updates",
+    description: 'See the latest Kai improvements and fixes in simple words. Newest first.',
   },
   '/guide': {
-    title: 'Guide — get started with kai in 30 seconds',
-    description: 'Install kai, verify the engine, plug in Codex / Claude / Gemini CLIs, and learn the keyboard-first shortcuts.',
+    title: 'Kai Guide — Start in 30 seconds',
+    description: 'Learn Kai in 3 simple steps: install, open a project, connect your AI tool. No account needed.',
   },
   '/faq': {
-    title: 'FAQ — kai questions answered',
-    description: 'Is kai free? Any telemetry? How does AI work? Which OS builds are shipped? Answers here.',
+    title: 'Kai FAQ — Simple answers',
+    description: 'Is Kai free? Is my code safe? How do I start? Simple answers to common questions.',
   },
 };
 

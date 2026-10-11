@@ -56,12 +56,12 @@ export function Hero({ tag, short, version, rel }: { tag: string; short: string;
         </h1>
 
         <p className="t-hero-sub t-enter" style={{ animationDelay: '140ms' }}>
-          A fast, keyboard-first terminal with a native Rust engine and built-in Project Intelligence — local code context for your AI coding assistant. Free, private, zero telemetry.
+          A fast terminal for Windows, Linux and Mac. It is easy to use, works with your AI coding tools, and keeps everything private on your computer. Free forever.
         </p>
 
         <p className="t-hero-reassure t-enter" style={{ animationDelay: '190ms' }}>
           <ShieldCheck size={15} />
-          <span>New here? Install in 30 seconds — no account, no config wizard. Works with Claude, Cursor, Codex, Gemini &amp; more.</span>
+          <span>First time here? Install in 30 seconds. No account. No setup stress. Works with Claude, Cursor, Codex, Gemini and more.</span>
         </p>
 
         <div className="t-enter" style={{ animationDelay: '230ms' }}>

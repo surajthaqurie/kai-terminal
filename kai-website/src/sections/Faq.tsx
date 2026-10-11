@@ -3,13 +3,13 @@ import { HelpCircle } from 'lucide-react';
 import { Badge, Section } from '../components/ui';
 
 const FAQ_ITEMS = [
-  { q: 'Is Kai free?', a: 'Yes — MIT. Free for personal + commercial use, no paywall, reproducible builds on GitHub Actions.' },
-  { q: 'Any telemetry or secret logging?', a: 'Zero telemetry. No cloud proxy, no keystroke tracking, strict workspace boundary isolation. Sensitive keys and tokens (.env*, id_rsa*, PATs) are automatically scrubbed from indexes.' },
-  { q: 'How does Project Intelligence & MCP work?', a: 'Kai indexes your repository locally (AST symbols, dependencies, and rules) and stores metadata safely in ~/.kai/. External AI tools (Claude Code, Cursor, Codex, Gemini, Copilot, Windsurf, Cline) connect via standard stdio MCP to get relevant, token-budgeted context without dumping whole directories.' },
-  { q: 'Which AI agents and CLIs are supported?', a: 'Kai configures 7 coding agents out of the box via kai agent setup (Claude Code, Cursor, Codex, Gemini, Copilot / VS Code, Windsurf, Cline) and detects 6 local AI CLIs (codex, claude, gemini, opencode, copilot, aider) without executing them.' },
-  { q: 'How fast is retrieval and how many tokens does it save?', a: 'Local context retrieval runs in under 10ms (typically 0.8ms - 3.2ms). By extracting only relevant AST symbols and dependencies, it achieves ~70% token reductions compared to naive file dumps.' },
-  { q: 'Why Tauri + Rust?', a: '~30MB idle vs 300MB+ Electron. Native portable-pty streams, faster startup, and minimal memory overhead on Windows, Linux, and macOS.' },
-  { q: 'Which OS builds are supported?', a: 'Apple (macOS) .dmg (Apple Silicon M1–M4) · Linux .deb (x64/ARM64) + .AppImage · Windows .exe/.msi (64-bit).' },
+  { q: 'Is Kai free?', a: 'Yes. Kai is free for personal and work use. No hidden fees, no locked features.' },
+  { q: 'Does Kai track me or upload my code?', a: 'No. Everything stays on your computer. Kai does not track you, does not upload code, and hides passwords and secret keys automatically.' },
+  { q: 'How does Kai help my AI tool?', a: 'Kai makes a private map of your project on your computer. When your AI tool (like Claude or Cursor) has a question, Kai gives it just the small part of code it needs. This is faster and cheaper.' },
+  { q: 'Which AI tools work with Kai?', a: 'Claude, Cursor, Codex, Gemini, Copilot, Windsurf and Cline. You only need one command to connect: for example, kai agent setup claude.' },
+  { q: 'Is it fast? Does it save money?', a: 'Yes. Answers come in less than 10 milliseconds. Because Kai shares only the needed code, you use about 70% less AI tokens — so lower cost.' },
+  { q: 'Why is Kai so light?', a: 'Kai is built with Rust and Tauri, not Electron. It uses about 30MB of memory instead of 300MB+. It starts fast and runs well on Windows, Linux and Mac.' },
+  { q: 'Which systems can I install it on?', a: 'Mac (M1 to M4), Linux (.deb and .AppImage), and Windows 10 and 11 (.exe and .msi). One simple download for each.' },
 ];
 
 export function Faq() {
@@ -19,8 +19,8 @@ export function Faq() {
       <div className="t-container-narrow" style={{ padding: 0 }}>
         <div style={{ textAlign: 'center', marginBottom: '2.5rem' }}>
           <Badge tone="neutral"><HelpCircle size={14} /> FAQ</Badge>
-          <h2 className="t-section-title">Frequently asked questions</h2>
-          <p className="t-section-sub">Short answers first — click any question to expand.</p>
+          <h2 className="t-section-title">Common questions</h2>
+          <p className="t-section-sub">Simple answers. Click a question to see more.</p>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '.9rem' }}>
           {FAQ_ITEMS.map((item, idx) => {

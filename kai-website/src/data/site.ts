@@ -13,12 +13,12 @@ export type Feature = {
 };
 
 export const FEATURES: Feature[] = [
-  { icon: Cpu, tone: 't-icon--neutral', tag: 'rust · portable-pty', title: 'Native PTY core', body: 'Direct OS pty streams. No Node backend, no Electron. ConPTY on Windows, POSIX elsewhere.' },
-  { icon: Zap, tone: 't-icon--neutral', tag: 'xterm.js · 60fps', title: 'GPU rendering', body: 'Canvas viewport, fast select + search, grid fit. Stays smooth on huge output.' },
-  { icon: Layers, tone: 't-icon--neutral', tag: 'tabs · isolation', title: 'Isolated tabs', body: 'Per-tab cwd + process tree + pty channel. One tab dies, the rest live.' },
-  { icon: Bot, tone: 't-icon--neutral', tag: 'mcp · stdio json-rpc', title: 'Project Intelligence & MCP', body: 'Local symbol graph, AST parsing, deterministic retrieval, and standard MCP server for Claude Code, Cursor, Codex, Gemini, Copilot, Windsurf, and Cline.' },
-  { icon: ShieldCheck, tone: 't-icon--neutral', tag: 'read-only · zero leak', title: 'Audited security & privacy', body: 'Strict workspace boundary enforcement, stream-bounded requests, live file staleness checks, symlink escape protection, automatic secret scrubbing, and zero prompt logging.' },
-  { icon: Monitor, tone: 't-icon--neutral', tag: '~30MB idle · sub-10ms query', title: 'Tauri 2, not Electron', body: '10× lighter than Electron terminals. Fast cold start, sub-10ms context retrieval, ~70% token savings, MIT licensed.' },
+  { icon: Cpu, tone: 't-icon--neutral', tag: 'Fast and light', title: 'Fast native core', body: 'Kai talks directly to your system. No heavy background apps. It opens fast and stays fast.' },
+  { icon: Zap, tone: 't-icon--neutral', tag: 'Smooth display', title: 'Smooth rendering', body: 'Clear text that scrolls smoothly, even with large outputs. Easy search and selection.' },
+  { icon: Layers, tone: 't-icon--neutral', tag: 'Tabs', title: 'Safe separate tabs', body: 'Each tab runs on its own. If one tab stops, your other tabs keep working.' },
+  { icon: Bot, tone: 't-icon--neutral', tag: 'AI help', title: 'Help for your AI assistant', body: 'Kai reads your project on your computer and gives your AI assistant the right context. Works with Claude, Cursor, Codex, Gemini, Copilot, Windsurf and Cline.' },
+  { icon: ShieldCheck, tone: 't-icon--neutral', tag: 'Private', title: 'Private and safe', body: 'Everything stays on your computer. No tracking, no uploads. Passwords and keys are never saved.' },
+  { icon: Monitor, tone: 't-icon--neutral', tag: 'Light app', title: 'Light, not heavy', body: 'Uses about 30MB of memory. Starts in seconds. Free for personal and work use.' },
 ];
 
 export type Shortcut = { label: string; keys: string[] };
@@ -37,10 +37,10 @@ export const SHORTCUTS: Shortcut[] = [
 export type CompareRow = { label: string; kai: string; electron: string; alacritty: string };
 
 export const COMPARE_ROWS: CompareRow[] = [
-  { label: 'Idle RAM', kai: '~30 MB', electron: '300 MB+', alacritty: 'low' },
-  { label: 'Tabs + split panes', kai: 'built in', electron: 'built in', alacritty: 'via tmux' },
-  { label: 'Project Intelligence & MCP', kai: 'built in (stdio MCP)', electron: 'via plugins', alacritty: 'none' },
-  { label: 'Context retrieval latency', kai: '< 10 ms (local)', electron: 'cloud/slow', alacritty: 'manual' },
-  { label: 'Token reduction vs full dump', kai: '~70% savings', electron: 'unbounded', alacritty: 'n/a' },
-  { label: 'Telemetry & Prompt Logging', kai: 'zero', electron: 'varies', alacritty: 'zero' },
+  { label: 'Memory use when idle', kai: '~30 MB', electron: '300 MB+', alacritty: 'low' },
+  { label: 'Tabs and split screens', kai: 'built in', electron: 'built in', alacritty: 'needs extra tool' },
+  { label: 'AI project help', kai: 'built in', electron: 'needs plugins', alacritty: 'none' },
+  { label: 'Speed of answers', kai: 'under 10 ms', electron: 'slower', alacritty: 'manual' },
+  { label: 'Saves AI costs', kai: '~70% less', electron: 'no limit', alacritty: 'n/a' },
+  { label: 'Tracking', kai: 'none', electron: 'depends', alacritty: 'none' },
 ];

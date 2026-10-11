@@ -3,22 +3,22 @@
 [![CI](https://github.com/surajthaqurie/kai-terminal/actions/workflows/ci.yml/badge.svg)](https://github.com/surajthaqurie/kai-terminal/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/surajthaqurie/kai-terminal?label=download)](https://github.com/surajthaqurie/kai-terminal/releases/latest)
-[![Website](https://img.shields.io/badge/site-kai--website--khaki.vercel.app-06b6d4)](https://kai-website-khaki.vercel.app/)
+[![Website](https://img.shields.io/badge/site-kai--website--jet.vercel.app-06b6d4)](https://kai-website-jet.vercel.app/)
 
 Fast, keyboard-first terminal for **Windows · Linux · macOS**.
 Native Rust PTY (`portable-pty`) + Tauri 2 + GPU `xterm.js`. ~30MB idle, zero telemetry, MIT.
 
-🌐 Live site: **https://kai-website-khaki.vercel.app/** · 💾 Releases: [latest](https://github.com/surajthaqurie/kai-terminal/releases/latest)
+🌐 Live site: **https://kai-website-jet.vercel.app/** · 💾 Releases: [latest](https://github.com/surajthaqurie/kai-terminal/releases/latest)
 
-[![kai hero](docs/screenshot.png)](https://kai-website-khaki.vercel.app/)
+[![kai hero](docs/screenshot.png)](https://kai-website-jet.vercel.app/)
 
 ## Install (1 file per OS)
 
 | OS | File | Command |
 | --- | --- | --- |
-| Windows 10/11 x64 | `Kai_0.1.0_x64-setup.exe` (or `.msi`) | download + run |
+| macOS 12+ M1–M4 (Apple Silicon) | `Kai_0.1.0_aarch64.dmg` | open + drag to `/Applications` |
 | Linux x64 / ARM64 | `kai_0.1.0_amd64.deb` (or `.AppImage`) | `sudo dpkg -i kai_*.deb` · `chmod +x kai_*.AppImage` |
-| macOS 12+ M1–M4 | `Kai_0.1.0_aarch64.dmg` | open + drag to `/Applications` |
+| Windows 10/11 x64 | `Kai_0.1.0_x64-setup.exe` (or `.msi`) | download + run |
 
 > No release files yet? Push tag `v0.1.0` to trigger builds, or build from source below.
 

@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://kai-website-khaki.vercel.app/sitemap.xml
+Sitemap: https://kai-website-jet.vercel.app/sitemap.xml

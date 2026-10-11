@@ -43,10 +43,10 @@ export function Changelog({ limit = 6 }: { limit?: number }) {
   return (
     <Section id="changelog" alt>
       <div style={{ textAlign: 'center', marginBottom: '2.5rem' }}>
-        <Badge tone="cyan"><ScrollText size={14} /> Official Changelog</Badge>
-        <h2 className="t-section-title">Changelog &amp; Release History</h2>
+        <Badge tone="cyan"><ScrollText size={14} /> What's new</Badge>
+        <h2 className="t-section-title">What's new in Kai</h2>
         <p className="t-section-sub">
-          Official production release milestones, binary artifacts, and pending changes tracked via changesets.
+          Latest updates and improvements. Simple list, newest first.
         </p>
       </div>
 
@@ -100,8 +100,8 @@ export function Changelog({ limit = 6 }: { limit?: number }) {
         ) : (
           <div className="t-panel t-log-empty">
             <div>
-              <b>No published releases yet</b>
-              <p>Push a <code>v*</code> tag to cut the first release. Until then, pending changesets are tracked below.</p>
+              <b>No releases yet</b>
+              <p>We are getting the first release ready. Please check back soon, or run Kai from source.</p>
             </div>
             <a href={LATEST_RELEASE_URL} target="_blank" rel="noreferrer" className="t-btn t-btn--secondary t-btn--sm">
               Releases <ExternalLink size={16} />

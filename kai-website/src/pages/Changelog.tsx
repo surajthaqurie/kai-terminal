@@ -9,9 +9,9 @@ export function ChangelogPage() {
   return (
     <>
       <PageHero
-        badge={<><ScrollText size={14} /> Auto-synced · GitHub + changesets</>}
-        title="Changelog"
-        sub="Published releases plus pending unreleased changes. This page updates itself — no manual editing."
+        badge={<><ScrollText size={14} /> Updates</>}
+        title="What's new"
+        sub="New versions and improvements. Newest first, in simple words."
       />
       <Changelog limit={20} />
     </>

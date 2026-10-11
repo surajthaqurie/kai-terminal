@@ -8,8 +8,8 @@ export function FaqPage() {
     <>
       <PageHero
         badge={<><HelpCircle size={14} /> FAQ</>}
-        title="Questions, answered"
-        sub="Pricing, privacy, AI setup, and platform coverage — in one place."
+        title="Simple answers"
+        sub="Is it free? Is it private? How do I start? All answered here."
       />
       <Faq />
       <CtaBanner />

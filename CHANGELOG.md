@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Clean Professional Release Interface & Domain Migration**:
+  - Transitioned website deployment URL to `https://kai-website-jet.vercel.app/` across all meta tags, canonical links, and documentation.
+  - Redesigned Releases & Direct Downloads with stacked, professional container boxes for Apple (macOS), Linux, and Windows.
+  - Eliminated emoji icons from platform switcher tabs and headings for a clean, developer-focused aesthetic.
+  - Structured installer package cards featuring format badges, architecture pills, and direct download actions.
 - **Structured Group-Wise Release Architecture**:
   - Organized release matrix into structured groups: **Apple (macOS)**, **Linux**, and **Windows**.
   - Direct download pipelines for Apple Silicon macOS (`.dmg`), Linux x86_64 and ARM64 (`.deb`, `.AppImage`), and Windows 64-bit (`.exe` NSIS and `.msi`).

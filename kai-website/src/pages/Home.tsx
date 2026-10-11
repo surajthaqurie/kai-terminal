@@ -1,4 +1,5 @@
 import { Hero } from '../sections/Hero';
+import { Workflow } from '../sections/Workflow';
 import { Quickstart } from '../sections/Quickstart';
 import { Features } from '../sections/Features';
 import { AiCli } from '../sections/AiCli';
@@ -15,6 +16,7 @@ export function HomePage({ rel }: { rel: LatestRelease }) {
   return (
     <>
       <Hero tag={rel.tag} short={rel.short} version={rel.tag} rel={rel} />
+      <Workflow />
       <Quickstart />
       <Features />
       <AiCli />
