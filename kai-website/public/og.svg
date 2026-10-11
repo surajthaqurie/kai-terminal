@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#070a12"/>
+      <stop offset="1" stop-color="#0b1530"/>
+    </linearGradient>
+    <linearGradient id="brand" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#06b6d4"/>
+      <stop offset="1" stop-color="#2563eb"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <g opacity="0.35" stroke="#1e293b" stroke-width="1">
+    <path d="M0 90h1200M0 180h1200M0 270h1200M0 360h1200M0 450h1200M0 540h1200"/>
+    <path d="M150 0v630M300 0v630M450 0v630M600 0v630M750 0v630M900 0v630M1050 0v630"/>
+  </g>
+  <rect x="80" y="90" width="1040" height="450" rx="24" fill="#0b1120" stroke="#1e293b" stroke-width="2"/>
+  <circle cx="130" cy="140" r="9" fill="#ef4444"/>
+  <circle cx="160" cy="140" r="9" fill="#f59e0b"/>
+  <circle cx="190" cy="140" r="9" fill="#10b981"/>
+  <text x="225" y="148" font-family="monospace" font-size="22" fill="#64748b">kai — zsh</text>
+  <rect x="130" y="175" width="150" height="36" rx="8" fill="#06b6d4" opacity="0.15"/>
+  <text x="145" y="200" font-family="monospace" font-size="20" fill="#22d3ee">kai --status</text>
+  <text x="130" y="290" font-family="monospace" font-size="30" fill="#38bdf8">➜ ~</text>
+  <text x="200" y="290" font-family="monospace" font-size="44" font-weight="bold" fill="#ffffff">One terminal. Every platform.</text>
+  <text x="130" y="350" font-family="monospace" font-size="26" fill="#34d399">✔ ~30MB idle · 60fps · zero telemetry · MIT</text>
+  <rect x="130" y="400" width="300" height="64" rx="12" fill="url(#brand)"/>
+  <text x="160" y="440" font-family="monospace" font-size="24" font-weight="bold" fill="#ffffff">$ kai — Tauri 2 + Rust</text>
+  <text x="850" y="440" font-family="monospace" font-size="24" fill="#94a3b8">win · linux · mac</text>
+</svg>

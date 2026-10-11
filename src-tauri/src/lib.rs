@@ -24,47 +24,47 @@ use pty::{PtyCreateOptions, PtyManager, PtySessionInfo};
 #[cfg(feature = "tauri")]
 use shell::{detect_available_shells, open_in_editor, ShellProfile};
 #[cfg(feature = "tauri")]
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 
 #[cfg(feature = "tauri")]
 #[tauri::command]
-pub fn get_available_shells() -> Vec<ShellProfile> {
+fn get_available_shells() -> Vec<ShellProfile> {
     detect_available_shells()
 }
 
 #[cfg(feature = "tauri")]
 #[tauri::command]
-pub fn get_ai_cli_status() -> Vec<AiCliStatus> {
+fn get_ai_cli_status() -> Vec<AiCliStatus> {
     detect_ai_clis()
 }
 
 #[cfg(feature = "tauri")]
 #[tauri::command]
-pub fn get_ai_cli_details() -> Vec<AiCliDetails> {
+fn get_ai_cli_details() -> Vec<AiCliDetails> {
     detect_ai_cli_details()
 }
 
 #[cfg(feature = "tauri")]
 #[tauri::command]
-pub fn check_ai_cli_path(id: String, custom_path: String) -> Result<AiCliDetails, String> {
+fn check_ai_cli_path(id: String, custom_path: String) -> Result<AiCliDetails, String> {
     check_custom_ai_cli_path(&id, &custom_path)
 }
 
 #[cfg(feature = "tauri")]
 #[tauri::command]
-pub fn get_git_info_cmd(cwd: String) -> GitInfo {
+fn get_git_info_cmd(cwd: String) -> GitInfo {
     get_git_info(&cwd)
 }
 
 #[cfg(feature = "tauri")]
 #[tauri::command]
-pub fn run_git_action_cmd(cwd: String, action: String) -> Result<String, String> {
+fn run_git_action_cmd(cwd: String, action: String) -> Result<String, String> {
     run_git_action(&cwd, &action)
 }
 
 #[cfg(feature = "tauri")]
 #[tauri::command]
-pub fn open_project_in_editor(
+fn open_project_in_editor(
     editor_path: Option<String>,
     cwd: String,
 ) -> Result<String, error::TerminalError> {
@@ -73,7 +73,7 @@ pub fn open_project_in_editor(
 
 #[cfg(feature = "tauri")]
 #[tauri::command]
-pub fn get_diagnostics(state: State<'_, PtyManager>) -> diagnostics::DiagnosticsReport {
+fn get_diagnostics(state: State<'_, PtyManager>) -> diagnostics::DiagnosticsReport {
     let sessions = state.list_sessions();
     let shells = detect_available_shells();
     let ai_clis: Vec<AiCliSummary> = detect_ai_cli_details()
@@ -89,7 +89,7 @@ pub fn get_diagnostics(state: State<'_, PtyManager>) -> diagnostics::Diagnostics
 
 #[cfg(feature = "tauri")]
 #[tauri::command]
-pub fn create_pty(
+fn create_pty(
     app_handle: AppHandle,
     state: State<'_, PtyManager>,
     options: PtyCreateOptions,
@@ -100,7 +100,7 @@ pub fn create_pty(
 
 #[cfg(feature = "tauri")]
 #[tauri::command]
-pub fn write_to_pty(
+fn write_to_pty(
     state: State<'_, PtyManager>,
     id: String,
     data: String,
@@ -110,7 +110,7 @@ pub fn write_to_pty(
 
 #[cfg(feature = "tauri")]
 #[tauri::command]
-pub fn resize_pty(
+fn resize_pty(
     state: State<'_, PtyManager>,
     id: String,
     cols: u16,
@@ -121,19 +121,19 @@ pub fn resize_pty(
 
 #[cfg(feature = "tauri")]
 #[tauri::command]
-pub fn close_pty(state: State<'_, PtyManager>, id: String) -> Result<(), error::TerminalError> {
+fn close_pty(state: State<'_, PtyManager>, id: String) -> Result<(), error::TerminalError> {
     state.close_pty(&id)
 }
 
 #[cfg(feature = "tauri")]
 #[tauri::command]
-pub fn get_session_info(state: State<'_, PtyManager>, id: String) -> Option<PtySessionInfo> {
+fn get_session_info(state: State<'_, PtyManager>, id: String) -> Option<PtySessionInfo> {
     state.get_session_info(&id)
 }
 
 #[cfg(feature = "tauri")]
 #[tauri::command]
-pub fn list_sessions(state: State<'_, PtyManager>) -> Vec<PtySessionInfo> {
+fn list_sessions(state: State<'_, PtyManager>) -> Vec<PtySessionInfo> {
     state.list_sessions()
 }
 
@@ -146,7 +146,6 @@ pub fn run() {
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { .. } = event {
                 // Reap all active PTY child processes when window is closed
-                use tauri::Manager;
                 let state: State<'_, PtyManager> = window.state();
                 state.close_all();
             }

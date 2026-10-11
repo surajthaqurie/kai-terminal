@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Terminal,
   Cpu,
@@ -29,6 +29,49 @@ import { Badge, Button, Card, Section, SectionHead } from './components/ui';
 
 const REPO_URL = 'https://github.com/surajthaqurie/kai-terminal';
 const LATEST_RELEASE_URL = `${REPO_URL}/releases/latest`;
+const FALLBACK_TAG = 'v0.1.0';
+
+type ReleaseAsset = { name: string; url: string };
+
+function useLatestRelease() {
+  const [rel, setRel] = useState<{ tag: string; assets: ReleaseAsset[] } | null>(() => {
+    const cached = readCache('kai-release');
+    if (!cached) return null;
+    try {
+      const parsed = JSON.parse(cached) as { tag: string; assets: ReleaseAsset[] };
+      if (typeof parsed.tag === 'string' && Array.isArray(parsed.assets)) return parsed;
+    } catch {
+      /* corrupt cache — refetch below */
+    }
+    return null;
+  });
+  useEffect(() => {
+    let live = true;
+    fetch('https://api.github.com/repos/surajthaqurie/kai-terminal/releases/latest')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (!live || !j || typeof j.tag_name !== 'string') return;
+        const assets: ReleaseAsset[] = Array.isArray(j.assets)
+          ? j.assets
+            .filter((a: any) => a && typeof a.name === 'string' && typeof a.browser_download_url === 'string')
+            .map((a: any) => ({ name: a.name as string, url: a.browser_download_url as string }))
+          : [];
+        const next = { tag: j.tag_name as string, assets };
+        setRel(next);
+        writeCache('kai-release', JSON.stringify(next));
+      })
+      .catch(() => {});
+    return () => { live = false; };
+  }, []);
+  const tag = rel?.tag ?? FALLBACK_TAG;
+  const short = tag.replace(/^v/, '');
+  const asset = (match: (name: string) => boolean, fallbackFile: string) => {
+    const hit = rel?.assets.find((a) => match(a.name));
+    if (hit) return hit.url;
+    return `${LATEST_RELEASE_URL}/download/${fallbackFile.replace('0.1.0', short)}`;
+  };
+  return { tag, short, asset };
+}
 
 /* ---------- small helpers ---------- */
 
@@ -77,8 +120,52 @@ function ThemeToggle() {
   );
 }
 
-function SiteHeader() {
+/* ---------- cached fetch helpers (1h localStorage TTL, silent offline fallback) ---------- */
+
+const CACHE_TTL = 3_600_000;
+
+function readCache(key: string): string | null {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { t: number; v: string };
+    if (typeof parsed.t !== 'number' || Date.now() - parsed.t > CACHE_TTL) return null;
+    return typeof parsed.v === 'string' ? parsed.v : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCache(key: string, v: string) {
+  try {
+    localStorage.setItem(key, JSON.stringify({ t: Date.now(), v }));
+  } catch {
+    /* storage full or blocked — non-fatal */
+  }
+}
+
+function useRepoStars() {
+  const [stars, setStars] = useState<string | null>(() => readCache('kai-stars'));
+  useEffect(() => {
+    let live = true;
+    fetch('https://api.github.com/repos/surajthaqurie/kai-terminal')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (!live || !j || typeof j.stargazers_count !== 'number') return;
+        const n: number = j.stargazers_count;
+        const label = n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`;
+        setStars(label);
+        writeCache('kai-stars', label);
+      })
+      .catch(() => {});
+    return () => { live = false; };
+  }, []);
+  return stars;
+}
+
+function SiteHeader({ version }: { version: string }) {
   const [open, setOpen] = useState(false);
+  const stars = useRepoStars();
   return (
     <header className="t-header">
       <div className="t-header-inner" style={{ position: 'relative' }}>
@@ -88,7 +175,7 @@ function SiteHeader() {
           </div>
           <div>
             <span className="t-brand-name">kai</span>
-            <span className="t-version">v0.1.0</span>
+            <span className="t-version">{version}</span>
           </div>
         </a>
 
@@ -96,14 +183,16 @@ function SiteHeader() {
           <a href="#quickstart" onClick={() => setOpen(false)}>Quickstart</a>
           <a href="#features" onClick={() => setOpen(false)}>Features</a>
           <a href="#ai-cli" onClick={() => setOpen(false)}>AI</a>
+          <a href="#compare" onClick={() => setOpen(false)}>Compare</a>
           <a href="#downloads" onClick={() => setOpen(false)}>Download</a>
           <a href="#faq" onClick={() => setOpen(false)}>FAQ</a>
         </nav>
 
         <div className="t-header-actions">
           <ThemeToggle />
-          <a href={REPO_URL} target="_blank" rel="noreferrer" className="t-btn t-btn--secondary t-btn--sm">
+          <a href={REPO_URL} target="_blank" rel="noreferrer" className="t-btn t-btn--secondary t-btn--sm t-star">
             <Github size={16} /> <span className="t-header-cta-label">Star</span>
+            {stars ? <span className="t-star-n">{stars}</span> : null}
           </a>
           <a href="#downloads" className="t-btn t-btn--primary t-btn--sm">
             <Download size={16} /> <span className="t-header-cta-label">Get Kai</span>
@@ -160,7 +249,7 @@ const INSTALL_TABS = [
   },
 ] as const;
 
-function InstallBar() {
+function InstallBar({ short }: { short: string }) {
   const [tab, setTab] = useState<string>(() => {
     if (typeof navigator === 'undefined') return 'linux';
     const p = navigator.platform.toLowerCase();
@@ -169,7 +258,8 @@ function InstallBar() {
     if (p.includes('win') || ua.includes('windows')) return 'windows';
     return 'linux';
   });
-  const active = INSTALL_TABS.find((t) => t.id === tab)!;
+  const active0 = INSTALL_TABS.find((t) => t.id === tab)!;
+  const active = { ...active0, cmd: active0.cmd.replace(/0\.1\.0/g, short) };
   return (
     <div className="t-install" role="region" aria-label="Install Kai">
       <div className="t-install-tabs" role="tablist">
@@ -198,8 +288,9 @@ function InstallBar() {
 
 /* ---------- hero terminal (click chip = run) ---------- */
 
-function HeroTerminal() {
+function HeroTerminal({ version }: { version: string }) {
   const [terminalInput, setTerminalInput] = useState('');
+  const viewRef = useRef<HTMLDivElement | null>(null);
   const [terminalHistory, setTerminalHistory] = useState<
     Array<{ cmd: string; output: React.ReactNode }>
   >([
@@ -207,7 +298,7 @@ function HeroTerminal() {
       cmd: 'kai --status',
       output: (
         <div style={{ color: '#34d399' }}>
-          <p>✔ engine v0.1.0 · portable-pty 0.8 · xterm.js 60fps</p>
+          <p>✔ engine {version} · portable-pty 0.8 · xterm.js 60fps</p>
           <p>✔ tabs isolated · zero telemetry · MIT</p>
         </div>
       ),
@@ -247,7 +338,7 @@ function HeroTerminal() {
         </div>
       );
     } else if (['version', 'kai --version'].includes(input)) {
-      reply = <p style={{ color: '#67e8f9' }}>kai v0.1.0 — Tauri 2.1 + Rust · MIT</p>;
+      reply = <p style={{ color: '#67e8f9' }}>kai {version} — Tauri 2.1 + Rust · MIT</p>;
     } else if (['ls', 'dir'].includes(input)) {
       reply = <p style={{ color: '#94a3b8' }}>src/ src-tauri/ packaging/ Cargo.toml package.json</p>;
     } else if (input === 'clear' || input === 'cls') {
@@ -260,6 +351,11 @@ function HeroTerminal() {
     setTerminalHistory((prev) => [...prev, { cmd: rawInput, output: reply }]);
     setTerminalInput('');
   };
+
+  useEffect(() => {
+    const el = viewRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [terminalHistory]);
 
   const onSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -286,7 +382,7 @@ function HeroTerminal() {
         </div>
       </div>
 
-      <div className="t-terminal-view">
+      <div className="t-terminal-view" ref={viewRef}>
         {terminalHistory.map((item, idx) => (
           <div key={idx} className="t-term-line">
             <div className="t-term-prompt">
@@ -313,17 +409,36 @@ function HeroTerminal() {
 }
 
 const FEATURES = [
-  { icon: Cpu, tone: 't-icon--cyan', tag: 'rust · portable-pty', title: 'Native PTY core', body: 'Direct OS pty streams. No Node backend, no Electron. ConPTY on Windows, POSIX elsewhere.' },
-  { icon: Zap, tone: 't-icon--pink', tag: 'xterm.js · 60fps', title: 'GPU rendering', body: 'Canvas viewport, fast select + search, grid fit. Stays smooth on huge output.' },
-  { icon: Layers, tone: 't-icon--green', tag: 'tabs · isolation', title: 'Isolated tabs', body: 'Per-tab cwd + process tree + pty channel. One tab dies, the rest live.' },
-  { icon: Bot, tone: 't-icon--purple', tag: 'codex · claude · gemini', title: 'Local AI CLIs', body: 'Detects tools already on your PATH. Zero bundled binaries, zero lock-in.' },
-  { icon: ShieldCheck, tone: 't-icon--amber', tag: 'zero telemetry', title: 'Private by default', body: 'No tracking, no keystroke logging, strict CSP. Everything stays local.' },
-  { icon: Monitor, tone: 't-icon--blue', tag: '~30MB idle', title: 'Tauri 2, not Electron', body: '10× lighter than Electron terminals. Fast cold start, MIT licensed.' },
+  { icon: Cpu, tone: 't-icon--neutral', tag: 'rust · portable-pty', title: 'Native PTY core', body: 'Direct OS pty streams. No Node backend, no Electron. ConPTY on Windows, POSIX elsewhere.' },
+  { icon: Zap, tone: 't-icon--neutral', tag: 'xterm.js · 60fps', title: 'GPU rendering', body: 'Canvas viewport, fast select + search, grid fit. Stays smooth on huge output.' },
+  { icon: Layers, tone: 't-icon--neutral', tag: 'tabs · isolation', title: 'Isolated tabs', body: 'Per-tab cwd + process tree + pty channel. One tab dies, the rest live.' },
+  { icon: Bot, tone: 't-icon--neutral', tag: 'codex · claude · gemini', title: 'Local AI CLIs', body: 'Detects tools already on your PATH. Zero bundled binaries, zero lock-in.' },
+  { icon: ShieldCheck, tone: 't-icon--neutral', tag: 'zero telemetry', title: 'Private by default', body: 'No tracking, no keystroke logging, strict CSP. Everything stays local.' },
+  { icon: Monitor, tone: 't-icon--neutral', tag: '~30MB idle', title: 'Tauri 2, not Electron', body: '10× lighter than Electron terminals. Fast cold start, MIT licensed.' },
+];
+
+const SHORTCUTS: Array<{ label: string; keys: string[] }> = [
+  { label: 'Command palette', keys: ['Ctrl', 'Shift', 'P'] },
+  { label: 'New tab', keys: ['Ctrl', 'Shift', 'T'] },
+  { label: 'Split horizontal', keys: ['Ctrl', 'Alt', 'S'] },
+  { label: 'Split vertical', keys: ['Ctrl', 'Alt', 'V'] },
+  { label: 'Find in output', keys: ['Ctrl', 'Shift', 'F'] },
+  { label: 'Next / prev tab', keys: ['Ctrl', 'Shift', ']', '['] },
+  { label: 'Restart session', keys: ['Ctrl', 'Shift', 'R'] },
+  { label: 'Settings', keys: ['Ctrl', 'Shift', ','] },
+];
+
+const COMPARE_ROWS: Array<{ label: string; kai: string; electron: string; alacritty: string }> = [
+  { label: 'Idle RAM', kai: '~30 MB', electron: '300 MB+', alacritty: 'low' },
+  { label: 'Tabs + split panes', kai: 'built in', electron: 'built in', alacritty: 'via tmux' },
+  { label: 'AI CLI detection', kai: 'built in', electron: 'plugins', alacritty: 'manual' },
+  { label: 'Telemetry', kai: 'zero', electron: 'varies', alacritty: 'zero' },
 ];
 
 function SiteContent() {
   const [activeFaq, setActiveFaq] = useState<number | null>(0);
   const [qsTab, setQsTab] = useState<'run' | 'ai' | 'config'>('run');
+  const rel = useLatestRelease();
 
   const faqItems = [
     { q: 'Is Kai free?', a: 'Yes — MIT. Free for personal + commercial, no paywall, reproducible builds on GitHub Actions.' },
@@ -341,31 +456,35 @@ function SiteContent() {
 
   return (
     <div id="top" style={{ backgroundColor: 'var(--bg-canvas)', color: 'var(--text-primary)', minHeight: '100vh', transition: 'background-color .25s ease, color .25s ease' }}>
-      <SiteHeader />
+      <SiteHeader version={rel.tag} />
+      <main>
 
       {/* Hero */}
       <section className="t-hero">
         <div className="t-hero-glow"></div>
-        <div className="t-grid-bg" aria-hidden="true"></div>
         <div className="t-hero-inner">
-          <Badge><Sparkles size={14} /> v0.1.0 · MIT · Tauri 2 + Rust</Badge>
+          <div className="t-enter" style={{ animationDelay: '0ms' }}>
+            <Badge><Sparkles size={14} /> {rel.tag} · MIT · Tauri 2 + Rust</Badge>
+          </div>
 
-          <h1 className="t-hero-title">
+          <h1 className="t-hero-title t-enter" style={{ animationDelay: '90ms' }}>
             One terminal.<br />Every platform.
           </h1>
 
-          <p className="t-hero-sub">
-            Lightweight, keyboard-first terminal for devs who live in the shell. Native pty, GPU render, local AI CLIs.
+          <p className="t-hero-sub t-enter" style={{ animationDelay: '180ms' }}>
+            A GPU-rendered terminal with a native Rust PTY on every OS. Tabs, splits, and your own AI CLIs — no account, no telemetry.
           </p>
 
-          <InstallBar />
+          <div className="t-enter" style={{ animationDelay: '260ms' }}>
+            <InstallBar short={rel.short} />
+          </div>
 
-          <div className="t-hero-cta">
+          <div className="t-hero-cta t-enter" style={{ animationDelay: '340ms' }}>
             <Button href="#downloads"><Download size={18} /> Download <ArrowRight size={16} /></Button>
             <Button href={REPO_URL} variant="secondary"><Code2 size={18} /> git clone</Button>
           </div>
 
-          <div className="t-stats">
+          <div className="t-stats t-enter" style={{ animationDelay: '420ms' }}>
             {[
               ['~30MB', 'idle RAM'],
               ['60fps', 'xterm.js'],
@@ -376,8 +495,10 @@ function SiteContent() {
             ))}
           </div>
 
-          <HeroTerminal />
-          <p className="t-hint">live demo — click a chip or type <code>help</code>. Try <code>ai</code>.</p>
+          <div className="t-enter" style={{ animationDelay: '500ms' }}>
+            <HeroTerminal version={rel.tag} />
+          </div>
+          <p className="t-hint t-enter" style={{ animationDelay: '600ms' }}>Interactive preview — click a chip or type <code>help</code>.</p>
         </div>
       </section>
 
@@ -419,8 +540,8 @@ function SiteContent() {
       {/* Features */}
       <Section id="features">
         <SectionHead
-          title="Built for speed, not slides"
-          sub="Six things devs actually feel every day."
+          title="Everything a terminal should do"
+          sub="Native performance, full keyboard control, zero telemetry."
         />
         <div className="t-grid-3">
           {FEATURES.map((f) => (
@@ -462,6 +583,48 @@ function SiteContent() {
         </div>
       </Section>
 
+      {/* Compare + shortcuts */}
+      <Section id="compare">
+        <SectionHead
+          title="How Kai compares"
+          sub="Footprint, workflow, and privacy at a glance."
+        />
+        <div className="t-compare">
+          <div className="t-panel t-table-wrap">
+            <table className="t-table">
+              <thead>
+                <tr><th scope="col"><span className="t-sr">Feature</span></th><th scope="col" className="t-hl">kai</th><th scope="col">Electron apps</th><th scope="col">Alacritty</th></tr>
+              </thead>
+              <tbody>
+                {COMPARE_ROWS.map((r) => (
+                  <tr key={r.label}>
+                    <th scope="row">{r.label}</th>
+                    <td className="t-hl">{r.kai}</td>
+                    <td>{r.electron}</td>
+                    <td>{r.alacritty}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="t-micro">Typical idle figures on the author's machine. Alacritty tabs/splits need tmux.</p>
+          </div>
+          <div className="t-panel">
+            <div className="t-probe-head"><span>$ keyboard-first</span><span className="t-pill">remappable</span></div>
+            <ul className="t-keys">
+              {SHORTCUTS.map((s) => (
+                <li key={s.label}>
+                  <span>{s.label}</span>
+                  <span className="t-kbd-group">
+                    {s.keys.map((k) => <kbd key={k} className="t-kbd">{k}</kbd>)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <p className="t-micro">Ctrl shown · macOS uses Cmd · change any binding in Settings.</p>
+          </div>
+        </div>
+      </Section>
+
       {/* Downloads */}
       <Section id="downloads">
         <div style={{ textAlign: 'center', marginBottom: '2.5rem' }}>
@@ -472,9 +635,9 @@ function SiteContent() {
 
         <div className="t-grid-3" style={{ marginBottom: '1.5rem' }}>
           {[
-            { os: 'Windows', sub: '10 / 11 · x64', href: `${LATEST_RELEASE_URL}/download/Kai_0.1.0_x64-setup.exe`, cta: 'Kai_0.1.0_x64-setup.exe', alt: '.msi alternative', altHref: `${LATEST_RELEASE_URL}/download/Kai_0.1.0_x64_en-US.msi` },
-            { os: 'Linux', sub: '.deb + .AppImage', href: `${LATEST_RELEASE_URL}/download/kai_0.1.0_amd64.deb`, cta: 'kai_0.1.0_amd64.deb', alt: '.AppImage + ARM64 builds', altHref: LATEST_RELEASE_URL },
-            { os: 'macOS', sub: '12+ · M1–M4', href: `${LATEST_RELEASE_URL}/download/Kai_0.1.0_aarch64.dmg`, cta: 'Kai_0.1.0_aarch64.dmg', alt: 'checksums + changelog', altHref: LATEST_RELEASE_URL },
+            { os: 'Windows', sub: '10 / 11 · x64', href: rel.asset((n) => n.endsWith('-setup.exe') || (n.endsWith('.exe') && !n.endsWith('.msi')), `Kai_0.1.0_x64-setup.exe`), cta: `Kai_${rel.short}_x64-setup.exe`, alt: '.msi alternative', altHref: rel.asset((n) => n.endsWith('.msi'), `Kai_0.1.0_x64_en-US.msi`) },
+            { os: 'Linux', sub: '.deb + .AppImage', href: rel.asset((n) => n.includes('amd64') && n.endsWith('.deb'), 'kai_0.1.0_amd64.deb'), cta: `kai_${rel.short}_amd64.deb`, alt: '.AppImage + ARM64 builds', altHref: LATEST_RELEASE_URL },
+            { os: 'macOS', sub: '12+ · M1–M4', href: rel.asset((n) => n.endsWith('.dmg'), `Kai_0.1.0_aarch64.dmg`), cta: `Kai_${rel.short}_aarch64.dmg`, alt: 'checksums + changelog', altHref: LATEST_RELEASE_URL },
           ].map((d) => (
             <Card key={d.os} solid>
               <h3 style={{ display: 'flex', alignItems: 'center', gap: '.6rem' }}><Monitor size={20} /> {d.os}</h3>
@@ -496,11 +659,25 @@ function SiteContent() {
         <div className="t-container-narrow" style={{ padding: 0 }}>
           <div style={{ textAlign: 'center', marginBottom: '2.5rem' }}>
             <Badge tone="neutral"><HelpCircle size={14} /> FAQ</Badge>
-            <h2 className="t-section-title">Short answers</h2>
+            <h2 className="t-section-title">Frequently asked questions</h2>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '.9rem' }}>
             {faqItems.map((item, idx) => (
-              <div key={idx} onClick={() => setActiveFaq(activeFaq === idx ? null : idx)} className="t-faq-item" data-open={activeFaq === idx}>
+              <div
+                key={idx}
+                role="button"
+                tabIndex={0}
+                aria-expanded={activeFaq === idx}
+                onClick={() => setActiveFaq(activeFaq === idx ? null : idx)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    setActiveFaq(activeFaq === idx ? null : idx);
+                  }
+                }}
+                className="t-faq-item"
+                data-open={activeFaq === idx}
+              >
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem' }}>
                   <h3 style={{ fontSize: '1rem', fontWeight: 700 }}>{item.q}</h3>
                   <span style={{ fontSize: '1.25rem', color: 'var(--text-tertiary)', transform: activeFaq === idx ? 'rotate(45deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>+</span>
@@ -512,6 +689,7 @@ function SiteContent() {
         </div>
       </Section>
 
+      </main>
       {/* Footer */}
       <footer className="t-footer">
         <div style={{ maxWidth: '1150px', margin: '0 auto', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1.25rem' }}>

@@ -1,6 +1,55 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 
 /* ——— Professional UI primitives built on design tokens ——— */
+
+/* Scroll-reveal wrapper: fades content up the first time it enters view.
+   Falls back to visible when IntersectionObserver is unavailable. */
+function useReveal<T extends HTMLElement>() {
+  const ref = useRef<T | null>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    if (typeof IntersectionObserver === 'undefined') {
+      el.classList.add('is-visible');
+      return;
+    }
+    const io = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((e) => {
+          if (e.isIntersecting) {
+            e.target.classList.add('is-visible');
+            io.unobserve(e.target);
+          }
+        });
+      },
+      { threshold: 0.1, rootMargin: '0px 0px -48px 0px' }
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
+  return ref;
+}
+
+export function Reveal({
+  children,
+  className = '',
+  delay = 0,
+}: {
+  children: React.ReactNode;
+  className?: string;
+  delay?: number;
+}) {
+  const ref = useReveal<HTMLDivElement>();
+  return (
+    <div
+      ref={ref}
+      className={`t-reveal${className ? ` ${className}` : ''}`}
+      style={delay ? { transitionDelay: `${delay}ms` } : undefined}
+    >
+      {children}
+    </div>
+  );
+}
 
 export function Container({ children, narrow }: { children: React.ReactNode; narrow?: boolean }) {
   return <div className={narrow ? 't-container-narrow' : 't-container'}>{children}</div>;
@@ -62,7 +111,9 @@ export function Section({
 }) {
   return (
     <section id={id} className={alt ? 't-section t-section-alt' : 't-section'}>
-      <Container>{children}</Container>
+      <Container>
+        <Reveal>{children}</Reveal>
+      </Container>
     </section>
   );
 }
@@ -96,9 +147,10 @@ export function Card({
   solid?: boolean;
   style?: React.CSSProperties;
 }) {
-  const cls = `t-card${hover ? ' t-card--hover' : ''}${solid ? ' t-card--solid' : ''}`;
+  const ref = useReveal<HTMLDivElement>();
+  const cls = `t-reveal t-card${hover ? ' t-card--hover' : ''}${solid ? ' t-card--solid' : ''}`;
   return (
-    <div className={cls} style={style}>
+    <div ref={ref} className={cls} style={style}>
       {children}
     </div>
   );

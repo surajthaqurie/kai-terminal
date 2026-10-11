@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://kai-website-khaki.vercel.app/sitemap.xml
