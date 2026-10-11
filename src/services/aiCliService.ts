@@ -41,13 +41,23 @@ export interface AiCliDetails extends AiCliStatus {
  *   to a diagnostic string instead of an error.
  * - Third-party AI CLI executables are never bundled into the installer.
  */
-export const KNOWN_AI_CLIS = ["codex", "claude", "gemini"] as const;
+export const KNOWN_AI_CLIS = [
+  "codex",
+  "claude",
+  "gemini",
+  "opencode",
+  "copilot",
+  "aider",
+] as const;
 
 function unavailableFallback(): AiCliStatus[] {
   return [
     { id: "codex", name: "Codex CLI", available: false, path: null },
     { id: "claude", name: "Claude Code", available: false, path: null },
     { id: "gemini", name: "Gemini CLI", available: false, path: null },
+    { id: "opencode", name: "opencode", available: false, path: null },
+    { id: "copilot", name: "Muse CLI", available: false, path: null },
+    { id: "aider", name: "Aider", available: false, path: null },
   ];
 }
 

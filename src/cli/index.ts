@@ -26,10 +26,24 @@ export const KAI_VERSION = "0.1.0";
  * unit-tested on any OS. Paths are JSON-escaped: interpolating a raw
  * Windows path (`C:\tools\...`) into the snippet would emit invalid JSON
  * (`\t` parses as a tab escape).
+ *
+ * Supported agents: claude, cursor, codex, gemini, copilot (vscode),
+ * windsurf, cline. Unknown ids return null.
  */
+export const SUPPORTED_AGENTS = [
+  "claude",
+  "cursor",
+  "codex",
+  "gemini",
+  "copilot",
+  "windsurf",
+  "cline",
+] as const;
+
 export function buildAgentSetup(agent: string, kaiBin: string): string | null {
+  const normalized = agent.toLowerCase();
   const quotedBin = JSON.stringify(kaiBin);
-  if (agent === "claude") {
+  if (normalized === "claude") {
     return `
 Verified Claude Code MCP Configuration:
 Add the following to your Claude Code settings (e.g., ~/.claude.json or project config):
@@ -49,7 +63,7 @@ In chat: "Use kai_project_info to inspect the codebase."
 `;
   }
 
-  if (agent === "cursor") {
+  if (normalized === "cursor") {
     return `
 Verified Cursor MCP Configuration:
 Add to .cursor/mcp.json or Cursor Settings > MCP:
@@ -65,7 +79,7 @@ Add to .cursor/mcp.json or Cursor Settings > MCP:
 `;
   }
 
-  if (agent === "codex") {
+  if (normalized === "codex") {
     return `
 Verified OpenAI Codex / CLI Agent Configuration:
 Launch Codex with MCP stdio configuration pointing to Kai:
@@ -79,6 +93,84 @@ Launch Codex with MCP stdio configuration pointing to Kai:
     }
   ]
 }
+`;
+  }
+
+  if (normalized === "gemini") {
+    return `
+Verified Gemini CLI MCP Configuration:
+Add to ~/.muse/settings.json (or .muse/settings.json for project scope):
+
+{
+  "mcpServers": {
+    "kai": {
+      "command": "node",
+      "args": [${quotedBin}, "mcp", "."]
+    }
+  }
+}
+
+Verification:
+Run: gemini
+In chat: "Use kai_project_info to inspect the codebase."
+`;
+  }
+
+  if (normalized === "copilot" || normalized === "vscode") {
+    return `
+Verified VS Code / Copilot MCP Configuration:
+Add to .vscode/mcp.json:
+
+{
+  "servers": {
+    "kai": {
+      "type": "stdio",
+      "command": "node",
+      "args": [${quotedBin}, "mcp", "."]
+    }
+  }
+}
+
+Verification:
+Open VS Code MCP settings and confirm the "kai" server is running.
+`;
+  }
+
+  if (normalized === "windsurf" || normalized === "codeium") {
+    return `
+Verified Windsurf MCP Configuration:
+Add to ~/.codeium/windsurf/mcp_config.json:
+
+{
+  "mcpServers": {
+    "kai": {
+      "command": "node",
+      "args": [${quotedBin}, "mcp", "."]
+    }
+  }
+}
+
+Verification:
+Restart Windsurf and confirm the "kai" MCP server is connected.
+`;
+  }
+
+  if (normalized === "cline") {
+    return `
+Verified Cline MCP Configuration:
+Add to cline_mcp_settings.json (VS Code Cline extension settings):
+
+{
+  "mcpServers": {
+    "kai": {
+      "command": "node",
+      "args": [${quotedBin}, "mcp", "."]
+    }
+  }
+}
+
+Verification:
+Open the Cline MCP settings panel and confirm the "kai" server is listed.
 `;
   }
 
@@ -106,7 +198,7 @@ Commands:
   lsp [status]            Probe locally installed Language Server Protocol (LSP) servers
   mcp [path]              Start stdio JSON-RPC Model Context Protocol (MCP) server
   bench [path]            Run privacy-safe evaluation benchmark across 4 configurations
-  agent setup <agent>     Output verified MCP configuration for external agents (claude, cursor, codex)
+  agent setup <agent>     Output verified MCP configuration for external agents (claude, cursor, codex, gemini, copilot, windsurf, cline)
   metrics [clear]         Display local privacy-safe telemetry summary
 
 Flags:
@@ -492,6 +584,10 @@ Available agent setup targets:
   kai agent setup claude
   kai agent setup cursor
   kai agent setup codex
+  kai agent setup gemini
+  kai agent setup copilot   (VS Code)
+  kai agent setup windsurf
+  kai agent setup cline
 `);
       return 0;
     }

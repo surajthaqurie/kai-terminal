@@ -595,15 +595,15 @@ export async function indexProject(
     const existingIndex = options.forceRebuild ? null : loadProjectIndex(meta.id);
     // Normalize legacy keys: indexes written on Windows used backslash
     // separators (`src\a.ts`). Lookups below use POSIX keys (`src/a.ts`).
-    const existingFiles: Record<string, IndexedFile> = {};
+    const existingFiles: Record<string, IndexedFile> = Object.create(null);
     if (existingIndex) {
       for (const [k, v] of Object.entries(existingIndex.files)) {
         existingFiles[toPosixRel(k)] = v;
       }
     }
 
-    const indexedFiles: Record<string, IndexedFile> = {};
-    const symbolIndex: Record<string, IndexedSymbol[]> = {};
+    const indexedFiles: Record<string, IndexedFile> = Object.create(null);
+    const symbolIndex: Record<string, IndexedSymbol[]> = Object.create(null);
     let totalFilesSeen = 0;
 
     const ignorePatterns = loadIgnorePatterns(canonicalRoot);
@@ -684,7 +684,12 @@ export async function indexProject(
             indexedFiles[relPath] = cached;
             // Add to symbolIndex
             for (const sym of cached.symbols) {
-              if (!symbolIndex[sym.name]) symbolIndex[sym.name] = [];
+              if (
+                !Object.prototype.hasOwnProperty.call(symbolIndex, sym.name) ||
+                !Array.isArray(symbolIndex[sym.name])
+              ) {
+                symbolIndex[sym.name] = [];
+              }
               symbolIndex[sym.name].push(sym);
             }
             continue;
@@ -731,7 +736,12 @@ export async function indexProject(
           indexedFiles[relPath] = indexedFile;
 
           for (const sym of symbols) {
-            if (!symbolIndex[sym.name]) symbolIndex[sym.name] = [];
+            if (
+              !Object.prototype.hasOwnProperty.call(symbolIndex, sym.name) ||
+              !Array.isArray(symbolIndex[sym.name])
+            ) {
+              symbolIndex[sym.name] = [];
+            }
             symbolIndex[sym.name].push(sym);
           }
         }

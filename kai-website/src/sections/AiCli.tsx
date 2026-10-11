@@ -7,12 +7,12 @@ export function AiCli() {
       <div className="t-split">
         <div>
           <Badge tone="purple"><Bot size={14} /> MCP Server & Project Intelligence</Badge>
-          <h2 className="t-section-title" style={{ textAlign: 'left' }}>Supercharge Claude, Cursor, and Codex with local context</h2>
+          <h2 className="t-section-title" style={{ textAlign: 'left' }}>Supercharge Claude, Cursor, Codex, Gemini & more with local context</h2>
           <p style={{ color: 'var(--text-secondary)', fontSize: '1.02rem', lineHeight: 1.65, marginBottom: '1.5rem' }}>
             Kai is both a high-performance terminal and a local Model Context Protocol (MCP) server. External coding agents connect over stdio to query AST symbols, dependency graphs, and task-budgeted context — without polluting your repo or leaking secrets.
           </p>
           <ul className="t-check-list">
-            <li><CheckCircle2 size={18} color="var(--accent-purple-fg)" /><span><strong>Standard stdio MCP server</strong> — 7 tools for Claude Code, Cursor, Codex, Gemini.</span></li>
+            <li><CheckCircle2 size={18} color="var(--accent-purple-fg)" /><span><strong>Standard stdio MCP server</strong> — 7 tools for Claude, Cursor, Codex, Gemini, Copilot, Windsurf, Cline.</span></li>
             <li><CheckCircle2 size={18} color="var(--accent-purple-fg)" /><span><strong>Sub-10ms retrieval & ~70% token savings</strong> — deterministic ranker beats raw dumps.</span></li>
             <li><CheckCircle2 size={18} color="var(--accent-purple-fg)" /><span><strong>Audited read-only security</strong> — path traversal confinement, secret scrubbing, zero execution.</span></li>
             <li><CheckCircle2 size={18} color="var(--accent-purple-fg)" /><span><strong>Isolated storage</strong> — indexes stored strictly in <code>~/.kai/</code>, keeping git trees clean.</span></li>

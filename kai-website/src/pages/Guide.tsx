@@ -27,7 +27,7 @@ export function GuidePage() {
                 <li><span>kai query "&lt;task&gt;"</span><span className="t-kbd-group"><span className="t-kbd">Deterministic context retrieval</span></span></li>
                 <li><span>kai cost</span><span className="t-kbd-group"><span className="t-kbd">Check token budget footprint</span></span></li>
                 <li><span>kai mcp .</span><span className="t-kbd-group"><span className="t-kbd">Start stdio MCP server (7 tools)</span></span></li>
-                <li><span>kai agent setup &lt;agent&gt;</span><span className="t-kbd-group"><span className="t-kbd">Auto-configure Claude / Cursor / Codex</span></span></li>
+                <li><span>kai agent setup &lt;agent&gt;</span><span className="t-kbd-group"><span className="t-kbd">Claude / Cursor / Codex / Gemini / Copilot / Windsurf / Cline</span></span></li>
                 <li><span>kai bench .</span><span className="t-kbd-group"><span className="t-kbd">Run token savings & latency benchmark</span></span></li>
                 <li><span>kai unregister .</span><span className="t-kbd-group"><span className="t-kbd">Clean up index metadata safely</span></span></li>
               </ul>

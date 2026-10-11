@@ -114,6 +114,24 @@ fn ai_cli_catalog() -> Vec<(&'static str, &'static str, Vec<&'static str>, &'sta
             vec!["gemini", "gemini-cli"],
             "Install via npm: npm install -g @google/gemini-cli — docs: https://github.com/google-gemini/gemini-cli",
         ),
+        (
+            "opencode",
+            "opencode",
+            vec!["opencode"],
+            "Install via npm: npm install -g opencode-ai — docs: https://opencode.ai/docs",
+        ),
+        (
+            "copilot",
+            "Muse CLI",
+            vec!["copilot", "gh-copilot"],
+            "Install via npm: npm install -g @github/copilot — docs: https://docs.github.com/en/copilot",
+        ),
+        (
+            "aider",
+            "Aider",
+            vec!["aider"],
+            "Install via pip: pip install aider-chat — docs: https://aider.chat/docs/install.html",
+        ),
     ]
 }
 
@@ -208,6 +226,30 @@ fn check_local_auth_presence(id: &str) -> String {
         }
         "gemini" => {
             if home.join(".gemini").exists() || home.join(".config").join("gemini-cli").exists() {
+                "configured".to_string()
+            } else {
+                "not_configured".to_string()
+            }
+        }
+        "opencode" => {
+            if home.join(".config").join("opencode").exists() {
+                "configured".to_string()
+            } else {
+                "not_configured".to_string()
+            }
+        }
+        "copilot" => {
+            if home.join(".config").join("github-copilot").exists()
+                || home.join(".copilot").exists()
+            {
+                "configured".to_string()
+            } else {
+                "not_configured".to_string()
+            }
+        }
+        "aider" => {
+            if home.join(".aider.conf.yml").exists() || home.join(".aider.model.settings.yml").exists()
+            {
                 "configured".to_string()
             } else {
                 "not_configured".to_string()
@@ -434,7 +476,10 @@ mod tests {
         assert!(ids.contains(&"codex"));
         assert!(ids.contains(&"claude"));
         assert!(ids.contains(&"gemini"));
-        assert_eq!(statuses.len(), 3);
+        assert!(ids.contains(&"opencode"));
+        assert!(ids.contains(&"copilot"));
+        assert!(ids.contains(&"aider"));
+        assert_eq!(statuses.len(), 6);
     }
 
     #[test]
@@ -467,7 +512,7 @@ mod tests {
     #[test]
     fn test_details_always_return_guidance() {
         let details = detect_ai_cli_details();
-        assert_eq!(details.len(), 3);
+        assert_eq!(details.len(), 6);
         for d in &details {
             assert!(!d.install_guidance.is_empty());
             assert!(!d.diagnostic.is_empty());
@@ -504,7 +549,7 @@ mod tests {
         std::env::set_var("PATH", tmp.to_string_lossy().to_string());
         let details = detect_ai_cli_details();
         std::env::set_var("PATH", old_path);
-        assert_eq!(details.len(), 3);
+        assert_eq!(details.len(), 6);
         for d in &details {
             assert!(!d.available);
             assert_eq!(d.state, AiCliDiagnosticState::NotFound);

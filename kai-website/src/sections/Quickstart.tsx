@@ -7,7 +7,7 @@ import { REPO_URL } from '../data/site';
 const STEPS: Array<[string, string, string]> = [
   ['01', 'Install or Clone', 'Get the native binary for your OS or run directly with npm / cargo.'],
   ['02', 'Index Your Project', 'Run kai code . to parse AST symbols, imports, and dependencies in ~/.kai/.'],
-  ['03', 'Connect AI Agents', 'Run kai mcp . or kai agent setup <claude|cursor|codex> for instant zero-config integration.'],
+  ['03', 'Connect AI Agents', 'Run kai mcp . or kai agent setup <claude|cursor|codex|gemini|copilot|windsurf|cline> for instant zero-config integration.'],
 ];
 
 const SNIPPETS: Record<'run' | 'ai' | 'config', { tab: string; code: string }> = {
@@ -17,7 +17,7 @@ const SNIPPETS: Record<'run' | 'ai' | 'config', { tab: string; code: string }> =
   },
   ai: {
     tab: '$ mcp-agent-setup',
-    code: '# Run Kai MCP server directly over stdio\nkai mcp .\n\n# Or configure your favorite AI coding agent in one command:\nkai agent setup claude    # configures ~/.claude.json\nkai agent setup cursor    # configures cursor mcp settings\nkai agent setup codex     # OpenAI Codex stdio configuration',
+    code: '# Run Kai MCP server directly over stdio\nkai mcp .\n\n# Or configure your favorite AI coding agent in one command:\nkai agent setup claude    # configures ~/.claude.json\nkai agent setup cursor    # configures cursor mcp settings\nkai agent setup codex     # OpenAI Codex stdio configuration\nkai agent setup gemini    # configures ~/.muse/settings.json\nkai agent setup copilot   # configures .vscode/mcp.json\nkai agent setup windsurf  # configures windsurf mcp_config.json\nkai agent setup cline     # configures cline_mcp_settings.json',
   },
   config: {
     tab: '$ terminal-pty',

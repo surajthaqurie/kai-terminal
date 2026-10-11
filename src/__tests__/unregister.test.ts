@@ -144,9 +144,19 @@ describe("runCli smoke coverage", () => {
     const extractJson = (snippet: string): any => {
       const start = snippet.indexOf("{");
       let depth = 0;
+      let inStr = false;
+      let esc = false;
       for (let i = start; i < snippet.length; i++) {
-        if (snippet[i] === "{") depth++;
-        else if (snippet[i] === "}") {
+        const ch = snippet[i];
+        if (inStr) {
+          if (esc) esc = false;
+          else if (ch === "\\") esc = true;
+          else if (ch === '"') inStr = false;
+          continue;
+        }
+        if (ch === '"') inStr = true;
+        else if (ch === "{") depth++;
+        else if (ch === "}") {
           depth--;
           if (depth === 0) return JSON.parse(snippet.slice(start, i + 1));
         }
@@ -170,6 +180,42 @@ describe("runCli smoke coverage", () => {
     expect(extractJson(posix).mcpServers.kai.args[0]).toBe("/usr/local/bin/kai.js");
 
     expect(buildAgentSetup("unknown-agent", winBin)).toBeNull();
+  });
+
+  it("supports every documented agent with valid JSON", () => {
+    const extractJson = (snippet: string): any => {
+      const start = snippet.indexOf("{");
+      let depth = 0;
+      let inStr = false;
+      let esc = false;
+      for (let i = start; i < snippet.length; i++) {
+        const ch = snippet[i];
+        if (inStr) {
+          if (esc) esc = false;
+          else if (ch === "\\") esc = true;
+          else if (ch === '"') inStr = false;
+          continue;
+        }
+        if (ch === '"') inStr = true;
+        else if (ch === "{") depth++;
+        else if (ch === "}") {
+          depth--;
+          if (depth === 0) return JSON.parse(snippet.slice(start, i + 1));
+        }
+      }
+      throw new Error("no balanced JSON object found");
+    };
+    const winBin = "C:\\tools\\kai space\\bin\\kai.js";
+    // Every supported agent must emit parseable JSON containing the kai bin.
+    for (const agent of ["gemini", "copilot", "windsurf", "cline"]) {
+      const snippet = buildAgentSetup(agent, winBin)!;
+      expect(snippet).toBeTruthy();
+      expect(extractJson(snippet)).toBeTruthy();
+      expect(snippet).toContain("kai");
+    }
+    // Case-insensitive + aliases.
+    expect(buildAgentSetup("Claude", winBin)).toBeTruthy();
+    expect(buildAgentSetup("vscode", winBin)).toBeTruthy();
   });
 });
 

@@ -71,10 +71,30 @@ kai lsp status
 kai bench .
 
 # Generate verified configuration for coding agents
-kai agent setup claude
-kai agent setup cursor
-kai agent setup codex
+kai agent setup claude    # ~/.claude.json
+kai agent setup cursor    # .cursor/mcp.json
+kai agent setup codex     # Codex MCP stdio config
+kai agent setup gemini    # ~/.muse/settings.json
+kai agent setup copilot   # .vscode/mcp.json (VS Code / Copilot)
+kai agent setup windsurf  # ~/.codeium/windsurf/mcp_config.json
+kai agent setup cline     # cline_mcp_settings.json
 ```
+
+### Supported agents
+
+| Agent | Config file | Notes |
+| --- | --- | --- |
+| Claude Code | `~/.claude.json` | `mcpServers.kai` stdio entry |
+| Cursor | `.cursor/mcp.json` | uses `${workspaceFolder}` |
+| Codex | Codex MCP stdio config | `mcp_servers` array format |
+| Gemini CLI | `~/.muse/settings.json` | `mcpServers.kai` stdio entry |
+| Copilot / VS Code | `.vscode/mcp.json` | `servers.kai` with `"type": "stdio"` |
+| Windsurf | `~/.codeium/windsurf/mcp_config.json` | `mcpServers.kai` stdio entry |
+| Cline | `cline_mcp_settings.json` | `mcpServers.kai` stdio entry |
+
+The desktop app additionally auto-detects locally installed CLIs
+(`codex`, `claude`, `gemini`, `opencode`, `copilot`, `aider`) without
+executing them — missing tools simply report `available: false`.
 
 ### Audited Performance & Token Optimization
 - **Sub-10ms retrieval latency**: Evaluated context assembly executes in `0.8ms – 3.2ms` on local hardware.

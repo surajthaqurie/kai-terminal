@@ -31,6 +31,23 @@ struct IndexJson {
     pub total_tokens_estimated: Option<usize>,
 }
 
+fn normalize_canonical_for_compare(p: &str) -> String {
+    let mut s = p.to_string();
+    if let Some(stripped) = s.strip_prefix(r"\\?\UNC\") {
+        s = format!(r"\\{stripped}");
+    } else if let Some(stripped) = s.strip_prefix(r"\\?\") {
+        s = stripped.to_string();
+    }
+    #[cfg(windows)]
+    {
+        s.replace('/', "\\").to_lowercase()
+    }
+    #[cfg(not(windows))]
+    {
+        s
+    }
+}
+
 pub fn get_project_intelligence(cwd: &str) -> ProjectIntelligenceSummary {
     get_project_intelligence_internal(cwd, None)
 }
@@ -80,7 +97,9 @@ pub fn get_project_intelligence_internal(
                 if let Ok(content) = fs::read_to_string(&meta_path) {
                     if let Ok(meta) = serde_json::from_str::<MetaJson>(&content) {
                         if let Some(cp) = meta.canonical_path {
-                            if cp == canonical {
+                            if normalize_canonical_for_compare(&cp)
+                                == normalize_canonical_for_compare(&canonical)
+                            {
                                 let mut total_tokens = 0;
                                 let index_path = p.join("index.json");
                                 if let Ok(idx_content) = fs::read_to_string(&index_path) {
@@ -141,10 +160,14 @@ mod tests {
             .to_string_lossy()
             .to_string();
 
-        let meta_json = format!(
-            r#"{{"status":"ready","canonicalPath":"{}","fileCount":42,"symbolCount":128,"lastIndexedAt":"2026-10-11T00:00:00Z"}}"#,
-            canonical_repo
-        );
+        let meta_json = serde_json::json!({
+            "status": "ready",
+            "canonicalPath": canonical_repo,
+            "fileCount": 42,
+            "symbolCount": 128,
+            "lastIndexedAt": "2026-10-11T00:00:00Z"
+        })
+        .to_string();
         fs::write(proj_dir.join("meta.json"), meta_json).unwrap();
         fs::write(
             proj_dir.join("index.json"),
@@ -165,5 +188,20 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(&temp_path);
+    }
+
+    #[test]
+    fn test_verbatim_prefix_mismatch_still_matches() {
+        // Rust canonicalize() returns `\\?\C:\...` verbatim paths on Windows
+        // while Node's realpathSync() (which writes meta.json) returns `C:\...`.
+        // Normalization must bridge the two forms.
+        assert_eq!(
+            normalize_canonical_for_compare(r"\\?\C:\Users\Runner\repo"),
+            normalize_canonical_for_compare(r"C:\Users\Runner\repo")
+        );
+        assert_eq!(
+            normalize_canonical_for_compare(r"\\?\UNC\server\share"),
+            normalize_canonical_for_compare(r"\\server\share")
+        );
     }
 }
