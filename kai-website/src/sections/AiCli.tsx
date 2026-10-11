@@ -7,15 +7,18 @@ export function AiCli() {
       <div className="t-split">
         <div>
           <Badge tone="purple"><Bot size={14} /> MCP Server & Project Intelligence</Badge>
-          <h2 className="t-section-title" style={{ textAlign: 'left' }}>Supercharge Claude, Cursor, Codex, Gemini, Copilot &amp; more with local context</h2>
-          <p style={{ color: 'var(--text-secondary)', fontSize: '1.02rem', lineHeight: 1.65, marginBottom: '1.5rem' }}>
-            Kai is both a high-performance terminal and a local Model Context Protocol (MCP) server. External coding agents connect over stdio to query AST symbols, dependency graphs, and task-budgeted context — without polluting your repo or leaking secrets.
+          <h2 className="t-section-title" style={{ textAlign: 'left' }}>Give your AI assistant real context from your code</h2>
+          <p style={{ color: 'var(--text-secondary)', fontSize: '1.02rem', lineHeight: 1.65, marginBottom: '1rem' }}>
+            Kai reads your project locally and answers your AI assistant's questions over a standard bridge called MCP — no uploads, no cloud, no leaked secrets.
+          </p>
+          <p style={{ color: 'var(--text-tertiary)', fontSize: '0.88rem', lineHeight: 1.6, marginBottom: '1.5rem' }}>
+            Vibe-coding? Pick <strong style={{ color: 'var(--text-primary)' }}>one</strong> assistant below to start — Kai wires it with one command.
           </p>
           <ul className="t-check-list">
-            <li><CheckCircle2 size={18} color="var(--accent-purple-fg)" /><span><strong>Standard stdio MCP server</strong> — 7 tools for Claude, Cursor, Codex, Gemini, Copilot, Windsurf, Cline.</span></li>
-            <li><CheckCircle2 size={18} color="var(--accent-purple-fg)" /><span><strong>Sub-10ms retrieval &amp; ~70% token savings</strong> — deterministic ranker beats raw dumps.</span></li>
-            <li><CheckCircle2 size={18} color="var(--accent-purple-fg)" /><span><strong>Audited read-only security</strong> — stream-bounded requests (10 MB), path confinement, live staleness checks, secret scrubbing.</span></li>
-            <li><CheckCircle2 size={18} color="var(--accent-purple-fg)" /><span><strong>Isolated storage</strong> — indexes stored strictly in <code>~/.kai/</code>, keeping git trees clean.</span></li>
+            <li><CheckCircle2 size={18} color="var(--accent-purple-fg)" /><span><strong>Works with 7 assistants</strong> — Claude, Cursor, Codex, Gemini, Copilot, Windsurf, Cline.</span></li>
+            <li><CheckCircle2 size={18} color="var(--accent-purple-fg)" /><span><strong>Fast &amp; cheap</strong> — answers in under 10ms and uses ~70% fewer tokens than pasting files.</span></li>
+            <li><CheckCircle2 size={18} color="var(--accent-purple-fg)" /><span><strong>Private by design</strong> — read-only, secrets scrubbed, nothing leaves your machine.</span></li>
+            <li><CheckCircle2 size={18} color="var(--accent-purple-fg)" /><span><strong>Keeps repos clean</strong> — all indexes live in <code>~/.kai/</code>, never in your git tree.</span></li>
           </ul>
         </div>
 

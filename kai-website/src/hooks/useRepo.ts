@@ -77,7 +77,7 @@ export function useLatestRelease(): LatestRelease {
   const asset = (match: (name: string) => boolean, fallbackFile: string) => {
     const hit = assets.find((a) => match(a.name));
     if (hit) return hit.url;
-    return `${LATEST_RELEASE_URL}/download/${fallbackFile.replace('0.1.0', short)}`;
+    return `${REPO_URL}/releases/download/${tag}/${fallbackFile.replace('0.1.0', short)}`;
   };
   return { tag, short, assets, status, asset };
 }
@@ -93,10 +93,11 @@ export type PublishedRelease = {
 export const FALLBACK_RELEASES: PublishedRelease[] = [
   {
     tag: 'v0.1.0',
-    name: 'Kai v0.1.0 — Initial Release',
+    name: 'Kai v0.1.0 — Initial Production Release',
     date: '2026-10-11T12:00:00Z',
     url: `${REPO_URL}/releases/tag/v0.1.0`,
-    notes: 'Initial production release: Native Rust portable-pty core with ConPTY and POSIX pty, Tauri 2 desktop app, GPU-accelerated xterm.js canvas rendering at 60fps, split panes (up to 4 panes per tab), Project Intelligence AST indexing, deterministic context retrieval, stdio Model Context Protocol (MCP) server, and one-command agent setup for Claude Code, Cursor, Codex, Gemini, Copilot, Windsurf, and Cline.',
+    notes:
+      'Initial production release of Kai:\n- Native portable-pty core: ConPTY on Windows, POSIX pseudoterminals on macOS & Linux with sub-millisecond ANSI throughput.\n- GPU canvas rendering: xterm.js canvas engine delivering smooth 60fps rendering at ~30MB idle RAM.\n- Project Intelligence & MCP: AST symbol graph indexing, deterministic retrieval (<10ms, ~70% token savings), and stdio MCP server for Claude Code, Cursor, Codex, Gemini, Copilot, Windsurf & Cline.\n- Structured cross-platform releases: Apple Silicon macOS DMG, Linux x64/ARM64 DEB & portable AppImage, and Windows x64 NSIS Setup & MSI.\n- Audited security release gate: strict workspace confinement, secret scrubbing, symlink boundary verification, and zero telemetry.',
   },
 ];
 

@@ -39,7 +39,8 @@ export function Footer() {
             <span style={{ fontSize: '1.1rem', fontWeight: 800 }}>kai</span>
             <span className="t-version">MIT</span>
           </div>
-          <p style={{ color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)', fontSize: '.82rem' }}>$ git clone {REPO_URL}.git — PRs welcome</p>
+          <p className="t-foot-clone">$ git clone {REPO_URL}.git — PRs welcome</p>
+          <p style={{ color: 'var(--text-tertiary)', fontSize: '.8rem', marginTop: '0.5rem', lineHeight: 1.6 }}>Free MIT · zero telemetry · new? start with the <Link to="/guide" style={{ color: 'var(--accent-cyan-fg)' }}>30-second guide</Link>.</p>
         </div>
         {COLS.map((col) => (
           <nav key={col.head} aria-label={col.head}>

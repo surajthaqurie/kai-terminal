@@ -32,7 +32,7 @@ export function Compare() {
           <ul className="t-keys">
             {SHORTCUTS.map((s) => (
               <li key={s.label}>
-                <span>{s.label}</span>
+                <span className="t-keys-label">{s.label}</span>
                 <span className="t-kbd-group">
                   {s.keys.map((k) => <kbd key={k} className="t-kbd">{k}</kbd>)}
                 </span>

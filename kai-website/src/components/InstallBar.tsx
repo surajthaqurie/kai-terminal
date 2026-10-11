@@ -10,28 +10,28 @@ function installTabs(short: string): InstallTab[] {
   const v = short;
   return [
     {
-      id: 'windows',
-      label: 'Windows',
-      note: 'Windows 10 / 11 · 64-bit — or grab the direct .exe / .msi installer above',
-      code: `# Windows 10 / 11\nwinget install Kai-terminal --source github`,
+      id: 'macos',
+      label: 'Apple (macOS)',
+      note: 'For Apple Silicon Macs (M1–M4) on macOS 12+. Open the file, then drag Kai into Applications.',
+      code: `# Apple Silicon · macOS 12 or later\nopen Kai_${v}_aarch64.dmg`,
     },
     {
       id: 'linux',
       label: 'Linux',
-      note: '.deb for Debian / Ubuntu, .AppImage runs on any distro',
-      code: `# Debian / Ubuntu (64-bit)\nsudo dpkg -i kai_${v}_amd64.deb\n\n# Portable — any distro\nchmod +x kai_${v}_amd64.AppImage\n./kai_${v}_amd64.AppImage`,
+      note: 'Pick .deb for Ubuntu / Debian, or .AppImage if you are unsure — it runs anywhere.',
+      code: `# Ubuntu / Debian (64-bit)\nsudo dpkg -i kai_${v}_amd64.deb\n\n# Portable fallback — any distro, no install needed\nchmod +x kai_${v}_amd64.AppImage\n./kai_${v}_amd64.AppImage`,
     },
     {
-      id: 'macos',
-      label: 'macOS',
-      note: 'Apple Silicon · macOS 12 or later — then drag Kai to /Applications',
-      code: `# Apple Silicon · macOS 12+\nopen Kai_${v}_aarch64.dmg`,
+      id: 'windows',
+      label: 'Windows',
+      note: 'For Windows 10 / 11 (64-bit). Prefer one click? Use the direct .exe download above.',
+      code: `# Windows 10 / 11 — paste in PowerShell or CMD\nwinget install Kai-terminal --source github`,
     },
     {
       id: 'source',
       label: 'From source',
-      note: 'Needs Node 20+ and Rust 1.75+ — same code the installers ship',
-      code: `# 1 · get the code\ngit clone https://github.com/surajthaqurie/kai-terminal.git\ncd kai-terminal\n\n# 2 · install and run\nnpm install\nnpm run tauri dev`,
+      note: 'For developers: same code the installers ship. Needs Node 20+ and Rust 1.75+.',
+      code: `# 1 · download the code\ngit clone https://github.com/surajthaqurie/kai-terminal.git\ncd kai-terminal\n\n# 2 · install and run the app\nnpm install\nnpm run tauri dev`,
     },
   ];
 }
@@ -48,23 +48,24 @@ function detectTab(): string {
 export function InstallBar({ short }: { short: string }) {
   const tabs = installTabs(short);
   const [tab, setTab] = useState<string>(detectTab);
-  const active = tabs.find((t) => t.id === tab) ?? tabs[1];
+  const detected = detectTab();
+  const active = tabs.find((t) => t.id === tab) ?? tabs[0];
   const commands = active.code
     .split('\n')
     .filter((l) => l.trim() !== '' && !l.trim().startsWith('#'))
     .join('\n');
 
   const directDownloads: Record<string, Array<{ name: string; url: string; label: string; primary?: boolean }>> = {
-    windows: [
-      { name: `Kai_${short}_x64-setup.exe`, url: `https://github.com/surajthaqurie/kai-terminal/releases/download/v${short}/Kai_${short}_x64-setup.exe`, label: '.exe installer', primary: true },
-      { name: `Kai_${short}_x64_en-US.msi`, url: `https://github.com/surajthaqurie/kai-terminal/releases/download/v${short}/Kai_${short}_x64_en-US.msi`, label: '.msi package' },
+    macos: [
+      { name: `Kai_${short}_aarch64.dmg`, url: `https://github.com/surajthaqurie/kai-terminal/releases/download/v${short}/Kai_${short}_aarch64.dmg`, label: '.dmg (Apple Silicon)', primary: true },
     ],
     linux: [
       { name: `kai_${short}_amd64.deb`, url: `https://github.com/surajthaqurie/kai-terminal/releases/download/v${short}/kai_${short}_amd64.deb`, label: '.deb (x64)', primary: true },
       { name: `kai_${short}_amd64.AppImage`, url: `https://github.com/surajthaqurie/kai-terminal/releases/download/v${short}/kai_${short}_amd64.AppImage`, label: '.AppImage' },
     ],
-    macos: [
-      { name: `Kai_${short}_aarch64.dmg`, url: `https://github.com/surajthaqurie/kai-terminal/releases/download/v${short}/Kai_${short}_aarch64.dmg`, label: '.dmg (Apple Silicon)', primary: true },
+    windows: [
+      { name: `Kai_${short}_x64-setup.exe`, url: `https://github.com/surajthaqurie/kai-terminal/releases/download/v${short}/Kai_${short}_x64-setup.exe`, label: '.exe installer', primary: true },
+      { name: `Kai_${short}_x64_en-US.msi`, url: `https://github.com/surajthaqurie/kai-terminal/releases/download/v${short}/Kai_${short}_x64_en-US.msi`, label: '.msi package' },
     ],
     source: [],
   };
@@ -82,8 +83,11 @@ export function InstallBar({ short }: { short: string }) {
             className="t-install-tab"
             data-active={tab === t.id}
             onClick={() => setTab(t.id)}
+            title={t.id === detected ? 'We detected this OS for you' : `Show ${t.label} instructions`}
           >
+            {t.id === detected && <span className="t-detected-dot" aria-hidden="true" />}
             {t.label}
+            {t.id === detected && tab !== t.id && <span className="t-sr"> (detected)</span>}
           </button>
         ))}
         <span style={{ flex: 1 }} />

@@ -101,9 +101,9 @@ export function HeroTerminal({ version }: { version: string }) {
           <span className="t-dot" style={{ backgroundColor: '#10b981' }}></span>
           <span className="t-terminal-title">kai — zsh</span>
         </div>
-        <div className="t-terminal-chips">
+        <div className="t-terminal-chips" role="group" aria-label="Try these commands">
           {chips.map((c) => (
-            <button key={c} type="button" onClick={() => run(c)} className="t-chip">
+            <button key={c} type="button" onClick={() => run(c)} className="t-chip" title={`Run ${c}`}>
               {c}
             </button>
           ))}

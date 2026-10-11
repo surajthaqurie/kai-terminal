@@ -1,4 +1,4 @@
-import { ArrowRight, Code2, Download, Sparkles } from 'lucide-react';
+import { ArrowRight, Code2, Download, ShieldCheck, Sparkles } from 'lucide-react';
 import { Badge, Button } from '../components/ui';
 import { InstallBar } from '../components/InstallBar';
 import { HeroTerminal } from '../components/HeroTerminal';
@@ -47,24 +47,30 @@ export function Hero({ tag, short, version, rel }: { tag: string; short: string;
       <div className="t-hero-glow"></div>
       <div className="t-hero-inner">
         <div className="t-enter" style={{ animationDelay: '0ms' }}>
-          <Badge><Sparkles size={14} /> {tag} · MIT · Tauri 2 + Rust + MCP</Badge>
+          <Badge><Sparkles size={14} /> {tag} · Free MIT · Tauri 2 + Rust</Badge>
         </div>
 
-        <h1 className="t-hero-title t-enter" style={{ animationDelay: '90ms' }}>
-          One terminal.<br />Every platform.
+        <h1 className="t-hero-title t-enter" style={{ animationDelay: '70ms' }}>
+          <span className="t-hero-title-line">One terminal.</span>
+          <span className="t-hero-title-line">Every platform.</span>
         </h1>
 
-        <p className="t-hero-sub t-enter" style={{ animationDelay: '180ms' }}>
-          A GPU-rendered terminal with a native Rust PTY and built-in Project Intelligence. Serve AST symbol context to Claude Code, Cursor, Codex, Gemini, Copilot, Windsurf &amp; Cline over MCP — zero cloud hops, zero telemetry.
+        <p className="t-hero-sub t-enter" style={{ animationDelay: '140ms' }}>
+          A fast, keyboard-first terminal with a native Rust engine and built-in Project Intelligence — local code context for your AI coding assistant. Free, private, zero telemetry.
         </p>
 
-        <div className="t-enter" style={{ animationDelay: '260ms' }}>
+        <p className="t-hero-reassure t-enter" style={{ animationDelay: '190ms' }}>
+          <ShieldCheck size={15} />
+          <span>New here? Install in 30 seconds — no account, no config wizard. Works with Claude, Cursor, Codex, Gemini &amp; more.</span>
+        </p>
+
+        <div className="t-enter" style={{ animationDelay: '230ms' }}>
           <InstallBar short={short} />
         </div>
 
-        <div className="t-hero-cta t-enter" style={{ animationDelay: '340ms' }}>
+        <div className="t-hero-cta t-enter" style={{ animationDelay: '300ms' }}>
           <Button href={activeDl.url}>
-            <Download size={18} /> {activeDl.label} <span style={{ opacity: 0.85, fontSize: '0.85em', fontWeight: 400 }}>{activeDl.sub}</span>
+            <Download size={18} /> {activeDl.label} <span className="t-btn-sub">{activeDl.sub}</span>
           </Button>
           <Button href="/download" variant="secondary">
             All Installers <ArrowRight size={16} />
@@ -74,25 +80,29 @@ export function Hero({ tag, short, version, rel }: { tag: string; short: string;
           </Button>
         </div>
 
-        <div className="t-quick-dl t-enter" style={{ animationDelay: '380ms' }}>
+        <p className="t-hero-os-hint t-enter" style={{ animationDelay: '330ms' }}>
+          We picked “{activeDl.label}” for you — wrong OS? Choose below or on the download page.
+        </p>
+
+        <div className="t-quick-dl t-enter" style={{ animationDelay: '360ms' }}>
           <span className="t-quick-dl-label">Direct downloads:</span>
-          <a href={directUrls.windows.url} className="t-quick-dl-pill"><Download size={12} /> Windows .exe</a>
-          <a href={rel?.asset((n) => n.toLowerCase().endsWith('.msi'), `Kai_${short}_x64_en-US.msi`) ?? `${REPO_URL}/releases/download/${tag}/Kai_${short}_x64_en-US.msi`} className="t-quick-dl-pill">Windows .msi</a>
+          <a href={directUrls.macos.url} className="t-quick-dl-pill"><Download size={12} /> macOS .dmg</a>
           <a href={directUrls.linux.url} className="t-quick-dl-pill"><Download size={12} /> Linux .deb</a>
           <a href={rel?.asset((n) => n.toLowerCase().includes('amd64') && n.toLowerCase().endsWith('.appimage'), `kai_${short}_amd64.AppImage`) ?? `${REPO_URL}/releases/download/${tag}/kai_${short}_amd64.AppImage`} className="t-quick-dl-pill">Linux .AppImage</a>
-          <a href={directUrls.macos.url} className="t-quick-dl-pill"><Download size={12} /> macOS .dmg</a>
+          <a href={directUrls.windows.url} className="t-quick-dl-pill"><Download size={12} /> Windows .exe</a>
+          <a href={rel?.asset((n) => n.toLowerCase().endsWith('.msi'), `Kai_${short}_x64_en-US.msi`) ?? `${REPO_URL}/releases/download/${tag}/Kai_${short}_x64_en-US.msi`} className="t-quick-dl-pill">Windows .msi</a>
         </div>
 
-        <div className="t-stats t-enter" style={{ animationDelay: '420ms' }}>
+        <div className="t-stats t-enter" style={{ animationDelay: '400ms' }}>
           {STATS.map(([v, l]) => (
             <div key={l} className="t-stat"><b>{v}</b><span>{l}</span></div>
           ))}
         </div>
 
-        <div className="t-enter" style={{ animationDelay: '500ms' }}>
+        <div className="t-enter" style={{ animationDelay: '460ms' }}>
           <HeroTerminal version={version} />
         </div>
-        <p className="t-hint t-enter" style={{ animationDelay: '600ms' }}>Interactive preview — click a chip or type <code>help</code>.</p>
+        <p className="t-hint t-enter t-terminal-hint" style={{ animationDelay: '520ms' }}><span>Interactive preview — click a chip or type</span> <code>help</code> <span>and press Enter.</span></p>
       </div>
     </section>
   );
