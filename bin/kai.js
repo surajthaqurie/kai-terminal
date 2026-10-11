@@ -2,7 +2,7 @@
 
 import path from 'path';
 import fs from 'fs';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -15,6 +15,6 @@ if (!fs.existsSync(bundledCliPath)) {
   process.exit(1);
 }
 
-const { runCli } = await import(bundledCliPath);
+const { runCli } = await import(pathToFileURL(bundledCliPath).href);
 const exitCode = await runCli(process.argv);
 process.exit(exitCode);
