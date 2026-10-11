@@ -585,8 +585,11 @@ export async function runCli(argv: string[]): Promise<number> {
           "Latency (ms)": b.retrievalLatencyMs,
           "Files In Context": b.retrievedFilesCount,
           Omissions: b.omissionsCount,
-          "Success Rate": `${Math.round(b.taskSuccessRate * 100)}%`,
+          "Retrieval Recall": `${Math.round(b.taskSuccessRate * 100)}%`,
         }))
+      );
+      console.log(
+        `\nNote: Est. Tokens are cl100k heuristics (~3.8 chars/tok). Retrieval Recall measures target symbol presence in context, not autonomous LLM task completion.`
       );
       return 0;
     }

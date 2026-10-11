@@ -1,4 +1,5 @@
 import readline from "readline";
+import { Transform } from "stream";
 import fs from "fs";
 import path from "path";
 import { registerProject, loadProjectIndex, resolveCanonicalPath } from "./registry";
@@ -586,31 +587,90 @@ export async function handleMcpMessage(
   }
 }
 
+export const MAX_MCP_LINE_BYTES = 10 * 1024 * 1024; // 10 MB
+
+/**
+ * Stream transform that rejects oversized lines at the byte stream level
+ * BEFORE unbounded memory accumulation can occur inside readline or Node buffers.
+ */
+export class BoundedLineTransform extends Transform {
+  private maxBytes: number;
+  private currentBytes: number = 0;
+  private isDiscarding: boolean = false;
+  private onOversized?: () => void;
+
+  constructor(maxBytes: number = MAX_MCP_LINE_BYTES, onOversized?: () => void) {
+    super();
+    this.maxBytes = maxBytes;
+    this.onOversized = onOversized;
+  }
+
+  _transform(chunk: Buffer, _encoding: BufferEncoding, callback: () => void): void {
+    let sliceStart = 0;
+    for (let i = 0; i < chunk.length; i++) {
+      if (chunk[i] === 0x0a) {
+        // newline \n encountered
+        if (this.isDiscarding) {
+          this.isDiscarding = false;
+          this.currentBytes = 0;
+          sliceStart = i + 1;
+        } else {
+          this.currentBytes = 0;
+        }
+      } else {
+        if (!this.isDiscarding) {
+          this.currentBytes++;
+          if (this.currentBytes > this.maxBytes) {
+            this.isDiscarding = true;
+            if (this.onOversized) {
+              this.onOversized();
+            }
+          }
+        }
+      }
+    }
+
+    if (this.isDiscarding) {
+      if (sliceStart > 0 && sliceStart < chunk.length) {
+        this.push(chunk.subarray(sliceStart));
+      }
+    } else {
+      this.push(sliceStart > 0 ? chunk.subarray(sliceStart) : chunk);
+    }
+    callback();
+  }
+}
+
 /**
  * Run the stdio JSON-RPC server loop
  */
-export async function startMcpServer(projectRoot: string = process.cwd()): Promise<void> {
+export async function startMcpServer(
+  projectRoot: string = process.cwd(),
+  inputStream: NodeJS.ReadableStream = process.stdin,
+  outputStream: NodeJS.WritableStream = process.stdout
+): Promise<void> {
   // Protocol on stdout ONLY. Diagnostic messages on stderr.
   process.stderr.write(`[kai-mcp] Starting MCP stdio server for root: ${projectRoot}\n`);
 
+  const boundedStream = new BoundedLineTransform(MAX_MCP_LINE_BYTES, () => {
+    const errResponse: McpResponse = {
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: -32600, message: "Request line exceeds maximum allowed size (10 MB)" },
+    };
+    outputStream.write(JSON.stringify(errResponse) + "\n");
+  });
+
+  (inputStream as NodeJS.ReadStream).pipe(boundedStream);
+
   const rl = readline.createInterface({
-    input: process.stdin,
+    input: boundedStream,
     terminal: false,
   });
 
   for await (const line of rl) {
     const trimmed = line.trim();
     if (!trimmed) continue;
-
-    if (trimmed.length > 10 * 1024 * 1024) {
-      const errResponse: McpResponse = {
-        jsonrpc: "2.0",
-        id: null,
-        error: { code: -32600, message: "Request exceeds maximum allowed size (10 MB)" },
-      };
-      process.stdout.write(JSON.stringify(errResponse) + "\n");
-      continue;
-    }
 
     let parsed: McpRequest;
     try {
@@ -621,13 +681,13 @@ export async function startMcpServer(projectRoot: string = process.cwd()): Promi
         id: null,
         error: { code: -32700, message: "Parse error" },
       };
-      process.stdout.write(JSON.stringify(errResponse) + "\n");
+      outputStream.write(JSON.stringify(errResponse) + "\n");
       continue;
     }
 
     const response = await handleMcpMessage(parsed, projectRoot);
     if (response) {
-      process.stdout.write(JSON.stringify(response) + "\n");
+      outputStream.write(JSON.stringify(response) + "\n");
     }
   }
 

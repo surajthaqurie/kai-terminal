@@ -120,7 +120,12 @@ export function assembleContext(
 
   // 6. Known limitations / caveats
   const knownLimitations: string[] = [];
-  if (indexFreshness === "stale") {
+  if (retrieval.staleFiles && retrieval.staleFiles.length > 0) {
+    indexFreshness = "stale";
+    knownLimitations.push(
+      `Detected ${retrieval.staleFiles.length} file(s) modified on disk since indexing (${retrieval.staleFiles.slice(0, 3).join(", ")}). Rebuild with 'kai graph rebuild'.`
+    );
+  } else if (indexFreshness === "stale") {
     knownLimitations.push(
       "Index is more than 24 hours old; consider rebuilding with `kai graph rebuild`."
     );

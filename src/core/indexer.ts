@@ -666,10 +666,17 @@ export async function indexProject(
           if (stat.size > MAX_FILE_SIZE_BYTES) continue; // Skip oversized files
 
           const mtimeMs = stat.mtimeMs;
+          const ctimeMs = stat.ctimeMs;
           const cached = existingFiles[relPath];
 
-          // Check if file is unchanged
-          if (cached && cached.mtimeMs === mtimeMs && cached.sizeBytes === stat.size) {
+          // Check if file is unchanged (comparing mtime, ctime, and size)
+          const isUnchanged =
+            cached &&
+            cached.mtimeMs === mtimeMs &&
+            cached.sizeBytes === stat.size &&
+            (cached.ctimeMs === undefined || ctimeMs === undefined || cached.ctimeMs === ctimeMs);
+
+          if (isUnchanged) {
             // Migrate legacy Windows keys/paths to POSIX on reuse.
             if (cached.relativePath !== relPath) {
               cached.relativePath = relPath;
@@ -724,6 +731,7 @@ export async function indexProject(
             canonicalPath: entryCanonical,
             sizeBytes: stat.size,
             mtimeMs,
+            ctimeMs,
             sha256,
             language,
             symbols,

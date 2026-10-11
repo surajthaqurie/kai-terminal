@@ -63,6 +63,7 @@ export interface IndexedFile {
   canonicalPath: string;
   sizeBytes: number;
   mtimeMs: number;
+  ctimeMs?: number;
   sha256: string;
   language: string;
   symbols: IndexedSymbol[];

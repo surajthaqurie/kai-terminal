@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import crypto from "crypto";
 import type {
   ProjectIndex,
   IndexedFile,
@@ -25,6 +26,7 @@ export interface RetrievalResult {
   dependencies: IndexedDependency[];
   omissions: ContextOmission[];
   usedTokens: number;
+  staleFiles: string[];
 }
 
 export const COMMON_TASK_STOP_WORDS = new Set([
@@ -205,6 +207,7 @@ export function retrieveContext(
 
   const matchedFiles: ScoredFileMatch[] = [];
   const omissions: ContextOmission[] = [];
+  const staleFiles: string[] = [];
   let currentTokens = 0;
 
   for (let i = 0; i < sortedFiles.length; i++) {
@@ -251,6 +254,13 @@ export function retrieveContext(
       const stat = fs.statSync(realTarget);
       if (!stat.isFile() || stat.size > 512 * 1024) continue;
       content = fs.readFileSync(realTarget, "utf-8");
+
+      if (item.file.sha256) {
+        const liveSha256 = crypto.createHash("sha256").update(content).digest("hex");
+        if (liveSha256 !== item.file.sha256) {
+          staleFiles.push(item.file.relativePath);
+        }
+      }
     } catch {
       continue; // Unreadable
     }
@@ -313,5 +323,6 @@ export function retrieveContext(
     dependencies: matchedDeps,
     omissions,
     usedTokens: currentTokens,
+    staleFiles,
   };
 }

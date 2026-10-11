@@ -248,7 +248,8 @@ fn check_local_auth_presence(id: &str) -> String {
             }
         }
         "aider" => {
-            if home.join(".aider.conf.yml").exists() || home.join(".aider.model.settings.yml").exists()
+            if home.join(".aider.conf.yml").exists()
+                || home.join(".aider.model.settings.yml").exists()
             {
                 "configured".to_string()
             } else {

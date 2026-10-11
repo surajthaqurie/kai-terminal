@@ -357,4 +357,32 @@ describe("audit regression: MCP validation", () => {
     );
     expect(nullFileRes?.error?.code).toBe(-32602);
   });
+
+  it("detects same-size content modifications during retrieval and flags stale context", async () => {
+    const dir = makeTempProject({
+      "src/config.ts": "export const mode = 'dev';\n", // 28 chars
+    });
+    const meta = registerProject(dir);
+    const index = await indexProject(meta);
+    const originalHash = index.files["src/config.ts"].sha256;
+    expect(originalHash).toBeDefined();
+
+    // Mutate content with identical byte length and restore timestamp
+    const fullPath = path.join(dir, "src", "config.ts");
+    const stat1 = fs.statSync(fullPath);
+    fs.writeFileSync(fullPath, "export const mode = 'prd';\n"); // identical 28 chars
+    fs.utimesSync(fullPath, stat1.atime, stat1.mtime); // preserve mtime
+
+    const { assembleContext } = await import("../core/contextAssembler");
+    const { contextPackage, renderedPrompt } = assembleContext(index, {
+      task: "explain mode configuration",
+      tokenBudget: 4000,
+    });
+
+    // Verify that retrieval read the live disk content (not the old content)
+    expect(renderedPrompt).toContain("export const mode = 'prd';");
+    // Verify that staleness was actively detected by sha256 mismatch
+    expect(contextPackage.projectMeta.indexFreshness).toBe("stale");
+    expect(contextPackage.knownLimitations.some((k) => k.includes("modified on disk"))).toBe(true);
+  });
 });
