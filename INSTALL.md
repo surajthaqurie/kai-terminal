@@ -151,6 +151,36 @@ npm run tauri build
 | **AppImage fails with FUSE error** | Install `libfuse2` package, or launch with `--appimage-extract`. |
 | **"Developer cannot be verified" on macOS** | Right-click the app > click Open, or run `xattr -cr /Applications/"Kai.app"`. |
 | **PTY creation or directory error** | Verify shell executable exists on system; leave working directory empty to default to `$HOME`. |
+| **CLI reports stale results after editing files** | Re-index with `kai graph rebuild <path>` (incremental detection is mtime+size based). |
+| **CLI reports "No project registered" after disk changes** | The index under `~/.kai/projects/` may be corrupt or deleted; rerun `kai code <path>`. |
+| **Indexing fails with a lock error** | Another `kai` process is indexing the same project; wait ~30s for stale-lock expiry and retry. |
+
+---
+
+## Kai CLI Data Locations & Uninstalling
+
+The `kai` CLI keeps all of its data **outside** your repositories:
+
+| Data | Location |
+| :--- | :--- |
+| Project indexes & metadata | `~/.kai/projects/<id>/` (override root with `KAI_HOME`) |
+| Local diagnostic metrics | `~/.kai/metrics.jsonl` (latency/token counts only — never prompts or source) |
+| CLI configuration | `~/.kai/config.json` |
+| Session/cache scratch files | `~/.kai/sessions/`, `~/.kai/cache/` |
+
+To remove a single project's index without touching the repository:
+
+```bash
+kai unregister <path-or-id> --dry-run  # inspect first
+kai unregister <path-or-id>
+```
+
+To fully uninstall the CLI and delete all Kai-owned data:
+
+```bash
+npm unlink -g kai-terminal  # only if installed via `npm link`
+rm -rf ~/.kai               # or "$KAI_HOME" if set
+```
 
 ---
 

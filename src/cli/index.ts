@@ -5,6 +5,7 @@ import {
   getProjectMeta,
   loadProjectIndex,
   deleteProjectData,
+  ensureKaiDirectories,
   getProjectStorageDir,
   getSessionsDir,
   getCacheDir,
@@ -18,6 +19,71 @@ import { getTelemetrySummary, clearMetricsLog } from "../core/telemetry";
 import { detectInstalledLspServers } from "../core/lspBridge";
 
 export const KAI_VERSION = "0.1.0";
+
+/**
+ * Build the verified MCP configuration snippet for an external agent.
+ * Pure function (takes kaiBin explicitly) so Windows-style paths can be
+ * unit-tested on any OS. Paths are JSON-escaped: interpolating a raw
+ * Windows path (`C:\tools\...`) into the snippet would emit invalid JSON
+ * (`\t` parses as a tab escape).
+ */
+export function buildAgentSetup(agent: string, kaiBin: string): string | null {
+  const quotedBin = JSON.stringify(kaiBin);
+  if (agent === "claude") {
+    return `
+Verified Claude Code MCP Configuration:
+Add the following to your Claude Code settings (e.g., ~/.claude.json or project config):
+
+{
+  "mcpServers": {
+    "kai": {
+      "command": "node",
+      "args": [${quotedBin}, "mcp", "."]
+    }
+  }
+}
+
+Verification:
+Run: claude
+In chat: "Use kai_project_info to inspect the codebase."
+`;
+  }
+
+  if (agent === "cursor") {
+    return `
+Verified Cursor MCP Configuration:
+Add to .cursor/mcp.json or Cursor Settings > MCP:
+
+{
+  "mcpServers": {
+    "kai": {
+      "command": "node",
+      "args": [${quotedBin}, "mcp", "\${workspaceFolder}"]
+    }
+  }
+}
+`;
+  }
+
+  if (agent === "codex") {
+    return `
+Verified OpenAI Codex / CLI Agent Configuration:
+Launch Codex with MCP stdio configuration pointing to Kai:
+
+{
+  "mcp_servers": [
+    {
+      "name": "kai",
+      "command": "node",
+      "args": [${quotedBin}, "mcp", "."]
+    }
+  ]
+}
+`;
+  }
+
+  return null;
+}
 
 export function printHelp(): void {
   console.log(`
@@ -290,6 +356,9 @@ export async function runCli(argv: string[]): Promise<number> {
           parsed = num;
         }
         currentConfig[key] = parsed;
+        // First-run safety: KAI_HOME may not exist yet (no project has been
+        // registered). Previously this threw ENOENT on a fresh machine.
+        ensureKaiDirectories();
         fs.writeFileSync(configPath, JSON.stringify(currentConfig, null, 2), { mode: 0o600 });
         console.log(`[kai] Configuration updated: ${key} = ${val}`);
         return 0;
@@ -410,60 +479,10 @@ export async function runCli(argv: string[]): Promise<number> {
       // Resolve the installed entry point, not the cwd. The old code used
       // process.cwd()/bin/kai.js which is wrong for global installs.
       const kaiBin = process.argv[1] ? path.resolve(process.argv[1]) : "kai";
+      const snippet = buildAgentSetup(agent, kaiBin);
 
-      if (agent === "claude") {
-        console.log(`
-Verified Claude Code MCP Configuration:
-Add the following to your Claude Code settings (e.g., ~/.claude.json or project config):
-
-{
-  "mcpServers": {
-    "kai": {
-      "command": "node",
-      "args": ["${kaiBin}", "mcp", "."]
-    }
-  }
-}
-
-Verification:
-Run: claude
-In chat: "Use kai_project_info to inspect the codebase."
-`);
-        return 0;
-      }
-
-      if (agent === "cursor") {
-        console.log(`
-Verified Cursor MCP Configuration:
-Add to .cursor/mcp.json or Cursor Settings > MCP:
-
-{
-  "mcpServers": {
-    "kai": {
-      "command": "node",
-      "args": ["${kaiBin}", "mcp", "\${workspaceFolder}"]
-    }
-  }
-}
-`);
-        return 0;
-      }
-
-      if (agent === "codex") {
-        console.log(`
-Verified OpenAI Codex / CLI Agent Configuration:
-Launch Codex with MCP stdio configuration pointing to Kai:
-
-{
-  "mcp_servers": [
-    {
-      "name": "kai",
-      "command": "node",
-      "args": ["${kaiBin}", "mcp", "."]
-    }
-  ]
-}
-`);
+      if (snippet) {
+        console.log(snippet);
         return 0;
       }
 

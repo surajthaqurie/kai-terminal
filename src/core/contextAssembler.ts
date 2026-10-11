@@ -241,13 +241,35 @@ export function assembleContext(
       );
       renderedPrompt = render();
       // Rendering the new limitation may itself exceed the budget; if so,
-      // hard-truncate (task section is leading, so it survives).
+      // hard-truncate (task section is leading, so it survives). The note
+      // below lives in the structured package even though it is cut from
+      // the rendered text.
       if (contextPackage.tokenMetrics.estimatedTokens > tokenBudget) {
         const truncated = truncateToTokenBudget(renderedPrompt, tokenBudget);
         renderedPrompt = truncated.text;
         contextPackage.tokenMetrics = truncated.metrics;
+        contextPackage.knownLimitations.push(
+          `Rendered prompt still exceeded the ${tokenBudget}-token budget after ` +
+            `recording omissions and was truncated.`
+        );
       }
     }
+  }
+
+  // Final refresh pass: the metrics footer embedded above reflects the
+  // previous render's numbers (initially zeros). Re-render so the footer
+  // shows measured values, then re-verify the hard budget guarantee —
+  // only the footer's digits changed, so any overflow is a few tokens
+  // at most and truncation cuts the footer tail, never the leading task.
+  renderedPrompt = render();
+  if (contextPackage.tokenMetrics.estimatedTokens > tokenBudget) {
+    const truncated = truncateToTokenBudget(renderedPrompt, tokenBudget);
+    renderedPrompt = truncated.text;
+    contextPackage.tokenMetrics = truncated.metrics;
+    contextPackage.knownLimitations.push(
+      `Rendered prompt exceeded the ${tokenBudget}-token budget on the final ` +
+        `metrics refresh and was truncated.`
+    );
   }
 
   return { contextPackage, renderedPrompt };

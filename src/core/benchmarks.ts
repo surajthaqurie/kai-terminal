@@ -71,10 +71,10 @@ export async function runBenchmarks(
 ): Promise<EvaluationBaseline[]> {
   const results: EvaluationBaseline[] = [];
 
-  /** Measured retrieval accuracy: fraction of tasks whose expected token
-   * appears in any retrieved file path, symbol name, or snippet. */
+  /** Measured retrieval accuracy per task: whether the expected token
+   * appears in any retrieved file path or symbol name. */
   function hitRate(
-    retrieved: { file: { relativePath: string }; snippet?: string }[],
+    retrieved: { file: { relativePath: string } }[],
     expected: string,
     symbolNames: string[]
   ): boolean {

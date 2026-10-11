@@ -13,7 +13,7 @@ import {
 import { indexProject } from "../core/indexer";
 import { assembleContext } from "../core/contextAssembler";
 import { estimateTokens } from "../core/tokenCounter";
-import { runCli } from "../cli/index";
+import { runCli, buildAgentSetup } from "../cli/index";
 
 let kaiHome: string;
 let savedKaiHome: string | undefined;
@@ -124,6 +124,53 @@ describe("runCli smoke coverage", () => {
     expect(await runCli(["node", "kai", "cost", dir])).toBe(0);
     expect(await runCli(["node", "kai", "graph", "rebuild", dir])).toBe(0);
   });
+
+  it("config set works on a fresh KAI_HOME with no directories yet", async () => {
+    // Point KAI_HOME at a path that does not exist at all (first run on a
+    // fresh machine). Previously this threw ENOENT instead of initializing.
+    const freshHome = path.join(kaiHome, "nested", "home");
+    process.env.KAI_HOME = freshHome;
+    expect(fs.existsSync(freshHome)).toBe(false);
+    expect(await runCli(["node", "kai", "config", "set", "defaultTokenBudget", "3000"])).toBe(0);
+    const saved = JSON.parse(fs.readFileSync(path.join(freshHome, "config.json"), "utf-8"));
+    expect(saved.defaultTokenBudget).toBe(3000);
+  });
+
+  it("emits valid JSON for Windows-style install paths", () => {
+    // Regression: interpolating `C:\tools\...` raw produced invalid JSON
+    // (`\t` bad escape), breaking copy-paste MCP setup on Windows.
+    // Snippets carry trailing prose, so extract the leading JSON object
+    // with a brace scan (no braces appear inside the string values).
+    const extractJson = (snippet: string): any => {
+      const start = snippet.indexOf("{");
+      let depth = 0;
+      for (let i = start; i < snippet.length; i++) {
+        if (snippet[i] === "{") depth++;
+        else if (snippet[i] === "}") {
+          depth--;
+          if (depth === 0) return JSON.parse(snippet.slice(start, i + 1));
+        }
+      }
+      throw new Error("no balanced JSON object found");
+    };
+    const winBin = "C:\\tools\\kai space\\bin\\kai.js";
+    for (const agent of ["claude", "codex"]) {
+      const snippet = buildAgentSetup(agent, winBin)!;
+      expect(snippet).toBeTruthy();
+      const parsed = extractJson(snippet);
+      const args = agent === "claude" ? parsed.mcpServers.kai.args : parsed.mcp_servers[0].args;
+      expect(args[0]).toBe(winBin);
+    }
+
+    const cursor = buildAgentSetup("cursor", winBin)!;
+    expect(cursor).toContain("${workspaceFolder}");
+    expect(cursor).toContain("C:\\\\tools\\\\kai space\\\\bin\\\\kai.js");
+
+    const posix = buildAgentSetup("claude", "/usr/local/bin/kai.js")!;
+    expect(extractJson(posix).mcpServers.kai.args[0]).toBe("/usr/local/bin/kai.js");
+
+    expect(buildAgentSetup("unknown-agent", winBin)).toBeNull();
+  });
 });
 
 describe("ProjectLock concurrency", () => {
@@ -189,5 +236,25 @@ describe("context budget hard enforcement", () => {
       expect(measured).toBeLessThanOrEqual(20000);
       expect(renderedPrompt).toContain("explain a");
     }
+  });
+
+  it("renders a metrics footer with measured (non-zero) values", async () => {
+    const dir = makeTempProject({ "src/a.ts": "export function alpha() { return 1; }\n" });
+    const meta = registerProject(dir);
+    const index = await indexProject(meta, { forceRebuild: true });
+    const { contextPackage, renderedPrompt } = assembleContext(index, {
+      task: "explain alpha",
+      tokenBudget: 4000,
+    });
+    const measured = estimateTokens(renderedPrompt);
+    expect(measured.estimatedTokens).toBeGreaterThan(0);
+    expect(contextPackage.tokenMetrics.estimatedTokens).toBe(measured.estimatedTokens);
+    // The footer is self-referential (the counts include their own digits),
+    // so it lags the final string by the width of the footer line itself —
+    // but it must be a live measurement, never the initial zeros.
+    const footerChars = Number(renderedPrompt.match(/Chars: (\d+)/)?.[1] ?? NaN);
+    expect(Number.isFinite(footerChars)).toBe(true);
+    expect(footerChars).toBeGreaterThan(0);
+    expect(Math.abs(footerChars - measured.characterCount)).toBeLessThanOrEqual(20);
   });
 });

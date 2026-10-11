@@ -40,12 +40,23 @@ export function retrieveContext(
   } = {}
 ): RetrievalResult {
   const tokenBudget = Math.min(Math.max(options.tokenBudget ?? 3500, 200), 20000);
-  const fileBudget = Math.min(Math.max(options.fileBudget ?? 8, 1), 20);
+  const rawFileBudget = options.fileBudget ?? 8;
+  const fileBudget = Math.min(
+    Math.max(Number.isFinite(rawFileBudget) ? Math.floor(rawFileBudget) : 8, 1),
+    20
+  );
   const includeTests = options.includeTests ?? true;
   const safeQuery = query.slice(0, 2000);
 
   const rawTokens = safeQuery.toLowerCase().match(/\w+/g) || [];
-  const queryTokens = Array.from(new Set(rawTokens)).filter((t) => t.length > 2);
+  let queryTokens = Array.from(new Set(rawTokens)).filter((t) => t.length > 2);
+  if (queryTokens.length === 0 && rawTokens.length > 0) {
+    // Short-symbol fallback: a query like "c" or "go" would otherwise match
+    // nothing (single-letter symbols are common in C/Rust/Go-adjacent code).
+    // Only applies when the length filter removed everything, so normal
+    // multi-token queries are unaffected.
+    queryTokens = Array.from(new Set(rawTokens));
+  }
 
   const fileScores = new Map<string, ScoredFileMatch>();
 

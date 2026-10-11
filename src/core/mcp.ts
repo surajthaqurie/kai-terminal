@@ -192,6 +192,18 @@ export async function handleMcpMessage(
       const toolName = params.name;
       const args = params.arguments || {};
 
+      // Reject unknown tools before touching storage: registration and
+      // auto-indexing run a full synchronous scan, which must not be
+      // triggerable by a misspelled or malicious tool name.
+      const KNOWN_TOOLS = new Set(MCP_TOOLS.map((t) => t.name));
+      if (toolName !== undefined && !KNOWN_TOOLS.has(toolName)) {
+        return {
+          jsonrpc: "2.0",
+          id: reqId,
+          error: { code: -32601, message: `Unknown tool: ${toolName}` },
+        };
+      }
+
       const projectTarget =
         typeof args.projectPath === "string" ? args.projectPath : defaultProjectRoot;
       const canonicalRoot = resolveCanonicalPath(projectTarget);

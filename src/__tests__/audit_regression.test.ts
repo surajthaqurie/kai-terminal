@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -6,6 +6,21 @@ import { indexProject, isSensitiveContent, matchesIgnorePattern } from "../core/
 import { registerProject, loadProjectIndex } from "../core/registry";
 import { retrieveContext } from "../core/retrieval";
 import { handleMcpMessage } from "../core/mcp";
+
+let savedKaiHome: string | undefined;
+let isolatedKaiHome: string;
+
+beforeEach(() => {
+  savedKaiHome = process.env.KAI_HOME;
+  isolatedKaiHome = fs.mkdtempSync(path.join(os.tmpdir(), "kai-home-"));
+  process.env.KAI_HOME = isolatedKaiHome;
+});
+
+afterEach(() => {
+  if (savedKaiHome === undefined) delete process.env.KAI_HOME;
+  else process.env.KAI_HOME = savedKaiHome;
+  fs.rmSync(isolatedKaiHome, { recursive: true, force: true });
+});
 
 function makeTempProject(files: Record<string, string>): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kai-audit-"));
@@ -54,6 +69,19 @@ describe("audit regression: indexer security & correctness", () => {
     const names = Object.keys(index.symbolIndex);
     expect(names).toContain("ServerMain");
     expect(names).toContain("Server");
+  });
+
+  it("extracts symbols from CRLF (Windows) line endings", async () => {
+    const dir = makeTempProject({
+      "src/a.ts": "export function crlfFn() {\r\n  return 1;\r\n}\r\nexport class CrlfCls {}\r\n",
+    });
+    const meta = registerProject(dir);
+    const index = await indexProject(meta, { forceRebuild: true });
+    const names = Object.keys(index.symbolIndex);
+    expect(names).toContain("crlfFn");
+    expect(names).toContain("CrlfCls");
+    const res = retrieveContext(index, "crlfFn", { tokenBudget: 4000, fileBudget: 5 });
+    expect(res.matchedFiles.map((m) => m.file.relativePath)).toContain("src/a.ts");
   });
 
   it("estimates total tokens from file sizes, not path strings", async () => {
@@ -140,6 +168,23 @@ describe("audit regression: retrieval confinement", () => {
       expect(paths).toContain("src/smallmatch.ts");
     })();
   });
+
+  it("recalls single-character symbols via short-query fallback", async () => {
+    const dir = makeTempProject({ "src/c.ts": "export function c() { return 1; }\n" });
+    const meta = registerProject(dir);
+    const index = await indexProject(meta, { forceRebuild: true });
+    const res = retrieveContext(index, "c", { tokenBudget: 4000, fileBudget: 5 });
+    expect(res.matchedFiles.map((m) => m.file.relativePath)).toContain("src/c.ts");
+  });
+
+  it("treats non-finite file budgets as the default", async () => {
+    const dir = makeTempProject({ "src/a.ts": "export function alpha() {}\n" });
+    const meta = registerProject(dir);
+    const index = await indexProject(meta, { forceRebuild: true });
+    const res = retrieveContext(index, "alpha", { tokenBudget: 4000, fileBudget: NaN });
+    expect(res.matchedFiles.length).toBeLessThanOrEqual(20);
+    expect(res.matchedFiles.length).toBeGreaterThan(0);
+  });
 });
 
 describe("audit regression: MCP validation", () => {
@@ -210,5 +255,23 @@ describe("audit regression: MCP validation", () => {
     );
     expect(res?.error?.code).toBe(-32602);
     expect(String(res?.error?.message)).not.toContain(file);
+  });
+
+  it("rejects unknown tools without registering or indexing anything", async () => {
+    const dir = makeTempProject({ "src/a.ts": "export function a() {}\n" });
+    const { computeProjectId } = await import("../core/registry");
+    const { resolveCanonicalPath, getProjectStorageDir } = await import("../core/registry");
+    const id = computeProjectId(resolveCanonicalPath(dir));
+    const res = await handleMcpMessage(
+      {
+        jsonrpc: "2.0",
+        id: 5,
+        method: "tools/call",
+        params: { name: "no_such_tool", arguments: { projectPath: dir } },
+      },
+      dir
+    );
+    expect(res?.error?.code).toBe(-32601);
+    expect(fs.existsSync(getProjectStorageDir(id))).toBe(false);
   });
 });
