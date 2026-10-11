@@ -339,6 +339,50 @@ export function App() {
     );
   }, [activeTabId]);
 
+  const handleSessionExit = useCallback(
+    (tabId: string, paneId: string, exitCode: number) => {
+      // If the process exited cleanly (exit code 0), close the pane or tab automatically
+      if (exitCode === 0) {
+        setTabs((prev) => {
+          const targetTab = prev.find((t) => t.id === tabId);
+          if (!targetTab) return prev;
+
+          // If the tab has multiple split panes, close only the pane that exited
+          if (targetTab.panes.length > 1) {
+            const remainingPanes = targetTab.panes.filter((p) => p.id !== paneId);
+            const nextActivePane =
+              targetTab.activePaneId === paneId ? remainingPanes[0].id : targetTab.activePaneId;
+            return prev.map((t) =>
+              t.id === tabId
+                ? {
+                    ...t,
+                    panes: remainingPanes,
+                    activePaneId: nextActivePane,
+                    splitDirection: remainingPanes.length > 1 ? t.splitDirection : "none",
+                  }
+                : t
+            );
+          }
+
+          // If there are multiple tabs in the window, close this tab
+          if (prev.length > 1) {
+            const remainingTabs = prev.filter((t) => t.id !== tabId);
+            if (activeTabId === tabId) {
+              const targetIdx = prev.findIndex((t) => t.id === tabId);
+              const nextIdx = Math.max(0, targetIdx - 1);
+              setActiveTabId(remainingTabs[nextIdx]?.id || remainingTabs[0].id);
+            }
+            return remainingTabs;
+          }
+
+          // Single remaining tab & pane: keep tab open in disconnected state for Enter-to-restart
+          return prev;
+        });
+      }
+    },
+    [activeTabId]
+  );
+
   const handleOpenEditor = useCallback(async () => {
     try {
       await openProjectInEditor(cwd.trim() || "/", userSettings.editorPath);
@@ -806,6 +850,9 @@ export function App() {
                       selectedShell={selectedShell}
                       cwd={pane.cwd || tab.cwd || cwd}
                       settings={userSettings}
+                      onExit={(exitCode) => {
+                        handleSessionExit(tab.id, pane.id, exitCode);
+                      }}
                       onSessionStatusChange={(status, message) => {
                         if (status === "error" && message) setLastError(message);
                         setTabs((prev) =>

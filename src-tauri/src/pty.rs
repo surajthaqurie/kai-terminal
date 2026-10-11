@@ -338,18 +338,21 @@ impl PtyManager {
 
         if let Some(session) = sessions.get_mut(id) {
             if session.status != SessionStatus::Connected {
-                return Err(TerminalError::InvalidState(format!(
-                    "Session '{}' is not connected",
-                    id
-                )));
+                return Ok(());
             }
 
-            write_bytes_chunked(&mut session.writer, data.as_bytes()).map_err(|e| {
-                TerminalError::WriteFailed(format!("Failed to write to PTY: {}", e))
-            })?;
-            session.writer.flush().map_err(|e| {
-                TerminalError::WriteFailed(format!("Failed to flush PTY writer: {}", e))
-            })?;
+            if let Err(e) = write_bytes_chunked(&mut session.writer, data.as_bytes()) {
+                if e.kind() == std::io::ErrorKind::BrokenPipe {
+                    return Ok(());
+                }
+                return Err(TerminalError::WriteFailed(format!("Failed to write to PTY: {}", e)));
+            }
+            if let Err(e) = session.writer.flush() {
+                if e.kind() == std::io::ErrorKind::BrokenPipe {
+                    return Ok(());
+                }
+                return Err(TerminalError::WriteFailed(format!("Failed to flush PTY writer: {}", e)));
+            }
             Ok(())
         } else {
             Err(TerminalError::SessionNotFound(id.to_string()))
@@ -369,6 +372,10 @@ impl PtyManager {
             .map_err(|e| TerminalError::IoError(format!("Lock failure: {}", e)))?;
 
         if let Some(session) = sessions.get_mut(id) {
+            if session.status != SessionStatus::Connected {
+                return Ok(());
+            }
+
             let valid_cols = if cols == 0 {
                 80
             } else {
@@ -380,15 +387,12 @@ impl PtyManager {
                 rows.clamp(MIN_ROWS, MAX_ROWS)
             };
 
-            session
-                .master
-                .resize(PtySize {
-                    rows: valid_rows,
-                    cols: valid_cols,
-                    pixel_width: 0,
-                    pixel_height: 0,
-                })
-                .map_err(|e| TerminalError::IoError(format!("Failed to resize PTY: {}", e)))?;
+            let _ = session.master.resize(PtySize {
+                rows: valid_rows,
+                cols: valid_cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            });
 
             session.cols = valid_cols;
             session.rows = valid_rows;

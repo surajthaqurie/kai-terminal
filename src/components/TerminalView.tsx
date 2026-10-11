@@ -23,10 +23,14 @@ interface TerminalViewProps {
   cwd?: string;
   settings?: UserSettings;
   onSessionStatusChange?: (status: SessionStatus, message?: string) => void;
+  onExit?: (exitCode: number) => void;
 }
 
 export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
-  ({ sessionId, selectedShell, cwd, settings = DEFAULT_SETTINGS, onSessionStatusChange }, ref) => {
+  (
+    { sessionId, selectedShell, cwd, settings = DEFAULT_SETTINGS, onSessionStatusChange, onExit },
+    ref
+  ) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const xtermRef = useRef<Terminal | null>(null);
     const fitAddonRef = useRef<FitAddon | null>(null);
@@ -197,12 +201,15 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         // Handle Ctrl+Shift+V / Cmd+V for pasting from clipboard
         if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.code === "KeyV") {
           if (event.type === "keydown") {
-            navigator.clipboard.readText().then((text) => {
-              const backendId = backendPtyIdRef.current;
-              if (text && backendId) {
-                ptyService.writeToPty(backendId, text);
-              }
-            });
+            navigator.clipboard
+              .readText()
+              .then((text) => {
+                const backendId = backendPtyIdRef.current;
+                if (text && backendId) {
+                  ptyService.writeToPty(backendId, text).catch(() => {});
+                }
+              })
+              .catch(() => {});
           }
           return false;
         }
@@ -223,6 +230,11 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
           ptyService.writeToPty(backendId, data).catch(() => {
             // Backend already reaped the session; status update arrives via pty-exit.
           });
+        } else {
+          // Terminal disconnected/exited: Enter restarts a fresh shell session
+          if (data === "\r" || data === "\n") {
+            void initPtySession();
+          }
         }
       });
 
@@ -275,10 +287,16 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
           if (payload.id === backendPtyIdRef.current) {
             flushOutput();
             backendPtyIdRef.current = null;
-            term.writeln(
-              `\r\n\x1b[33m[Process exited with code ${payload.exit_code ?? 0}]\x1b[0m\r\n`
-            );
+            const exitCode = payload.exit_code ?? 0;
+            if (exitCode === 0) {
+              term.writeln("\r\n\x1b[90m[Process completed — press Enter to restart]\x1b[0m\r\n");
+            } else {
+              term.writeln(
+                `\r\n\x1b[33m[Process exited with code ${exitCode} — press Enter to restart]\x1b[0m\r\n`
+              );
+            }
             onSessionStatusChange?.("disconnected");
+            onExit?.(exitCode);
           }
         })
         .then((unlisten) => {
@@ -291,7 +309,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
           fitAddon.fit();
           const backendId = backendPtyIdRef.current;
           if (term.cols && term.rows && backendId) {
-            ptyService.resizePty(backendId, term.cols, term.rows);
+            ptyService.resizePty(backendId, term.cols, term.rows).catch(() => {});
           }
         } catch {
           // Ignore layout errors during component unmount

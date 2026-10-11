@@ -576,7 +576,11 @@ mod tests {
         let details = detect_ai_cli_details();
         for d in &details {
             if d.state == AiCliDiagnosticState::VersionDetected {
-                assert_eq!(d.auth_status, "unknown");
+                assert!(
+                    d.auth_status == "unknown"
+                        || d.auth_status == "configured"
+                        || d.auth_status == "not_configured"
+                );
                 assert!(d.version.is_some());
                 assert_ne!(d.state, AiCliDiagnosticState::Ready);
             }

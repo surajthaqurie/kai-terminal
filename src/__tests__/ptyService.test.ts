@@ -21,4 +21,13 @@ describe("PtyService (Mock Fallback)", () => {
     expect(session.cols).toBe(80);
     expect(session.rows).toBe(24);
   });
+
+  it("should register onPtyOutput and onPtyExit listeners without throwing in mock mode", async () => {
+    const unlistenOutput = await PtyService.onPtyOutput(() => {});
+    const unlistenExit = await PtyService.onPtyExit(() => {});
+    expect(typeof unlistenOutput).toBe("function");
+    expect(typeof unlistenExit).toBe("function");
+    unlistenOutput();
+    unlistenExit();
+  });
 });
