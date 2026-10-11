@@ -204,6 +204,14 @@ export async function handleMcpMessage(
         };
       }
 
+      if (typeof args.projectPath === "string" && args.projectPath.includes("\0")) {
+        return {
+          jsonrpc: "2.0",
+          id: reqId,
+          error: { code: -32602, message: "Invalid project path: contains null bytes" },
+        };
+      }
+
       const canonicalDefault = resolveCanonicalPath(defaultProjectRoot);
       const projectTarget =
         typeof args.projectPath === "string" ? args.projectPath : defaultProjectRoot;
@@ -352,14 +360,18 @@ export async function handleMcpMessage(
             error: { code: -32602, message: "name parameter is required" },
           };
         }
-        if (/[./\\]/.test(name)) {
+        if (name.includes("\0") || /[./\\]/.test(name)) {
           return {
             jsonrpc: "2.0",
             id: reqId,
             error: { code: -32602, message: "invalid symbol name" },
           };
         }
-        const found = index.symbolIndex[name] || [];
+        const found =
+          Object.prototype.hasOwnProperty.call(index.symbolIndex, name) &&
+          Array.isArray(index.symbolIndex[name])
+            ? index.symbolIndex[name]
+            : [];
 
         return {
           jsonrpc: "2.0",
@@ -392,6 +404,8 @@ export async function handleMcpMessage(
         const isWindowsAbsolute = /^[a-zA-Z]:\//.test(targetRel) || targetRel.startsWith("//");
         if (
           !targetRel ||
+          targetRel.includes("\0") ||
+          rawRel.includes("\0") ||
           targetRel.split("/").includes("..") ||
           path.isAbsolute(targetRel) ||
           path.isAbsolute(rawRel) ||
@@ -403,7 +417,13 @@ export async function handleMcpMessage(
             error: { code: -32602, message: `Invalid filePath` },
           };
         }
-        const file = index.files[targetRel] ?? index.files[rawRel];
+        const file =
+          (Object.prototype.hasOwnProperty.call(index.files, targetRel)
+            ? index.files[targetRel]
+            : undefined) ??
+          (Object.prototype.hasOwnProperty.call(index.files, rawRel)
+            ? index.files[rawRel]
+            : undefined);
         if (!file) {
           return {
             jsonrpc: "2.0",
@@ -581,6 +601,16 @@ export async function startMcpServer(projectRoot: string = process.cwd()): Promi
   for await (const line of rl) {
     const trimmed = line.trim();
     if (!trimmed) continue;
+
+    if (trimmed.length > 10 * 1024 * 1024) {
+      const errResponse: McpResponse = {
+        jsonrpc: "2.0",
+        id: null,
+        error: { code: -32600, message: "Request exceeds maximum allowed size (10 MB)" },
+      };
+      process.stdout.write(JSON.stringify(errResponse) + "\n");
+      continue;
+    }
 
     let parsed: McpRequest;
     try {

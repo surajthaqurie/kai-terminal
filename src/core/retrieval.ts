@@ -115,7 +115,13 @@ export function retrieveContext(
           // Windows legacy indexes stored backslash paths; normalize so
           // lookups succeed regardless of which separator was persisted.
           const normKey = sym.filePath.replace(/\\/g, "/");
-          const file = index.files[sym.filePath] ?? index.files[normKey];
+          const file =
+            (Object.prototype.hasOwnProperty.call(index.files, sym.filePath)
+              ? index.files[sym.filePath]
+              : undefined) ??
+            (Object.prototype.hasOwnProperty.call(index.files, normKey)
+              ? index.files[normKey]
+              : undefined);
           if (file) {
             const existing = fileScores.get(normKey) || {
               file,

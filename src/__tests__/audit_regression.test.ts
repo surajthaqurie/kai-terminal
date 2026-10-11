@@ -275,4 +275,86 @@ describe("audit regression: MCP validation", () => {
     expect(res?.error?.code).toBe(-32601);
     expect(fs.existsSync(getProjectStorageDir(id))).toBe(false);
   });
+
+  it("safely indexes and looks up symbols named after Object.prototype properties", async () => {
+    const dir = makeTempProject({
+      "src/props.ts": [
+        "export function toString() { return 'str'; }",
+        "export function valueOf() { return 1; }",
+        "export class ConstructorHandler { constructor() {} }",
+      ].join("\n"),
+    });
+    const meta = registerProject(dir);
+    const index = await indexProject(meta, { forceRebuild: true });
+    expect(index.meta.status).toBe("ready");
+    expect(Object.keys(index.symbolIndex)).toContain("toString");
+    expect(Object.keys(index.symbolIndex)).toContain("valueOf");
+
+    // MCP kai_find_symbol for prototype property name
+    const res = await handleMcpMessage(
+      {
+        jsonrpc: "2.0",
+        id: 10,
+        method: "tools/call",
+        params: {
+          name: "kai_find_symbol",
+          arguments: { name: "toString", projectPath: dir },
+        },
+      },
+      dir
+    );
+    expect(res?.error).toBeUndefined();
+    const resultObj = JSON.parse(
+      (res?.result as { content: Array<{ text: string }> }).content[0].text
+    );
+    expect(resultObj.symbolName).toBe("toString");
+    expect(resultObj.foundCount).toBe(1);
+
+    // MCP kai_get_dependencies for prototype property name
+    const depRes = await handleMcpMessage(
+      {
+        jsonrpc: "2.0",
+        id: 11,
+        method: "tools/call",
+        params: {
+          name: "kai_get_dependencies",
+          arguments: { filePath: "toString", projectPath: dir },
+        },
+      },
+      dir
+    );
+    expect(depRes?.error?.code).toBe(-32602);
+  });
+
+  it("rejects null bytes in projectPath and filePath", async () => {
+    const dir = makeTempProject({ "src/a.ts": "export function a() {}\n" });
+    const nullPathRes = await handleMcpMessage(
+      {
+        jsonrpc: "2.0",
+        id: 12,
+        method: "tools/call",
+        params: {
+          name: "kai_project_info",
+          arguments: { projectPath: dir + "\0bad" },
+        },
+      },
+      dir
+    );
+    expect(nullPathRes?.error?.code).toBe(-32602);
+    expect(nullPathRes?.error?.message).toContain("null bytes");
+
+    const nullFileRes = await handleMcpMessage(
+      {
+        jsonrpc: "2.0",
+        id: 13,
+        method: "tools/call",
+        params: {
+          name: "kai_get_dependencies",
+          arguments: { filePath: "src/a.ts\0bad", projectPath: dir },
+        },
+      },
+      dir
+    );
+    expect(nullFileRes?.error?.code).toBe(-32602);
+  });
 });

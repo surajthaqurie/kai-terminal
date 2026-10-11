@@ -142,7 +142,7 @@ export function classifyTask(task: string, explicitOverride?: TaskCategory): Cla
     };
   }
 
-  const trimmed = task.trim();
+  const trimmed = task.trim().slice(0, 4000);
   if (!trimmed) {
     return {
       category: "unknown",

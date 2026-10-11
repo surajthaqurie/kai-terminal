@@ -286,7 +286,25 @@ export async function runCli(argv: string[]): Promise<number> {
         return 1;
       }
       const isDryRun = args.includes("--dry-run");
-      const meta = getProjectMeta(target);
+      let meta = getProjectMeta(target);
+
+      if (!meta && /^[0-9a-f]{16}$/.test(target)) {
+        const storageDir = getProjectStorageDir(target);
+        if (fs.existsSync(storageDir)) {
+          meta = {
+            id: target,
+            name: `orphaned-${target}`,
+            rootPath: "unknown",
+            canonicalPath: "unknown",
+            registeredAt: "unknown",
+            lastIndexedAt: null,
+            schemaVersion: 1,
+            status: "unindexed",
+            fileCount: 0,
+            symbolCount: 0,
+          };
+        }
+      }
 
       if (!meta) {
         console.error(`[kai] No project registered for: ${target}`);
@@ -397,6 +415,13 @@ export async function runCli(argv: string[]): Promise<number> {
         }
       }
 
+      const ALLOWED_KEYS = new Set([
+        "defaultTokenBudget",
+        "maxFileSizeBytes",
+        "indexingDepth",
+        "telemetryLocal",
+      ]);
+
       if (sub === "list") {
         console.log(`[kai] Current Configuration:`);
         console.log(JSON.stringify(currentConfig, null, 2));
@@ -407,6 +432,12 @@ export async function runCli(argv: string[]): Promise<number> {
         const key = args[2];
         if (!key) {
           console.error(`[kai] Error: Please specify a configuration key.`);
+          return 1;
+        }
+        if (!ALLOWED_KEYS.has(key)) {
+          console.error(
+            `[kai] Error: Unknown configuration key "${key}". Allowed: ${[...ALLOWED_KEYS].join(", ")}`
+          );
           return 1;
         }
         console.log(`${key} = ${currentConfig[key]}`);
@@ -420,12 +451,6 @@ export async function runCli(argv: string[]): Promise<number> {
           console.error(`[kai] Error: Usage: kai config set <key> <value>`);
           return 1;
         }
-        const ALLOWED_KEYS = new Set([
-          "defaultTokenBudget",
-          "maxFileSizeBytes",
-          "indexingDepth",
-          "telemetryLocal",
-        ]);
         if (!ALLOWED_KEYS.has(key)) {
           console.error(
             `[kai] Error: Unknown configuration key "${key}". Allowed: ${[...ALLOWED_KEYS].join(", ")}`

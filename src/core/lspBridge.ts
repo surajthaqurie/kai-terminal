@@ -72,6 +72,9 @@ export interface LspCrossFileReferenceResult {
  * Check whether a binary command exists in the system PATH
  */
 export function isCommandAvailable(command: string): boolean {
+  if (!/^[a-zA-Z0-9_-]+$/.test(command)) {
+    return false;
+  }
   try {
     const isWindows = process.platform === "win32";
     const checkCmd = isWindows ? `where ${command}` : `which ${command}`;

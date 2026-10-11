@@ -67,6 +67,17 @@ describe("kai unregister command", () => {
     expect(fs.existsSync(getProjectStorageDir(meta.id))).toBe(false);
   });
 
+  it("unregisters orphaned project storage by ID even if meta.json is missing", async () => {
+    const orphanId = "1234567890abcdef";
+    const storageDir = getProjectStorageDir(orphanId);
+    fs.mkdirSync(storageDir, { recursive: true });
+    fs.writeFileSync(path.join(storageDir, "index.json"), "{}");
+    expect(fs.existsSync(storageDir)).toBe(true);
+
+    expect(await runCli(["node", "kai", "unregister", orphanId])).toBe(0);
+    expect(fs.existsSync(storageDir)).toBe(false);
+  });
+
   it("requires a target and fails cleanly for unknown projects", async () => {
     expect(await runCli(["node", "kai", "unregister"])).toBe(1);
     expect(await runCli(["node", "kai", "unregister", "--dry-run"])).toBe(1);
@@ -111,6 +122,8 @@ describe("runCli smoke coverage", () => {
     expect(await runCli(["node", "kai", "frobnicate"])).toBe(1);
     expect(await runCli(["node", "kai", "query"])).toBe(1);
     expect(await runCli(["node", "kai", "status", "/nonexistent-xyz"])).toBe(1);
+    expect(await runCli(["node", "kai", "config", "get", "defaultTokenBudget"])).toBe(0);
+    expect(await runCli(["node", "kai", "config", "get", "bogusKey"])).toBe(1);
     expect(await runCli(["node", "kai", "config", "set", "bogus", "1"])).toBe(1);
   });
 
