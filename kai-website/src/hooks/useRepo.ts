@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { readCache, writeCache } from '../lib/cache';
-import { FALLBACK_TAG, LATEST_RELEASE_URL } from '../data/site';
+import { FALLBACK_TAG, LATEST_RELEASE_URL, REPO_URL } from '../data/site';
 
 export type ReleaseAsset = { name: string; url: string; size: number; downloads: number };
 export type ReleaseStatus = 'loading' | 'ready' | 'empty';
@@ -90,24 +90,34 @@ export type PublishedRelease = {
   notes: string;
 };
 
+export const FALLBACK_RELEASES: PublishedRelease[] = [
+  {
+    tag: 'v0.1.0',
+    name: 'Kai v0.1.0 — Initial Release',
+    date: '2026-10-11T12:00:00Z',
+    url: `${REPO_URL}/releases/tag/v0.1.0`,
+    notes: 'Initial production release: Native Rust portable-pty core with ConPTY and POSIX pty, Tauri 2 desktop app, GPU-accelerated xterm.js canvas rendering at 60fps, split panes (up to 4 panes per tab), Project Intelligence AST indexing, deterministic context retrieval, stdio Model Context Protocol (MCP) server, and one-command agent setup for Claude Code, Cursor, Codex, Gemini, Copilot, Windsurf, and Cline.',
+  },
+];
+
 export function usePublishedReleases(limit = 6): PublishedRelease[] {
   const [list, setList] = useState<PublishedRelease[]>(() => {
     const cached = readCache('kai-releases');
-    if (!cached) return [];
+    if (!cached) return FALLBACK_RELEASES;
     try {
       const parsed = JSON.parse(cached) as PublishedRelease[];
-      if (Array.isArray(parsed)) return parsed.filter((r) => r && typeof r.tag === 'string');
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed.filter((r) => r && typeof r.tag === 'string');
     } catch {
       /* corrupt cache — refetch below */
     }
-    return [];
+    return FALLBACK_RELEASES;
   });
   useEffect(() => {
     let live = true;
     fetch(`https://api.github.com/repos/surajthaqurie/kai-terminal/releases?per_page=${limit}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((j) => {
-        if (!live || !Array.isArray(j)) return;
+        if (!live || !Array.isArray(j) || j.length === 0) return;
         const next: PublishedRelease[] = j
           .filter((r: any) => r && typeof r.tag_name === 'string')
           .slice(0, limit)
@@ -118,8 +128,10 @@ export function usePublishedReleases(limit = 6): PublishedRelease[] {
             url: typeof r.html_url === 'string' ? r.html_url : LATEST_RELEASE_URL,
             notes: typeof r.body === 'string' ? r.body : '',
           }));
-        setList(next);
-        writeCache('kai-releases', JSON.stringify(next));
+        if (next.length > 0) {
+          setList(next);
+          writeCache('kai-releases', JSON.stringify(next));
+        }
       })
       .catch(() => {});
     return () => { live = false; };

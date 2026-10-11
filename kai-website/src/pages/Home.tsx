@@ -4,6 +4,7 @@ import { Features } from '../sections/Features';
 import { AiCli } from '../sections/AiCli';
 import { Compare } from '../sections/Compare';
 import { Downloads } from '../sections/Downloads';
+import { Changelog } from '../sections/Changelog';
 import { Faq } from '../sections/Faq';
 import { CtaBanner } from '../components/CtaBanner';
 import type { LatestRelease } from '../hooks/useRepo';
@@ -19,6 +20,7 @@ export function HomePage({ rel }: { rel: LatestRelease }) {
       <AiCli />
       <Compare />
       <Downloads rel={rel} />
+      <Changelog limit={6} />
       <Faq />
       <CtaBanner />
     </>
