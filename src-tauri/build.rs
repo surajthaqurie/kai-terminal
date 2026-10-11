@@ -1,4 +1,4 @@
 fn main() {
-    #[cfg(feature = "tauri")]
+    #[cfg(any(feature = "tauri", feature = "tauri-build"))]
     tauri_build::build();
 }

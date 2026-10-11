@@ -11,7 +11,6 @@ import {
   Layers,
   Monitor,
   Bot,
-  Globe,
   Code2,
   ExternalLink,
   PackageCheck,
@@ -21,12 +20,45 @@ import {
   Moon,
   Menu,
   X,
+  Copy,
+  Check,
+  ChevronRight,
 } from 'lucide-react';
 import { ThemeProvider, useTheme } from './theme/ThemeContext';
 import { Badge, Button, Card, Section, SectionHead } from './components/ui';
 
 const REPO_URL = 'https://github.com/surajthaqurie/kai-terminal';
 const LATEST_RELEASE_URL = `${REPO_URL}/releases/latest`;
+
+/* ---------- small helpers ---------- */
+
+function useCopy(text: string) {
+  const [ok, setOk] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      ta.remove();
+    }
+    setOk(true);
+    setTimeout(() => setOk(false), 1400);
+  };
+  return { ok, copy };
+}
+
+function CopyBtn({ text }: { text: string }) {
+  const { ok, copy } = useCopy(text);
+  return (
+    <button type="button" className="t-copy" onClick={copy} aria-label="Copy to clipboard" title="Copy">
+      {ok ? <Check size={15} /> : <Copy size={15} />}
+    </button>
+  );
+}
 
 function ThemeToggle() {
   const { theme, toggle } = useTheme();
@@ -55,23 +87,23 @@ function SiteHeader() {
             <Terminal size={22} color="#ffffff" />
           </div>
           <div>
-            <span className="t-brand-name">Kai</span>
-            <span className="t-version">v0.1.0 MIT</span>
+            <span className="t-brand-name">kai</span>
+            <span className="t-version">v0.1.0</span>
           </div>
         </a>
 
         <nav className="t-nav" data-open={open} aria-label="Primary">
+          <a href="#quickstart" onClick={() => setOpen(false)}>Quickstart</a>
           <a href="#features" onClick={() => setOpen(false)}>Features</a>
-          <a href="#ai-cli" onClick={() => setOpen(false)}>AI Integration</a>
-          <a href="#architecture" onClick={() => setOpen(false)}>Architecture</a>
-          <a href="#downloads" onClick={() => setOpen(false)}>Downloads</a>
+          <a href="#ai-cli" onClick={() => setOpen(false)}>AI</a>
+          <a href="#downloads" onClick={() => setOpen(false)}>Download</a>
           <a href="#faq" onClick={() => setOpen(false)}>FAQ</a>
         </nav>
 
         <div className="t-header-actions">
           <ThemeToggle />
           <a href={REPO_URL} target="_blank" rel="noreferrer" className="t-btn t-btn--secondary t-btn--sm">
-            <Github size={16} /> <span className="t-header-cta-label">GitHub</span>
+            <Github size={16} /> <span className="t-header-cta-label">Star</span>
           </a>
           <a href="#downloads" className="t-btn t-btn--primary t-btn--sm">
             <Download size={16} /> <span className="t-header-cta-label">Get Kai</span>
@@ -91,6 +123,81 @@ function SiteHeader() {
   );
 }
 
+/* ---------- install commands (developer-first) ---------- */
+
+const INSTALL_TABS = [
+  {
+    id: 'windows',
+    label: 'Windows',
+    lang: 'powershell',
+    cmd: 'winget install Kai-terminal --source github',
+    file: 'Kai_0.1.0_x64-setup.exe',
+    note: 'or grab .exe / .msi from Releases',
+  },
+  {
+    id: 'linux',
+    label: 'Linux',
+    lang: 'bash',
+    cmd: 'sudo dpkg -i kai_0.1.0_amd64.deb  # or chmod +x kai_*.AppImage',
+    file: 'kai_0.1.0_amd64.deb',
+    note: '.deb x64/ARM64 · .AppImage x64/ARM64',
+  },
+  {
+    id: 'macos',
+    label: 'macOS',
+    lang: 'bash',
+    cmd: 'open Kai_0.1.0_aarch64.dmg  # drag to /Applications',
+    file: 'Kai_0.1.0_aarch64.dmg',
+    note: 'Apple Silicon M1–M4 · macOS 12+',
+  },
+  {
+    id: 'source',
+    label: 'From source',
+    lang: 'bash',
+    cmd: 'git clone https://github.com/surajthaqurie/kai-terminal.git && cd kai-terminal && cargo run --release',
+    file: 'MIT · Rust + Tauri 2',
+    note: 'needs Rust + Node 20+',
+  },
+] as const;
+
+function InstallBar() {
+  const [tab, setTab] = useState<string>(() => {
+    if (typeof navigator === 'undefined') return 'linux';
+    const p = navigator.platform.toLowerCase();
+    const ua = navigator.userAgent.toLowerCase();
+    if (p.includes('mac') || ua.includes('mac')) return 'macos';
+    if (p.includes('win') || ua.includes('windows')) return 'windows';
+    return 'linux';
+  });
+  const active = INSTALL_TABS.find((t) => t.id === tab)!;
+  return (
+    <div className="t-install" role="region" aria-label="Install Kai">
+      <div className="t-install-tabs" role="tablist">
+        {INSTALL_TABS.map((t) => (
+          <button
+            key={t.id}
+            role="tab"
+            aria-selected={tab === t.id}
+            className="t-install-tab"
+            data-active={tab === t.id}
+            onClick={() => setTab(t.id)}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+      <div className="t-install-body">
+        <span className="t-install-prompt">$</span>
+        <code className="t-install-cmd">{active.cmd}</code>
+        <CopyBtn text={active.cmd} />
+      </div>
+      <div className="t-install-note">{active.note}</div>
+    </div>
+  );
+}
+
+/* ---------- hero terminal (click chip = run) ---------- */
+
 function HeroTerminal() {
   const [terminalInput, setTerminalInput] = useState('');
   const [terminalHistory, setTerminalHistory] = useState<
@@ -99,117 +206,67 @@ function HeroTerminal() {
     {
       cmd: 'kai --status',
       output: (
-        <div className="text-emerald-400 space-y-1" style={{ color: '#34d399' }}>
-          <p>✔ Rust PTY Engine: Active (portable-pty 0.8)</p>
-          <p>✔ Session Isolation: Multi-tab process sandboxing</p>
-          <p>✔ AI CLI Probe: Local PATH detection active (0 bundled binaries)</p>
-          <p>✔ License: 100% Free &amp; Open-Source (MIT)</p>
+        <div style={{ color: '#34d399' }}>
+          <p>✔ engine v0.1.0 · portable-pty 0.8 · xterm.js 60fps</p>
+          <p>✔ tabs isolated · zero telemetry · MIT</p>
         </div>
       ),
     },
   ]);
 
-  const handleTerminalSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const rawInput = terminalInput.trim();
-    const input = rawInput.toLowerCase();
+  const run = (rawInput: string) => {
+    const input = rawInput.trim().toLowerCase();
     if (!input) return;
-
     let reply: React.ReactNode = '';
-    if (input === 'help' || input === 'kai --help' || input === 'kai -h' || input === '?') {
+    if (['help', '?', 'kai --help', 'kai -h'].includes(input)) {
       reply = (
         <div style={{ color: '#67e8f9' }}>
-          <p>Available interactive demo commands:</p>
-          <p>• <span style={{ color: '#fcd34d', fontWeight: 700 }}>kai --status</span> (or status) - Check PTY engine &amp; IPC health</p>
-          <p>• <span style={{ color: '#fcd34d', fontWeight: 700 }}>claude</span> - Check local Claude Code CLI connection status</p>
-          <p>• <span style={{ color: '#fcd34d', fontWeight: 700 }}>codex</span> - Check local OpenAI Codex CLI probe status</p>
-          <p>• <span style={{ color: '#fcd34d', fontWeight: 700 }}>gemini</span> - Check local Gemini CLI status</p>
-          <p>• <span style={{ color: '#fcd34d', fontWeight: 700 }}>downloads</span> - List release packages for Windows, Linux, macOS</p>
-          <p>• <span style={{ color: '#fcd34d', fontWeight: 700 }}>license</span> | <span style={{ color: '#fcd34d', fontWeight: 700 }}>clear</span> | <span style={{ color: '#fcd34d', fontWeight: 700 }}>whoami</span></p>
+          <p>try: <b style={{ color: '#fcd34d' }}>status</b> · <b style={{ color: '#fcd34d' }}>ai</b> · <b style={{ color: '#fcd34d' }}>claude</b> · <b style={{ color: '#fcd34d' }}>downloads</b> · <b style={{ color: '#fcd34d' }}>clear</b></p>
         </div>
       );
-    } else if (input === 'status' || input === 'kai --status' || input === 'kai status' || input === 'kai -s') {
+    } else if (['status', 'kai --status', 'kai status'].includes(input)) {
       reply = (
         <div style={{ color: '#34d399' }}>
-          <p>✔ Kai Engine: Operational (v0.1.0)</p>
-          <p>✔ Rust PTY Driver: Active (portable-pty 0.8 / ConPTY / POSIX)</p>
-          <p>✔ Render Loop: xterm.js Canvas GPU viewport @ 60 FPS</p>
-          <p>✔ Session Sandboxing: Isolated tab handle security active</p>
-          <p>✔ Local AI Probe: 3 AI CLIs detected on system PATH</p>
+          <p>✔ engine operational · ConPTY / POSIX pty</p>
+          <p>✔ render: xterm.js canvas @ 60fps</p>
+          <p>✔ 3 AI CLIs on PATH · no bundled binaries</p>
         </div>
       );
-    } else if (input === 'claude' || input === 'claude code' || input === 'connect claude' || input === 'kai claude') {
+    } else if (['claude', 'codex', 'gemini', 'ai'].includes(input) || input.startsWith('kai ')) {
       reply = (
         <div style={{ color: '#d8b4fe' }}>
-          <p style={{ fontWeight: 600, color: '#e9d5ff' }}>🤖 Claude Code CLI Connection Status:</p>
-          <p>• Binary: <span style={{ color: '#34d399', fontFamily: 'Fira Code, monospace' }}>/usr/bin/claude</span> (Detected via PATH)</p>
-          <p>• PTY Handle: Native Rust PTY channel bound</p>
-          <p>• Mode: Full ANSI terminal interactive session ready</p>
-          <p style={{ color: '#94a3b8', fontSize: '0.75rem', fontStyle: 'italic' }}>* Kai launches Claude in your working directory with full terminal capabilities.</p>
+          <p>codex <span style={{ color: '#34d399' }}>✓</span> /usr/local/bin/codex · claude <span style={{ color: '#34d399' }}>✓</span> /usr/bin/claude · gemini <span style={{ color: '#34d399' }}>✓</span> ~/bin/gemini</p>
+          <p style={{ color: '#94a3b8', fontSize: '0.75rem' }}>kai never bundles AI binaries — you own keys + execution.</p>
         </div>
       );
-    } else if (input === 'codex' || input === 'codex cli' || input === 'connect codex' || input === 'kai codex') {
-      reply = (
-        <div style={{ color: '#93c5fd' }}>
-          <p style={{ fontWeight: 600, color: '#bfdbfe' }}>🤖 OpenAI Codex CLI Connection Status:</p>
-          <p>• Binary: <span style={{ color: '#34d399', fontFamily: 'Fira Code, monospace' }}>/usr/local/bin/codex</span> (Detected via PATH)</p>
-          <p>• PTY Handle: Bounded local process execution</p>
-          <p>• Mode: Interactive code generation &amp; terminal assist ready</p>
-        </div>
-      );
-    } else if (input === 'gemini' || input === 'gemini cli' || input === 'connect gemini' || input === 'kai gemini') {
-      reply = (
-        <div style={{ color: '#6ee7b7' }}>
-          <p style={{ fontWeight: 600, color: '#a7f3d0' }}>🤖 Gemini CLI Connection Status:</p>
-          <p>• Binary: <span style={{ color: '#34d399', fontFamily: 'Fira Code, monospace' }}>~/.nvm/versions/bin/gemini</span> (Detected via PATH)</p>
-          <p>• Mode: Multimodal developer assistant ready</p>
-        </div>
-      );
-    } else if (input === 'ai' || input === 'kai ai' || input === 'kai --ai') {
-      reply = (
-        <div style={{ color: '#d8b4fe' }}>
-          <p style={{ fontWeight: 600, color: '#e9d5ff' }}>Local System PATH AI CLI Probe Results:</p>
-          <p>• Codex CLI: <span style={{ color: '#34d399' }}>Available</span> (/usr/local/bin/codex)</p>
-          <p>• Claude Code: <span style={{ color: '#34d399' }}>Available</span> (/usr/bin/claude)</p>
-          <p>• Gemini CLI: <span style={{ color: '#34d399' }}>Available</span> (~/.nvm/versions/bin/gemini)</p>
-          <p style={{ color: '#94a3b8', fontSize: '0.75rem', fontStyle: 'italic' }}>* Kai never bundles AI binaries. You control all execution &amp; keys.</p>
-        </div>
-      );
-    } else if (input === 'downloads' || input === 'download' || input === 'kai downloads') {
+    } else if (['downloads', 'download', 'install'].includes(input)) {
       reply = (
         <div style={{ color: '#67e8f9' }}>
-          <p style={{ fontWeight: 600, color: '#a5f3fc' }}>Official Kai Release Installers (v0.1.0):</p>
-          <p>• Windows: .exe (NSIS Installer), .msi (64-bit Package)</p>
-          <p>• Linux: .deb (Ubuntu/Debian x64 &amp; ARM64), .AppImage (x64 &amp; ARM64)</p>
-          <p>• macOS: .dmg (Apple Silicon M1-M4)</p>
+          <p>.exe/.msi · .deb/.AppImage · .dmg (M1-M4)</p>
+          <p style={{ color: '#94a3b8' }}>$ scroll to #downloads or run tab above ↑</p>
         </div>
       );
-    } else if (input === 'version' || input === 'kai --version' || input === 'kai -v') {
-      reply = <p style={{ color: '#67e8f9' }}>Kai v0.1.0 (Tauri 2.1.0 + Rust PTY backend, MIT License)</p>;
-    } else if (input === 'whoami' || input === 'kai') {
-      reply = <p style={{ color: '#cbd5e1' }}>kai@kai-workstation</p>;
-    } else if (input === 'ls' || input === 'dir') {
-      reply = <p style={{ color: '#94a3b8', fontFamily: 'Fira Code, monospace' }}>src/  src-tauri/  packaging/  Cargo.toml  package.json  README.md</p>;
-    } else if (input === 'license') {
-      reply = <p style={{ color: '#fcd34d' }}>MIT License — Copyright (c) 2026 Kai Contributors. 100% Free &amp; Open Source.</p>;
+    } else if (['version', 'kai --version'].includes(input)) {
+      reply = <p style={{ color: '#67e8f9' }}>kai v0.1.0 — Tauri 2.1 + Rust · MIT</p>;
+    } else if (['ls', 'dir'].includes(input)) {
+      reply = <p style={{ color: '#94a3b8' }}>src/ src-tauri/ packaging/ Cargo.toml package.json</p>;
     } else if (input === 'clear' || input === 'cls') {
       setTerminalHistory([]);
       setTerminalInput('');
       return;
     } else {
-      reply = <p style={{ color: '#fb7185' }}>Command not found: &apos;{rawInput}&apos;. Type &apos;help&apos; or &apos;kai --status&apos; for commands.</p>;
+      reply = <p style={{ color: '#fb7185' }}>not found: '{rawInput}'. type 'help'.</p>;
     }
-
     setTerminalHistory((prev) => [...prev, { cmd: rawInput, output: reply }]);
     setTerminalInput('');
   };
 
-  const chips: Array<{ label: string; value: string; bg: string; fg: string; border: string }> = [
-    { label: 'kai --status', value: 'kai --status', bg: 'rgba(6,182,212,0.12)', fg: '#22d3ee', border: 'rgba(6,182,212,0.3)' },
-    { label: 'claude', value: 'claude', bg: 'rgba(168,85,247,0.12)', fg: '#c084fc', border: 'rgba(168,85,247,0.3)' },
-    { label: 'ai', value: 'ai', bg: 'rgba(255,255,255,0.06)', fg: '#94a3b8', border: 'rgba(255,255,255,0.08)' },
-    { label: 'downloads', value: 'downloads', bg: 'rgba(255,255,255,0.06)', fg: '#94a3b8', border: 'rgba(255,255,255,0.08)' },
-  ];
+  const onSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    run(terminalInput);
+  };
+
+  const chips = ['kai --status', 'ai', 'downloads', 'help'];
 
   return (
     <div className="t-terminal" role="region" aria-label="Interactive Kai demo terminal">
@@ -218,18 +275,12 @@ function HeroTerminal() {
           <span className="t-dot" style={{ backgroundColor: '#ef4444' }}></span>
           <span className="t-dot" style={{ backgroundColor: '#f59e0b' }}></span>
           <span className="t-dot" style={{ backgroundColor: '#10b981' }}></span>
-          <span className="t-terminal-title">kai ~ bash (portable-pty 0.8)</span>
+          <span className="t-terminal-title">kai — zsh</span>
         </div>
         <div className="t-terminal-chips">
           {chips.map((c) => (
-            <button
-              key={c.label}
-              type="button"
-              onClick={() => setTerminalInput(c.value)}
-              className="t-chip"
-              style={{ backgroundColor: c.bg, color: c.fg, border: `1px solid ${c.border}` }}
-            >
-              {c.label}
+            <button key={c} type="button" onClick={() => run(c)} className="t-chip">
+              {c}
             </button>
           ))}
         </div>
@@ -239,20 +290,19 @@ function HeroTerminal() {
         {terminalHistory.map((item, idx) => (
           <div key={idx} className="t-term-line">
             <div className="t-term-prompt">
-              <span>user@kai:~$</span>
+              <span>➜ ~</span>
               <span className="t-term-cmd">{item.cmd}</span>
             </div>
             <div className="t-term-out">{item.output}</div>
           </div>
         ))}
-
-        <form onSubmit={handleTerminalSubmit} className="t-term-form">
-          <span style={{ color: '#38bdf8' }}>user@kai:~$</span>
+        <form onSubmit={onSubmit} className="t-term-form">
+          <span style={{ color: '#38bdf8' }}>➜ ~</span>
           <input
             type="text"
             value={terminalInput}
             onChange={(e) => setTerminalInput(e.target.value)}
-            placeholder="Try typing 'help', 'status', 'ai', or 'downloads'..."
+            placeholder="type 'help' + enter — it's live"
             className="t-term-input"
             aria-label="Demo terminal input"
           />
@@ -263,24 +313,31 @@ function HeroTerminal() {
 }
 
 const FEATURES = [
-  { icon: Cpu, tone: 't-icon--cyan', title: 'Rust PTY Core (`portable-pty`)', body: 'Direct OS pseudo-terminal streaming without Node.js backend overhead. Supports POSIX PTY on Linux/macOS and ConPTY on Windows.' },
-  { icon: Bot, tone: 't-icon--purple', title: 'Safe Local AI CLI Detection', body: 'Probes local PATH safely for installed AI CLIs (Codex, Claude Code, Gemini). Zero bundled binaries, keeping you in total control.' },
-  { icon: Layers, tone: 't-icon--green', title: 'Multi-Tab Process Isolation', body: 'Each terminal tab runs with isolated working directory handles, independent child process trees, and dedicated PTY channels.' },
-  { icon: ShieldCheck, tone: 't-icon--amber', title: 'Zero Telemetry & Secret Shield', body: 'No tracking cookies, no background analytics, and no remote keystroke logging. Strict Content Security Policy (CSP) enforced.' },
-  { icon: Zap, tone: 't-icon--pink', title: 'GPU Accelerated Rendering', body: '60 FPS smooth rendering powered by `@xterm/xterm` canvas engine, fast text selection, search addon, and automatic grid fitting.' },
-  { icon: Globe, tone: 't-icon--blue', title: '100% Free MIT Open Source', body: 'Free for all personal and enterprise workloads. Reproducible native installer builds compiled automatically on GitHub.' },
+  { icon: Cpu, tone: 't-icon--cyan', tag: 'rust · portable-pty', title: 'Native PTY core', body: 'Direct OS pty streams. No Node backend, no Electron. ConPTY on Windows, POSIX elsewhere.' },
+  { icon: Zap, tone: 't-icon--pink', tag: 'xterm.js · 60fps', title: 'GPU rendering', body: 'Canvas viewport, fast select + search, grid fit. Stays smooth on huge output.' },
+  { icon: Layers, tone: 't-icon--green', tag: 'tabs · isolation', title: 'Isolated tabs', body: 'Per-tab cwd + process tree + pty channel. One tab dies, the rest live.' },
+  { icon: Bot, tone: 't-icon--purple', tag: 'codex · claude · gemini', title: 'Local AI CLIs', body: 'Detects tools already on your PATH. Zero bundled binaries, zero lock-in.' },
+  { icon: ShieldCheck, tone: 't-icon--amber', tag: 'zero telemetry', title: 'Private by default', body: 'No tracking, no keystroke logging, strict CSP. Everything stays local.' },
+  { icon: Monitor, tone: 't-icon--blue', tag: '~30MB idle', title: 'Tauri 2, not Electron', body: '10× lighter than Electron terminals. Fast cold start, MIT licensed.' },
 ];
 
 function SiteContent() {
-  const [activeFaq, setActiveFaq] = useState<number | null>(null);
+  const [activeFaq, setActiveFaq] = useState<number | null>(0);
+  const [qsTab, setQsTab] = useState<'run' | 'ai' | 'config'>('run');
 
   const faqItems = [
-    { q: 'Is Kai 100% free and open-source?', a: 'Yes! Kai is released under the permissive MIT License. It is completely free for personal, educational, and commercial use with no hidden fees or paywalls.' },
-    { q: 'Does Kai collect telemetry or log terminal output?', a: 'No. Kai enforces a strict Zero Telemetry policy. Your keystrokes, environment variables, command history, and session data remain strictly local to your machine.' },
-    { q: 'How does local AI CLI integration work?', a: 'Kai automatically probes your local system PATH for AI tools you already have installed (such as Codex CLI, Claude Code, or Gemini CLI). It does not bundle heavy external AI binaries or force subscriptions.' },
-    { q: 'Why use Tauri 2 + Rust instead of Electron?', a: 'By leveraging Tauri 2 and native Rust PTY streams (portable-pty), Kai consumes under 30MB of RAM at idle compared to 300MB+ for typical Electron terminal emulators, delivering faster startup times and lower CPU usage.' },
-    { q: 'Which operating systems and package formats are supported?', a: 'Kai provides native installers for Windows (.exe NSIS, .msi), Linux (.deb x64/ARM64, .AppImage x64/ARM64), and macOS (.dmg for Apple Silicon M1-M4).' },
+    { q: 'Is Kai free?', a: 'Yes — MIT. Free for personal + commercial, no paywall, reproducible builds on GitHub Actions.' },
+    { q: 'Any telemetry?', a: 'No. No analytics, no keystroke logging, strict CSP. Sessions never leave your machine.' },
+    { q: 'How does AI work?', a: 'Kai probes PATH for codex / claude / gemini you already installed and launches them in a full pty. Bring your own keys.' },
+    { q: 'Why Tauri + Rust?', a: '~30MB idle vs 300MB+ Electron. Native portable-pty streams, faster startup, lower CPU.' },
+    { q: 'Which OS builds?', a: 'Windows .exe/.msi · Linux .deb (x64/ARM64) + .AppImage · macOS .dmg (Apple Silicon).' },
   ];
+
+  const qsCode: Record<string, string> = {
+    run: '# launch + verify\nkai\nkai --status        # pty + render + AI probe\nkai --help          # all flags',
+    ai: '# use tools you already have\ncodex --help        # OpenAI Codex CLI\nclaude --help       # Claude Code\nGemini --help       # Gemini CLI\n# kai auto-detects all three on PATH',
+    config: '# zero-config, sensible defaults\n# theme: dark/light auto · font: Fira Code\n# shell: $SHELL on unix, ConPTY on win\n# tabs keep isolated cwd + env',
+  };
 
   return (
     <div id="top" style={{ backgroundColor: 'var(--bg-canvas)', color: 'var(--text-primary)', minHeight: '100vh', transition: 'background-color .25s ease, color .25s ease' }}>
@@ -289,35 +346,86 @@ function SiteContent() {
       {/* Hero */}
       <section className="t-hero">
         <div className="t-hero-glow"></div>
+        <div className="t-grid-bg" aria-hidden="true"></div>
         <div className="t-hero-inner">
-          <Badge><Sparkles size={14} /> One terminal. Every platform.</Badge>
+          <Badge><Sparkles size={14} /> v0.1.0 · MIT · Tauri 2 + Rust</Badge>
 
           <h1 className="t-hero-title">
-            Kai Terminal<br />One terminal. Every platform.
+            One terminal.<br />Every platform.
           </h1>
 
           <p className="t-hero-sub">
-            A modern cross-platform terminal for Windows, Linux, and macOS. Powered by <strong>Tauri 2</strong>, memory-safe <strong>Rust PTY streams (`portable-pty`)</strong>, and GPU-accelerated <strong>xterm.js</strong>.
+            Lightweight, keyboard-first terminal for devs who live in the shell. Native pty, GPU render, local AI CLIs.
           </p>
 
+          <InstallBar />
+
           <div className="t-hero-cta">
-            <Button href="#downloads"><Download size={18} /> Download Free Release <ArrowRight size={16} /></Button>
-            <Button href={REPO_URL} variant="secondary"><Code2 size={18} /> Source Code</Button>
+            <Button href="#downloads"><Download size={18} /> Download <ArrowRight size={16} /></Button>
+            <Button href={REPO_URL} variant="secondary"><Code2 size={18} /> git clone</Button>
+          </div>
+
+          <div className="t-stats">
+            {[
+              ['~30MB', 'idle RAM'],
+              ['60fps', 'xterm.js'],
+              ['3 OS', 'win · linux · mac'],
+              ['0', 'telemetry'],
+            ].map(([v, l]) => (
+              <div key={l} className="t-stat"><b>{v}</b><span>{l}</span></div>
+            ))}
           </div>
 
           <HeroTerminal />
+          <p className="t-hint">live demo — click a chip or type <code>help</code>. Try <code>ai</code>.</p>
         </div>
       </section>
 
-      {/* Features */}
-      <Section id="features" alt>
+      {/* Quickstart */}
+      <Section id="quickstart" alt>
         <SectionHead
-          title="Architected for Pure Performance"
-          sub="Combining memory-safe Rust execution with hardware-accelerated frontend rendering."
+          title="Up and running in 30s"
+          sub="Install, verify, plug in your AI CLI. No account, no config wizard."
+        />
+        <div className="t-split">
+          <div className="t-steps">
+            {[
+              ['01', 'Install', 'Pick your OS above or grab a file below.'],
+              ['02', 'Verify', 'Run kai --status to check pty + render health.'],
+              ['03', 'Plug AI', 'Install codex / claude / gemini — Kai finds them on PATH.'],
+            ].map(([n, t, d]) => (
+              <div key={n} className="t-step">
+                <span className="t-step-n">{n}</span>
+                <div><b>{t}</b><p>{d}</p></div>
+              </div>
+            ))}
+            <a className="t-link" href={`${REPO_URL}/blob/main/DEVELOPMENT.md`}>Read DEVELOPMENT.md <ChevronRight size={15} /></a>
+          </div>
+          <div className="t-panel t-code-panel">
+            <div className="t-install-tabs" role="tablist">
+              {(['run', 'ai', 'config'] as const).map((k) => (
+                <button key={k} role="tab" aria-selected={qsTab === k} data-active={qsTab === k} className="t-install-tab" onClick={() => setQsTab(k)}>
+                  {k === 'run' ? '$ quickstart' : k === 'ai' ? '$ ai' : '$ config'}
+                </button>
+              ))}
+              <span style={{ flex: 1 }} />
+              <CopyBtn text={qsCode[qsTab]} />
+            </div>
+            <pre className="t-code"><code>{qsCode[qsTab]}</code></pre>
+          </div>
+        </div>
+      </Section>
+
+      {/* Features */}
+      <Section id="features">
+        <SectionHead
+          title="Built for speed, not slides"
+          sub="Six things devs actually feel every day."
         />
         <div className="t-grid-3">
           {FEATURES.map((f) => (
             <Card key={f.title} hover>
+              <span className="t-tag">{f.tag}</span>
               <div className={`t-icon ${f.tone}`}>
                 <f.icon size={24} />
               </div>
@@ -329,128 +437,72 @@ function SiteContent() {
       </Section>
 
       {/* AI CLI */}
-      <Section id="ai-cli">
+      <Section id="ai-cli" alt>
         <div className="t-split">
           <div>
-            <Badge tone="purple"><Bot size={14} /> Seamless AI Workflow</Badge>
-            <h2 className="t-section-title" style={{ textAlign: 'left' }}>Designed for Developer AI Tools</h2>
-            <p style={{ color: 'var(--text-secondary)', fontSize: '1.05rem', lineHeight: 1.65, marginBottom: '1.75rem' }}>
-              Kai respects your environment. Rather than forcing proprietary AI APIs or bundling opaque binary blobs, Kai detects local CLI tools already installed on your system.
+            <Badge tone="purple"><Bot size={14} /> BYO AI · no lock-in</Badge>
+            <h2 className="t-section-title" style={{ textAlign: 'left' }}>Works with the AI CLIs you already use</h2>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '1.02rem', lineHeight: 1.65, marginBottom: '1.5rem' }}>
+              No bundled blobs, no proxy API. Kai probes <code>PATH</code> and runs your tools in a full interactive pty, under your user + keys.
             </p>
             <ul className="t-check-list">
-              <li><CheckCircle2 size={18} color="var(--accent-purple-fg)" /><span><strong>Codex CLI / Claude Code / Gemini CLI:</strong> Automatically discovered via local system PATH.</span></li>
-              <li><CheckCircle2 size={18} color="var(--accent-purple-fg)" /><span><strong>Zero Vendor Lock-in:</strong> Works out of the box with standard shell tools and customized aliases.</span></li>
-              <li><CheckCircle2 size={18} color="var(--accent-purple-fg)" /><span><strong>User Controlled Execution:</strong> AI commands run under your permissions with full interactive terminal visibility.</span></li>
+              <li><CheckCircle2 size={18} color="var(--accent-purple-fg)" /><span><strong>codex / claude / gemini</strong> — auto-found, version shown.</span></li>
+              <li><CheckCircle2 size={18} color="var(--accent-purple-fg)" /><span><strong>Full ANSI passthrough</strong> — TUIs render exactly like your shell.</span></li>
+              <li><CheckCircle2 size={18} color="var(--accent-purple-fg)" /><span><strong>You control exec</strong> — visible process tree per tab.</span></li>
             </ul>
           </div>
 
-          <div className="t-panel">
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '1rem', marginBottom: '1rem' }}>
-              <span style={{ fontSize: '0.9rem', fontWeight: 700 }}>Local AI CLI Probe Diagnostics</span>
-              <span style={{ fontSize: '0.75rem', color: 'var(--accent-green-fg)', backgroundColor: 'var(--accent-green-bg)', padding: '0.2rem 0.5rem', borderRadius: '4px' }}>Active</span>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-              {[
-                { name: 'Codex CLI', detail: 'Path: /usr/local/bin/codex • Version: 0.14.2', color: '#a855f7' },
-                { name: 'Claude Code CLI', detail: 'Path: /usr/bin/claude • Version: 1.0.4', color: '#38bdf8' },
-                { name: 'Gemini CLI', detail: 'Path: ~/.nvm/versions/bin/gemini • Version: 0.8.0', color: '#34d399' },
-              ].map((r) => (
-                <div key={r.name} className="t-mono-row" style={{ color: 'var(--text-secondary)' }}>
-                  <div style={{ color: r.color, fontWeight: 600 }}>{r.name}</div>
-                  <div style={{ color: 'var(--text-tertiary)', fontSize: '0.75rem', marginTop: '0.2rem' }}>{r.detail}</div>
-                </div>
-              ))}
-            </div>
+          <div className="t-panel t-probe">
+            <div className="t-probe-head"><span>$ kai --probe ai</span><span className="t-pill">3 found</span></div>
+            <pre className="t-code t-code--sm"><code>{`✓ codex   /usr/local/bin/codex   v0.14.2
+✓ claude  /usr/bin/claude         v1.0.4
+✓ gemini  ~/.nvm/bin/gemini       v0.8.0
+— 0 bundled binaries · PATH only`}</code></pre>
           </div>
-        </div>
-      </Section>
-
-      {/* Architecture strip */}
-      <Section id="architecture" alt>
-        <SectionHead
-          badge={<Badge tone="neutral">Tauri 2 • Rust • React • xterm.js</Badge>}
-          title="Lightweight by Architecture, Not by Compromise"
-          sub="Under 30MB idle RAM. Native PTY streams, GPU canvas rendering, and strict session isolation."
-        />
-        <div className="t-grid-3">
-          <Card><h3>~30MB idle footprint</h3><p>Tauri 2 webview shell plus a native Rust backend — no bundled Chromium, no Electron overhead.</p></Card>
-          <Card><h3>Native PTY everywhere</h3><p>portable-pty on POSIX, ConPTY on Windows. Direct byte streams with full ANSI fidelity.</p></Card>
-          <Card><h3>Isolated by default</h3><p>Per-tab working directories and process trees. Zero telemetry, strict CSP, local-first secrets.</p></Card>
         </div>
       </Section>
 
       {/* Downloads */}
       <Section id="downloads">
-        <div style={{ textAlign: 'center', marginBottom: '3rem' }}>
-          <Badge tone="green"><PackageCheck size={14} /> Official Pre-built Installers</Badge>
-          <h2 className="t-section-title">Download Kai for Your Platform</h2>
-          <p className="t-section-sub">Native release packages built directly on clean GitHub Actions runners.</p>
+        <div style={{ textAlign: 'center', marginBottom: '2.5rem' }}>
+          <Badge tone="green"><PackageCheck size={14} /> GitHub Releases · SHA256</Badge>
+          <h2 className="t-section-title">Download Kai</h2>
+          <p className="t-section-sub">One file per OS. Built clean on GitHub Actions.</p>
         </div>
 
-        <div className="t-grid-3" style={{ marginBottom: '2rem' }}>
-          <Card solid>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem', marginBottom: '1.25rem' }}>
-              <div style={{ padding: '0.65rem', borderRadius: '12px', backgroundColor: 'var(--accent-cyan-bg)' }}><Monitor size={28} color="var(--accent-cyan-fg)" /></div>
-              <div><h3 style={{ margin: 0 }}>Windows</h3><span style={{ fontSize: '0.825rem', color: 'var(--text-secondary)' }}>Windows 10 / 11 (x86_64)</span></div>
-            </div>
-            <p style={{ marginBottom: '1.75rem' }}>Native ConPTY support for PowerShell Core, CMD, Git Bash, and WSL environment integration.</p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-              <a className="t-dl t-dl--accent-cyan" href={`${LATEST_RELEASE_URL}/download/Kai_0.1.0_x64-setup.exe`}><span>Download NSIS Installer (.exe)</span><Download size={16} /></a>
-              <a className="t-dl" href={`${LATEST_RELEASE_URL}/download/Kai_0.1.0_x64_en-US.msi`}><span>Download MSI Package (.msi)</span><Download size={16} /></a>
-            </div>
-          </Card>
-
-          <Card solid>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem', marginBottom: '1.25rem' }}>
-              <div style={{ padding: '0.65rem', borderRadius: '12px', backgroundColor: 'var(--accent-green-bg)' }}><Terminal size={28} color="var(--accent-green-fg)" /></div>
-              <div><h3 style={{ margin: 0 }}>Linux</h3><span style={{ fontSize: '0.825rem', color: 'var(--text-secondary)' }}>Ubuntu / Debian / Arch / Fedora</span></div>
-            </div>
-            <p style={{ marginBottom: '1.75rem' }}>Debian `.deb` packages (x64 &amp; ARM64) and standalone `.AppImage` builds, each compiled natively on GitHub runners.</p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-              <a className="t-dl t-dl--accent-green" href={`${LATEST_RELEASE_URL}/download/kai_0.1.0_amd64.deb`}><span>Debian / Ubuntu Package (.deb x64)</span><Download size={16} /></a>
-              <a className="t-dl" href={`${LATEST_RELEASE_URL}/download/kai_0.1.0_amd64.AppImage`}><span>Portable Linux AppImage (.AppImage x64)</span><Download size={16} /></a>
-              <a className="t-dl" href={`${LATEST_RELEASE_URL}/download/kai_0.1.0_arm64.deb`}><span>Debian ARM64 Package (.deb ARM64)</span><Download size={16} /></a>
-              <a className="t-dl" href={`${LATEST_RELEASE_URL}/download/kai_0.1.0_arm64.AppImage`}><span>Portable Linux AppImage (.AppImage ARM64)</span><Download size={16} /></a>
-            </div>
-          </Card>
-
-          <Card solid>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem', marginBottom: '1.25rem' }}>
-              <div style={{ padding: '0.65rem', borderRadius: '12px', backgroundColor: 'var(--accent-purple-bg)' }}><Globe size={28} color="var(--accent-purple-fg)" /></div>
-              <div><h3 style={{ margin: 0 }}>macOS</h3><span style={{ fontSize: '0.825rem', color: 'var(--text-secondary)' }}>macOS 12.0+ Monterey or later</span></div>
-            </div>
-            <p style={{ marginBottom: '1.75rem' }}>Native Apple Silicon build (M1/M2/M3/M4). Supports Zsh, Bash, and Fish shells.</p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-              <a className="t-dl t-dl--accent-purple" href={`${LATEST_RELEASE_URL}/download/Kai_0.1.0_aarch64.dmg`}><span>Apple Silicon DMG (M1/M2/M3/M4)</span><Download size={16} /></a>
-            </div>
-          </Card>
+        <div className="t-grid-3" style={{ marginBottom: '1.5rem' }}>
+          {[
+            { os: 'Windows', sub: '10 / 11 · x64', href: `${LATEST_RELEASE_URL}/download/Kai_0.1.0_x64-setup.exe`, cta: 'Kai_0.1.0_x64-setup.exe', alt: '.msi alternative', altHref: `${LATEST_RELEASE_URL}/download/Kai_0.1.0_x64_en-US.msi` },
+            { os: 'Linux', sub: '.deb + .AppImage', href: `${LATEST_RELEASE_URL}/download/kai_0.1.0_amd64.deb`, cta: 'kai_0.1.0_amd64.deb', alt: '.AppImage + ARM64 builds', altHref: LATEST_RELEASE_URL },
+            { os: 'macOS', sub: '12+ · M1–M4', href: `${LATEST_RELEASE_URL}/download/Kai_0.1.0_aarch64.dmg`, cta: 'Kai_0.1.0_aarch64.dmg', alt: 'checksums + changelog', altHref: LATEST_RELEASE_URL },
+          ].map((d) => (
+            <Card key={d.os} solid>
+              <h3 style={{ display: 'flex', alignItems: 'center', gap: '.6rem' }}><Monitor size={20} /> {d.os}</h3>
+              <p style={{ marginBottom: '1.25rem' }}>{d.sub}</p>
+              <a className="t-dl t-dl--accent-cyan" href={d.href}><span>{d.cta}</span><Download size={16} /></a>
+              <a className="t-link" style={{ marginTop: '.8rem', display: 'inline-flex' }} href={d.altHref} target={d.altHref.startsWith('http') ? '_blank' : undefined} rel="noreferrer">{d.alt} <ChevronRight size={14} /></a>
+            </Card>
+          ))}
         </div>
 
-        <div className="t-panel" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1.5rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem' }}>
-            <div style={{ padding: '0.85rem', borderRadius: '12px', backgroundColor: 'var(--accent-cyan-bg)', color: 'var(--accent-cyan-fg)' }}><Github size={26} /></div>
-            <div>
-              <h4 style={{ fontSize: '1.15rem', fontWeight: 700 }}>All Release Artifacts &amp; SHA256 Checksums</h4>
-              <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginTop: '0.2rem' }}>Inspect full changelogs, build verification hashes, and tag history on GitHub.</p>
-            </div>
-          </div>
-          <a href={LATEST_RELEASE_URL} target="_blank" rel="noreferrer" className="t-btn t-btn--primary t-btn--sm">View GitHub Releases <ExternalLink size={16} /></a>
+        <div className="t-panel t-verify">
+          <div><b>Verify + see all artifacts</b><p>Changelog, SHA256, full tag history.</p></div>
+          <a href={LATEST_RELEASE_URL} target="_blank" rel="noreferrer" className="t-btn t-btn--primary t-btn--sm">Releases <ExternalLink size={16} /></a>
         </div>
       </Section>
 
       {/* FAQ */}
       <Section id="faq" alt>
         <div className="t-container-narrow" style={{ padding: 0 }}>
-          <div style={{ textAlign: 'center', marginBottom: '3rem' }}>
-            <Badge tone="neutral"><HelpCircle size={14} /> Clear Answers</Badge>
-            <h2 className="t-section-title">Frequently Asked Questions</h2>
-            <p className="t-section-sub">Everything you need to know about Kai features, privacy, and performance.</p>
+          <div style={{ textAlign: 'center', marginBottom: '2.5rem' }}>
+            <Badge tone="neutral"><HelpCircle size={14} /> FAQ</Badge>
+            <h2 className="t-section-title">Short answers</h2>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '.9rem' }}>
             {faqItems.map((item, idx) => (
               <div key={idx} onClick={() => setActiveFaq(activeFaq === idx ? null : idx)} className="t-faq-item" data-open={activeFaq === idx}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem' }}>
-                  <h3 style={{ fontSize: '1.1rem', fontWeight: 700 }}>{item.q}</h3>
+                  <h3 style={{ fontSize: '1rem', fontWeight: 700 }}>{item.q}</h3>
                   <span style={{ fontSize: '1.25rem', color: 'var(--text-tertiary)', transform: activeFaq === idx ? 'rotate(45deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>+</span>
                 </div>
                 {activeFaq === idx && <p className="t-faq-a">{item.a}</p>}
@@ -462,23 +514,22 @@ function SiteContent() {
 
       {/* Footer */}
       <footer className="t-footer">
-        <div style={{ maxWidth: '1150px', margin: '0 auto', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1.5rem' }}>
+        <div style={{ maxWidth: '1150px', margin: '0 auto', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1.25rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
             <div className="t-brand-mark" style={{ width: '28px', height: '28px', borderRadius: '8px' }}><Terminal size={16} color="#ffffff" /></div>
-            <span style={{ fontSize: '1.15rem', fontWeight: 800, color: 'var(--text-primary)' }}>Kai</span>
+            <span style={{ fontSize: '1.1rem', fontWeight: 800 }}>kai</span>
+            <span className="t-version">MIT</span>
           </div>
-          <p style={{ maxWidth: '600px', textAlign: 'center', color: 'var(--text-secondary)' }}>
-            A modern cross-platform terminal for Windows, Linux, and macOS. Released under the permissive MIT license.
-          </p>
-          <div style={{ display: 'flex', gap: '2rem', flexWrap: 'wrap', justifyContent: 'center', color: 'var(--text-secondary)' }}>
-            <a href="#features" style={{ color: 'inherit', textDecoration: 'none' }}>Features</a>
-            <a href="#ai-cli" style={{ color: 'inherit', textDecoration: 'none' }}>AI Integration</a>
-            <a href="#downloads" style={{ color: 'inherit', textDecoration: 'none' }}>Installers for All OS</a>
-            <a href="#faq" style={{ color: 'inherit', textDecoration: 'none' }}>FAQ</a>
-            <a href={REPO_URL} target="_blank" rel="noreferrer" style={{ color: 'inherit', textDecoration: 'none' }}>GitHub Repository</a>
+          <p style={{ color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)', fontSize: '.82rem' }}>$ git clone {REPO_URL}.git — PRs welcome</p>
+          <div style={{ display: 'flex', gap: '1.5rem', flexWrap: 'wrap', justifyContent: 'center' }}>
+            <a href="#quickstart" style={{ color: 'inherit', textDecoration: 'none' }}>Quickstart</a>
+            <a href="#downloads" style={{ color: 'inherit', textDecoration: 'none' }}>Download</a>
+            <a href={REPO_URL} target="_blank" rel="noreferrer" style={{ color: 'inherit', textDecoration: 'none' }}>GitHub</a>
+            <a href={`${REPO_URL}/issues`} target="_blank" rel="noreferrer" style={{ color: 'inherit', textDecoration: 'none' }}>Issues</a>
+            <a href={LATEST_RELEASE_URL} target="_blank" rel="noreferrer" style={{ color: 'inherit', textDecoration: 'none' }}>Releases</a>
           </div>
-          <div style={{ borderTop: '1px solid var(--border-subtle)', width: '100%', paddingTop: '1.5rem', textAlign: 'center', fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>
-            Copyright © 2026 Kai Contributors. All rights reserved.
+          <div style={{ borderTop: '1px solid var(--border-subtle)', width: '100%', paddingTop: '1.25rem', textAlign: 'center', fontSize: '0.78rem', color: 'var(--text-tertiary)' }}>
+            © 2026 Kai Contributors · MIT
           </div>
         </div>
       </footer>

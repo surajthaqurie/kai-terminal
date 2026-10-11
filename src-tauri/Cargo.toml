@@ -20,6 +20,8 @@ tauri = { version = "2.1.0", features = [], optional = true }
 
 [features]
 default = ["tauri"]
+tauri = ["dep:tauri", "dep:tauri-build"]
+tauri-build = ["dep:tauri-build"]
 
 [profile.release]
 panic = "abort"
