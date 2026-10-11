@@ -17,7 +17,35 @@ This guide explains how to install pre-built packages of Kai Terminal or build t
 
 ---
 
-## Installation Instructions
+## Installing Kai CLI (Project Intelligence & MCP Server)
+
+The `kai` CLI and Model Context Protocol (MCP) server can be installed globally or run locally using Node.js (v20+):
+
+### Global Installation via npm
+```bash
+cd kai
+npm install
+npm run build:cli
+npm link
+```
+After linking, the `kai` command is available in your shell:
+```bash
+kai --version
+kai code .
+kai status
+kai mcp .
+```
+
+### Local Execution
+```bash
+./bin/kai.js --help
+./bin/kai.js code .
+./bin/kai.js query "Explain architecture"
+```
+
+---
+
+## Supported Operating Systems (Desktop App)
 
 ### Linux
 

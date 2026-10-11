@@ -48,52 +48,40 @@ The browser preview will be accessible at `http://localhost:1420`.
 
 ```text
 terminal/
-├── package.json              # Frontend npm packages and scripts
+├── bin/
+│   └── kai.js                # Executable Node CLI entrypoint
+├── package.json              # Dependencies, bin link, and scripts
 ├── tsconfig.json             # TypeScript compiler settings
-├── vite.config.ts            # Vite bundler config
-├── index.html                # App entry HTML
-├── src/                      # React Frontend Source Code
-│   ├── main.tsx              # React DOM entry point
-│   ├── App.tsx               # Primary layout (tabs, toolbar, panels)
-│   ├── App.css               # Global application styling
-│   ├── components/           # UI Components
-│   │   ├── TabBar.tsx        # Tab bar with inline renaming
-│   │   ├── Toolbar.tsx       # Shell selector, cwd, recent projects, git badge
-│   │   ├── TerminalView.tsx  # xterm.js view connected to PTY backend
-│   │   ├── SearchBar.tsx     # Scrollback search overlay
-│   │   ├── CommandPalette.tsx# Keyboard command launcher (`Ctrl+Shift+P`)
-│   │   ├── SettingsModal.tsx # Theme, font, shell, shortcut configuration
-│   │   ├── AiCliPanel.tsx    # Optional AI CLI status and diagnostic view
-│   │   └── DiagnosticsModal.tsx # Diagnostic report export window
+├── vite.config.ts            # Desktop frontend Vite bundler config
+├── vite.cli.config.ts        # Standalone CLI Vite bundler config
+├── index.html                # Desktop app entry HTML
+├── src/                      # TypeScript Source Code
+│   ├── cli/                  # Terminal CLI command handlers
+│   │   └── index.ts          # CLI runner & argument dispatcher
+│   ├── core/                 # Project Intelligence Engine
+│   │   ├── types.ts          # Core data models
+│   │   ├── registry.ts       # Project storage (~/.kai/), atomic writes, locks
+│   │   ├── tokenCounter.ts   # Deterministic token estimator & budgeter
+│   │   ├── indexer.ts        # Bounded incremental file scanner & symbol extractor
+│   │   ├── classifier.ts     # Task classifier (explain, implement, debug, etc.)
+│   │   ├── templates.ts      # Versioned prompt templates
+│   │   ├── skills.ts         # On-demand skill registry
+│   │   ├── retrieval.ts      # Deterministic relevance search & ranking
+│   │   ├── contextAssembler.ts # Multi-stage context package builder
+│   │   ├── mcp.ts            # Stdio JSON-RPC Model Context Protocol server
+│   │   ├── benchmarks.ts     # 4-configuration benchmark harness
+│   │   └── telemetry.ts      # Privacy-safe local metrics logging
+│   ├── components/           # UI Components (Desktop app)
 │   ├── services/             # Typed Frontend Services
-│   │   ├── ptyService.ts     # PTY IPC interface and Tauri wrapper
-│   │   ├── aiCliService.ts   # AI CLI status and diagnostic checker
-│   │   ├── projectService.ts # Recent projects and git info client
-│   │   ├── diagnosticsService.ts # Diagnostic report generator
-│   │   ├── settingsService.ts# Preferences storage and validation
-│   │   ├── shortcuts.ts      # Keyboard shortcut registry
-│   │   ├── paneLayout.ts     # Split pane layout engine
-│   │   └── workspaces.ts     # Session workspace storage and migration
-│   ├── types/                # TypeScript Interfaces
-│   │   └── terminal.ts       # Shell profiles, PTY options, settings types
-│   └── __tests__/            # Frontend Unit Tests (Vitest)
+│   ├── types/                # UI TypeScript Interfaces
+│   └── __tests__/            # Unit & Integration Tests (Vitest)
+│       ├── intelligence.test.ts # Intelligence, tokens, classifier tests
+│       └── mcp_security.test.ts # MCP protocol, security, concurrency tests
 └── src-tauri/                # Rust Desktop Backend
     ├── Cargo.toml            # Rust crate dependencies
     ├── tauri.conf.json       # Tauri app security and packaging config
     ├── capabilities/         # Security permissions
-    │   └── default.json      # Minimal privilege capability sandbox
-    ├── build.rs              # Tauri build script
-    ├── src/                  # Rust Backend Source Code
-    │   ├── main.rs           # Executable entry point
-    │   ├── lib.rs            # Tauri application setup and command handlers
-    │   ├── pty.rs            # PtyManager session tracking and worker threads
-    │   ├── shell.rs          # Cross-platform shell auto-detection
-    │   ├── ai_cli.rs         # AI CLI binary presence and version checking
-    │   ├── git.rs            # Git branch and status reader
-    │   ├── diagnostics.rs    # Diagnostic report compiler
-    │   └── error.rs          # TerminalError handling definitions
-    └── tests/
-        └── pty_integration_tests.rs # Real PTY integration test suite
+    └── src/                  # Rust Backend Source Code
 ```
 
 ---
@@ -102,7 +90,7 @@ terminal/
 
 All pull requests and code modifications must pass the following verification checks:
 
-### Frontend Verification
+### TypeScript & CLI Verification
 
 ```bash
 # Type check TypeScript files
@@ -111,14 +99,26 @@ npm run typecheck
 # Check formatting with Prettier
 npm run format:check
 
-# Auto-format frontend code
+# Auto-format codebase
 npm run format
 
-# Run frontend unit tests (Vitest)
+# Run all unit, intelligence, and security tests (Vitest)
 npm run test
 
-# Run all frontend checks at once (typecheck + format check + vitest)
+# Build production bundles (Desktop frontend + CLI bundle)
+npm run build
+
+# Build standalone CLI bundle only
+npm run build:cli
+
+# Run all checks at once (typecheck + format check + vitest)
 npm run check
+
+# Verify CLI commands directly
+./bin/kai.js --help
+./bin/kai.js code .
+./bin/kai.js status
+./bin/kai.js bench .
 ```
 
 ### Rust Backend Verification

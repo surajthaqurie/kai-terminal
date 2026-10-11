@@ -38,14 +38,62 @@ sudo apt-get install -y build-essential pkg-config libssl-dev libwebkit2gtk-4.1-
 
 Other useful scripts: `npm run dev` (browser mock PTY) · `npm run tauri build` (bundles in `src-tauri/target/release/bundle/`) · `npm run check` (lint+types+tests).
 
-## AI CLIs (optional, local only)
+## Kai CLI & Project Intelligence
 
-kai probes `PATH` for tools you already installed — `codex`, `claude`, `gemini` — and runs them in a full pty. Zero bundled binaries, your keys stay yours.
+Kai includes a lightweight, terminal-first project intelligence tool that helps external AI coding agents (Claude Code, Cursor, Codex, Gemini) understand codebases efficiently through local, bounded indexing and read-only MCP integration.
+
+### Quickstart
 
 ```bash
-kai --status      # pty + render + AI probe
-kai --probe ai    # list detected CLIs
+# Register and index the project (stored safely in ~/.kai/ outside the repository)
+kai code .
+
+# Inspect project status, schema version, and index health
+kai status
+
+# Remove a project's Kai-owned index data (repository untouched)
+kai unregister . --dry-run
+
+# Query task-aware context with deterministic classification & prompt formatting
+# (rendered output is hard-bounded to the token budget, default 4000)
+kai query "Explain PtyManager lifecycle"
+
+# Inspect token footprint and budget metrics
+kai cost
+
+# Start local Model Context Protocol (MCP) server over stdio
+kai mcp .
+
+# Inspect local Language Server Protocol (LSP) availability
+kai lsp status
+
+# Run privacy-safe evaluation benchmarks across 4 configurations
+kai bench .
+
+# Generate verified configuration for coding agents
+kai agent setup claude
+kai agent setup cursor
+kai agent setup codex
 ```
+
+### Supported MCP Tools (stdio JSON-RPC)
+
+- `kai_project_info`: High-level metadata, file counts, and language breakdown.
+- `kai_search_code`: Deterministic relevance search over symbols and snippets.
+- `kai_find_symbol`: Locate definitions (functions, classes, interfaces) with line ranges.
+- `kai_get_dependencies`: Query import and dependency graphs.
+- `kai_get_context`: Assemble a task-optimized context package within a strict token budget.
+- `kai_refresh_index`: Safe incremental re-index of the repository.
+- `kai_get_lsp_status`: Query probe status of locally installed Language Servers (`typescript-language-server`, `rust-analyzer`, `pyright`, `gopls`).
+
+### Desktop GUI Intelligence Widget
+The Kai Terminal status bar includes an active project intelligence badge next to the Git branch status. It displays real-time indexing state, file and symbol counts, and the project's estimated token footprint.
+
+### Privacy, Boundaries & Safety
+- **Zero code execution**: Indexed project source files and scripts are never executed.
+- **Strict exclusion**: `.env*`, `id_rsa*`, tokens, and binary files are excluded by default.
+- **Isolated storage**: All indexes and caches are kept in `~/.kai/` outside the repo.
+- **Local telemetry**: Diagnostic metrics are stored locally in `~/.kai/metrics.jsonl` with zero prompt logging.
 
 ## Docs
 

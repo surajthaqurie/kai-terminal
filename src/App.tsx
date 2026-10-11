@@ -16,6 +16,8 @@ import {
   recordRecentProject,
   openProjectInEditor,
   runGitAction,
+  getProjectIntelligence,
+  ProjectIntelligenceInfo,
 } from "./services/projectService";
 import {
   matchShortcut,
@@ -147,6 +149,7 @@ export function App() {
   const [recentProjects, setRecentProjects] = useState<string[]>(() => loadRecentProjects());
   const [gitBranch, setGitBranch] = useState<string | null>(null);
   const [gitDirty, setGitDirty] = useState<boolean>(false);
+  const [projectIntel, setProjectIntel] = useState<ProjectIntelligenceInfo | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
   const [userSettings, setUserSettings] = useState<UserSettings>(() =>
     SettingsService.loadSettings()
@@ -239,6 +242,7 @@ export function App() {
     if (!cwd.trim()) {
       setGitBranch(null);
       setGitDirty(false);
+      setProjectIntel(null);
       return;
     }
     let cancelled = false;
@@ -253,6 +257,16 @@ export function App() {
           if (cancelled) return;
           setGitBranch(null);
           setGitDirty(false);
+        });
+
+      getProjectIntelligence(cwd.trim())
+        .then((intel) => {
+          if (cancelled) return;
+          setProjectIntel(intel);
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setProjectIntel(null);
         });
     };
     const timer = setTimeout(fetch, 400);
@@ -711,6 +725,7 @@ export function App() {
           }}
           gitBranch={gitBranch}
           gitDirty={gitDirty}
+          projectIntelligence={projectIntel}
           onNewTab={() => handleNewTab()}
           onSplitHorizontal={() => handleSplitPane("horizontal")}
           onSplitVertical={() => handleSplitPane("vertical")}

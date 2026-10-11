@@ -16,7 +16,9 @@ import {
   Rows,
   Code,
   GitBranch,
+  Cpu,
 } from "lucide-react";
+import { ProjectIntelligenceInfo } from "../services/projectService";
 
 interface ToolbarProps {
   shells: ShellProfile[];
@@ -28,6 +30,7 @@ interface ToolbarProps {
   onSelectRecent: (dir: string) => void;
   gitBranch?: string | null;
   gitDirty?: boolean;
+  projectIntelligence?: ProjectIntelligenceInfo | null;
   onNewTab: () => void;
   onSplitHorizontal?: () => void;
   onSplitVertical?: () => void;
@@ -55,6 +58,7 @@ export const Toolbar: FC<ToolbarProps> = ({
   onSelectRecent,
   gitBranch,
   gitDirty,
+  projectIntelligence,
   onNewTab,
   onSplitHorizontal,
   onSplitVertical,
@@ -147,6 +151,16 @@ export const Toolbar: FC<ToolbarProps> = ({
             <GitBranch size={12} style={{ display: "inline", marginRight: "4px" }} />
             {gitBranch}
             {gitDirty ? " ●" : ""}
+          </span>
+        )}
+        {projectIntelligence && projectIntelligence.status !== "unindexed" && (
+          <span
+            className={`intelligence-badge intel-${projectIntelligence.status}`}
+            title={`Kai Project Intelligence\nStatus: ${projectIntelligence.status}\nFiles: ${projectIntelligence.file_count}\nSymbols: ${projectIntelligence.symbol_count}\nEst. Tokens: ~${projectIntelligence.total_tokens_estimated.toLocaleString()}\nLast indexed: ${projectIntelligence.last_indexed_at || "Never"}`}
+          >
+            <Cpu size={12} style={{ display: "inline", marginRight: "4px" }} />
+            <span>~{Math.round(projectIntelligence.total_tokens_estimated / 1000)}k tok</span>
+            <span className="intel-status-dot">●</span>
           </span>
         )}
       </div>

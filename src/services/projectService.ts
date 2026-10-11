@@ -9,6 +9,37 @@ export interface GitInfo {
   error: string | null;
 }
 
+export interface ProjectIntelligenceInfo {
+  status: "ready" | "indexing" | "unindexed" | "stale";
+  file_count: number;
+  symbol_count: number;
+  total_tokens_estimated: number;
+  last_indexed_at: string | null;
+}
+
+export async function getProjectIntelligence(cwd: string): Promise<ProjectIntelligenceInfo> {
+  if (!isTauriAvailable() || !cwd.trim()) {
+    return {
+      status: "unindexed",
+      file_count: 0,
+      symbol_count: 0,
+      total_tokens_estimated: 0,
+      last_indexed_at: null,
+    };
+  }
+  try {
+    return await invoke<ProjectIntelligenceInfo>("get_project_intelligence_cmd", { cwd });
+  } catch {
+    return {
+      status: "unindexed",
+      file_count: 0,
+      symbol_count: 0,
+      total_tokens_estimated: 0,
+      last_indexed_at: null,
+    };
+  }
+}
+
 export async function getGitInfo(cwd: string): Promise<GitInfo> {
   if (!isTauriAvailable() || !cwd.trim()) {
     return {

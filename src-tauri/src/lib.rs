@@ -2,6 +2,7 @@ pub mod ai_cli;
 pub mod diagnostics;
 pub mod error;
 pub mod git;
+pub mod intelligence;
 pub mod pty;
 pub mod shell;
 
@@ -60,6 +61,12 @@ fn get_git_info_cmd(cwd: String) -> GitInfo {
 #[tauri::command]
 fn run_git_action_cmd(cwd: String, action: String) -> Result<String, String> {
     run_git_action(&cwd, &action)
+}
+
+#[cfg(feature = "tauri")]
+#[tauri::command]
+fn get_project_intelligence_cmd(cwd: String) -> intelligence::ProjectIntelligenceSummary {
+    intelligence::get_project_intelligence(&cwd)
 }
 
 #[cfg(feature = "tauri")]
@@ -164,7 +171,8 @@ pub fn run() {
             resize_pty,
             close_pty,
             get_session_info,
-            list_sessions
+            list_sessions,
+            get_project_intelligence_cmd
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

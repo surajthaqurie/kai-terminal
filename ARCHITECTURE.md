@@ -6,45 +6,52 @@ This document describes the architectural design, component responsibilities, da
 
 ## 1. High-Level Architecture
 
-Kai Terminal uses a decoupled architecture separating the React webview frontend from the Rust native backend.
+Kai Terminal combines two complementary systems:
+1. **Desktop Terminal Application**: A decoupled React webview frontend and Rust native PTY backend.
+2. **Project Intelligence Core & CLI**: A lightweight, terminal-first indexer, context retriever, and Model Context Protocol (MCP) server that helps external AI coding agents understand codebases with minimal token overhead.
 
 ```mermaid
 flowchart TD
-    subgraph Frontend["Frontend Layer (React + TypeScript + Vite)"]
-        UI["UI Components (TabBar, Toolbar, Settings)"]
-        TV["TerminalView Component"]
-        XT["xterm.js Engine + FitAddon"]
-        PS["PtyService (Tauri IPC Wrapper)"]
+    subgraph Agents["External AI Coding Agents"]
+        CL["Claude Code"]
+        CU["Cursor"]
+        CX["Codex / CLI"]
     end
 
-    subgraph IPC["Tauri 2 IPC Boundary"]
-        CMD["Commands (create_pty, write_to_pty, resize_pty, close_pty)"]
-        EVT["Events (pty-output, pty-exit)"]
-        CAP["Capability Sandbox (capabilities/default.json)"]
+    subgraph Intelligence["Project Intelligence & MCP Layer (Node / TS)"]
+        CLI["Kai CLI (bin/kai.js)"]
+        MCP["MCP Server (stdio JSON-RPC)"]
+        CLASS["Task Classifier"]
+        RET["Relevance Retriever"]
+        SKILLS["Skill Registry"]
+        TEMPL["Versioned Prompt Templates"]
+        INDEX["Incremental Indexer"]
     end
 
-    subgraph Backend["Rust Backend Layer (src-tauri)"]
-        PM["PtyManager (pty.rs)"]
-        SH["Shell Auto-Detection (shell.rs)"]
-        PTY["portable-pty Master/Slave Pair"]
-        TH["Output Reader Worker Thread"]
+    subgraph Storage["Isolated Local Storage (~/.kai/)"]
+        PROJ_DB["Project Indexes (projects/id/index.json)"]
+        LOCK["Concurrency File Locks (.lock)"]
+        METRICS["Privacy Metrics (metrics.jsonl)"]
     end
 
-    subgraph HostOS["Host Operating System"]
-        PROC["System Shell Process (bash / zsh / pwsh / cmd / wsl)"]
+    subgraph DesktopApp["Desktop Terminal Application"]
+        UI["React Frontend (Tabs, Split Panes, xterm.js)"]
+        TAURI["Tauri 2 IPC Boundary"]
+        RUST["Rust Native Backend (PtyManager, Shell Auto-Detect)"]
     end
 
-    UI --> TV
-    TV --> XT
-    TV --> PS
-    PS <--> CMD
-    PS <--> EVT
-    CMD --> CAP --> PM
-    PM --> SH
-    PM --> PTY
-    PTY --> TH
-    TH --> EVT
-    PTY <--> PROC
+    CL <-->|stdio JSON-RPC| MCP
+    CU <-->|stdio JSON-RPC| MCP
+    CX <-->|stdio JSON-RPC| MCP
+    CLI --> MCP
+    CLI --> CLASS
+    CLASS --> RET
+    RET --> TEMPL
+    SKILLS --> TEMPL
+    INDEX --> PROJ_DB
+    INDEX --> LOCK
+    RET --> PROJ_DB
+    UI <--> TAURI <--> RUST
 ```
 
 ---
@@ -90,11 +97,27 @@ flowchart TD
 - **`git.rs`**: Reads current branch name and status using local system `git` commands with timeout bounds.
 - **`error.rs`**: Strongly typed Rust error definitions returned via IPC.
 
+### 2.4 Project Intelligence & MCP Layer (`src/core/`, `src/cli/`, `bin/kai.js`)
+
+- **`src/core/registry.ts`**: Manages isolated storage in `~/.kai/projects/<id>/` outside target repositories. Implements canonical path hashing, schema-versioned metadata, atomic JSON writes (`atomicWriteJson`), and file locks (`ProjectLock`) preventing indexing collisions.
+- **`src/core/indexer.ts`**: Bounded, non-evaluating incremental scanner. Extracts symbols (functions, classes, interfaces) and dependencies across TypeScript, Rust, Python, Go. Enforces canonical project boundary checks, rejects symlink escapes, skips binary files, and filters sensitive credentials (`.env*`, `id_rsa*`, tokens).
+- **`src/core/classifier.ts`**: Deterministic rule-based task classifier categorizing prompts into 8 task domains (`explain`, `implement`, `debug`, `refactor`, `test`, `review`, `architecture`, `documentation`) or `unknown` with confidence scoring and caller overrides.
+- **`src/core/templates.ts`**: Versioned (`v1.0.0`) prompt templates that preserve the user's intent verbatim and structure task guidelines, project rules, source references, and line ranges.
+- **`src/core/skills.ts`**: On-demand skill registry matching relevant coding conventions based on task category, language, and keywords under strict token limits without code execution.
+- **`src/core/retrieval.ts`**: Deterministic relevance search prioritizing exact symbol matches (10.0), filename matches (5.0), and dependencies. Extracts focused line ranges (-15 to +45 lines) around symbols.
+- **`src/core/contextAssembler.ts`**: Orchestrates classification, freshness checks, rule extraction, retrieval, and skills into a structured `ContextPackage`. Enforces the token budget as a hard guarantee on the rendered prompt (drops skills, lowest-scored sources, then rules; hard-truncates only as a last resort — the verbatim task section leads so it survives).
+- **`src/core/tokenCounter.ts`**: Deterministic `cl100k` token estimation distinguishing estimates from exact tokenizer measurements.
+- **`src/core/mcp.ts`**: Standard Model Context Protocol (MCP) server communicating over `stdio` JSON-RPC. Exposes 6 read-only tools: `kai_project_info`, `kai_search_code`, `kai_find_symbol`, `kai_get_dependencies`, `kai_get_context`, and `kai_refresh_index`.
+- **`src/cli/index.ts` & `bin/kai.js`**: Unified CLI dispatcher providing terminal commands for project registration, status inspection, unregistration (`unregister` deletes only Kai-owned data under `~/.kai/projects/`), querying, benchmarking, and agent setup.
+
 ---
 
 ## 3. Security & Safety Principles
 
 1. **Direct Argv Execution:** Commands are launched directly using `portable-pty`'s `CommandBuilder` with explicit argument arrays (no shell string evaluation).
-2. **Local Execution Only:** The application operates strictly on the local machine with standard user permissions. No remote code execution or background servers are included.
-3. **No Secret Persistence:** Input keystrokes, environment variable maps, scrollback contents, and credentials are never written to disk or telemetry files.
-4. **Graceful Fallbacks:** If a custom shell, git binary, or AI tool is missing, the application falls back safely with informative diagnostics rather than crashing.
+2. **Local Execution Only:** The application operates strictly on the local machine with standard user permissions. No remote code execution or unauthenticated network listeners exist.
+3. **Non-Execution Invariant for Project Content:** Indexed project files, scripts, and build commands are NEVER executed during scanning or retrieval. All parsing is passive and lexical.
+4. **Symlink & Traversal Boundaries:** Scanners canonicalize paths with `fs.realpathSync` and verify the target resides within the authorized project root before reading.
+5. **Secret Filtering:** `.env*`, `id_rsa*`, private keys, and credential stores are excluded by default.
+6. **No Secret Persistence:** Input keystrokes, environment variable maps, scrollback contents, and credentials are never written to disk or telemetry files. Diagnostic metrics in `~/.kai/metrics.jsonl` record only performance metadata (latency, file counts, token estimates), never user prompts or source code.
+7. **Graceful Fallbacks:** If a custom shell, git binary, or AI tool is missing, the application falls back safely with informative diagnostics rather than crashing.

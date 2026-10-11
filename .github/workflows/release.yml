@@ -234,7 +234,16 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: kai-${{ github.ref_name || inputs.version }}-${{ matrix.artifact-suffix }}
-          path: src-tauri/target/release/bundle/**/*
+          # Upload only final installers. Do NOT use bundle/**/*: that captures
+          # intermediates (AppDir contents, deb control/data.tar.gz,
+          # dmg support files, share/create-dmg, .app directories) which then
+          # break the publish verification (nested layout, junk files).
+          path: |
+            src-tauri/target/release/bundle/**/*.deb
+            src-tauri/target/release/bundle/**/*.AppImage
+            src-tauri/target/release/bundle/**/*.exe
+            src-tauri/target/release/bundle/**/*.msi
+            src-tauri/target/release/bundle/**/*.dmg
           if-no-files-found: error
 
   # ------------------------------------------------------------------
@@ -259,20 +268,48 @@ jobs:
           set -euo pipefail
           echo "Staged release files:"
           find release-artifacts -type f | sort
-          # Linux verified builds
-          ls release-artifacts/*.deb
-          ls release-artifacts/*.AppImage
-          # Windows verified build
-          ls release-artifacts/*.exe
-          ls release-artifacts/*.msi
-          # macOS Apple Silicon build (unsigned unless Apple secrets configured)
-          ls release-artifacts/*.dmg
+          # Artifacts are downloaded with merge-multiple:true, so each platform's
+          # installers land in subdirectories (deb/, appimage/, nsis/, msi/, dmg/).
+          # Use recursive search — a flat `ls release-artifacts/*.deb` fails with
+          # exit code 2 because no .deb exists at the top level.
+          fail=0
+          check() {
+            local label="$1"
+            local pattern="$2"
+            echo "--- $label ($pattern) ---"
+            local matches
+            matches=$(find release-artifacts -type f -name "$pattern" | sort)
+            if [ -z "$matches" ]; then
+              echo "MISSING: no $label files found"
+              fail=1
+            else
+              echo "$matches"
+              echo "OK: found $(echo "$matches" | wc -l) $label file(s)."
+            fi
+          }
+          check "Linux .deb" "*.deb"
+          check "Linux .AppImage" "*.AppImage"
+          check "Windows installer .exe" "*.exe"
+          check "Windows .msi" "*.msi"
+          check "macOS .dmg" "*.dmg"
+          if [ "$fail" -ne 0 ]; then
+            echo "Artifact verification failed."
+            exit 1
+          fi
           echo "All expected platform artifacts are present."
 
       - name: Create GitHub Release with verified artifacts
         uses: softprops/action-gh-release@v2
         with:
-          files: release-artifacts/*
+          # Recursive globs: installers are nested (deb/, appimage/, nsis/,
+          # msi/, dmg/) after merge-multiple. A flat `release-artifacts/*`
+          # misses them and would attach junk intermediates if upload is broad.
+          files: |
+            release-artifacts/**/*.deb
+            release-artifacts/**/*.AppImage
+            release-artifacts/**/*.exe
+            release-artifacts/**/*.msi
+            release-artifacts/**/*.dmg
           draft: false
           prerelease: false
           generate_release_notes: true

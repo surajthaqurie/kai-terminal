@@ -4,9 +4,13 @@
   "license": "MIT",
   "version": "0.1.0",
   "type": "module",
+  "bin": {
+    "kai": "./bin/kai.js"
+  },
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "tsc && vite build && npm run build:cli",
+    "build:cli": "vite build --config vite.cli.config.ts",
     "preview": "vite preview",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",

@@ -64,6 +64,15 @@ jobs:
       - name: Frontend Vitest Unit Tests
         run: npm run test
 
+      - name: Security Regression Tests (audit, MCP, unregister — all OSes)
+        run: npx vitest run src/__tests__/audit_regression.test.ts src/__tests__/mcp_security.test.ts src/__tests__/unregister.test.ts
+
+      - name: CLI Smoke Test (built bundle, all OSes)
+        run: |
+          npm run build:cli
+          node ./bin/kai.js --version
+          node ./bin/kai.js --help
+
       - name: Rust Backend Formatting Check
         run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
 

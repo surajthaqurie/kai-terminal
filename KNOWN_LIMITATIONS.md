@@ -62,6 +62,17 @@ This document lists known operating system constraints, platform boundaries, res
 - **Platform Coverage:** Cross-platform.
 - **Remaining Limitation:** Git status badge relies on local system `git` binary; if `git` is not installed on system PATH, the badge is hidden without affecting terminal functionality.
 
+### 1.8 Project Intelligence, Symbol Extraction & Context Retrieval
+- **Previous Behavior:** No local project intelligence, symbol indexing, or MCP integration existed; external coding agents had to scan entire file trees or read raw repository dumps without task relevance.
+- **Implementation Change:** Implemented local incremental project indexer (`src/core/indexer.ts`), deterministic task classifier (`src/core/classifier.ts`), versioned prompt templates (`src/core/templates.ts`), on-demand skills registry (`src/core/skills.ts`), stdio Model Context Protocol (MCP) server (`src/core/mcp.ts`), optional local Language Server Protocol (LSP) bridge (`src/core/lspBridge.ts`), and native Tauri status bar intelligence badge (`src-tauri/src/intelligence.rs`, `Toolbar.tsx`). Indexes are stored outside target repositories in `~/.kai/projects/<id>/`. Rendered prompts are hard-bounded to the token budget (`assembleContext` drops skills, lowest-scored sources, then rules, and truncates only as a last resort while preserving the verbatim task). Projects can be removed with `kai unregister <path|id>` (deletes only Kai-owned data; the repository is untouched; storage ids are strictly validated before deletion).
+- **Tests Added:** `src/__tests__/intelligence.test.ts` (16 tests), `src/__tests__/lspBridge.test.ts` (6 tests), `src/__tests__/mcp_security.test.ts` (9 tests), `src/__tests__/audit_regression.test.ts`, `src/__tests__/unregister.test.ts` (CLI `unregister`/`code`/`status`/`query` coverage, `deleteProjectData` id validation, `ProjectLock` concurrency, budget-enforcement bounds), and Rust unit tests in `src-tauri/src/intelligence.rs`. CI runs the security regression suites and a built-bundle CLI smoke test (`--version`, `--help`) explicitly on Linux, Windows, and macOS (`Security Regression Tests` and `CLI Smoke Test` steps).
+- **Actual Test Result:** Passed (90/90 Vitest tests across 14 files, `tsc --noEmit` clean, 40 unit + 13 integration Rust tests passing).
+- **Platform Coverage:** Cross-platform (Linux, macOS, Windows).
+- **Remaining Limitation:**
+  1. Deep type-checker cross-file inferences fall back to deterministic pattern parsing when local language server binaries (`typescript-language-server`, `rust-analyzer`, `pyright`, `gopls`) are not locally installed on the host.
+  2. Token counts use a fast deterministic `cl100k` heuristic estimator and are explicitly tagged `isEstimate: true` until an exact tokenizer binary is configured.
+  3. All project intelligence is single-machine local; no cloud index sync or telemetry export is included by design.
+
 ---
 
 ## 2. Explicit Non-Goals & Security Guardrails
@@ -71,11 +82,14 @@ This document lists known operating system constraints, platform boundaries, res
 3. **No Credential Persistence or Telemetry:** Terminal input keystrokes, environment variables, scrollback logs, and credentials are never stored to disk, transmitted, or logged.
 4. **Local Persistence Only:** Saved settings (`kai_user_settings`), active tab/pane layouts (`kai_workspaces_v1`), and recent projects (`kai_recent_projects`) are saved strictly in local browser storage (`localStorage`). Command history and terminal scrollback contents are never saved to disk.
 5. **No Bundled AI Executables:** Third-party AI CLIs (Claude Code, Gemini CLI, Codex, etc.) are not bundled into Kai installers. If installed by the user, they can be executed inside regular terminal tabs.
+6. **Non-Execution of Indexed Code:** Kai's project scanner never compiles, evaluates, or runs scripts discovered in indexed projects.
 
 ---
 
 ## 3. Implemented Capabilities Summary
 
+- **Project Intelligence & MCP Server:** Terminal-first indexing (`kai code .`), status tracking (`kai status`), context querying (`kai query`), cost estimation (`kai cost`), evaluation benchmarks (`kai bench`), optional LSP status inspection (`kai lsp status`), and read-only MCP server (`kai mcp .`) over stdio JSON-RPC.
+- **Status Bar Intelligence Widget:** Native desktop status bar badge displaying project readiness, file count, symbol count, and estimated token footprint directly in Kai Terminal.
 - **Split Panes:** Up to 4 split panes per tab (horizontal and vertical splits) with independent backend PTY processes per pane.
 - **Custom Shortcuts:** Centralized shortcut manager with customizable keybindings, navigation shortcuts, and conflict detection.
 - **Workspaces & Editor Launching:** Save active tab/pane layouts, restore named workspaces, and launch projects in external code editors (VS Code, Cursor, VSCodium, Sublime, Zed).

@@ -26,3 +26,29 @@ This document describes process execution controls, IPC capabilities, permission
 - **User Privileges:** Kai runs with standard OS user permissions. It does not auto-elevate or run as Administrator/root. Admin privileges are only granted when the user explicitly runs `sudo` or elevation prompts within their shell.
 - **No Telemetry or Secret Persistence:** Keystrokes typed into shell sessions, environment variable values, and terminal outputs are never logged to disk or external servers.
 - **Local Settings Storage:** User settings (`kai_user_settings`) and saved workspace tab structures (`kai_workspaces_v1`) store layout information, shell paths, and UI preferences in browser `localStorage`. Command history, scrollback logs, and credentials are never stored.
+
+---
+
+## 4. Project Scanner, Indexer & MCP Security Model
+
+- **Non-Execution Invariant:** Under no circumstances are indexed project files, build scripts, test suites, or package hooks executed during scanning, indexing, or retrieval. All parsing is passive, static lexical analysis.
+- **Path Traversal & Symlink Escapes:** Canonical paths are verified with `fs.realpathSync`. Any symbolic link pointing outside the authorized project root is rejected and never traversed.
+- **Default Secret Exclusion:** Sensitive files and credential stores are filtered by default:
+  - Environment files: `.env`, `.env.*`
+  - SSH and cryptography keys: `id_rsa*`, `id_ed25519*`, `*.pem`, `*.key`, `*.pfx`, `*.p12`
+  - Cloud and API credentials: `credentials.json`, `secrets.json`, `token.json`, `service-account*.json`
+- **Resource Exhaustion Bounds:**
+  - File size cap: 512 KB per file.
+  - File count limit: 10,000 files per project.
+  - Traversal depth limit: 20 directories.
+  - Binary files (by extension or null byte check) are skipped.
+- **Concurrency & Atomic Storage:**
+  - Index and metadata writes use atomic temporary file creation followed by rename (`atomicWriteJson`).
+  - Concurrent operations are protected by PID-tracked file locks (`ProjectLock`) preventing index corruption.
+- **MCP Stdio Isolation:**
+  - The MCP server operates exclusively over standard input/output (`stdio`) JSON-RPC. It does not open network sockets or unauthenticated network ports.
+  - All tools are strictly read-only on project sources; arguments are validated before execution.
+- **Privacy-Safe Telemetry:**
+  - Local diagnostic metrics are appended to `~/.kai/metrics.jsonl` tracking only execution latencies, token counts, and error codes.
+  - User prompts, indexed source contents, and secret keys are never persisted to metrics logs.
+
