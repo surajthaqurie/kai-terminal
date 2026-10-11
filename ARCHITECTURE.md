@@ -15,7 +15,11 @@ flowchart TD
     subgraph Agents["External AI Coding Agents"]
         CL["Claude Code"]
         CU["Cursor"]
-        CX["Codex / CLI"]
+        CX["Codex"]
+        GM["Gemini CLI"]
+        CP["Copilot / VS Code"]
+        WS["Windsurf"]
+        CN["Cline"]
     end
 
     subgraph Intelligence["Project Intelligence & MCP Layer (Node / TS)"]
@@ -43,6 +47,10 @@ flowchart TD
     CL <-->|stdio JSON-RPC| MCP
     CU <-->|stdio JSON-RPC| MCP
     CX <-->|stdio JSON-RPC| MCP
+    GM <-->|stdio JSON-RPC| MCP
+    CP <-->|stdio JSON-RPC| MCP
+    WS <-->|stdio JSON-RPC| MCP
+    CN <-->|stdio JSON-RPC| MCP
     CLI --> MCP
     CLI --> CLASS
     CLASS --> RET
@@ -93,22 +101,22 @@ flowchart TD
 
 - **`pty.rs` (`PtyManager`)**: Manages session handles (`HashMap<String, PtySessionHandle>`) wrapped in thread-safe locks. Handles PTY spawning, chunked byte writing (`write_bytes_chunked`), and cleanup.
 - **`shell.rs`**: Cross-platform shell discovery logic for Windows (PowerShell Core, Windows PowerShell, CMD, WSL), Linux (`$SHELL`, bash, zsh, fish, sh), and macOS (`$SHELL`, zsh, Homebrew shells, bash, fish). Includes Windows build version gate checking (minimum build 17763).
-- **`ai_cli.rs`**: Checks local PATH presence and runs safe, bounded `--version` checks (with an 8-second execution timeout and auto-reap) for optional local AI tools.
+- **`ai_cli.rs`**: Checks local PATH presence and config presence for 6 catalogued AI tools (`codex`, `claude`, `gemini`, `opencode`, `copilot`, `aider`), running safe, bounded `--version` checks (with an 8-second execution timeout and auto-reap) without network calls.
 - **`git.rs`**: Reads current branch name and status using local system `git` commands with timeout bounds.
 - **`error.rs`**: Strongly typed Rust error definitions returned via IPC.
 
 ### 2.4 Project Intelligence & MCP Layer (`src/core/`, `src/cli/`, `bin/kai.js`)
 
 - **`src/core/registry.ts`**: Manages isolated storage in `~/.kai/projects/<id>/` outside target repositories. Implements canonical path hashing, schema-versioned metadata, atomic JSON writes (`atomicWriteJson`), and file locks (`ProjectLock`) preventing indexing collisions.
-- **`src/core/indexer.ts`**: Bounded, non-evaluating incremental scanner. Extracts symbols (functions, classes, interfaces) and dependencies across TypeScript, Rust, Python, Go. Enforces canonical project boundary checks, rejects symlink escapes, skips binary files, and filters sensitive credentials (`.env*`, `id_rsa*`, tokens).
-- **`src/core/classifier.ts`**: Deterministic rule-based task classifier categorizing prompts into 8 task domains (`explain`, `implement`, `debug`, `refactor`, `test`, `review`, `architecture`, `documentation`) or `unknown` with confidence scoring and caller overrides.
+- **`src/core/indexer.ts`**: Bounded, non-evaluating incremental scanner with `mtimeMs`, `ctimeMs`, and `sizeBytes` cache validation. Extracts symbols (functions, classes, interfaces) and dependencies across TypeScript, Rust, Python, Go. Enforces canonical project boundary checks, prototype-safe dictionaries (`Object.create(null)`), rejects symlink escapes, skips binary files, and filters sensitive credentials (`.env*`, `id_rsa*`, tokens).
+- **`src/core/classifier.ts`**: Deterministic rule-based task classifier categorizing prompts into 8 task domains (`explain`, `implement`, `debug`, `refactor`, `test`, `review`, `architecture`, `documentation`) or `unknown` with input length bounds (4,000 characters) and confidence scoring.
 - **`src/core/templates.ts`**: Versioned (`v1.0.0`) prompt templates that preserve the user's intent verbatim and structure task guidelines, project rules, source references, and line ranges.
 - **`src/core/skills.ts`**: On-demand skill registry matching relevant coding conventions based on task category, language, and keywords under strict token limits without code execution.
-- **`src/core/retrieval.ts`**: Deterministic relevance search prioritizing exact symbol matches (10.0), filename matches (5.0), and dependencies. Extracts focused line ranges (-15 to +45 lines) around symbols.
+- **`src/core/retrieval.ts`**: Deterministic relevance search prioritizing exact symbol matches (10.0), filename matches (5.0), and dependencies. Extracts focused line ranges (-15 to +45 lines) around symbols and validates live on-disk file SHA-256 digests against index snapshots to flag stale files.
 - **`src/core/contextAssembler.ts`**: Orchestrates classification, freshness checks, rule extraction, retrieval, and skills into a structured `ContextPackage`. Enforces the token budget as a hard guarantee on the rendered prompt (drops skills, lowest-scored sources, then rules; hard-truncates only as a last resort — the verbatim task section leads so it survives).
 - **`src/core/tokenCounter.ts`**: Deterministic `cl100k` token estimation distinguishing estimates from exact tokenizer measurements.
-- **`src/core/mcp.ts`**: Standard Model Context Protocol (MCP) server communicating over `stdio` JSON-RPC with strict workspace boundary confinement. Exposes 7 read-only tools: `kai_project_info`, `kai_search_code`, `kai_find_symbol`, `kai_get_dependencies`, `kai_get_context`, `kai_refresh_index`, and `kai_get_lsp_status`.
-- **`src/cli/index.ts` & `bin/kai.js`**: Unified CLI dispatcher providing terminal commands for project registration, status inspection, unregistration (`unregister` deletes only Kai-owned data under `~/.kai/projects/`), querying, benchmarking, and agent setup.
+- **`src/core/mcp.ts`**: Standard Model Context Protocol (MCP) server communicating over `stdio` JSON-RPC with stream-level 10 MB line limits (`BoundedLineTransform`) and strict workspace boundary confinement. Exposes 7 read-only tools: `kai_project_info`, `kai_search_code`, `kai_find_symbol`, `kai_get_dependencies`, `kai_get_context`, `kai_refresh_index`, and `kai_get_lsp_status`.
+- **`src/cli/index.ts` & `bin/kai.js`**: Unified CLI dispatcher providing terminal commands for project registration, status inspection, unregistration (`unregister` deletes only Kai-owned data under `~/.kai/projects/` by path or 16-hex ID), querying, benchmarking, and automated agent setup (`kai agent setup <agent>`).
 
 ---
 
@@ -118,6 +126,6 @@ flowchart TD
 2. **Local Execution Only:** The application operates strictly on the local machine with standard user permissions. No remote code execution or unauthenticated network listeners exist.
 3. **Non-Execution Invariant for Project Content:** Indexed project files, scripts, and build commands are NEVER executed during scanning or retrieval. All parsing is passive and lexical.
 4. **Symlink & Traversal Boundaries:** Scanners canonicalize paths with `fs.realpathSync` and verify the target resides within the authorized project root before reading.
-5. **Secret Filtering:** `.env*`, `id_rsa*`, private keys, and credential stores are excluded by default.
+5. **Secret Filtering & Bounded Streams:** `.env*`, `id_rsa*`, private keys, and credential stores are excluded by default. MCP stdio stream bounds prevent memory exhaustion from oversized inputs.
 6. **No Secret Persistence:** Input keystrokes, environment variable maps, scrollback contents, and credentials are never written to disk or telemetry files. Diagnostic metrics in `~/.kai/metrics.jsonl` record only performance metadata (latency, file counts, token estimates), never user prompts or source code.
 7. **Graceful Fallbacks:** If a custom shell, git binary, or AI tool is missing, the application falls back safely with informative diagnostics rather than crashing.

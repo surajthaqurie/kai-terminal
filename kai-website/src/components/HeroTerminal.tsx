@@ -51,11 +51,11 @@ export function HeroTerminal({ version }: { version: string }) {
           <p style={{ color: '#34d399' }}>✔ token footprint: 1,420 tokens (68% savings vs raw dump)</p>
         </div>
       );
-    } else if (['claude', 'codex', 'gemini', 'ai'].includes(input) || input.startsWith('kai ')) {
+    } else if (['claude', 'codex', 'gemini', 'copilot', 'opencode', 'aider', 'windsurf', 'cline', 'ai'].includes(input) || input.startsWith('kai agent') || input.startsWith('kai ')) {
       reply = (
         <div style={{ color: '#d8b4fe' }}>
-          <p>codex <span style={{ color: '#34d399' }}>✓</span> /usr/local/bin/codex · claude <span style={{ color: '#34d399' }}>✓</span> /usr/bin/claude · gemini <span style={{ color: '#34d399' }}>✓</span> ~/bin/gemini</p>
-          <p style={{ color: '#94a3b8', fontSize: '0.75rem' }}>kai never bundles AI binaries — you own keys + execution.</p>
+          <p>codex <span style={{ color: '#34d399' }}>✓</span> · claude <span style={{ color: '#34d399' }}>✓</span> · gemini <span style={{ color: '#34d399' }}>✓</span> · copilot <span style={{ color: '#34d399' }}>✓</span> · opencode <span style={{ color: '#34d399' }}>✓</span> · aider <span style={{ color: '#34d399' }}>✓</span></p>
+          <p style={{ color: '#94a3b8', fontSize: '0.75rem' }}>run 'kai agent setup &lt;agent&gt;' for instant zero-config stdio MCP wiring.</p>
         </div>
       );
     } else if (['downloads', 'download', 'install'].includes(input)) {

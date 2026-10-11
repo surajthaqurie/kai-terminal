@@ -25,7 +25,7 @@ export function Hero({ tag, short, version }: { tag: string; short: string; vers
         </h1>
 
         <p className="t-hero-sub t-enter" style={{ animationDelay: '180ms' }}>
-          A GPU-rendered terminal with a native Rust PTY and built-in Project Intelligence. Serve AST symbol context to Claude Code, Cursor, and Codex over MCP — zero cloud hops, zero telemetry.
+          A GPU-rendered terminal with a native Rust PTY and built-in Project Intelligence. Serve AST symbol context to Claude Code, Cursor, Codex, Gemini, Copilot, Windsurf &amp; Cline over MCP — zero cloud hops, zero telemetry.
         </p>
 
         <div className="t-enter" style={{ animationDelay: '260ms' }}>

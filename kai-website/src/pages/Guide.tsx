@@ -29,7 +29,7 @@ export function GuidePage() {
                 <li><span>kai mcp .</span><span className="t-kbd-group"><span className="t-kbd">Start stdio MCP server (7 tools)</span></span></li>
                 <li><span>kai agent setup &lt;agent&gt;</span><span className="t-kbd-group"><span className="t-kbd">Claude / Cursor / Codex / Gemini / Copilot / Windsurf / Cline</span></span></li>
                 <li><span>kai bench .</span><span className="t-kbd-group"><span className="t-kbd">Run token savings & latency benchmark</span></span></li>
-                <li><span>kai unregister .</span><span className="t-kbd-group"><span className="t-kbd">Clean up index metadata safely</span></span></li>
+                <li><span>kai unregister &lt;path|id&gt;</span><span className="t-kbd-group"><span className="t-kbd">Clean up index metadata safely (path or 16-hex ID)</span></span></li>
               </ul>
               <p className="t-micro">All indexes live in ~/.kai/ — your source repository is kept strictly read-only and unpolluted.</p>
             </div>

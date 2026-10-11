@@ -16,8 +16,8 @@ export const FEATURES: Feature[] = [
   { icon: Cpu, tone: 't-icon--neutral', tag: 'rust · portable-pty', title: 'Native PTY core', body: 'Direct OS pty streams. No Node backend, no Electron. ConPTY on Windows, POSIX elsewhere.' },
   { icon: Zap, tone: 't-icon--neutral', tag: 'xterm.js · 60fps', title: 'GPU rendering', body: 'Canvas viewport, fast select + search, grid fit. Stays smooth on huge output.' },
   { icon: Layers, tone: 't-icon--neutral', tag: 'tabs · isolation', title: 'Isolated tabs', body: 'Per-tab cwd + process tree + pty channel. One tab dies, the rest live.' },
-  { icon: Bot, tone: 't-icon--neutral', tag: 'mcp · stdio json-rpc', title: 'Project Intelligence & MCP', body: 'Local symbol graph, AST parsing, deterministic retrieval, and standard MCP server for Claude Code, Cursor, and Codex.' },
-  { icon: ShieldCheck, tone: 't-icon--neutral', tag: 'read-only · zero leak', title: 'Audited security & privacy', body: 'Strict workspace boundary enforcement, symlink escape protection, automatic secret scrubbing, and zero prompt logging.' },
+  { icon: Bot, tone: 't-icon--neutral', tag: 'mcp · stdio json-rpc', title: 'Project Intelligence & MCP', body: 'Local symbol graph, AST parsing, deterministic retrieval, and standard MCP server for Claude Code, Cursor, Codex, Gemini, Copilot, Windsurf, and Cline.' },
+  { icon: ShieldCheck, tone: 't-icon--neutral', tag: 'read-only · zero leak', title: 'Audited security & privacy', body: 'Strict workspace boundary enforcement, stream-bounded requests, live file staleness checks, symlink escape protection, automatic secret scrubbing, and zero prompt logging.' },
   { icon: Monitor, tone: 't-icon--neutral', tag: '~30MB idle · sub-10ms query', title: 'Tauri 2, not Electron', body: '10× lighter than Electron terminals. Fast cold start, sub-10ms context retrieval, ~70% token savings, MIT licensed.' },
 ];
 

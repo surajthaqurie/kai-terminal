@@ -40,7 +40,7 @@ Other useful scripts: `npm run dev` (browser mock PTY) · `npm run tauri build` 
 
 ## Kai CLI & Project Intelligence
 
-Kai includes a lightweight, terminal-first project intelligence tool that helps external AI coding agents (Claude Code, Cursor, Codex, Gemini) understand codebases efficiently through local, bounded indexing and read-only MCP integration.
+Kai includes a lightweight, terminal-first project intelligence tool that helps external AI coding agents (Claude Code, Cursor, Codex, Gemini, Copilot, Windsurf, Cline) understand codebases efficiently through local, bounded indexing and read-only MCP integration.
 
 ### Quickstart
 
@@ -51,7 +51,7 @@ kai code .
 # Inspect project status, schema version, and index health
 kai status
 
-# Remove a project's Kai-owned index data (repository untouched)
+# Remove a project's Kai-owned index data (repository untouched; supports path or 16-hex ID)
 kai unregister . --dry-run
 
 # Query task-aware context with deterministic classification & prompt formatting
@@ -119,7 +119,9 @@ The Kai Terminal status bar includes an active project intelligence badge next t
 ### Privacy, Boundaries & Safety
 - **Zero code execution**: Indexed project source files and scripts are never executed.
 - **Strict exclusion**: `.env*`, `id_rsa*`, tokens, and binary files are excluded by default.
-- **Isolated storage**: All indexes and caches are kept in `~/.kai/` outside the repo.
+- **Stream-bounded MCP**: `BoundedLineTransform` rejects requests exceeding 10 MB at the byte stream level before memory accumulation.
+- **Live staleness detection**: Retrieval validates on-disk files against index SHA-256 hashes and warns when files have drifted since indexing.
+- **Isolated storage & cleanup**: All indexes and caches are kept in `~/.kai/` outside the repo; `kai unregister` supports safe 16-hex ID cleanup of orphaned data.
 - **Local telemetry**: Diagnostic metrics are stored locally in `~/.kai/metrics.jsonl` with zero prompt logging.
 
 ## Docs

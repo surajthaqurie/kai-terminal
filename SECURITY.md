@@ -48,10 +48,21 @@ This document describes process execution controls, IPC capabilities, permission
 - **Concurrency & Atomic Storage:**
   - Index and metadata writes use atomic temporary file creation followed by rename (`atomicWriteJson`).
   - Concurrent operations are protected by PID-tracked file locks (`ProjectLock`) preventing index corruption.
-- **MCP Stdio Isolation & Workspace Confinement:**
+- **MCP Stdio Isolation & Stream Protection:**
   - The MCP server operates exclusively over standard input/output (`stdio`) JSON-RPC. It does not open network sockets or unauthenticated network ports.
   - All tools are strictly read-only on project sources.
   - All tool arguments resolving file paths enforce strict workspace confinement using `fs.realpathSync`, rejecting unauthorized path traversal and out-of-boundary access.
+  - Stream-level line size enforcement (`BoundedLineTransform`) discards requests exceeding 10 MB directly on the byte stream before Node buffers or `readline` can accumulate unbounded memory.
+  - Project paths and symbol query arguments containing NUL bytes (`\0`) are strictly rejected.
+- **Live Staleness Detection & Index Verification:**
+  - Context retrieval computes on-the-fly SHA-256 digests of disk sources and compares them against index snapshot hashes. Stale files trigger explicit warnings directing users to re-index (`kai graph rebuild`).
+  - Index caching validates `mtimeMs`, `ctimeMs`, and `sizeBytes` to prevent silent corruption or stale reuse across filesystem changes.
+- **Prototype Pollution Defense & Input Boundaries:**
+  - In-memory index maps and dependency lookups use null-prototype objects (`Object.create(null)`) with explicit `Object.prototype.hasOwnProperty` guards.
+  - Task classifier inputs are strictly bounded to 4,000 characters to prevent regex backtracking or CPU exhaustion on oversized prompts.
+  - `kai config get` restricts lookups strictly to an approved configuration key allowlist (`ALLOWED_KEYS`).
+  - Language server probes validate command names before checking system `PATH`.
+  - Storage deletion in `kai unregister` validates input project paths and supports clean deletion of orphaned storage by 16-character hexadecimal ID when `meta.json` is missing or corrupted.
 - **Privacy-Safe Telemetry:**
   - Local diagnostic metrics are appended to `~/.kai/metrics.jsonl` tracking only execution latencies, token counts, and error codes.
   - User prompts, indexed source contents, and secret keys are never persisted to metrics logs.
