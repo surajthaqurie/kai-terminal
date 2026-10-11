@@ -15,7 +15,28 @@ export function GuidePage() {
         sub="Install, verify the engine, plug in your AI CLI. No account, no config wizard."
       />
       <Quickstart />
-      <section className="t-section" id="shortcuts">
+      <section className="t-section" id="cli-reference">
+        <Container narrow>
+          <Reveal>
+            <h2 className="t-section-title" style={{ fontSize: '1.5rem', marginBottom: '1.25rem' }}>Project Intelligence & MCP Reference</h2>
+            <div className="t-panel" style={{ marginBottom: '2.5rem' }}>
+              <div className="t-probe-head"><span>$ kai --help</span><span className="t-pill">CLI commands</span></div>
+              <ul className="t-keys">
+                <li><span>kai code .</span><span className="t-kbd-group"><span className="t-kbd">Index project into ~/.kai/</span></span></li>
+                <li><span>kai status</span><span className="t-kbd-group"><span className="t-kbd">Inspect schema version & file health</span></span></li>
+                <li><span>kai query "&lt;task&gt;"</span><span className="t-kbd-group"><span className="t-kbd">Deterministic context retrieval</span></span></li>
+                <li><span>kai cost</span><span className="t-kbd-group"><span className="t-kbd">Check token budget footprint</span></span></li>
+                <li><span>kai mcp .</span><span className="t-kbd-group"><span className="t-kbd">Start stdio MCP server (7 tools)</span></span></li>
+                <li><span>kai agent setup &lt;agent&gt;</span><span className="t-kbd-group"><span className="t-kbd">Auto-configure Claude / Cursor / Codex</span></span></li>
+                <li><span>kai bench .</span><span className="t-kbd-group"><span className="t-kbd">Run token savings & latency benchmark</span></span></li>
+                <li><span>kai unregister .</span><span className="t-kbd-group"><span className="t-kbd">Clean up index metadata safely</span></span></li>
+              </ul>
+              <p className="t-micro">All indexes live in ~/.kai/ — your source repository is kept strictly read-only and unpolluted.</p>
+            </div>
+          </Reveal>
+        </Container>
+      </section>
+      <section className="t-section t-section-alt" id="shortcuts">
         <Container narrow>
           <Reveal>
             <div className="t-panel">

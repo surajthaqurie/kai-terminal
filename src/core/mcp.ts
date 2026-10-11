@@ -204,9 +204,25 @@ export async function handleMcpMessage(
         };
       }
 
+      const canonicalDefault = resolveCanonicalPath(defaultProjectRoot);
       const projectTarget =
         typeof args.projectPath === "string" ? args.projectPath : defaultProjectRoot;
       const canonicalRoot = resolveCanonicalPath(projectTarget);
+
+      // Security check: Confine tool execution to the authorized server workspace boundary
+      if (
+        canonicalRoot !== canonicalDefault &&
+        !canonicalRoot.startsWith(canonicalDefault + path.sep)
+      ) {
+        return {
+          jsonrpc: "2.0",
+          id: reqId,
+          error: {
+            code: -32602,
+            message: "Project path escapes the authorized server workspace boundary",
+          },
+        };
+      }
 
       // Verify directory exists and is a directory (not a file).
       let rootStat: fs.Stats | null = null;
@@ -368,17 +384,26 @@ export async function handleMcpMessage(
       }
 
       if (toolName === "kai_get_dependencies") {
-        const targetRel = String(args.filePath || "")
+        const rawRel = String(args.filePath || "")
           .trim()
           .slice(0, 1024);
-        if (!targetRel || targetRel.includes("..") || path.isAbsolute(targetRel)) {
+        // Normalize Windows separators so `src\a.ts` resolves like `src/a.ts`.
+        const targetRel = rawRel.replace(/\\/g, "/");
+        const isWindowsAbsolute = /^[a-zA-Z]:\//.test(targetRel) || targetRel.startsWith("//");
+        if (
+          !targetRel ||
+          targetRel.split("/").includes("..") ||
+          path.isAbsolute(targetRel) ||
+          path.isAbsolute(rawRel) ||
+          isWindowsAbsolute
+        ) {
           return {
             jsonrpc: "2.0",
             id: reqId,
             error: { code: -32602, message: `Invalid filePath` },
           };
         }
-        const file = index.files[targetRel];
+        const file = index.files[targetRel] ?? index.files[rawRel];
         if (!file) {
           return {
             jsonrpc: "2.0",

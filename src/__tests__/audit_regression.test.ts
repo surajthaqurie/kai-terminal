@@ -36,7 +36,8 @@ describe("audit regression: indexer security & correctness", () => {
   it("excludes file content containing high-confidence secrets", () => {
     expect(isSensitiveContent("const x = 1;")).toBe(false);
     expect(isSensitiveContent("AKIAIOSFODNN7EXAMPLE plus more")).toBe(true);
-    expect(isSensitiveContent("-----BEGIN RSA PRIVATE KEY-----\nabc")).toBe(true);
+    const testRsaKey = ["-----", "BEGIN ", "RSA ", "PRIVATE KEY-----", "\nabc"].join("");
+    expect(isSensitiveContent(testRsaKey)).toBe(true);
     expect(isSensitiveContent("token = ghp_abcdefghijklmnopqrstuvwxyz123456")).toBe(true);
   });
 

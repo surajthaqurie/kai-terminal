@@ -33,21 +33,25 @@ This document describes process execution controls, IPC capabilities, permission
 
 - **Non-Execution Invariant:** Under no circumstances are indexed project files, build scripts, test suites, or package hooks executed during scanning, indexing, or retrieval. All parsing is passive, static lexical analysis.
 - **Path Traversal & Symlink Escapes:** Canonical paths are verified with `fs.realpathSync`. Any symbolic link pointing outside the authorized project root is rejected and never traversed.
-- **Default Secret Exclusion:** Sensitive files and credential stores are filtered by default:
+- **Default Secret Exclusion:** Sensitive files and credential patterns are filtered by default:
   - Environment files: `.env`, `.env.*`
-  - SSH and cryptography keys: `id_rsa*`, `id_ed25519*`, `*.pem`, `*.key`, `*.pfx`, `*.p12`
-  - Cloud and API credentials: `credentials.json`, `secrets.json`, `token.json`, `service-account*.json`
+  - SSH and cryptography keys: `id_rsa*`, `id_ed25519*`, `*.pem`, `*.key`, `*.pfx`, `*.p12`, PKCS#8 / OpenSSL PEM private keys
+  - Cloud and API credentials: `credentials.json`, `secrets.json`, `token.json`, `service-account*.json`, fine-grained GitHub PATs (`github_pat_*`), Anthropic API keys (`sk-ant-*`), OpenAI API keys (`sk-*`)
 - **Resource Exhaustion Bounds:**
   - File size cap: 512 KB per file.
   - File count limit: 10,000 files per project.
   - Traversal depth limit: 20 directories.
   - Binary files (by extension or null byte check) are skipped.
+- **Context Injection & Prompt Isolation:**
+  - Prompt templates demarcate untrusted context boundaries with explicit warning headers.
+  - Dynamic code fence escaping (`safeCodeFence`) prevents markdown breakout when user source code contains triple or quadruple backticks.
 - **Concurrency & Atomic Storage:**
   - Index and metadata writes use atomic temporary file creation followed by rename (`atomicWriteJson`).
   - Concurrent operations are protected by PID-tracked file locks (`ProjectLock`) preventing index corruption.
-- **MCP Stdio Isolation:**
+- **MCP Stdio Isolation & Workspace Confinement:**
   - The MCP server operates exclusively over standard input/output (`stdio`) JSON-RPC. It does not open network sockets or unauthenticated network ports.
-  - All tools are strictly read-only on project sources; arguments are validated before execution.
+  - All tools are strictly read-only on project sources.
+  - All tool arguments resolving file paths enforce strict workspace confinement using `fs.realpathSync`, rejecting unauthorized path traversal and out-of-boundary access.
 - **Privacy-Safe Telemetry:**
   - Local diagnostic metrics are appended to `~/.kai/metrics.jsonl` tracking only execution latencies, token counts, and error codes.
   - User prompts, indexed source contents, and secret keys are never persisted to metrics logs.

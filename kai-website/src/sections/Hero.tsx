@@ -6,9 +6,9 @@ import { REPO_URL } from '../data/site';
 
 const STATS: Array<[string, string]> = [
   ['~30MB', 'idle RAM'],
-  ['60fps', 'xterm.js'],
-  ['3 OS', 'win · linux · mac'],
-  ['0', 'telemetry'],
+  ['<10ms', 'retrieval latency'],
+  ['~70%', 'token savings'],
+  ['0', 'telemetry · leaks'],
 ];
 
 export function Hero({ tag, short, version }: { tag: string; short: string; version: string }) {
@@ -17,7 +17,7 @@ export function Hero({ tag, short, version }: { tag: string; short: string; vers
       <div className="t-hero-glow"></div>
       <div className="t-hero-inner">
         <div className="t-enter" style={{ animationDelay: '0ms' }}>
-          <Badge><Sparkles size={14} /> {tag} · MIT · Tauri 2 + Rust</Badge>
+          <Badge><Sparkles size={14} /> {tag} · MIT · Tauri 2 + Rust + MCP</Badge>
         </div>
 
         <h1 className="t-hero-title t-enter" style={{ animationDelay: '90ms' }}>
@@ -25,7 +25,7 @@ export function Hero({ tag, short, version }: { tag: string; short: string; vers
         </h1>
 
         <p className="t-hero-sub t-enter" style={{ animationDelay: '180ms' }}>
-          A GPU-rendered terminal with a native Rust PTY on every OS. Tabs, splits, and your own AI CLIs — no account, no telemetry.
+          A GPU-rendered terminal with a native Rust PTY and built-in Project Intelligence. Serve AST symbol context to Claude Code, Cursor, and Codex over MCP — zero cloud hops, zero telemetry.
         </p>
 
         <div className="t-enter" style={{ animationDelay: '260ms' }}>

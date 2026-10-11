@@ -3,11 +3,12 @@ import { HelpCircle } from 'lucide-react';
 import { Badge, Section } from '../components/ui';
 
 const FAQ_ITEMS = [
-  { q: 'Is Kai free?', a: 'Yes — MIT. Free for personal + commercial, no paywall, reproducible builds on GitHub Actions.' },
-  { q: 'Any telemetry?', a: 'No. No analytics, no keystroke logging, strict CSP. Sessions never leave your machine.' },
-  { q: 'How does AI work?', a: 'Kai probes PATH for codex / claude / gemini you already installed and launches them in a full pty. Bring your own keys.' },
-  { q: 'Why Tauri + Rust?', a: '~30MB idle vs 300MB+ Electron. Native portable-pty streams, faster startup, lower CPU.' },
-  { q: 'Which OS builds?', a: 'Windows .exe/.msi · Linux .deb (x64/ARM64) + .AppImage · macOS .dmg (Apple Silicon).' },
+  { q: 'Is Kai free?', a: 'Yes — MIT. Free for personal + commercial use, no paywall, reproducible builds on GitHub Actions.' },
+  { q: 'Any telemetry or secret logging?', a: 'Zero telemetry. No cloud proxy, no keystroke tracking, strict workspace boundary isolation. Sensitive keys and tokens (.env*, id_rsa*, PATs) are automatically scrubbed from indexes.' },
+  { q: 'How does Project Intelligence & MCP work?', a: 'Kai indexes your repository locally (AST symbols, dependencies, and rules) and stores metadata safely in ~/.kai/. External AI tools (Claude Code, Cursor, Codex) connect via standard stdio MCP to get relevant, token-budgeted context without dumping whole directories.' },
+  { q: 'How fast is retrieval and how many tokens does it save?', a: 'Local context retrieval runs in under 10ms (typically 0.8ms - 3.2ms). By extracting only relevant AST symbols and dependencies, it achieves ~70% token reductions compared to naive file dumps.' },
+  { q: 'Why Tauri + Rust?', a: '~30MB idle vs 300MB+ Electron. Native portable-pty streams, faster startup, and minimal memory overhead on Windows, Linux, and macOS.' },
+  { q: 'Which OS builds are supported?', a: 'Windows .exe/.msi · Linux .deb (x64/ARM64) + .AppImage · macOS .dmg (Apple Silicon).' },
 ];
 
 export function Faq() {

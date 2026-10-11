@@ -107,7 +107,7 @@ flowchart TD
 - **`src/core/retrieval.ts`**: Deterministic relevance search prioritizing exact symbol matches (10.0), filename matches (5.0), and dependencies. Extracts focused line ranges (-15 to +45 lines) around symbols.
 - **`src/core/contextAssembler.ts`**: Orchestrates classification, freshness checks, rule extraction, retrieval, and skills into a structured `ContextPackage`. Enforces the token budget as a hard guarantee on the rendered prompt (drops skills, lowest-scored sources, then rules; hard-truncates only as a last resort — the verbatim task section leads so it survives).
 - **`src/core/tokenCounter.ts`**: Deterministic `cl100k` token estimation distinguishing estimates from exact tokenizer measurements.
-- **`src/core/mcp.ts`**: Standard Model Context Protocol (MCP) server communicating over `stdio` JSON-RPC. Exposes 6 read-only tools: `kai_project_info`, `kai_search_code`, `kai_find_symbol`, `kai_get_dependencies`, `kai_get_context`, and `kai_refresh_index`.
+- **`src/core/mcp.ts`**: Standard Model Context Protocol (MCP) server communicating over `stdio` JSON-RPC with strict workspace boundary confinement. Exposes 7 read-only tools: `kai_project_info`, `kai_search_code`, `kai_find_symbol`, `kai_get_dependencies`, `kai_get_context`, `kai_refresh_index`, and `kai_get_lsp_status`.
 - **`src/cli/index.ts` & `bin/kai.js`**: Unified CLI dispatcher providing terminal commands for project registration, status inspection, unregistration (`unregister` deletes only Kai-owned data under `~/.kai/projects/`), querying, benchmarking, and agent setup.
 
 ---

@@ -252,7 +252,7 @@ export async function queryLspCrossFileReferences(
                   const filePath = loc.uri.replace("file://", "");
                   defs.push({
                     uri: loc.uri,
-                    filePath: path.relative(canonicalRoot, filePath),
+                    filePath: path.relative(canonicalRoot, filePath).replace(/\\/g, "/"),
                     range: loc.range,
                   });
                 }

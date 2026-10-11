@@ -38,12 +38,12 @@ The real PTY integration suite covers 13 core scenarios:
 
 ## 3. Project Intelligence & MCP Verification Matrix
 
-The intelligence test suite (`src/__tests__/intelligence.test.ts` and `src/__tests__/mcp_security.test.ts`) covers 25 automated scenarios:
+The intelligence test suite (`src/__tests__/intelligence.test.ts`, `src/__tests__/mcp_security.test.ts`, `src/__tests__/audit_production_security.test.ts`, and `src/__tests__/performance_benchmarks.test.ts`) covers comprehensive automated scenarios across 109 Vitest tests:
 
 | # | Test Area | Description | Automated Target | Status |
 | :--- | :--- | :--- | :--- | :--- |
 | **1** | **Token Estimation** | Bounded heuristic estimation distinguishing estimates from measurements (`isEstimate`) | `intelligence.test.ts` | **Passed** |
-| **2** | **Budget Bounding** | Strict text truncation to fit token budget bounds | `intelligence.test.ts` | **Passed** |
+| **2** | **Budget Bounding** | Strict text truncation to fit token budget bounds with two-pass enforcement | `intelligence.test.ts` | **Passed** |
 | **3** | **Task Classification** | Deterministic rule matching for 8 categories (`explain`, `implement`, `debug`, etc.) | `intelligence.test.ts` | **Passed** |
 | **4** | **Classifier Fallback** | Uncertain queries safely categorized as `unknown` with low confidence | `intelligence.test.ts` | **Passed** |
 | **5** | **Caller Override** | Caller or agent explicitly overrides classification with 100% confidence | `intelligence.test.ts` | **Passed** |
@@ -51,13 +51,17 @@ The intelligence test suite (`src/__tests__/intelligence.test.ts` and `src/__tes
 | **7** | **Skill Matching** | On-demand skill selection based on category, language, and keywords | `intelligence.test.ts` | **Passed** |
 | **8** | **Skill Safety** | Strict size bounding and non-execution of skill content | `intelligence.test.ts` | **Passed** |
 | **9** | **MCP Handshake** | Valid `initialize` JSON-RPC response with protocol version and server info | `mcp_security.test.ts` | **Passed** |
-| **10** | **MCP Tool Discovery**| `tools/list` exposes all 6 intelligence tools with valid JSON schemas | `mcp_security.test.ts` | **Passed** |
+| **10** | **MCP Tool Discovery**| `tools/list` exposes all 7 intelligence tools with valid JSON schemas | `mcp_security.test.ts` | **Passed** |
 | **11** | **MCP Argument Guard**| Unknown tools or missing parameters return structured JSON-RPC error codes | `mcp_security.test.ts` | **Passed** |
-| **12** | **Secret Exclusion** | Built-in patterns exclude `.env*`, `id_rsa*`, `.key`, and credential files | `mcp_security.test.ts` | **Passed** |
-| **13** | **Binary Rejection** | Extension and null-byte checks skip binary and object files | `mcp_security.test.ts` | **Passed** |
-| **14** | **Atomic Persistence**| Temporary file write and atomic rename prevent corrupt indexes | `mcp_security.test.ts` | **Passed** |
-| **15** | **Lock Concurrency** | Exclusive `ProjectLock` with PID and timeout prevents index collision | `mcp_security.test.ts` | **Passed** |
-| **16** | **Symlink Boundaries**| Traversal stops at project boundary; symlinks pointing outside root are rejected | `mcp_security.test.ts` | **Passed** |
+| **12** | **MCP Workspace Confinement** | Tools reject file paths outside authorized project boundary | `mcp_security.test.ts` | **Passed** |
+| **13** | **Secret Scrubbing** | Built-in patterns exclude `.env*`, `id_rsa*`, PKCS#8 keys, and API tokens | `audit_production_security.test.ts` | **Passed** |
+| **14** | **Dynamic Code Fence** | Escapes triple/quadruple backticks preventing prompt breakout | `audit_production_security.test.ts` | **Passed** |
+| **15** | **Binary Rejection** | Extension and null-byte checks skip binary and object files | `mcp_security.test.ts` | **Passed** |
+| **16** | **Atomic Persistence**| Temporary file write and atomic rename prevent corrupt indexes | `mcp_security.test.ts` | **Passed** |
+| **17** | **Lock Concurrency** | Exclusive `ProjectLock` with PID and timeout prevents index collision | `mcp_security.test.ts` | **Passed** |
+| **18** | **Symlink Boundaries**| Traversal stops at project boundary; symlinks pointing outside root are rejected | `audit_production_security.test.ts` | **Passed** |
+| **19** | **Retrieval Freshness**| Filter stop words, singular/plural stem matching, and extract constants | `audit_production_security.test.ts` | **Passed** |
+| **20** | **Performance Benchmarks** | Evaluates 4 configurations with sub-10ms latency and ~70% token savings | `performance_benchmarks.test.ts` | **Passed** |
 
 ---
 
@@ -66,7 +70,7 @@ The intelligence test suite (`src/__tests__/intelligence.test.ts` and `src/__tes
 Run all verification checks locally prior to committing:
 
 ```bash
-# 1. Full TypeScript, Formatting & Intelligence Test Suite (Vitest - 62 tests)
+# 1. Full TypeScript, Formatting & Intelligence Test Suite (Vitest - 16 test files, 109 tests)
 npm run check
 
 # 2. Standalone CLI Build
@@ -84,7 +88,7 @@ cargo fmt --manifest-path src-tauri/Cargo.toml --check
 # 5. Rust Backend Linter Check
 cargo clippy --no-default-features --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 
-# 6. Rust Backend Unit Tests (38 tests)
+# 6. Rust Backend Unit Tests (40 tests)
 cargo test --no-default-features --manifest-path src-tauri/Cargo.toml --lib
 
 # 7. Real PTY Integration Tests (13 tests)

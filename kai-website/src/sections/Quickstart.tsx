@@ -5,23 +5,23 @@ import { CopyBtn } from '../components/CopyBtn';
 import { REPO_URL } from '../data/site';
 
 const STEPS: Array<[string, string, string]> = [
-  ['01', 'Install', 'Get the file for your OS above. One download, no setup wizard.'],
-  ['02', 'Open and verify', 'Launch Kai, then run kai --status to check the engine.'],
-  ['03', 'Bring your AI', 'Install Codex, Claude, or Gemini CLI. Kai finds them on PATH — nothing to paste, no keys to hand over.'],
+  ['01', 'Install or Clone', 'Get the native binary for your OS or run directly with npm / cargo.'],
+  ['02', 'Index Your Project', 'Run kai code . to parse AST symbols, imports, and dependencies in ~/.kai/.'],
+  ['03', 'Connect AI Agents', 'Run kai mcp . or kai agent setup <claude|cursor|codex> for instant zero-config integration.'],
 ];
 
 const SNIPPETS: Record<'run' | 'ai' | 'config', { tab: string; code: string }> = {
   run: {
-    tab: '$ quickstart',
-    code: '# 1 · open Kai, then check it is healthy\nkai --status\n\n# 2 · see everything it can do\nkai --help',
+    tab: '$ project-intelligence',
+    code: '# 1 · index any codebase into ~/.kai/ without touching git\nkai code .\n\n# 2 · query ranked context within strict token budgets\nkai query "Explain PtyManager state machine"\n\n# 3 · check indexing health, symbols, and token footprint\nkai status\nkai cost',
   },
   ai: {
-    tab: '$ ai',
-    code: '# Kai uses AI tools you already installed — nothing bundled\ncodex --help      # OpenAI Codex CLI\nclaude --help     # Claude Code\nGemini --help     # Gemini CLI',
+    tab: '$ mcp-agent-setup',
+    code: '# Run Kai MCP server directly over stdio\nkai mcp .\n\n# Or configure your favorite AI coding agent in one command:\nkai agent setup claude    # configures ~/.claude.json\nkai agent setup cursor    # configures cursor mcp settings\nkai agent setup codex     # OpenAI Codex stdio configuration',
   },
   config: {
-    tab: '$ config',
-    code: '# no config needed — the defaults are sane\n# theme follows your OS · font is Fira Code\n# shell: $SHELL on Linux/macOS, ConPTY on Windows',
+    tab: '$ terminal-pty',
+    code: '# Native PTY with ConPTY on Windows, POSIX pty on Linux/macOS\n# GPU accelerated rendering with xterm.js at 60fps\n# Isolated tabs and processes · zero telemetry, 100% private',
   },
 };
 

@@ -3,7 +3,6 @@ import path from "path";
 import type { ProjectIndex, EvaluationBaseline, TaskCategory } from "./types";
 import { retrieveContext } from "./retrieval";
 import { assembleContext } from "./contextAssembler";
-import { estimateTokens } from "./tokenCounter";
 
 export interface BenchmarkTaskDef {
   id: string;
@@ -100,7 +99,7 @@ export async function runBenchmarks(
       }
     }
     const latencyA = Date.now() - startA;
-    const tokensA = estimateTokens("A".repeat(Math.min(totalRawChars, 200000))).estimatedTokens;
+    const tokensA = Math.max(1, Math.ceil(totalRawChars / 3.8));
 
     results.push({
       taskDescription: task.description,
@@ -117,7 +116,10 @@ export async function runBenchmarks(
 
     // Config B: Kai with basic relevant-file retrieval
     const startB = Date.now();
-    const retrievedB = retrieveContext(index, task.query, { tokenBudget: 4000, fileBudget: 8 });
+    const retrievedB = retrieveContext(index, task.description, {
+      tokenBudget: 4000,
+      fileBudget: 8,
+    });
     const latencyB = Date.now() - startB;
     const hitB = hitRate(
       retrievedB.matchedFiles,

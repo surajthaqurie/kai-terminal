@@ -27,6 +27,42 @@ export interface RetrievalResult {
   usedTokens: number;
 }
 
+export const COMMON_TASK_STOP_WORDS = new Set([
+  "the",
+  "and",
+  "for",
+  "with",
+  "from",
+  "into",
+  "that",
+  "this",
+  "what",
+  "where",
+  "when",
+  "how",
+  "write",
+  "read",
+  "make",
+  "create",
+  "does",
+  "explain",
+  "implement",
+  "unit",
+  "test",
+  "tests",
+  "some",
+  "have",
+  "more",
+  "also",
+  "been",
+  "were",
+  "will",
+  "would",
+  "should",
+  "could",
+  "why",
+]);
+
 /**
  * Deterministic relevance search over indexed symbols, file paths, dependencies, and content
  */
@@ -65,19 +101,23 @@ export function retrieveContext(
   for (const [symName, syms] of Object.entries(index.symbolIndex)) {
     const symLower = symName.toLowerCase();
     for (const q of queryTokens) {
+      const isStopWord = COMMON_TASK_STOP_WORDS.has(q);
       let boost = 0;
       if (symLower === q) {
-        boost = 10.0; // Exact symbol match
-      } else if (symLower.includes(q)) {
-        boost = 3.0; // Partial symbol match
+        boost = isStopWord ? 2.0 : 10.0; // Exact symbol match
+      } else if (!isStopWord && symLower.includes(q)) {
+        boost = 3.0; // Partial symbol match only for non-stop-words
       }
 
       if (boost > 0) {
         for (const sym of syms) {
           matchedSymbols.push(sym);
-          const file = index.files[sym.filePath];
+          // Windows legacy indexes stored backslash paths; normalize so
+          // lookups succeed regardless of which separator was persisted.
+          const normKey = sym.filePath.replace(/\\/g, "/");
+          const file = index.files[sym.filePath] ?? index.files[normKey];
           if (file) {
-            const existing = fileScores.get(sym.filePath) || {
+            const existing = fileScores.get(normKey) || {
               file,
               score: 0,
               matchedSymbols: [],
@@ -91,7 +131,7 @@ export function retrieveContext(
             ) {
               existing.matchedSymbols.push(sym);
             }
-            fileScores.set(sym.filePath, existing);
+            fileScores.set(normKey, existing);
           }
         }
       }
@@ -102,27 +142,37 @@ export function retrieveContext(
   for (const [relPath, file] of Object.entries(index.files)) {
     if (!includeTests && file.isTest) continue;
 
-    const pathLower = relPath.toLowerCase();
-    const baseName = path.basename(relPath).toLowerCase();
+    // Normalize for cross-platform matching: `path.basename` on POSIX
+    // does not split Windows `\` separators.
+    const normRel = relPath.replace(/\\/g, "/");
+    const pathLower = normRel.toLowerCase();
+    const baseName = normRel.split("/").pop()?.toLowerCase() ?? normRel.toLowerCase();
+    const baseWithoutExt = baseName.replace(/\.[^.]+$/, "");
 
     let pathScore = 0;
     for (const q of queryTokens) {
-      if (baseName.includes(q)) {
-        pathScore += 5.0; // File name match
-      } else if (pathLower.includes(q)) {
+      const isStopWord = COMMON_TASK_STOP_WORDS.has(q);
+      const isPluralStemMatch =
+        (baseWithoutExt.endsWith("s") && baseWithoutExt.slice(0, -1) === q) ||
+        (q.endsWith("s") && q.slice(0, -1) === baseWithoutExt);
+      if (baseWithoutExt === q || isPluralStemMatch) {
+        pathScore += isStopWord ? 5.0 : 25.0; // Exact or singular/plural filename stem match
+      } else if (baseName.includes(q)) {
+        pathScore += isStopWord ? 1.0 : 6.0; // File name match
+      } else if (!isStopWord && pathLower.includes(q)) {
         pathScore += 2.0; // Directory match
       }
     }
 
     if (pathScore > 0) {
-      const existing = fileScores.get(relPath) || {
+      const existing = fileScores.get(normRel) || {
         file,
         score: 0,
         matchedSymbols: [],
         matchedDeps: [],
       };
       existing.score += pathScore;
-      fileScores.set(relPath, existing);
+      fileScores.set(normRel, existing);
     }
   }
 
@@ -134,7 +184,7 @@ export function retrieveContext(
       for (const q of queryTokens) {
         if (specLower.includes(q)) {
           matchedDeps.push(dep);
-          const existing = fileScores.get(file.relativePath);
+          const existing = fileScores.get(file.relativePath.replace(/\\/g, "/"));
           if (existing) {
             existing.score += 1.5;
             existing.matchedDeps.push(dep);
@@ -211,6 +261,12 @@ export function retrieveContext(
       startLine = Math.max(1, targetLine - 15);
       endLine = Math.min(lines.length, targetLine + 45);
       snippet = lines.slice(startLine - 1, endLine).join("\n");
+    } else if (content.length > 3000) {
+      // Bound large files without specific symbol focus to top 80 lines
+      const lines = content.split("\n");
+      startLine = 1;
+      endLine = Math.min(lines.length, 80);
+      snippet = lines.slice(0, endLine).join("\n");
     }
 
     const snippetTokens = estimateTokens(snippet).estimatedTokens;

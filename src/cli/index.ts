@@ -186,8 +186,9 @@ export async function runCli(argv: string[]): Promise<number> {
 
     // 3. kai unregister <path|id> [--dry-run]
     if (command === "unregister") {
-      const target = args[1];
-      if (!target || target === "--dry-run") {
+      const nonFlagArgs = args.slice(1).filter((a) => !a.startsWith("-"));
+      const target = nonFlagArgs[0];
+      if (!target) {
         console.error(`[kai] Error: Please specify a project path or id.`);
         console.error(`Example: kai unregister . --dry-run`);
         return 1;

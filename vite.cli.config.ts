@@ -10,9 +10,12 @@ export default defineConfig({
     lib: {
       entry: path.resolve(__dirname, 'src/cli/index.ts'),
       formats: ['es'],
-      fileName: () => 'kai.js',
+      fileName: () => 'index.js',
     },
     rollupOptions: {
+      output: {
+        entryFileNames: 'index.js',
+      },
       external: [
         'fs',
         'path',

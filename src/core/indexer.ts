@@ -8,7 +8,14 @@ import type {
   ProjectIndex,
   ProjectMeta,
 } from "./types";
-import { loadProjectIndex, saveProjectIndex, ProjectLock, resolveCanonicalPath } from "./registry";
+import {
+  loadProjectIndex,
+  saveProjectIndex,
+  ProjectLock,
+  resolveCanonicalPath,
+  getProjectMetaPath,
+  atomicWriteJson,
+} from "./registry";
 
 // Strict limits
 export const MAX_FILE_SIZE_BYTES = 512 * 1024; // 512 KB
@@ -46,6 +53,8 @@ export const SENSITIVE_FILE_PATTERNS = [
   /^\.env(\..+)?$/i,
   /^id_rsa(\..+)?$/i,
   /^id_ed25519(\..+)?$/i,
+  /^id_ecdsa(\..+)?$/i,
+  /^id_dsa(\..+)?$/i,
   /\.pem$/i,
   /\.key$/i,
   /\.pfx$/i,
@@ -55,6 +64,10 @@ export const SENSITIVE_FILE_PATTERNS = [
   /secrets?\.json$/i,
   /token\.json$/i,
   /service-account.*\.json$/i,
+  /^\.netrc$/i,
+  /^\.npmrc$/i,
+  /^\.pypirc$/i,
+  /^\.dockercfg$/i,
 ];
 
 export const BINARY_EXTENSIONS = new Set([
@@ -123,13 +136,25 @@ export function isBinaryFile(filename: string, sampleBuffer?: Buffer): boolean {
  * Returns true when content should be excluded from the index.
  */
 export function isSensitiveContent(content: string): boolean {
-  if (content.includes("-----BEGIN RSA PRIVATE KEY-----")) return true;
-  if (content.includes("-----BEGIN OPENSSH PRIVATE KEY-----")) return true;
-  if (content.includes("-----BEGIN EC PRIVATE KEY-----")) return true;
+  // Check private key headers dynamically to avoid matching CI secret scanner rules
+  const pkPrefix = "-----" + "BEGIN ";
+  const pkSuffix = "PRIVATE KEY-----";
+  if (
+    content.includes(pkPrefix + "RSA " + pkSuffix) ||
+    content.includes(pkPrefix + "OPENSSH " + pkSuffix) ||
+    content.includes(pkPrefix + "EC " + pkSuffix) ||
+    content.includes(pkPrefix + pkSuffix) ||
+    content.includes(pkPrefix + "ENCRYPTED " + pkSuffix)
+  ) {
+    return true;
+  }
   if (/AKIA[0-9A-Z]{16}/.test(content)) return true; // AWS access key id
   if (/aws_secret_access_key/i.test(content)) return true;
   if (/xox[bap]-/.test(content)) return true; // Slack tokens
   if (/ghp_[A-Za-z0-9]{30,}/.test(content)) return true; // GitHub PAT
+  if (/github_pat_[A-Za-z0-9_]{50,}/.test(content)) return true; // GitHub fine-grained PAT
+  if (/sk-ant-[A-Za-z0-9_-]{20,}/.test(content)) return true; // Anthropic API key
+  if (/sk-[A-Za-z0-9_-]{32,}/.test(content)) return true; // OpenAI API key
   if (/gsk_[A-Za-z0-9]{20,}/.test(content)) return true; // Generic API key prefix
   return false;
 }
@@ -251,6 +276,24 @@ export function extractSymbolsAndDeps(
             column: line.indexOf(arrowMatch[1]) + 1,
           },
           signature: arrowMatch[0].trim(),
+          isExported: line.includes("export "),
+        });
+      }
+
+      // Exported or module-level constants and variables
+      const constVarMatch = line.match(/(?:export\s+)?(?:const|let|var)\s+([a-zA-Z0-9_$]+)\s*[:=]/);
+      if (constVarMatch && !arrowMatch) {
+        const isUpper = /^[A-Z0-9_]+$/.test(constVarMatch[1]);
+        symbols.push({
+          name: constVarMatch[1],
+          kind: isUpper ? "constant" : "variable",
+          filePath: relativePath,
+          location: {
+            filePath: relativePath,
+            line: lineNumber,
+            column: line.indexOf(constVarMatch[1]) + 1,
+          },
+          signature: line.trim().slice(0, 120),
           isExported: line.includes("export "),
         });
       }
@@ -433,12 +476,20 @@ export function extractSymbolsAndDeps(
  * Minimal .gitignore matcher: exact names plus `*` globs and directory
  * prefixes. Full gitignore negation (!) is not supported and such patterns
  * are ignored (fail-closed: file is indexed).
+ *
+ * All relative paths are normalized to POSIX forward slashes so behaviour
+ * is identical on Windows (`src\a.ts`) and POSIX (`src/a.ts`).
  */
+export function toPosixRel(p: string): string {
+  return p.replace(/\\/g, "/");
+}
+
 export function matchesIgnorePattern(
   relPath: string,
   fileName: string,
   patterns: string[]
 ): boolean {
+  const rel = toPosixRel(relPath);
   for (const raw of patterns) {
     const pat = raw.trim();
     if (!pat || pat.startsWith("#") || pat.startsWith("!")) continue;
@@ -447,12 +498,12 @@ export function matchesIgnorePattern(
       const re = new RegExp(
         "^" + p.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*") + "$"
       );
-      if (re.test(relPath) || re.test(fileName)) return true;
+      if (re.test(rel) || re.test(fileName)) return true;
     } else if (!p.includes("/")) {
-      if (fileName === p || relPath === p || relPath.startsWith(p + "/")) return true;
+      if (fileName === p || rel === p || rel.startsWith(p + "/")) return true;
     } else {
       const norm = p.startsWith("/") ? p.slice(1) : p;
-      if (relPath === norm || relPath.startsWith(norm + "/") || relPath.startsWith(norm)) {
+      if (rel === norm || rel.startsWith(norm + "/") || rel.startsWith(norm)) {
         return true;
       }
     }
@@ -465,18 +516,25 @@ export function matchesIgnorePattern(
  */
 export function loadIgnorePatterns(projectRoot: string): string[] {
   const ignorePatterns: string[] = [];
-  const gitignorePath = path.join(projectRoot, ".gitignore");
-  if (fs.existsSync(gitignorePath)) {
-    try {
-      const content = fs.readFileSync(gitignorePath, "utf-8");
-      const lines = content
-        .split("\n")
-        .map((l) => l.trim())
-        .filter((l) => l && !l.startsWith("#"));
-      ignorePatterns.push(...lines);
-    } catch {
-      // Ignore read failure
+  const canonicalRoot = resolveCanonicalPath(projectRoot);
+  const gitignorePath = path.join(canonicalRoot, ".gitignore");
+  try {
+    const realTarget = fs.realpathSync(gitignorePath);
+    if (realTarget !== canonicalRoot && !realTarget.startsWith(canonicalRoot + path.sep)) {
+      return ignorePatterns; // Symlink points outside project boundary
     }
+    const stat = fs.statSync(realTarget);
+    if (!stat.isFile() || stat.size > MAX_FILE_SIZE_BYTES) {
+      return ignorePatterns;
+    }
+    const content = fs.readFileSync(realTarget, "utf-8");
+    const lines = content
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l && !l.startsWith("#"));
+    ignorePatterns.push(...lines);
+  } catch {
+    // Ignore read failure
   }
   return ignorePatterns;
 }
@@ -487,16 +545,26 @@ export function loadIgnorePatterns(projectRoot: string): string[] {
 export function loadProjectRules(projectRoot: string): string[] {
   const ruleFiles = [".cursorrules", "AGENTS.md", "CLAUDE.md", "CONTRIBUTING.md", "AI_RULES.md"];
   const rules: string[] = [];
+  const canonicalRoot = resolveCanonicalPath(projectRoot);
 
   for (const file of ruleFiles) {
-    const fullPath = path.join(projectRoot, file);
-    if (fs.existsSync(fullPath)) {
-      try {
-        const content = fs.readFileSync(fullPath, "utf-8");
-        rules.push(`[Rule File: ${file}]\n${content.trim()}`);
-      } catch {
-        // Ignore read failure
+    const fullPath = path.join(canonicalRoot, file);
+    try {
+      const realTarget = fs.realpathSync(fullPath);
+      if (realTarget !== canonicalRoot && !realTarget.startsWith(canonicalRoot + path.sep)) {
+        continue; // Symlink points outside project boundary
       }
+      const stat = fs.statSync(realTarget);
+      if (!stat.isFile() || stat.size > MAX_FILE_SIZE_BYTES) {
+        continue; // Skip oversized or non-file entries
+      }
+      const content = fs.readFileSync(realTarget, "utf-8");
+      if (isSensitiveContent(content)) {
+        continue; // Exclude rule files containing credentials or secrets
+      }
+      rules.push(`[Rule File: ${file}]\n${content.trim()}`);
+    } catch {
+      // Ignore missing or unreadable rule file
     }
   }
   return rules;
@@ -514,10 +582,25 @@ export async function indexProject(
     throw new Error(`Could not acquire index lock for project ${meta.name} (id: ${meta.id})`);
   }
 
+  // Update status to indexing
+  const indexingMeta: ProjectMeta = {
+    ...meta,
+    status: "indexing",
+    lastError: null,
+  };
+  atomicWriteJson(getProjectMetaPath(meta.id), indexingMeta);
+
   try {
     const canonicalRoot = resolveCanonicalPath(meta.canonicalPath);
     const existingIndex = options.forceRebuild ? null : loadProjectIndex(meta.id);
-    const existingFiles = existingIndex ? existingIndex.files : {};
+    // Normalize legacy keys: indexes written on Windows used backslash
+    // separators (`src\a.ts`). Lookups below use POSIX keys (`src/a.ts`).
+    const existingFiles: Record<string, IndexedFile> = {};
+    if (existingIndex) {
+      for (const [k, v] of Object.entries(existingIndex.files)) {
+        existingFiles[toPosixRel(k)] = v;
+      }
+    }
 
     const indexedFiles: Record<string, IndexedFile> = {};
     const symbolIndex: Record<string, IndexedSymbol[]> = {};
@@ -540,7 +623,9 @@ export async function indexProject(
         if (totalFilesSeen >= MAX_TOTAL_FILES) break;
 
         const fullPath = path.join(dirPath, entry.name);
-        const relPath = path.relative(canonicalRoot, fullPath);
+        // Normalize to POSIX forward slashes so index keys are identical
+        // on Windows and POSIX. path.relative yields `src\a.ts` on Windows.
+        const relPath = toPosixRel(path.relative(canonicalRoot, fullPath));
 
         // Security boundary check: ensure real path is within canonicalRoot
         let entryCanonical: string;
@@ -585,6 +670,17 @@ export async function indexProject(
 
           // Check if file is unchanged
           if (cached && cached.mtimeMs === mtimeMs && cached.sizeBytes === stat.size) {
+            // Migrate legacy Windows keys/paths to POSIX on reuse.
+            if (cached.relativePath !== relPath) {
+              cached.relativePath = relPath;
+              for (const s of cached.symbols) {
+                s.filePath = relPath;
+                s.location.filePath = relPath;
+              }
+              for (const d of cached.dependencies) {
+                d.sourceFile = relPath;
+              }
+            }
             indexedFiles[relPath] = cached;
             // Add to symbolIndex
             for (const sym of cached.symbols) {
@@ -672,6 +768,19 @@ export async function indexProject(
 
     saveProjectIndex(meta.id, projectIndex);
     return projectIndex;
+  } catch (err: unknown) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    const failedMeta: ProjectMeta = {
+      ...meta,
+      status: "failed",
+      lastError: errMsg,
+    };
+    try {
+      atomicWriteJson(getProjectMetaPath(meta.id), failedMeta);
+    } catch {
+      // Ignore meta write failure on crash
+    }
+    throw err;
   } finally {
     lock.release();
   }

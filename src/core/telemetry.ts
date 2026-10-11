@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { getKaiHomeDir } from "./registry";
+import { getKaiHomeDir, ensureKaiDirectories } from "./registry";
 
 export interface LocalMetricsRecord {
   timestamp: string;
@@ -32,6 +32,7 @@ export function getMetricsLogPath(): string {
  */
 export function recordMetric(event: Omit<LocalMetricsRecord, "timestamp">): void {
   try {
+    ensureKaiDirectories();
     const record: LocalMetricsRecord = {
       ...event,
       timestamp: new Date().toISOString(),

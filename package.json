@@ -7,10 +7,15 @@
   "bin": {
     "kai": "./bin/kai.js"
   },
+  "files": [
+    "bin",
+    "dist"
+  ],
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build && npm run build:cli",
     "build:cli": "vite build --config vite.cli.config.ts",
+    "prepack": "npm run build:cli",
     "preview": "vite preview",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",

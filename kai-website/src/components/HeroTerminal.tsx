@@ -24,15 +24,31 @@ export function HeroTerminal({ version }: { version: string }) {
     if (['help', '?', 'kai --help', 'kai -h'].includes(input)) {
       reply = (
         <div style={{ color: '#67e8f9' }}>
-          <p>try: <b style={{ color: '#fcd34d' }}>status</b> · <b style={{ color: '#fcd34d' }}>ai</b> · <b style={{ color: '#fcd34d' }}>downloads</b> · <b style={{ color: '#fcd34d' }}>clear</b></p>
+          <p>try: <b style={{ color: '#fcd34d' }}>status</b> · <b style={{ color: '#fcd34d' }}>mcp</b> · <b style={{ color: '#fcd34d' }}>query</b> · <b style={{ color: '#fcd34d' }}>downloads</b> · <b style={{ color: '#fcd34d' }}>clear</b></p>
         </div>
       );
     } else if (['status', 'kai --status', 'kai status'].includes(input)) {
       reply = (
         <div style={{ color: '#34d399' }}>
           <p>✔ engine operational · ConPTY / POSIX pty</p>
-          <p>✔ render: xterm.js canvas @ 60fps</p>
-          <p>✔ 3 AI CLIs on PATH · no bundled binaries</p>
+          <p>✔ render: xterm.js canvas @ 60fps · ~30MB idle</p>
+          <p>✔ project intelligence: schema v1 · 7 MCP tools available</p>
+        </div>
+      );
+    } else if (['mcp', 'kai mcp', 'kai mcp .'].includes(input)) {
+      reply = (
+        <div style={{ color: '#34d399' }}>
+          <p>[kai-mcp] stdio JSON-RPC server listening</p>
+          <p style={{ color: '#a78bfa' }}>tools: kai_project_info · kai_search_code · kai_find_symbol · kai_get_context</p>
+          <p style={{ color: '#94a3b8', fontSize: '0.75rem' }}>latency &lt; 10ms · read-only workspace boundary enforced</p>
+        </div>
+      );
+    } else if (input.startsWith('kai query') || input.startsWith('query')) {
+      reply = (
+        <div style={{ color: '#38bdf8' }}>
+          <p>✔ task: "Explain PtyManager state machine"</p>
+          <p>✔ retrieved: 4 relevant files, 14 symbols, 0 secrets</p>
+          <p style={{ color: '#34d399' }}>✔ token footprint: 1,420 tokens (68% savings vs raw dump)</p>
         </div>
       );
     } else if (['claude', 'codex', 'gemini', 'ai'].includes(input) || input.startsWith('kai ')) {
@@ -74,7 +90,7 @@ export function HeroTerminal({ version }: { version: string }) {
     run(terminalInput);
   };
 
-  const chips = ['kai --status', 'ai', 'downloads', 'help'];
+  const chips = ['kai status', 'kai mcp .', 'kai query', 'help'];
 
   return (
     <div className="t-terminal" role="region" aria-label="Interactive Kai preview terminal">
