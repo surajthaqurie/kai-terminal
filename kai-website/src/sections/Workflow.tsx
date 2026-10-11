@@ -5,34 +5,33 @@ const STEPS = [
   {
     icon: Download,
     step: 'Step 1',
-    title: 'Install Kai',
-    body: 'Download Kai for your system. Open it. Done in 30 seconds. No account needed.',
-    code: 'Download → Open → Done',
+    title: 'Install',
+    body: 'Download the file for your OS from GitHub Releases and open it. No account.',
+    code: 'macOS .dmg / Linux .deb / Windows .exe',
   },
   {
     icon: FolderOpen,
     step: 'Step 2',
-    title: 'Add your project',
-    body: 'Open your code folder in Kai and type kai code . The dot means “this folder”. Kai learns your files — safely, on your computer.',
+    title: 'Index a folder',
+    body: 'Open a repo in Kai and run kai code . The index goes to ~/.kai/, your repo stays untouched.',
     code: 'kai code .',
   },
   {
     icon: Bot,
     step: 'Step 3',
-    title: 'Ask with AI',
-    body: 'Connect one AI tool, then ask questions in plain words. Example: “Where is the login code?” You get a short, correct answer.',
+    title: 'Use with your AI tool',
+    body: 'Run kai agent setup for one tool (Claude, Cursor, Codex, Gemini, Copilot, Windsurf or Cline), then work as usual.',
     code: 'kai agent setup claude',
   },
 ];
 
-/* Simple professional workflow: Install → Add project → Ask with AI.
-   Uses plain words so beginners and pros both understand. */
+/* Grounded workflow: Install → Index → Use. No promises, just the commands. */
 export function Workflow() {
   return (
     <Section id="how-it-works">
       <SectionHead
         title="How it works"
-        sub="Three simple steps. No tech skills needed."
+        sub="Three commands. Everything stays on your machine."
       />
       <div className="t-grid-3">
         {STEPS.map((s) => (
@@ -60,7 +59,7 @@ export function Workflow() {
         ))}
       </div>
       <p className="t-micro" style={{ textAlign: 'center', marginTop: '1.5rem' }}>
-        That is the full workflow. Every page and guide on this site follows the same 3 steps.
+        Full flags and edge cases are in the Guide and README — this is the short version.
       </p>
     </Section>
   );

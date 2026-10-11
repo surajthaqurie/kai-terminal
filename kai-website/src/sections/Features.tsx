@@ -5,8 +5,8 @@ export function Features() {
   return (
     <Section id="features">
       <SectionHead
-        title="A terminal that just works"
-        sub="Fast, simple, and private. Everything you need, nothing you don't."
+        title="What Kai does"
+        sub="Terminal first. Local CLI second. No account."
       />
       <div className="t-grid-3">
         {FEATURES.map((f) => (

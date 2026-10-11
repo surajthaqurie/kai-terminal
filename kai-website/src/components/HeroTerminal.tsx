@@ -61,7 +61,7 @@ export function HeroTerminal({ version }: { version: string }) {
     } else if (['downloads', 'download', 'install'].includes(input)) {
       reply = (
         <div style={{ color: '#67e8f9' }}>
-          <p>.exe/.msi · .deb/.AppImage · .dmg (Apple Silicon)</p>
+          <p>.exe / .msi · .deb / .AppImage · .dmg (macOS)</p>
           <p style={{ color: '#94a3b8' }}>open the /download page ↓</p>
         </div>
       );

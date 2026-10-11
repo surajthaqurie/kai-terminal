@@ -2,46 +2,27 @@ import React, { createContext, useCallback, useContext, useEffect, useState } fr
 
 export type Theme = 'dark' | 'light';
 
-interface ThemeContextValue {
-  theme: Theme;
-  toggle: () => void;
-  setTheme: (t: Theme) => void;
-}
+const KEY = 'kai-theme';
 
-const ThemeContext = createContext<ThemeContextValue>({
-  theme: 'dark',
-  toggle: () => {},
-  setTheme: () => {},
-});
-
-const STORAGE_KEY = 'kai-theme';
-
-function getInitialTheme(): Theme {
-  if (typeof window === 'undefined') return 'dark';
+function initial(): Theme {
   try {
-    const stored = window.localStorage.getItem(STORAGE_KEY);
-    if (stored === 'light' || stored === 'dark') return stored;
-  } catch {
-    /* ignore */
+    const s = localStorage.getItem(KEY);
+    if (s === 'light' || s === 'dark') return s;
+  } catch { /* ignore */ }
+  if (typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: light)').matches) {
+    return 'light';
   }
-  // Respect OS preference, default to dark to preserve brand look
-  if (window.matchMedia?.('(prefers-color-scheme: light)').matches) return 'light';
   return 'dark';
 }
 
-export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [theme, setThemeState] = useState<Theme>(getInitialTheme);
+const Ctx = createContext<{ theme: Theme; toggle: () => void }>({ theme: 'dark', toggle: () => {} });
 
+export function ThemeProvider({ children }: { children: React.ReactNode }) {
+  const [theme, setTheme] = useState<Theme>(initial);
   useEffect(() => {
-    const root = document.documentElement;
-    root.dataset.theme = theme;
-    root.style.colorScheme = theme;
-    root.classList.toggle('dark', theme === 'dark');
-    try {
-      window.localStorage.setItem(STORAGE_KEY, theme);
-    } catch {
-      /* ignore */
-    }
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.style.colorScheme = theme;
+    try { localStorage.setItem(KEY, theme); } catch { /* ignore */ }
     const meta = document.querySelector('meta[name="theme-color"]');
     if (meta) meta.setAttribute('content', theme === 'dark' ? '#070a12' : '#f4f6fb');
   }, [theme]);
@@ -52,25 +33,18 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     if (!mq) return;
     const onChange = (e: MediaQueryListEvent) => {
       try {
-        if (window.localStorage.getItem(STORAGE_KEY)) return;
-      } catch {
-        /* ignore */
-      }
-      setThemeState(e.matches ? 'light' : 'dark');
+        if (localStorage.getItem(KEY)) return;
+      } catch { /* ignore */ }
+      setTheme(e.matches ? 'light' : 'dark');
     };
     mq.addEventListener?.('change', onChange);
     return () => mq.removeEventListener?.('change', onChange);
   }, []);
 
-  const setTheme = useCallback((t: Theme) => setThemeState(t), []);
-  const toggle = useCallback(
-    () => setThemeState((t) => (t === 'dark' ? 'light' : 'dark')),
-    [],
-  );
-
-  return <ThemeContext.Provider value={{ theme, toggle, setTheme }}>{children}</ThemeContext.Provider>;
+  const toggle = useCallback(() => setTheme((t) => (t === 'dark' ? 'light' : 'dark')), []);
+  return <Ctx.Provider value={{ theme, toggle }}>{children}</Ctx.Provider>;
 }
 
 export function useTheme() {
-  return useContext(ThemeContext);
+  return useContext(Ctx);
 }

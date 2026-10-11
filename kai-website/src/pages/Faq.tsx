@@ -8,8 +8,8 @@ export function FaqPage() {
     <>
       <PageHero
         badge={<><HelpCircle size={14} /> FAQ</>}
-        title="Simple answers"
-        sub="Is it free? Is it private? How do I start? All answered here."
+        title="FAQ"
+        sub="What Kai is, how to install it, and which file to pick."
       />
       <Faq />
       <CtaBanner />

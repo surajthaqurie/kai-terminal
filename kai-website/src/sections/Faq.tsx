@@ -3,13 +3,12 @@ import { HelpCircle } from 'lucide-react';
 import { Badge, Section } from '../components/ui';
 
 const FAQ_ITEMS = [
-  { q: 'Is Kai free?', a: 'Yes. Kai is free for personal and work use. No hidden fees, no locked features.' },
-  { q: 'Does Kai track me or upload my code?', a: 'No. Everything stays on your computer. Kai does not track you, does not upload code, and hides passwords and secret keys automatically.' },
-  { q: 'How does Kai help my AI tool?', a: 'Kai makes a private map of your project on your computer. When your AI tool (like Claude or Cursor) has a question, Kai gives it just the small part of code it needs. This is faster and cheaper.' },
-  { q: 'Which AI tools work with Kai?', a: 'Claude, Cursor, Codex, Gemini, Copilot, Windsurf and Cline. You only need one command to connect: for example, kai agent setup claude.' },
-  { q: 'Is it fast? Does it save money?', a: 'Yes. Answers come in less than 10 milliseconds. Because Kai shares only the needed code, you use about 70% less AI tokens — so lower cost.' },
-  { q: 'Why is Kai so light?', a: 'Kai is built with Rust and Tauri, not Electron. It uses about 30MB of memory instead of 300MB+. It starts fast and runs well on Windows, Linux and Mac.' },
-  { q: 'Which systems can I install it on?', a: 'Mac (M1 to M4), Linux (.deb and .AppImage), and Windows 10 and 11 (.exe and .msi). One simple download for each.' },
+  { q: 'What is Kai?', a: 'A desktop terminal (Tauri 2 + Rust) plus a local CLI that indexes a folder and serves context to AI coding tools over MCP. MIT licensed.' },
+  { q: 'What does it cost? Is there tracking?', a: 'MIT, no account. No telemetry in the app. Indexes stay in ~/.kai/ on your machine. .env files, keys and binaries are skipped.' },
+  { q: 'How do I start?', a: 'Install the file for your OS, open a repo, run kai code . to index it, then kai agent setup <name> for one AI tool. The Guide shows each command.' },
+  { q: 'Which AI tools are covered?', a: 'Claude, Cursor, Codex, Gemini, Copilot, Windsurf and Cline for config generation. The desktop app also lists locally installed CLIs without running them.' },
+  { q: 'What are the limits?', a: 'v0.1.0 is early. kai query output is capped by a token budget (default 4000). Some repos need kai refresh-index after large renames. See Known Limitations in the repo.' },
+  { q: 'Which files do I download?', a: 'macOS: .dmg (M1–M4). Linux: .deb for Ubuntu/Debian or .AppImage for other distros. Windows: .exe or .msi (x64). Pick yourself — the site does not auto-decide for you.' },
 ];
 
 export function Faq() {
@@ -19,8 +18,8 @@ export function Faq() {
       <div className="t-container-narrow" style={{ padding: 0 }}>
         <div style={{ textAlign: 'center', marginBottom: '2.5rem' }}>
           <Badge tone="neutral"><HelpCircle size={14} /> FAQ</Badge>
-          <h2 className="t-section-title">Common questions</h2>
-          <p className="t-section-sub">Simple answers. Click a question to see more.</p>
+          <h2 className="t-section-title">Questions</h2>
+          <p className="t-section-sub">Straight answers. Click to expand.</p>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '.9rem' }}>
           {FAQ_ITEMS.map((item, idx) => {

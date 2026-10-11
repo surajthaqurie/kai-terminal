@@ -9,9 +9,9 @@ export function ChangelogPage() {
   return (
     <>
       <PageHero
-        badge={<><ScrollText size={14} /> Updates</>}
-        title="What's new"
-        sub="New versions and improvements. Newest first, in simple words."
+        badge={<><ScrollText size={14} /> Changelog</>}
+        title="Changelog"
+        sub="Release notes and pending changes. Newest first."
       />
       <Changelog limit={20} />
     </>

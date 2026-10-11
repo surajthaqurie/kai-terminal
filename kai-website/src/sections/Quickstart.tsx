@@ -5,23 +5,23 @@ import { CopyBtn } from '../components/CopyBtn';
 import { REPO_URL } from '../data/site';
 
 const STEPS: Array<{ n: string; t: string; d: string; what: string }> = [
-  { n: '01', t: 'Install Kai', d: 'Download Kai for your system above. Open it like any normal app.', what: 'You get: a fast app. No account. Takes 30 seconds.' },
-  { n: '02', t: 'Open your project', d: 'Open your code folder in Kai, then type: kai code . — the dot means “this folder”.', what: 'What happens: Kai makes a private list of your files. Your code is not changed.' },
-  { n: '03', t: 'Connect your AI tool', d: 'Pick one AI tool to start. Type: kai agent setup claude — then ask questions about your code.', what: 'Try it: ask your AI “Where is the login code?” and it will find it fast.' },
+  { n: '01', t: 'Install Kai', d: 'Download the file for your OS from this page and open it. No account.', what: 'Source build instead? See DEVELOPMENT.md — needs Node 20+ and Rust 1.75+.' },
+  { n: '02', t: 'Point Kai at a project', d: 'Open a code folder in Kai, then run: kai code . — the dot means the current folder.', what: 'Kai stores its index in ~/.kai/ outside your repo. Your files are not modified.' },
+  { n: '03', t: 'Wire up one AI tool', d: 'Start with one tool, e.g.: kai agent setup claude — then use that tool as normal.', what: 'Each tool keeps its own config file. See Guide for the full command list.' },
 ];
 
 const SNIPPETS: Record<'run' | 'ai' | 'config', { tab: string; code: string }> = {
   run: {
-    tab: '$ my project',
-    code: '# 1 · Tell Kai which folder to remember (dot = this folder)\nkai code .\n\n# 2 · Ask a question about your code\nkai query "Where is the login code?"\n\n# 3 · Check health and cost\nkai status\nkai cost',
+    tab: '$ project',
+    code: '# index the current folder\nkai code .\n\n# ask for context on a task\nkai query "Where is the login code?"\n\n# check state\nkai status\nkai cost',
   },
   ai: {
-    tab: '$ connect AI',
-    code: '# Start the helper your AI tool talks to\nkai mcp .\n\n# Or connect your favorite AI tool with one line:\nkai agent setup claude    # for Claude\nkai agent setup cursor    # for Cursor\nkai agent setup codex     # for Codex\nkai agent setup gemini    # for Gemini\nkai agent setup copilot   # for VS Code Copilot\nkai agent setup windsurf  # for Windsurf\nkai agent setup cline     # for Cline',
+    tab: '$ AI setup',
+    code: '# start the local bridge your AI tool calls\nkai mcp .\n\n# or write the config for one tool\nkai agent setup claude    # ~/.claude.json\nkai agent setup cursor    # .cursor/mcp.json\nkai agent setup codex\nkai agent setup gemini    # ~/.muse/settings.json\nkai agent setup copilot   # .vscode/mcp.json\nkai agent setup windsurf\nkai agent setup cline',
   },
   config: {
-    tab: '$ why Kai?',
-    code: '# Fast on Windows, Linux and Mac\n# Clear text, smooth scrolling\n# Separate safe tabs · nothing is tracked',
+    tab: '$ notes',
+    code: '# indexes live in ~/.kai/, not in your repo\n# .env*, keys and binaries are skipped\n# run kai unregister <path> to delete an index',
   },
 };
 
@@ -30,12 +30,12 @@ export function Quickstart() {
   return (
     <Section id="quickstart" alt>
       <SectionHead
-        title="Ready in 3 simple steps"
-        sub="Install, open a project, connect your AI tool. That is all."
+        title="Get running"
+        sub="Install, index one folder, wire up one AI tool."
       />
       <div className="t-guide-callout">
         <MousePointerClick size={18} />
-        <span><strong>New to terminals?</strong> Just follow steps 01 → 02 → 03. Copy each line exactly as shown — dots and dashes matter.</span>
+        <span>Follow 01 → 02 → 03 in order. Copy lines exactly — the <code>.</code> in <code>kai code .</code> matters.</span>
       </div>
       <div className="t-split">
         <div className="t-steps">

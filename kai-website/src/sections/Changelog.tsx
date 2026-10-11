@@ -1,5 +1,6 @@
 import { ExternalLink, GitBranch, Package, ScrollText, Sparkles } from 'lucide-react';
 import { Badge, Section } from '../components/ui';
+import { Link } from '../router';
 import { fmtDate } from '../lib/format';
 import { LATEST_RELEASE_URL } from '../data/site';
 import { usePublishedReleases } from '../hooks/useRepo';
@@ -12,33 +13,22 @@ export type ChangesetEntry = {
   summary: string;
 };
 
-function parseSummary(summary: string) {
-  const lines = summary.split('\n').map((l) => l.trim()).filter(Boolean);
-  if (lines.length <= 1) return { heading: summary, bullets: [] };
-  const first = lines[0];
-  const heading = first.endsWith(':') ? first.slice(0, -1) : first;
-  const bullets = lines.slice(1).map((l) => l.replace(/^[-*•]\s*/, ''));
-  return { heading, bullets };
-}
-
-function parseNotes(notes: string) {
-  const lines = notes.split('\n').map((l) => l.trim()).filter(Boolean);
-  if (lines.length <= 1) return { intro: notes, bullets: [] };
-  const first = lines[0];
-  const intro = first.endsWith(':') ? first.slice(0, -1) : first;
-  const bullets = lines.slice(1).map((l) => l.replace(/^[-*•]\s*/, ''));
-  return { intro, bullets };
+/* One helper for both release notes and changeset summaries:
+   first line = heading, rest = bullets. */
+function splitNotes(text: string) {
+  const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
+  if (lines.length <= 1) return { head: text.trim(), bullets: [] as string[] };
+  return {
+    head: lines[0].replace(/:$/, ''),
+    bullets: lines.slice(1).map((l) => l.replace(/^[-*•]\s*/, '')),
+  };
 }
 
 export function Changelog({ limit = 6 }: { limit?: number }) {
   const releases = usePublishedReleases(limit);
-  const rawEntries = (pendingChanges as { entries?: unknown })?.entries;
-  const pending: ChangesetEntry[] = Array.isArray(rawEntries)
-    ? (rawEntries as ChangesetEntry[])
+  const pending: ChangesetEntry[] = Array.isArray((pendingChanges as { entries?: unknown })?.entries)
+    ? (pendingChanges as { entries: ChangesetEntry[] }).entries
     : [];
-  const generatedAt = typeof (pendingChanges as { generatedAt?: unknown })?.generatedAt === 'string'
-    ? (pendingChanges as { generatedAt: string }).generatedAt
-    : '';
 
   return (
     <Section id="changelog" alt>
@@ -54,7 +44,7 @@ export function Changelog({ limit = 6 }: { limit?: number }) {
         {releases.length > 0 ? (
           <ul className="t-log-list">
             {releases.map((r, idx) => {
-              const { intro, bullets } = parseNotes(r.notes);
+              const { head, bullets } = splitNotes(r.notes);
               return (
                 <li key={r.tag} className="t-log-row" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', flexWrap: 'wrap', gap: '0.5rem' }}>
@@ -73,7 +63,7 @@ export function Changelog({ limit = 6 }: { limit?: number }) {
                     <div className="t-log-head" style={{ marginBottom: '0.5rem' }}>
                       <b style={{ fontSize: '1.05rem' }}>{r.name}</b>
                     </div>
-                    {intro && <p className="t-log-notes" style={{ margin: '0 0 0.5rem' }}>{intro}:</p>}
+                    {head && <p className="t-log-notes" style={{ margin: '0 0 0.5rem' }}>{head}:</p>}
                     {bullets.length > 0 && (
                       <ul className="t-log-bullets">
                         {bullets.map((b, bIdx) => (
@@ -85,9 +75,9 @@ export function Changelog({ limit = 6 }: { limit?: number }) {
 
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', paddingTop: '0.5rem', borderTop: '1px solid var(--border-subtle)', flexWrap: 'wrap', gap: '0.5rem' }}>
                     <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                      <a href="#downloads" className="t-btn t-btn--secondary t-btn--sm" style={{ padding: '0.25rem 0.6rem', fontSize: '0.75rem' }}>
+                      <Link to="/download" className="t-btn t-btn--secondary t-btn--sm" style={{ padding: '0.25rem 0.6rem', fontSize: '0.75rem' }}>
                         Direct Downloads
-                      </a>
+                      </Link>
                     </div>
                     <a className="t-link" href={r.url} target="_blank" rel="noreferrer" style={{ fontSize: '0.8rem' }}>
                       GitHub Release Notes <ExternalLink size={13} />
@@ -120,7 +110,7 @@ export function Changelog({ limit = 6 }: { limit?: number }) {
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               {pending.map((p) => {
-                const { heading, bullets } = parseSummary(p.summary);
+                const { head, bullets } = splitNotes(p.summary);
                 return (
                   <div
                     key={p.file}
@@ -145,7 +135,7 @@ export function Changelog({ limit = 6 }: { limit?: number }) {
                     </div>
 
                     <div style={{ fontSize: '0.86rem', color: 'var(--text-primary)', lineHeight: 1.5 }}>
-                      <b>{heading}</b>
+                      <b>{head}</b>
                       {bullets.length > 0 && (
                         <ul className="t-log-bullets" style={{ marginTop: '0.35rem' }}>
                           {bullets.map((b, bIdx) => (
@@ -159,8 +149,7 @@ export function Changelog({ limit = 6 }: { limit?: number }) {
               })}
             </div>
             <p className="t-micro" style={{ marginTop: '1rem' }}>
-              Tracked with Changesets workflow — automatically compiled into CHANGELOG.md upon release.
-              {generatedAt ? ` Auto-synced: ${fmtDate(generatedAt)}.` : ''}
+              Coming in the next release.
             </p>
           </div>
         )}

@@ -6,33 +6,33 @@ export function AiCli() {
     <Section id="ai-cli" alt>
       <div className="t-split">
         <div>
-          <Badge tone="purple"><Bot size={14} /> Works with your AI tools</Badge>
-          <h2 className="t-section-title" style={{ textAlign: 'left' }}>Let your AI tool understand your code</h2>
+          <Badge tone="purple"><Bot size={14} /> Local context for AI tools</Badge>
+          <h2 className="t-section-title" style={{ textAlign: 'left' }}>Context from your repo, on your machine</h2>
           <p style={{ color: 'var(--text-secondary)', fontSize: '1.02rem', lineHeight: 1.65, marginBottom: '1rem' }}>
-            Kai looks at your project on your computer and shares only the needed parts with your AI tool. Nothing is uploaded. Nothing leaves your machine.
+            Kai indexes the folder you point it at and serves file snippets over a local MCP bridge.
+            No cloud, no account. Indexes live in ~/.kai/.
           </p>
           <p style={{ color: 'var(--text-tertiary)', fontSize: '0.88rem', lineHeight: 1.6, marginBottom: '1.5rem' }}>
-            Just starting? Pick <strong style={{ color: 'var(--text-primary)' }}>one</strong> tool below — Kai connects it with one command.
+            Start with one tool. The config paths differ per tool — Kai writes them for you.
           </p>
           <ul className="t-check-list">
-            <li><CheckCircle2 size={18} color="var(--accent-purple-fg)" /><span><strong>Works with 7 tools</strong> — Claude, Cursor, Codex, Gemini, Copilot, Windsurf, Cline.</span></li>
-            <li><CheckCircle2 size={18} color="var(--accent-purple-fg)" /><span><strong>Fast and low cost</strong> — answers in seconds and uses ~70% less AI cost.</span></li>
-            <li><CheckCircle2 size={18} color="var(--accent-purple-fg)" /><span><strong>Private</strong> — your code is only read, never changed. Secrets are hidden.</span></li>
-            <li><CheckCircle2 size={18} color="var(--accent-purple-fg)" /><span><strong>Keeps your project clean</strong> — Kai saves its notes outside your project folder.</span></li>
+            <li><CheckCircle2 size={18} color="var(--accent-purple-fg)" /><span><strong>7 tools covered</strong> — Claude, Cursor, Codex, Gemini, Copilot, Windsurf, Cline.</span></li>
+            <li><CheckCircle2 size={18} color="var(--accent-purple-fg)" /><span><strong>Local only</strong> — read-only access, .env and keys skipped by default.</span></li>
+            <li><CheckCircle2 size={18} color="var(--accent-purple-fg)" /><span><strong>Budgeted output</strong> — kai query stays within a token budget (default 4000).</span></li>
+            <li><CheckCircle2 size={18} color="var(--accent-purple-fg)" /><span><strong>Outside your repo</strong> — nothing is written into your git tree.</span></li>
           </ul>
         </div>
 
         <div className="t-panel t-probe">
-          <div className="t-probe-head"><span>$ kai mcp .</span><span className="t-pill">Ready for AI tools</span></div>
-          <pre className="t-code t-code--sm"><code>{`[kai] Ready to help your AI tool
-✓ project info      what files you have
-✓ search code       find code quickly
-✓ find parts        find functions and classes
-✓ see links         how files connect
-✓ get answers       short, low-cost answers
-✓ refresh           update when files change
-✓ health check      is everything OK?
-— your code never leaves your computer`}</code></pre>
+          <div className="t-probe-head"><span>$ kai mcp .</span><span className="t-pill">7 tools, stdio</span></div>
+          <pre className="t-code t-code--sm"><code>{`[kai-mcp] listening on stdio
+- kai_project_info
+- kai_search_code
+- kai_find_symbol
+- kai_get_dependencies
+- kai_get_context
+- kai_refresh_index
+- kai_get_lsp_status`}</code></pre>
         </div>
       </div>
     </Section>

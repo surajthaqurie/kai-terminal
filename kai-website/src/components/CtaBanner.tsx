@@ -8,8 +8,8 @@ export function CtaBanner() {
       <div className="t-container">
         <div className="t-cta">
           <div>
-            <h2>Get Kai today — it's free</h2>
-            <p>One simple download for your system. Ready in 30 seconds.</p>
+            <h2>Download Kai</h2>
+            <p>Installers for macOS, Linux and Windows are on the download page and GitHub Releases.</p>
           </div>
           <div className="t-cta-actions">
             <Link to="/download" className="t-btn t-btn--primary">

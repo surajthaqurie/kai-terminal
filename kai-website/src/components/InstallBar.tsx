@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { Download } from 'lucide-react';
 import { CopyBtn } from './CopyBtn';
+import { detectOs } from '../lib/os';
+import { REPO_URL } from '../data/site';
 
 type InstallTab = { id: string; label: string; note: string; code: string };
 
@@ -11,9 +13,9 @@ function installTabs(short: string): InstallTab[] {
   return [
     {
       id: 'macos',
-      label: 'Apple (macOS)',
-      note: 'For Apple Silicon Macs (M1–M4) on macOS 12+. Open the file, then drag Kai into Applications.',
-      code: `# Apple Silicon · macOS 12 or later\nopen Kai_${v}_aarch64.dmg`,
+      label: 'macOS',
+      note: 'For M1–M4 Macs on macOS 12+. Open the file, then drag Kai into Applications.',
+      code: `# macOS 12 or later · M1–M4\nopen Kai_${v}_aarch64.dmg`,
     },
     {
       id: 'linux',
@@ -37,16 +39,12 @@ function installTabs(short: string): InstallTab[] {
 }
 
 function detectTab(): string {
-  if (typeof navigator === 'undefined') return 'linux';
-  const p = (navigator.platform ?? '').toLowerCase();
-  const ua = navigator.userAgent.toLowerCase();
-  if (p.includes('mac') || ua.includes('mac')) return 'macos';
-  if (p.includes('win') || ua.includes('windows')) return 'windows';
-  return 'linux';
+  return detectOs();
 }
 
 export function InstallBar({ short }: { short: string }) {
   const tabs = installTabs(short);
+  // Suggest the visitor's OS, but every tab stays one click away.
   const [tab, setTab] = useState<string>(detectTab);
   const detected = detectTab();
   const active = tabs.find((t) => t.id === tab) ?? tabs[0];
@@ -57,15 +55,15 @@ export function InstallBar({ short }: { short: string }) {
 
   const directDownloads: Record<string, Array<{ name: string; url: string; label: string; primary?: boolean }>> = {
     macos: [
-      { name: `Kai_${short}_aarch64.dmg`, url: `https://github.com/surajthaqurie/kai-terminal/releases/download/v${short}/Kai_${short}_aarch64.dmg`, label: '.dmg (Apple Silicon)', primary: true },
+      { name: `Kai_${short}_aarch64.dmg`, url: `${REPO_URL}/releases/download/v${short}/Kai_${short}_aarch64.dmg`, label: '.dmg (M1–M4)', primary: true },
     ],
     linux: [
-      { name: `kai_${short}_amd64.deb`, url: `https://github.com/surajthaqurie/kai-terminal/releases/download/v${short}/kai_${short}_amd64.deb`, label: '.deb (x64)', primary: true },
-      { name: `kai_${short}_amd64.AppImage`, url: `https://github.com/surajthaqurie/kai-terminal/releases/download/v${short}/kai_${short}_amd64.AppImage`, label: '.AppImage' },
+      { name: `kai_${short}_amd64.deb`, url: `${REPO_URL}/releases/download/v${short}/kai_${short}_amd64.deb`, label: '.deb (x64)', primary: true },
+      { name: `kai_${short}_amd64.AppImage`, url: `${REPO_URL}/releases/download/v${short}/kai_${short}_amd64.AppImage`, label: '.AppImage' },
     ],
     windows: [
-      { name: `Kai_${short}_x64-setup.exe`, url: `https://github.com/surajthaqurie/kai-terminal/releases/download/v${short}/Kai_${short}_x64-setup.exe`, label: '.exe installer', primary: true },
-      { name: `Kai_${short}_x64_en-US.msi`, url: `https://github.com/surajthaqurie/kai-terminal/releases/download/v${short}/Kai_${short}_x64_en-US.msi`, label: '.msi package' },
+      { name: `Kai_${short}_x64-setup.exe`, url: `${REPO_URL}/releases/download/v${short}/Kai_${short}_x64-setup.exe`, label: '.exe installer', primary: true },
+      { name: `Kai_${short}_x64_en-US.msi`, url: `${REPO_URL}/releases/download/v${short}/Kai_${short}_x64_en-US.msi`, label: '.msi package' },
     ],
     source: [],
   };
@@ -83,16 +81,18 @@ export function InstallBar({ short }: { short: string }) {
             className="t-install-tab"
             data-active={tab === t.id}
             onClick={() => setTab(t.id)}
-            title={t.id === detected ? 'We detected this OS for you' : `Show ${t.label} instructions`}
+            title={`Show ${t.label} instructions`}
           >
-            {t.id === detected && <span className="t-detected-dot" aria-hidden="true" />}
             {t.label}
-            {t.id === detected && tab !== t.id && <span className="t-sr"> (detected)</span>}
+            {t.id === detected && <span className="t-sr"> (your system)</span>}
           </button>
         ))}
         <span style={{ flex: 1 }} />
         <CopyBtn text={commands} />
       </div>
+      <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', padding: '0.5rem 1.1rem 0', margin: 0 }}>
+        The highlighted tab is only a guess from your browser — pick any tab, you are not locked in.
+      </p>
       {currentDls.length > 0 && (
         <div className="t-install-direct">
           <span className="t-install-direct-label">Direct Download:</span>

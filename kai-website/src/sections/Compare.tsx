@@ -5,8 +5,8 @@ export function Compare() {
   return (
     <Section id="compare">
       <SectionHead
-        title="Why choose Kai?"
-        sub="Less memory, simple setup, and full privacy."
+        title="Kai vs other options"
+        sub="Measured on the maintainer's machine. Your numbers will differ."
       />
       <div className="t-compare">
         <div className="t-panel t-table-wrap">

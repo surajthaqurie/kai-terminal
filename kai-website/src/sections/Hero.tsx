@@ -1,4 +1,4 @@
-import { ArrowRight, Code2, Download, ShieldCheck, Sparkles } from 'lucide-react';
+import { ArrowRight, Code2, Download } from 'lucide-react';
 import { Badge, Button } from '../components/ui';
 import { InstallBar } from '../components/InstallBar';
 import { HeroTerminal } from '../components/HeroTerminal';
@@ -6,48 +6,25 @@ import { REPO_URL } from '../data/site';
 import type { LatestRelease } from '../hooks/useRepo';
 
 const STATS: Array<[string, string]> = [
-  ['~30MB', 'idle RAM'],
-  ['<10ms', 'retrieval latency'],
-  ['~70%', 'token savings'],
-  ['0', 'telemetry · leaks'],
+  ['~30MB', 'idle, one tab open'],
+  ['v0.1.0', 'current release'],
+  ['MIT', 'license'],
+  ['3', 'installers: macOS, Linux, Windows'],
 ];
 
-function detectOs(): 'windows' | 'linux' | 'macos' {
-  if (typeof navigator === 'undefined') return 'linux';
-  const p = (navigator.platform ?? '').toLowerCase();
-  const ua = navigator.userAgent.toLowerCase();
-  if (p.includes('mac') || ua.includes('mac')) return 'macos';
-  if (p.includes('win') || ua.includes('windows')) return 'windows';
-  return 'linux';
-}
-
 export function Hero({ tag, short, version, rel }: { tag: string; short: string; version: string; rel?: LatestRelease }) {
-  const userOs = detectOs();
-  const directUrls = {
-    windows: {
-      url: rel?.asset((n) => n.toLowerCase().endsWith('setup.exe'), `Kai_${short}_x64-setup.exe`) ?? `${REPO_URL}/releases/download/${tag}/Kai_${short}_x64-setup.exe`,
-      label: 'Download for Windows',
-      sub: '.exe setup (x64)',
-    },
-    linux: {
-      url: rel?.asset((n) => n.toLowerCase().includes('amd64') && n.toLowerCase().endsWith('.deb'), `kai_${short}_amd64.deb`) ?? `${REPO_URL}/releases/download/${tag}/kai_${short}_amd64.deb`,
-      label: 'Download for Linux',
-      sub: '.deb (x64)',
-    },
-    macos: {
-      url: rel?.asset((n) => n.toLowerCase().endsWith('.dmg'), `Kai_${short}_aarch64.dmg`) ?? `${REPO_URL}/releases/download/${tag}/Kai_${short}_aarch64.dmg`,
-      label: 'Download for macOS',
-      sub: '.dmg (Apple Silicon)',
-    },
-  };
-  const activeDl = directUrls[userOs];
+  const macUrl = rel?.asset((n) => n.toLowerCase().endsWith('.dmg'), `Kai_${short}_aarch64.dmg`) ?? `${REPO_URL}/releases/download/${tag}/Kai_${short}_aarch64.dmg`;
+  const linuxDeb = rel?.asset((n) => n.toLowerCase().includes('amd64') && n.toLowerCase().endsWith('.deb'), `kai_${short}_amd64.deb`) ?? `${REPO_URL}/releases/download/${tag}/kai_${short}_amd64.deb`;
+  const linuxApp = rel?.asset((n) => n.toLowerCase().includes('amd64') && n.toLowerCase().endsWith('.appimage'), `kai_${short}_amd64.AppImage`) ?? `${REPO_URL}/releases/download/${tag}/kai_${short}_amd64.AppImage`;
+  const winExe = rel?.asset((n) => n.toLowerCase().endsWith('setup.exe'), `Kai_${short}_x64-setup.exe`) ?? `${REPO_URL}/releases/download/${tag}/Kai_${short}_x64-setup.exe`;
+  const winMsi = rel?.asset((n) => n.toLowerCase().endsWith('.msi'), `Kai_${short}_x64_en-US.msi`) ?? `${REPO_URL}/releases/download/${tag}/Kai_${short}_x64_en-US.msi`;
 
   return (
     <section className="t-hero">
       <div className="t-hero-glow"></div>
       <div className="t-hero-inner">
         <div className="t-enter" style={{ animationDelay: '0ms' }}>
-          <Badge><Sparkles size={14} /> {tag} · Free MIT · Tauri 2 + Rust</Badge>
+          <Badge>{tag} · MIT · Tauri 2 + Rust</Badge>
         </div>
 
         <h1 className="t-hero-title t-enter" style={{ animationDelay: '70ms' }}>
@@ -56,12 +33,12 @@ export function Hero({ tag, short, version, rel }: { tag: string; short: string;
         </h1>
 
         <p className="t-hero-sub t-enter" style={{ animationDelay: '140ms' }}>
-          A fast terminal for Windows, Linux and Mac. It is easy to use, works with your AI coding tools, and keeps everything private on your computer. Free forever.
+          Kai is a desktop terminal for macOS, Linux and Windows. Same tabs and shortcuts on all three.
+          Pick the file for your system below — every installer is published on GitHub Releases.
         </p>
 
         <p className="t-hero-reassure t-enter" style={{ animationDelay: '190ms' }}>
-          <ShieldCheck size={15} />
-          <span>First time here? Install in 30 seconds. No account. No setup stress. Works with Claude, Cursor, Codex, Gemini and more.</span>
+          <span>v0.1.0 is an early release. If something breaks, check the changelog or open an issue on GitHub.</span>
         </p>
 
         <div className="t-enter" style={{ animationDelay: '230ms' }}>
@@ -69,28 +46,32 @@ export function Hero({ tag, short, version, rel }: { tag: string; short: string;
         </div>
 
         <div className="t-hero-cta t-enter" style={{ animationDelay: '300ms' }}>
-          <Button href={activeDl.url}>
-            <Download size={18} /> {activeDl.label} <span className="t-btn-sub">{activeDl.sub}</span>
-          </Button>
-          <Button href="/download" variant="secondary">
-            All Installers <ArrowRight size={16} />
+          <Button href="/download">
+            <Download size={18} /> Download Kai
           </Button>
           <Button href={REPO_URL} variant="secondary" target="_blank" rel="noreferrer">
             <Code2 size={18} /> GitHub
           </Button>
+          <Button href="/guide" variant="secondary">
+            Setup guide <ArrowRight size={16} />
+          </Button>
         </div>
 
-        <p className="t-hero-os-hint t-enter" style={{ animationDelay: '330ms' }}>
-          We picked “{activeDl.label}” for you — wrong OS? Choose below or on the download page.
-        </p>
-
         <div className="t-quick-dl t-enter" style={{ animationDelay: '360ms' }}>
-          <span className="t-quick-dl-label">Direct downloads:</span>
-          <a href={directUrls.macos.url} className="t-quick-dl-pill"><Download size={12} /> macOS .dmg</a>
-          <a href={directUrls.linux.url} className="t-quick-dl-pill"><Download size={12} /> Linux .deb</a>
-          <a href={rel?.asset((n) => n.toLowerCase().includes('amd64') && n.toLowerCase().endsWith('.appimage'), `kai_${short}_amd64.AppImage`) ?? `${REPO_URL}/releases/download/${tag}/kai_${short}_amd64.AppImage`} className="t-quick-dl-pill">Linux .AppImage</a>
-          <a href={directUrls.windows.url} className="t-quick-dl-pill"><Download size={12} /> Windows .exe</a>
-          <a href={rel?.asset((n) => n.toLowerCase().endsWith('.msi'), `Kai_${short}_x64_en-US.msi`) ?? `${REPO_URL}/releases/download/${tag}/Kai_${short}_x64_en-US.msi`} className="t-quick-dl-pill">Windows .msi</a>
+          {rel && rel.assets.length === 0 ? (
+            <span className="t-quick-dl-label" style={{ lineHeight: 1.6 }}>
+              Installers for {tag} aren't published on GitHub yet — see the download page for source build, or watch Releases.
+            </span>
+          ) : (
+            <>
+              <span className="t-quick-dl-label">All files ({tag}):</span>
+              <a href={macUrl} className="t-quick-dl-pill"><Download size={12} /> macOS .dmg</a>
+              <a href={linuxDeb} className="t-quick-dl-pill"><Download size={12} /> Linux .deb</a>
+              <a href={linuxApp} className="t-quick-dl-pill"><Download size={12} /> Linux .AppImage</a>
+              <a href={winExe} className="t-quick-dl-pill"><Download size={12} /> Windows .exe</a>
+              <a href={winMsi} className="t-quick-dl-pill"><Download size={12} /> Windows .msi</a>
+            </>
+          )}
         </div>
 
         <div className="t-stats t-enter" style={{ animationDelay: '400ms' }}>

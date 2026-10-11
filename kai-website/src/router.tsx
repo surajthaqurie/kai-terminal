@@ -1,44 +1,35 @@
-import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useState } from 'react';
+import { SITE_URL } from './data/site';
 
-/* Minimal client-side router (no dependency).
-   Clean URLs via History API: /, /download, /changelog, /guide, /faq.
-   Vercel rewrites /(.*) -> /index.html so deep links + refresh work.
-   Hash suffixes (/#features, /guide#shortcuts) are preserved for scrolling. */
-
-export const ROUTES = ['/', '/download', '/changelog', '/guide', '/faq'] as const;
-export type RoutePath = (typeof ROUTES)[number];
+/* Simple hash-free router: History API + Vercel rewrite to /index.html. */
 
 export const ROUTE_META: Record<string, { title: string; description: string }> = {
   '/': {
-    title: 'Kai — Simple fast terminal for everyone',
-    description: 'Kai is a simple, fast terminal for Windows, Linux and Mac. Easy setup in 30 seconds. Works with your AI tools. Free and private.',
+    title: 'Kai — Terminal for macOS, Linux, Windows',
+    description: 'Kai is a Tauri + Rust terminal with a local CLI for AI context. MIT licensed. Installers on GitHub Releases.',
   },
   '/download': {
-    title: 'Download Kai — Free for Windows, Linux, Mac',
-    description: 'Download Kai for your system in 30 seconds. Simple setup, free forever, private by design.',
+    title: 'Download Kai — macOS, Linux, Windows',
+    description: 'All Kai installers: macOS .dmg, Linux .deb/.AppImage, Windows .exe/.msi. Pick your own file on GitHub Releases.',
   },
   '/changelog': {
-    title: "What's new — Kai updates",
-    description: 'See the latest Kai improvements and fixes in simple words. Newest first.',
+    title: 'Changelog — Kai',
+    description: 'Kai release notes and pending changes.',
   },
   '/guide': {
-    title: 'Kai Guide — Start in 30 seconds',
-    description: 'Learn Kai in 3 simple steps: install, open a project, connect your AI tool. No account needed.',
+    title: 'Setup guide — Kai',
+    description: 'Install Kai, index a folder with kai code ., wire up one AI tool. CLI reference included.',
   },
   '/faq': {
-    title: 'Kai FAQ — Simple answers',
-    description: 'Is Kai free? Is my code safe? How do I start? Simple answers to common questions.',
+    title: 'FAQ — Kai',
+    description: 'What Kai is, what it costs, how to start, and which files to download.',
   },
 };
 
 function pathname(): string {
-  try {
-    let p = window.location.pathname || '/';
-    if (p.length > 1 && p.endsWith('/')) p = p.slice(0, -1);
-    return p;
-  } catch {
-    return '/';
-  }
+  let p = window.location.pathname || '/';
+  if (p.length > 1 && p.endsWith('/')) p = p.slice(0, -1);
+  return p;
 }
 
 export function navigate(to: string) {
@@ -46,61 +37,44 @@ export function navigate(to: string) {
   window.dispatchEvent(new PopStateEvent('popstate'));
 }
 
-const PathContext = createContext<string>('/');
+const PathCtx = createContext('/');
 
 export function RouterProvider({ children }: { children: React.ReactNode }) {
-  const [path, setPath] = useState<string>(() => (typeof window === 'undefined' ? '/' : pathname()));
+  const [path, setPath] = useState(() => (typeof window === 'undefined' ? '/' : pathname()));
   useEffect(() => {
     const onChange = () => setPath(pathname());
     window.addEventListener('popstate', onChange);
     return () => window.removeEventListener('popstate', onChange);
   }, []);
-  return <PathContext.Provider value={path}>{children}</PathContext.Provider>;
+  return <PathCtx.Provider value={path}>{children}</PathCtx.Provider>;
 }
 
-export function usePath(): string {
-  return useContext(PathContext);
+export function usePath() {
+  return useContext(PathCtx);
 }
 
-export function useNavigate() {
-  return useCallback((to: string) => navigate(to), []);
-}
-
-function isExternal(to: string): boolean {
+function external(to: string) {
   return /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(to) || to.startsWith('//');
 }
 
-export function Link({
-  to,
-  children,
-  className,
-  style,
-  onClick,
-  activeClass = 'is-active',
-  ...rest
-}: {
-  to: string;
-  children: React.ReactNode;
-  className?: string;
-  style?: React.CSSProperties;
-  onClick?: (e: React.MouseEvent) => void;
-  activeClass?: string;
+export function Link({ to, children, className, style, onClick, ...rest }: {
+  to: string; children: React.ReactNode; className?: string;
+  style?: React.CSSProperties; onClick?: React.MouseEventHandler<HTMLAnchorElement>;
 } & Omit<React.AnchorHTMLAttributes<HTMLAnchorElement>, 'href' | 'onClick'>) {
   const path = usePath();
-  const active = !isExternal(to) && (to === path || (to !== '/' && path.startsWith(to)));
+  const active = !external(to) && (to === path || (to !== '/' && path.startsWith(to)));
   return (
     <a
       href={to}
-      className={active && className ? `${className} ${activeClass}` : className}
+      className={active && className ? `${className} is-active` : className}
       aria-current={active ? 'page' : undefined}
       style={style}
       onClick={(e) => {
         onClick?.(e);
         if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
-        if (isExternal(to) || to.startsWith('#')) return;
+        if (external(to) || to.startsWith('#')) return;
         e.preventDefault();
-        if (to !== window.location.pathname + window.location.hash) navigate(to);
-        else window.scrollTo({ top: 0 });
+        navigate(to);
       }}
       {...rest}
     >
@@ -109,31 +83,27 @@ export function Link({
   );
 }
 
-/** Scroll to top on page change; honour #hash targets when present. */
 export function useRouteScroll() {
   const path = usePath();
   useEffect(() => {
     const hash = window.location.hash;
-    if (hash) {
-      const el = document.querySelector(hash);
-      if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        return;
-      }
-    }
-    window.scrollTo(0, 0);
+    const el = hash ? document.querySelector(hash) : null;
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    else window.scrollTo(0, 0);
   }, [path]);
 }
 
-/** Keep <title> + meta description in sync per route (professional SEO). */
 export function useRouteMeta() {
   const path = usePath();
   useEffect(() => {
     const meta = ROUTE_META[path];
-    if (meta) {
-      document.title = meta.title;
-      const desc = document.querySelector('meta[name="description"]');
-      if (desc) desc.setAttribute('content', meta.description);
-    }
+    if (!meta) return;
+    const url = `${SITE_URL}${path === '/' ? '/' : path}`;
+    document.title = meta.title;
+    document.querySelector('meta[name="description"]')?.setAttribute('content', meta.description);
+    document.querySelector('link[rel="canonical"]')?.setAttribute('href', url);
+    document.querySelector('meta[property="og:url"]')?.setAttribute('content', url);
+    document.querySelector('meta[property="og:title"]')?.setAttribute('content', meta.title);
+    document.querySelector('meta[property="og:description"]')?.setAttribute('content', meta.description);
   }, [path]);
 }

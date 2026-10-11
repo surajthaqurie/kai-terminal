@@ -39,8 +39,8 @@ export function Footer() {
             <span style={{ fontSize: '1.1rem', fontWeight: 800 }}>kai</span>
             <span className="t-version">MIT</span>
           </div>
-          <p className="t-foot-clone">$ git clone {REPO_URL}.git — everyone is welcome</p>
-          <p style={{ color: 'var(--text-tertiary)', fontSize: '.8rem', marginTop: '0.5rem', lineHeight: 1.6 }}>Free · private · new here? Start with the <Link to="/guide" style={{ color: 'var(--accent-cyan-fg)' }}>easy 30-second guide</Link>.</p>
+          <p className="t-foot-clone">$ git clone {REPO_URL}.git</p>
+          <p style={{ color: 'var(--text-tertiary)', fontSize: '.8rem', marginTop: '0.5rem', lineHeight: 1.6 }}>MIT licensed. Start at the <Link to="/guide" style={{ color: 'var(--accent-cyan-fg)' }}>setup guide</Link> or pick a file on the <Link to="/download" style={{ color: 'var(--accent-cyan-fg)' }}>download page</Link>.</p>
         </div>
         {COLS.map((col) => (
           <nav key={col.head} aria-label={col.head}>
@@ -61,7 +61,7 @@ export function Footer() {
           </nav>
         ))}
       </div>
-      <div className="t-foot-base">© 2026 Kai Contributors · Free and private by design</div>
+      <div className="t-foot-base">© 2026 Kai Contributors · MIT</div>
     </footer>
   );
 }
