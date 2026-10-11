@@ -345,13 +345,19 @@ impl PtyManager {
                 if e.kind() == std::io::ErrorKind::BrokenPipe {
                     return Ok(());
                 }
-                return Err(TerminalError::WriteFailed(format!("Failed to write to PTY: {}", e)));
+                return Err(TerminalError::WriteFailed(format!(
+                    "Failed to write to PTY: {}",
+                    e
+                )));
             }
             if let Err(e) = session.writer.flush() {
                 if e.kind() == std::io::ErrorKind::BrokenPipe {
                     return Ok(());
                 }
-                return Err(TerminalError::WriteFailed(format!("Failed to flush PTY writer: {}", e)));
+                return Err(TerminalError::WriteFailed(format!(
+                    "Failed to flush PTY writer: {}",
+                    e
+                )));
             }
             Ok(())
         } else {
