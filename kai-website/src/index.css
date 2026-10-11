@@ -270,17 +270,23 @@ section[id] { scroll-margin-top: 72px; }
   background: var(--bg-surface); border: 1px solid var(--border-default);
   border-radius: 14px; box-shadow: var(--shadow-card); overflow: hidden;
 }
-.t-install-tabs { display: flex; gap: .25rem; padding: .5rem .6rem; border-bottom: 1px solid var(--border-subtle); align-items: center; }
+.t-install-tabs { display: flex; gap: .25rem; padding: .5rem .6rem; border-bottom: 1px solid var(--border-subtle); align-items: center; flex-wrap: wrap; }
 .t-install-tab {
   border: 1px solid transparent; background: transparent; color: var(--text-tertiary);
   font-size: .8rem; font-weight: 600; padding: .4rem .8rem; border-radius: 8px; cursor: pointer;
   font-family: var(--font-mono);
 }
 .t-install-tab[data-active='true'] { background: var(--accent-cyan-bg); color: var(--accent-cyan-fg); border-color: var(--accent-cyan-border); }
-.t-install-body { display: flex; align-items: center; gap: .7rem; padding: 1rem 1.1rem .4rem; font-family: var(--font-mono); font-size: .86rem; }
-.t-install-prompt { color: var(--accent-green-fg); font-weight: 700; }
-.t-install-cmd { flex: 1; color: var(--text-primary); overflow-x: auto; white-space: nowrap; }
-.t-install-note { padding: 0 1.1rem 1rem 2.2rem; font-size: .78rem; color: var(--text-tertiary); font-family: var(--font-mono); }
+.t-install-body { padding: 1rem 1.1rem 0.25rem; font-family: var(--font-mono); }
+.t-install-code {
+  margin: 0; padding: 1rem 1.1rem;
+  font-family: var(--font-mono); font-size: 0.86rem; line-height: 1.75;
+  white-space: pre-wrap; overflow-x: auto; color: var(--text-primary);
+}
+.t-code-comment { color: var(--text-tertiary); }
+.t-code-line { display: block; overflow-wrap: anywhere; }
+.t-code-prompt { color: var(--accent-green-fg); font-weight: 700; margin-right: 0.65rem; user-select: none; }
+.t-install-note { padding: 0.8rem 1.1rem 1rem; font-size: 0.8rem; color: var(--text-secondary); border-top: 1px solid var(--border-subtle); margin-top: 0.4rem; }
 .t-copy {
   width: 32px; height: 32px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center;
   background: var(--btn-secondary-bg); border: 1px solid var(--btn-secondary-border); color: var(--text-secondary); cursor: pointer; flex-shrink: 0;
@@ -346,6 +352,32 @@ section[id] { scroll-margin-top: 72px; }
   border-bottom-width: 2px; border-radius: 6px; padding: .15rem .45rem; color: var(--text-primary);
 }
 .t-micro { font-size: .78rem; color: var(--text-tertiary); margin-top: .9rem; }
+/* ——— Changelog ——— */
+.t-log { max-width: 860px; margin: 0 auto; }
+.t-log-list { list-style: none; margin: 0 0 1.25rem; padding: 0; display: flex; flex-direction: column; gap: 0.9rem; }
+.t-log-row {
+  display: flex; align-items: flex-start; gap: 1rem;
+  padding: 1.1rem 1.25rem; border-radius: 14px;
+  background-color: var(--bg-surface); border: 1px solid var(--border-default);
+}
+.t-log-main { flex: 1; min-width: 0; }
+.t-log-head { display: flex; align-items: baseline; gap: 0.75rem; flex-wrap: wrap; }
+.t-log-head b { font-size: 0.95rem; }
+.t-log-date { font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-tertiary); }
+.t-log-notes { color: var(--text-secondary); font-size: 0.86rem; margin-top: 0.3rem; line-height: 1.55; }
+.t-log-row .t-link { flex-shrink: 0; margin-top: 0.1rem; }
+.t-log-empty { display: flex; align-items: center; justify-content: space-between; gap: 1.5rem; flex-wrap: wrap; }
+.t-log-empty p { color: var(--text-secondary); font-size: 0.9rem; margin-top: 0.3rem; }
+.t-log-empty code, .t-pkg { font-family: var(--font-mono); font-size: 0.8rem; color: var(--accent-cyan-fg); }
+.t-log-pending { display: block; font-size: 0.88rem; line-height: 1.55; }
+.t-log-pending .t-pkg { margin-right: 0.5rem; }
+.t-bump {
+  font-family: var(--font-mono); font-size: 0.72rem; font-weight: 700;
+  padding: 0.15rem 0.6rem; border-radius: 999px;
+  background: var(--accent-green-bg); color: var(--accent-green-fg); border: 1px solid var(--accent-green-border);
+}
+.t-bump--minor { background: var(--accent-cyan-bg); color: var(--accent-cyan-fg); border-color: var(--accent-cyan-border); }
+.t-bump--major { background: var(--accent-amber-bg); color: var(--accent-amber-fg); border-color: var(--accent-amber-border); }
 @media (max-width: 900px) { .t-compare { grid-template-columns: 1fr; } }
 .t-star { position: relative; }
 .t-star-n {
@@ -354,7 +386,7 @@ section[id] { scroll-margin-top: 72px; }
   border: 1px solid var(--accent-cyan-border); border-radius: 999px; padding: .05rem .5rem;
 }
 /* Light-theme contrast: install + code stay readable on white */
-[data-theme='light'] .t-install-cmd { color: #0f172a; }
+[data-theme='light'] .t-install-code { color: #0f172a; }
 [data-theme='light'] .t-code { color: #0f172a; }
 [data-theme='light'] .t-install-note { color: #64748b; }
 [data-theme='light'] .t-stat b { color: #0f172a; }
@@ -379,10 +411,14 @@ html.js .t-enter { opacity: 0; animation: t-rise 0.7s cubic-bezier(0.2, 0.7, 0.2
 .t-hero-glow { animation: t-float 12s ease-in-out infinite; }
 
 /* Scroll reveal (JS adds .is-visible via IntersectionObserver).
-   Hidden state applies only when JS runs — content is visible by default. */
+   Hidden state applies only when JS runs AND live IO is proven (html.io-ok,
+   set by the sentinel probe) — content is visible by default.
+   :not(.is-visible) keeps specificity below the visible rule so adding
+   .is-visible always wins (previously `html.js.io-ok .t-reveal` beat
+   `.t-reveal.is-visible` and content stayed at opacity:0 forever). */
 .t-reveal { will-change: opacity, transform; }
-html.js .t-reveal { opacity: 0; transform: translateY(26px); transition: opacity 0.7s ease, transform 0.7s cubic-bezier(0.2, 0.7, 0.2, 1); }
-.t-reveal.is-visible { opacity: 1; transform: none; }
+html.js.io-ok .t-reveal:not(.is-visible) { opacity: 0; transform: translateY(26px); transition: opacity 0.7s ease, transform 0.7s cubic-bezier(0.2, 0.7, 0.2, 1); }
+html.js.io-ok .t-reveal.is-visible, .t-reveal.is-visible { opacity: 1; transform: none; }
 /* Stagger siblings inside grids + lists */
 .t-grid-3 > *:nth-child(2) { transition-delay: 0.08s; }
 .t-grid-3 > *:nth-child(3) { transition-delay: 0.16s; }
@@ -394,6 +430,48 @@ html.js .t-reveal { opacity: 0; transform: translateY(26px); transition: opacity
 
 /* Calm interactive states */
 .t-faq-item { transition: border-color 0.2s ease; }
+
+/* ——— Multi-page: active nav, page hero, CTA, footer, 404 ——— */
+.t-nav a.is-active { color: var(--text-primary); font-weight: 700; }
+.t-nav a.is-active::after {
+  content: ''; display: block; height: 2px; border-radius: 2px;
+  background: var(--brand-gradient); margin-top: 2px;
+}
+.t-page-hero { position: relative; padding: 4.5rem 1.5rem 1rem; overflow: hidden; text-align: center; }
+.t-page-hero-inner { max-width: 860px; margin: 0 auto; position: relative; }
+.t-page-title {
+  font-size: clamp(2rem, 4.5vw, 3rem); font-weight: 800;
+  letter-spacing: -0.03em; line-height: 1.12;
+  color: var(--text-primary); margin-bottom: 1rem;
+}
+.t-page-sub { font-size: 1.1rem; color: var(--text-secondary); max-width: 680px; margin: 0 auto 2rem; line-height: 1.6; }
+.t-cta {
+  display: flex; align-items: center; justify-content: space-between; gap: 1.5rem; flex-wrap: wrap;
+  padding: 2.5rem 2.5rem; border-radius: 20px;
+  background: var(--card-bg-solid, var(--bg-surface));
+  border: 1px solid var(--border-default);
+  box-shadow: var(--shadow-card);
+  text-align: left;
+}
+.t-cta h2 { font-size: 1.6rem; font-weight: 800; letter-spacing: -0.02em; color: var(--text-primary); margin-bottom: 0.4rem; }
+.t-cta p { color: var(--text-secondary); }
+.t-cta-actions { display: flex; gap: 0.75rem; flex-wrap: wrap; }
+.t-foot-grid {
+  max-width: 1150px; margin: 0 auto 2rem;
+  display: grid; grid-template-columns: 1.4fr 1fr 1fr 1fr; gap: 2rem;
+  text-align: left;
+}
+.t-foot-head { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-tertiary); font-family: var(--font-mono); margin-bottom: 0.9rem; }
+.t-foot-links { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.6rem; }
+.t-foot-links a { color: var(--text-secondary); text-decoration: none; font-size: 0.9rem; }
+.t-foot-links a:hover { color: var(--text-primary); }
+.t-foot-base { border-top: 1px solid var(--border-subtle); max-width: 1150px; margin: 0 auto; padding-top: 1.25rem; text-align: center; font-size: 0.78rem; color: var(--text-tertiary); }
+.t-notfound { text-align: center; padding: 3rem 2rem; }
+@media (max-width: 900px) {
+  .t-foot-grid { grid-template-columns: 1fr 1fr; }
+  .t-cta { padding: 2rem 1.5rem; }
+  .t-page-hero { padding: 3rem 1.25rem 0.5rem; }
+}
 
 /* ——— Responsive ——— */
 @media (max-width: 900px) {
@@ -411,6 +489,9 @@ html.js .t-reveal { opacity: 0; transform: translateY(26px); transition: opacity
   .t-section { padding: 4rem 0; }
   .t-hero { padding: 3.5rem 1.25rem 3rem; }
   .t-terminal-view { padding: 1rem; font-size: 0.8rem; }
+  .t-panel { padding: 1.5rem; }
+  .t-card { padding: 1.5rem; }
+  .t-install-code { padding: 0.85rem 1rem; font-size: 0.8rem; }
 }
 
 @media (prefers-reduced-motion: reduce) {

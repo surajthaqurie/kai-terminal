@@ -3,13 +3,31 @@ import React, { useEffect, useRef } from 'react';
 /* ——— Professional UI primitives built on design tokens ——— */
 
 /* Scroll-reveal wrapper: fades content up the first time it enters view.
-   Falls back to visible when IntersectionObserver is unavailable. */
+   Falls back to visible when IntersectionObserver is unavailable *or*
+   when it never fires (jsdom, background tab, buggy driver). In-viewport
+   elements are shown immediately so above-the-fold content never sticks
+   at opacity:0. */
+function isInViewport(el: HTMLElement): boolean {
+  try {
+    const r = el.getBoundingClientRect();
+    const vh = window.innerHeight || document.documentElement.clientHeight || 800;
+    return r.top < vh - 48 && r.bottom > 0;
+  } catch {
+    return true;
+  }
+}
+
 function useReveal<T extends HTMLElement>() {
   const ref = useRef<T | null>(null);
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
     if (typeof IntersectionObserver === 'undefined') {
+      el.classList.add('is-visible');
+      return;
+    }
+    // Already on screen (e.g. hero / first sections): show without waiting.
+    if (isInViewport(el)) {
       el.classList.add('is-visible');
       return;
     }
@@ -25,7 +43,18 @@ function useReveal<T extends HTMLElement>() {
       { threshold: 0.1, rootMargin: '0px 0px -48px 0px' }
     );
     io.observe(el);
-    return () => io.disconnect();
+    // Safety net: if IO never callbacks but the element scrolls into view,
+    // the rAF-throttled check below (and App's global fallback) reveals it.
+    const t = setTimeout(() => {
+      if (isInViewport(el)) {
+        el.classList.add('is-visible');
+        io.disconnect();
+      }
+    }, 1200);
+    return () => {
+      clearTimeout(t);
+      io.disconnect();
+    };
   }, []);
   return ref;
 }

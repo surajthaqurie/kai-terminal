@@ -7,6 +7,9 @@ dist/
 kai-website/dist/
 src-tauri/target/
 
+# Generated website data (rebuilt by predev/prebuild)
+kai-website/src/generated/
+
 # IDE / OS files
 .DS_Store
 Thumbs.db
