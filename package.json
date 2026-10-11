@@ -14,7 +14,9 @@
     "format": "prettier --write \"src/**/*.{ts,tsx,css,json}\"",
     "format:check": "prettier --check \"src/**/*.{ts,tsx,css,json}\"",
     "check": "npm run typecheck && npm run format:check && npm run test",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "changeset": "changeset",
+    "version-packages": "changeset version"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.1.1",
@@ -26,6 +28,7 @@
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@changesets/cli": "^3.0.3",
     "@tauri-apps/cli": "^2.1.0",
     "@types/node": "^22.9.0",
     "@types/react": "^18.3.12",

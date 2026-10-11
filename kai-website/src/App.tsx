@@ -31,15 +31,32 @@ const REPO_URL = 'https://github.com/surajthaqurie/kai-terminal';
 const LATEST_RELEASE_URL = `${REPO_URL}/releases/latest`;
 const FALLBACK_TAG = 'v0.1.0';
 
-type ReleaseAsset = { name: string; url: string };
+type ReleaseAsset = { name: string; url: string; size: number; downloads: number };
 
-function useLatestRelease() {
-  const [rel, setRel] = useState<{ tag: string; assets: ReleaseAsset[] } | null>(() => {
+export type ReleaseStatus = 'loading' | 'ready' | 'empty';
+
+function useLatestRelease(): {
+  tag: string;
+  short: string;
+  assets: ReleaseAsset[];
+  status: ReleaseStatus;
+  asset: (match: (name: string) => boolean, fallbackFile: string) => string;
+} {
+  const [rel, setRel] = useState<{ tag: string; assets: ReleaseAsset[] } | 'empty' | null>(() => {
     const cached = readCache('kai-release');
     if (!cached) return null;
     try {
       const parsed = JSON.parse(cached) as { tag: string; assets: ReleaseAsset[] };
-      if (typeof parsed.tag === 'string' && Array.isArray(parsed.assets)) return parsed;
+      if (typeof parsed.tag !== 'string' || !Array.isArray(parsed.assets)) return null;
+      const assets = parsed.assets
+        .filter((a) => a && typeof a.name === 'string' && typeof a.url === 'string')
+        .map((a) => ({
+          name: a.name,
+          url: a.url,
+          size: typeof a.size === 'number' ? a.size : 0,
+          downloads: typeof a.downloads === 'number' ? a.downloads : 0,
+        }));
+      return { tag: parsed.tag, assets };
     } catch {
       /* corrupt cache — refetch below */
     }
@@ -48,14 +65,31 @@ function useLatestRelease() {
   useEffect(() => {
     let live = true;
     fetch('https://api.github.com/repos/surajthaqurie/kai-terminal/releases/latest')
-      .then((r) => (r.ok ? r.json() : null))
+      .then((r) => {
+        if (r.status === 404) return 'missing';
+        return r.ok ? r.json() : null;
+      })
       .then((j) => {
-        if (!live || !j || typeof j.tag_name !== 'string') return;
+        if (!live) return;
+        if (j === 'missing' || !j || typeof j.tag_name !== 'string') {
+          setRel((prev) => (prev ? prev : 'empty'));
+          return;
+        }
         const assets: ReleaseAsset[] = Array.isArray(j.assets)
           ? j.assets
             .filter((a: any) => a && typeof a.name === 'string' && typeof a.browser_download_url === 'string')
-            .map((a: any) => ({ name: a.name as string, url: a.browser_download_url as string }))
+            .filter((a: any) => !(a.name as string).toLowerCase().endsWith('.sig'))
+            .map((a: any) => ({
+              name: a.name as string,
+              url: a.browser_download_url as string,
+              size: typeof a.size === 'number' ? a.size : 0,
+              downloads: typeof a.download_count === 'number' ? a.download_count : 0,
+            }))
           : [];
+        if (assets.length === 0) {
+          setRel((prev) => (prev && prev !== 'empty' ? prev : 'empty'));
+          return;
+        }
         const next = { tag: j.tag_name as string, assets };
         setRel(next);
         writeCache('kai-release', JSON.stringify(next));
@@ -63,14 +97,17 @@ function useLatestRelease() {
       .catch(() => {});
     return () => { live = false; };
   }, []);
-  const tag = rel?.tag ?? FALLBACK_TAG;
+  const data = rel === 'empty' ? null : rel;
+  const tag = data?.tag ?? FALLBACK_TAG;
   const short = tag.replace(/^v/, '');
+  const assets = data?.assets ?? [];
+  const status: ReleaseStatus = data ? 'ready' : rel === 'empty' ? 'empty' : 'loading';
   const asset = (match: (name: string) => boolean, fallbackFile: string) => {
-    const hit = rel?.assets.find((a) => match(a.name));
+    const hit = assets.find((a) => match(a.name));
     if (hit) return hit.url;
     return `${LATEST_RELEASE_URL}/download/${fallbackFile.replace('0.1.0', short)}`;
   };
-  return { tag, short, asset };
+  return { tag, short, assets, status, asset };
 }
 
 /* ---------- small helpers ---------- */
@@ -435,6 +472,19 @@ const COMPARE_ROWS: Array<{ label: string; kai: string; electron: string; alacri
   { label: 'Telemetry', kai: 'zero', electron: 'varies', alacritty: 'zero' },
 ];
 
+function fmtSize(bytes: number): string {
+  if (!bytes || bytes <= 0) return '';
+  if (bytes < 1_048_576) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return `${(bytes / 1_048_576).toFixed(1)} MB`;
+}
+
+function archLabel(name: string): string {
+  const n = name.toLowerCase();
+  if (n.includes('arm64') || n.includes('aarch64')) return 'ARM64';
+  if (n.includes('amd64') || n.includes('x86_64') || n.includes('x64')) return 'x64';
+  return '';
+}
+
 function SiteContent() {
   const [activeFaq, setActiveFaq] = useState<number | null>(0);
   const [qsTab, setQsTab] = useState<'run' | 'ai' | 'config'>('run');
@@ -628,28 +678,86 @@ function SiteContent() {
       {/* Downloads */}
       <Section id="downloads">
         <div style={{ textAlign: 'center', marginBottom: '2.5rem' }}>
-          <Badge tone="green"><PackageCheck size={14} /> GitHub Releases · SHA256</Badge>
+          <Badge tone="green"><PackageCheck size={14} /> Native builds · GitHub Releases</Badge>
           <h2 className="t-section-title">Download Kai</h2>
-          <p className="t-section-sub">One file per OS. Built clean on GitHub Actions.</p>
+          <p className="t-section-sub">
+            {rel.status === 'empty'
+              ? 'No published release yet — build from source below.'
+              : `${rel.tag} · one file per OS · built clean on GitHub Actions.`}
+          </p>
         </div>
 
-        <div className="t-grid-3" style={{ marginBottom: '1.5rem' }}>
-          {[
-            { os: 'Windows', sub: '10 / 11 · x64', href: rel.asset((n) => n.endsWith('-setup.exe') || (n.endsWith('.exe') && !n.endsWith('.msi')), `Kai_0.1.0_x64-setup.exe`), cta: `Kai_${rel.short}_x64-setup.exe`, alt: '.msi alternative', altHref: rel.asset((n) => n.endsWith('.msi'), `Kai_0.1.0_x64_en-US.msi`) },
-            { os: 'Linux', sub: '.deb + .AppImage', href: rel.asset((n) => n.includes('amd64') && n.endsWith('.deb'), 'kai_0.1.0_amd64.deb'), cta: `kai_${rel.short}_amd64.deb`, alt: '.AppImage + ARM64 builds', altHref: LATEST_RELEASE_URL },
-            { os: 'macOS', sub: '12+ · M1–M4', href: rel.asset((n) => n.endsWith('.dmg'), `Kai_0.1.0_aarch64.dmg`), cta: `Kai_${rel.short}_aarch64.dmg`, alt: 'checksums + changelog', altHref: LATEST_RELEASE_URL },
-          ].map((d) => (
-            <Card key={d.os} solid>
-              <h3 style={{ display: 'flex', alignItems: 'center', gap: '.6rem' }}><Monitor size={20} /> {d.os}</h3>
-              <p style={{ marginBottom: '1.25rem' }}>{d.sub}</p>
-              <a className="t-dl t-dl--accent-cyan" href={d.href}><span>{d.cta}</span><Download size={16} /></a>
-              <a className="t-link" style={{ marginTop: '.8rem', display: 'inline-flex' }} href={d.altHref} target={d.altHref.startsWith('http') ? '_blank' : undefined} rel="noreferrer">{d.alt} <ChevronRight size={14} /></a>
-            </Card>
-          ))}
-        </div>
+        {rel.status === 'empty' ? (
+          <div className="t-panel t-empty">
+            <div>
+              <b>No installers published yet</b>
+              <p>Push tag <code>{FALLBACK_TAG}</code> to trigger the release workflow, or run from source — it takes about a minute.</p>
+              <pre className="t-code t-code--sm" style={{ marginTop: '1rem' }}><code>git clone {REPO_URL}.git{'\n'}cd kai-terminal && npm install && npm run tauri dev</code></pre>
+            </div>
+            <div className="t-empty-actions">
+              <a href="#quickstart" className="t-btn t-btn--primary t-btn--sm">Build from source</a>
+              <a href={`${REPO_URL}/actions`} target="_blank" rel="noreferrer" className="t-btn t-btn--secondary t-btn--sm">Actions <ExternalLink size={16} /></a>
+            </div>
+          </div>
+        ) : (
+          <div className="t-grid-3" style={{ marginBottom: '1.5rem' }}>
+            {[
+              {
+                os: 'Windows',
+                sub: '10 / 11 · x64',
+                files: [
+                  ...rel.assets.filter((a) => a.name.toLowerCase().endsWith('setup.exe')),
+                  ...rel.assets.filter((a) => a.name.toLowerCase().endsWith('.msi')),
+                ],
+                fallback: [
+                  { name: `Kai_${rel.short}_x64-setup.exe`, url: rel.asset((n) => n.toLowerCase().endsWith('setup.exe'), `Kai_0.1.0_x64-setup.exe`), size: 0 },
+                  { name: `Kai_${rel.short}_x64_en-US.msi`, url: rel.asset((n) => n.toLowerCase().endsWith('.msi'), `Kai_0.1.0_x64_en-US.msi`), size: 0 },
+                ],
+              },
+              {
+                os: 'Linux',
+                sub: '.deb + .AppImage · x64 / ARM64',
+                files: [
+                  ...rel.assets.filter((a) => a.name.toLowerCase().endsWith('.deb')),
+                  ...rel.assets.filter((a) => a.name.toLowerCase().endsWith('.appimage')),
+                ],
+                fallback: [
+                  { name: `kai_${rel.short}_amd64.deb`, url: rel.asset((n) => n.toLowerCase().includes('amd64') && n.toLowerCase().endsWith('.deb'), 'kai_0.1.0_amd64.deb'), size: 0 },
+                ],
+              },
+              {
+                os: 'macOS',
+                sub: '12+ · Apple Silicon',
+                files: rel.assets.filter((a) => a.name.toLowerCase().endsWith('.dmg')),
+                fallback: [
+                  { name: `Kai_${rel.short}_aarch64.dmg`, url: rel.asset((n) => n.toLowerCase().endsWith('.dmg'), `Kai_0.1.0_aarch64.dmg`), size: 0 },
+                ],
+              },
+            ].map((d) => {
+              const rows = d.files.length > 0 ? d.files : d.fallback;
+              return (
+                <Card key={d.os} solid>
+                  <h3 style={{ display: 'flex', alignItems: 'center', gap: '.6rem' }}><Monitor size={20} /> {d.os}</h3>
+                  <p style={{ marginBottom: '1.25rem' }}>{d.sub}</p>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                    {rows.map((f, i) => (
+                      <a key={f.name} className={`t-dl${i === 0 ? ' t-dl--accent-cyan' : ''}`} href={f.url}>
+                        <span className="t-dl-name">{f.name}{archLabel(f.name) ? ` · ${archLabel(f.name)}` : ''}</span>
+                        <span className="t-dl-meta">{fmtSize(f.size)}<Download size={16} /></span>
+                      </a>
+                    ))}
+                  </div>
+                  {d.files.length === 0 && rel.status === 'ready' && (
+                    <p className="t-micro">Not in {rel.tag} — see all artifacts.</p>
+                  )}
+                </Card>
+              );
+            })}
+          </div>
+        )}
 
         <div className="t-panel t-verify">
-          <div><b>Verify + see all artifacts</b><p>Changelog, SHA256, full tag history.</p></div>
+          <div><b>Verify + see all artifacts</b><p>Changelog, assets, full tag history.</p></div>
           <a href={LATEST_RELEASE_URL} target="_blank" rel="noreferrer" className="t-btn t-btn--primary t-btn--sm">Releases <ExternalLink size={16} /></a>
         </div>
       </Section>
