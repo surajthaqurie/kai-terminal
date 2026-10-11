@@ -3,6 +3,7 @@ import { Quickstart } from '../sections/Quickstart';
 import { Features } from '../sections/Features';
 import { AiCli } from '../sections/AiCli';
 import { Compare } from '../sections/Compare';
+import { Downloads } from '../sections/Downloads';
 import { Faq } from '../sections/Faq';
 import { CtaBanner } from '../components/CtaBanner';
 import type { LatestRelease } from '../hooks/useRepo';
@@ -12,11 +13,12 @@ import type { LatestRelease } from '../hooks/useRepo';
 export function HomePage({ rel }: { rel: LatestRelease }) {
   return (
     <>
-      <Hero tag={rel.tag} short={rel.short} version={rel.tag} />
+      <Hero tag={rel.tag} short={rel.short} version={rel.tag} rel={rel} />
       <Quickstart />
       <Features />
       <AiCli />
       <Compare />
+      <Downloads rel={rel} />
       <Faq />
       <CtaBanner />
     </>

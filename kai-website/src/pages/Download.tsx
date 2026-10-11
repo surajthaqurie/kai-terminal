@@ -13,9 +13,7 @@ export function DownloadPage({ rel }: { rel: LatestRelease }) {
       <PageHero
         badge={<><Download size={14} /> {rel.tag} · Native builds · GitHub Releases</>}
         title="Download kai"
-        sub={rel.status === 'empty'
-          ? 'No published release yet — install from source in about a minute.'
-          : `${rel.tag} · one file per OS · built clean on GitHub Actions.`}
+        sub={`${rel.tag} · one direct installer per OS · built clean on GitHub Actions.`}
       >
         <InstallBar short={rel.short} />
       </PageHero>

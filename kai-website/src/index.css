@@ -242,6 +242,34 @@ section[id] { scroll-margin-top: 72px; }
 .t-dl--accent-green { background-color: var(--accent-green-bg); color: var(--accent-green-fg); border-color: var(--accent-green-border); font-weight: 600; }
 .t-dl--accent-purple { background-color: var(--accent-purple-bg); color: var(--accent-purple-fg); border-color: var(--accent-purple-border); font-weight: 600; }
 
+/* ——— Direct download quick links ——— */
+.t-quick-dl {
+  display: flex; align-items: center; justify-content: center;
+  gap: 0.5rem; flex-wrap: wrap; margin-top: -2.75rem; margin-bottom: 3.5rem;
+}
+.t-quick-dl-label {
+  font-size: 0.78rem; color: var(--text-tertiary); font-family: var(--font-mono); margin-right: 0.25rem;
+}
+.t-quick-dl-pill {
+  display: inline-flex; align-items: center; gap: 0.35rem;
+  padding: 0.3rem 0.65rem; border-radius: 999px;
+  background-color: var(--btn-secondary-bg); border: 1px solid var(--border-default);
+  color: var(--text-secondary); text-decoration: none; font-size: 0.78rem;
+  font-family: var(--font-mono); transition: all 0.15s ease;
+}
+.t-quick-dl-pill:hover {
+  color: var(--accent-cyan-fg); border-color: var(--accent-cyan-border);
+  background-color: var(--accent-cyan-bg); transform: translateY(-1px);
+}
+.t-install-direct {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.6rem 1.1rem; background-color: var(--btn-secondary-bg);
+  border-bottom: 1px solid var(--border-subtle); flex-wrap: wrap;
+}
+.t-install-direct-label {
+  font-size: 0.76rem; font-weight: 600; color: var(--text-tertiary); font-family: var(--font-mono);
+}
+
 /* ——— FAQ ——— */
 .t-faq-item {
   padding: 1.5rem; border-radius: 14px;

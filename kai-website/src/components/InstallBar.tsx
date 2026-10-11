@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Download } from 'lucide-react';
 import { CopyBtn } from './CopyBtn';
 
 type InstallTab = { id: string; label: string; note: string; code: string };
@@ -11,7 +12,7 @@ function installTabs(short: string): InstallTab[] {
     {
       id: 'windows',
       label: 'Windows',
-      note: 'Windows 10 / 11 · 64-bit — or grab the .exe / .msi below',
+      note: 'Windows 10 / 11 · 64-bit — or grab the direct .exe / .msi installer above',
       code: `# Windows 10 / 11\nwinget install Kai-terminal --source github`,
     },
     {
@@ -53,6 +54,23 @@ export function InstallBar({ short }: { short: string }) {
     .filter((l) => l.trim() !== '' && !l.trim().startsWith('#'))
     .join('\n');
 
+  const directDownloads: Record<string, Array<{ name: string; url: string; label: string; primary?: boolean }>> = {
+    windows: [
+      { name: `Kai_${short}_x64-setup.exe`, url: `https://github.com/surajthaqurie/kai-terminal/releases/download/v${short}/Kai_${short}_x64-setup.exe`, label: '.exe installer', primary: true },
+      { name: `Kai_${short}_x64_en-US.msi`, url: `https://github.com/surajthaqurie/kai-terminal/releases/download/v${short}/Kai_${short}_x64_en-US.msi`, label: '.msi package' },
+    ],
+    linux: [
+      { name: `kai_${short}_amd64.deb`, url: `https://github.com/surajthaqurie/kai-terminal/releases/download/v${short}/kai_${short}_amd64.deb`, label: '.deb (x64)', primary: true },
+      { name: `kai_${short}_amd64.AppImage`, url: `https://github.com/surajthaqurie/kai-terminal/releases/download/v${short}/kai_${short}_amd64.AppImage`, label: '.AppImage' },
+    ],
+    macos: [
+      { name: `Kai_${short}_aarch64.dmg`, url: `https://github.com/surajthaqurie/kai-terminal/releases/download/v${short}/Kai_${short}_aarch64.dmg`, label: '.dmg (Apple Silicon)', primary: true },
+    ],
+    source: [],
+  };
+
+  const currentDls = directDownloads[tab] ?? [];
+
   return (
     <div className="t-install" role="region" aria-label="Install Kai">
       <div className="t-install-tabs" role="tablist" aria-label="Install instructions by platform">
@@ -71,6 +89,21 @@ export function InstallBar({ short }: { short: string }) {
         <span style={{ flex: 1 }} />
         <CopyBtn text={commands} />
       </div>
+      {currentDls.length > 0 && (
+        <div className="t-install-direct">
+          <span className="t-install-direct-label">Direct Download:</span>
+          {currentDls.map((d) => (
+            <a
+              key={d.name}
+              href={d.url}
+              className={`t-btn t-btn--sm ${d.primary ? 't-btn--primary' : 't-btn--secondary'}`}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', padding: '0.25rem 0.65rem', fontSize: '0.78rem' }}
+            >
+              <Download size={13} /> {d.label}
+            </a>
+          ))}
+        </div>
+      )}
       <pre className="t-install-code"><code>{active.code.split('\n').map((line, i) => {
         const trimmed = line.trim();
         if (trimmed === '') return <span key={i} className="t-code-line" aria-hidden="true">&nbsp;</span>;
