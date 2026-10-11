@@ -5,10 +5,20 @@ import { LATEST_RELEASE_URL } from '../data/site';
 import { usePublishedReleases } from '../hooks/useRepo';
 import pendingChanges from '../generated/changesets.json';
 
+export type ChangesetEntry = {
+  file: string;
+  package: string;
+  bump: string;
+  summary: string;
+};
+
 export function Changelog({ limit = 6 }: { limit?: number }) {
   const releases = usePublishedReleases(limit);
-  const pending = Array.isArray(pendingChanges.entries) ? pendingChanges.entries : [];
-  const generatedAt = typeof (pendingChanges as { generatedAt?: unknown }).generatedAt === 'string'
+  const rawEntries = (pendingChanges as { entries?: unknown })?.entries;
+  const pending: ChangesetEntry[] = Array.isArray(rawEntries)
+    ? (rawEntries as ChangesetEntry[])
+    : [];
+  const generatedAt = typeof (pendingChanges as { generatedAt?: unknown })?.generatedAt === 'string'
     ? (pendingChanges as { generatedAt: string }).generatedAt
     : '';
   return (

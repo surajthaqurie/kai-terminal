@@ -2,12 +2,18 @@
 // can render an "Unreleased" changelog block. Runs as `prebuild` (and `predev`)
 // so dev and Vercel builds always embed the current .changeset state.
 // Never fails the build: on any error it writes an empty entry list.
-import { readdirSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import { readdirSync, readFileSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const changesetDir = join(here, '..', '..', '.changeset');
+const candidates = [
+  join(here, '..', '..', '.changeset'),
+  join(here, '..', '.changeset'),
+  join(process.cwd(), '.changeset'),
+  join(process.cwd(), '..', '.changeset'),
+];
+const changesetDir = candidates.find((d) => existsSync(d)) || join(here, '..', '..', '.changeset');
 const outFile = join(here, '..', 'src', 'generated', 'changesets.json');
 
 function parseEntry(file, text) {
