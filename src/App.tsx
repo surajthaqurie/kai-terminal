@@ -730,6 +730,7 @@ export function App() {
           onSplitHorizontal={() => handleSplitPane("horizontal")}
           onSplitVertical={() => handleSplitPane("vertical")}
           onOpenEditor={handleOpenEditor}
+          editorPath={userSettings.editorPath}
           onGitAction={handleGitActionRun}
           onRestart={handleRestartActive}
           onClear={handleClearActive}

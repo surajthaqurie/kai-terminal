@@ -35,6 +35,7 @@ interface ToolbarProps {
   onSplitHorizontal?: () => void;
   onSplitVertical?: () => void;
   onOpenEditor?: () => void;
+  editorPath?: string;
   onGitAction?: (action: "fetch" | "pull" | "status") => void;
   onRestart: () => void;
   onClear: () => void;
@@ -63,6 +64,7 @@ export const Toolbar: FC<ToolbarProps> = ({
   onSplitHorizontal,
   onSplitVertical,
   onOpenEditor,
+  editorPath,
   onGitAction,
   onRestart,
   onClear,
@@ -90,7 +92,7 @@ export const Toolbar: FC<ToolbarProps> = ({
 
         <select
           className="select-input"
-          value={selectedShellId}
+          value={selectedShellId || (shells[0]?.id ?? "")}
           onChange={(e) => onSelectShell(e.target.value)}
           title="Select Active Shell Profile"
           aria-label="Select shell profile"
@@ -170,7 +172,11 @@ export const Toolbar: FC<ToolbarProps> = ({
           <button
             className="btn btn-icon"
             onClick={onOpenEditor}
-            title="Open Project in Code Editor"
+            title={
+              editorPath
+                ? `Open Project in ${editorPath}`
+                : "Open Project in Code Editor (VS Code, Cursor, etc.)"
+            }
             aria-label="Open in editor"
           >
             <Code size={15} />

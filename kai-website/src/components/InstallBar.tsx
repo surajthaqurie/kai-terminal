@@ -15,7 +15,7 @@ function installTabs(short: string): InstallTab[] {
       id: 'macos',
       label: 'macOS',
       note: 'For M1–M4 Macs on macOS 12+. Open the file, then drag Kai into Applications.',
-      code: `# macOS 12 or later · M1–M4\nopen Kai_${v}_aarch64.dmg`,
+      code: `# macOS 12 or later · M1–M4\nopen kai_${v}_aarch64.dmg`,
     },
     {
       id: 'linux',
@@ -55,15 +55,15 @@ export function InstallBar({ short }: { short: string }) {
 
   const directDownloads: Record<string, Array<{ name: string; url: string; label: string; primary?: boolean }>> = {
     macos: [
-      { name: `Kai_${short}_aarch64.dmg`, url: `${REPO_URL}/releases/download/v${short}/Kai_${short}_aarch64.dmg`, label: '.dmg (M1–M4)', primary: true },
+      { name: `kai_${short}_aarch64.dmg`, url: `${REPO_URL}/releases/download/v${short}/kai_${short}_aarch64.dmg`, label: '.dmg (M1–M4)', primary: true },
     ],
     linux: [
       { name: `kai_${short}_amd64.deb`, url: `${REPO_URL}/releases/download/v${short}/kai_${short}_amd64.deb`, label: '.deb (x64)', primary: true },
       { name: `kai_${short}_amd64.AppImage`, url: `${REPO_URL}/releases/download/v${short}/kai_${short}_amd64.AppImage`, label: '.AppImage' },
     ],
     windows: [
-      { name: `Kai_${short}_x64-setup.exe`, url: `${REPO_URL}/releases/download/v${short}/Kai_${short}_x64-setup.exe`, label: '.exe installer', primary: true },
-      { name: `Kai_${short}_x64_en-US.msi`, url: `${REPO_URL}/releases/download/v${short}/Kai_${short}_x64_en-US.msi`, label: '.msi package' },
+      { name: `kai_${short}_x64-setup.exe`, url: `${REPO_URL}/releases/download/v${short}/kai_${short}_x64-setup.exe`, label: '.exe installer', primary: true },
+      { name: `kai_${short}_x64_en-US.msi`, url: `${REPO_URL}/releases/download/v${short}/kai_${short}_x64_en-US.msi`, label: '.msi package' },
     ],
     source: [],
   };

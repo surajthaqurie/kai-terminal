@@ -1,3 +1,7 @@
+:root {
+  color-scheme: dark;
+}
+
 * {
   box-sizing: border-box;
   margin: 0;
@@ -202,9 +206,85 @@ html,
   outline: none;
 }
 
+select,
+.select-input {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-color: #11111b;
+  color: #cdd6f4;
+  border: 1px solid #313244;
+  border-radius: 4px;
+  padding: 4px 26px 4px 10px;
+  font-size: 12px;
+  outline: none;
+  cursor: pointer;
+  color-scheme: dark;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23a6adc8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  background-size: 12px;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+select::-ms-expand,
+.select-input::-ms-expand {
+  display: none;
+}
+
+select:hover,
+.select-input:hover {
+  border-color: #45475a;
+}
+
+select:focus,
 .select-input:focus,
 .text-input:focus {
   border-color: #89b4fa;
+  box-shadow: 0 0 0 1px rgba(137, 180, 250, 0.4);
+}
+
+select option,
+.select-input option {
+  background-color: #181825;
+  color: #cdd6f4;
+  padding: 8px 10px;
+}
+
+select option:checked,
+.select-input option:checked {
+  background-color: #313244;
+  color: #89b4fa;
+}
+
+select option:hover,
+.select-input option:hover {
+  background-color: #45475a;
+  color: #ffffff;
+}
+
+.modal-input.select-input,
+select.modal-input {
+  width: 100%;
+  padding: 6px 28px 6px 10px;
+  font-size: 13px;
+  background-position: right 10px center;
+}
+
+.cwd-group .select-input {
+  max-width: 110px;
+  border: 1px solid #313244;
+  background-color: #181825;
+  font-size: 11px;
+  padding: 2px 22px 2px 6px;
+  background-position: right 6px center;
+}
+
+input::-webkit-calendar-picker-indicator {
+  filter: invert(0.8);
+  cursor: pointer;
 }
 
 .cwd-input {
@@ -427,15 +507,18 @@ html,
 }
 
 /* Settings Modal */
+/* Settings Modal */
 .settings-modal {
-  width: 500px;
-  max-width: 90vw;
+  width: 580px;
+  max-width: 94vw;
+  max-height: 88vh;
   background-color: #181825;
   border: 1px solid #313244;
   border-radius: 8px;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .modal-header {
@@ -444,6 +527,7 @@ html,
   justify-content: space-between;
   padding: 14px 20px;
   border-bottom: 1px solid #313244;
+  background-color: #181825;
 }
 
 .modal-header h3 {
@@ -466,8 +550,50 @@ html,
   color: #cdd6f4;
 }
 
+/* Modal Tab Bar */
+.modal-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 0 12px;
+  background-color: #11111b;
+  border-bottom: 1px solid #313244;
+}
+
+.modal-tab-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: #a6adc8;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.modal-tab-btn:hover {
+  color: #cdd6f4;
+  background-color: rgba(49, 50, 68, 0.5);
+}
+
+.modal-tab-btn.active {
+  color: #89b4fa;
+  border-bottom-color: #89b4fa;
+  background-color: rgba(49, 50, 68, 0.3);
+}
+
 .modal-body {
   padding: 20px;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  max-height: calc(88vh - 130px);
+}
+
+.settings-tab-panel {
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -483,6 +609,167 @@ html,
   font-size: 12px;
   color: #a6adc8;
   font-weight: 500;
+}
+
+.label-with-value {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* Theme Cards Grid */
+.theme-selector-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 10px;
+}
+
+.theme-card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  background-color: #11111b;
+  border: 1px solid #313244;
+  border-radius: 6px;
+  padding: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  text-align: center;
+}
+
+.theme-card:hover {
+  border-color: #45475a;
+  transform: translateY(-1px);
+}
+
+.theme-card.selected {
+  border-color: #89b4fa;
+  box-shadow: 0 0 0 1px #89b4fa;
+  background-color: #1e1e2e;
+}
+
+.theme-card-preview {
+  height: 38px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.preview-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.preview-text {
+  font-family: monospace;
+  font-size: 12px;
+  font-weight: bold;
+}
+
+.theme-card-name {
+  font-size: 11px;
+  color: #cdd6f4;
+  margin-top: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Opacity Slider */
+.slider-container {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.slider-input {
+  flex: 1;
+  accent-color: #89b4fa;
+  cursor: pointer;
+  height: 6px;
+  border-radius: 3px;
+  background: #313244;
+}
+
+.slider-badge {
+  font-size: 12px;
+  font-weight: 600;
+  color: #89b4fa;
+  background: #11111b;
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid #313244;
+  min-width: 44px;
+  text-align: center;
+}
+
+/* Font Preview Box */
+.font-preview-box {
+  background-color: #11111b;
+  border: 1px solid #313244;
+  border-radius: 6px;
+  padding: 10px 12px;
+  color: #cdd6f4;
+  white-space: pre-wrap;
+  word-break: break-all;
+  line-height: 1.5;
+}
+
+/* Shortcuts Table */
+.shortcuts-table {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 280px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.shortcut-row-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 8px;
+  background-color: #11111b;
+  border: 1px solid #313244;
+  border-radius: 4px;
+}
+
+.shortcut-label {
+  font-size: 12px;
+  color: #cdd6f4;
+  min-width: 140px;
+}
+
+.shortcut-input-group {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.shortcut-input {
+  max-width: 160px;
+  align-self: flex-end;
+  text-align: center;
+  font-family: monospace;
+}
+
+.shortcut-input.recording {
+  border-color: #89b4fa;
+  box-shadow: 0 0 0 2px rgba(137, 180, 250, 0.4);
+  color: #89b4fa;
+  background-color: #1e1e2e;
+}
+
+.btn-small {
+  padding: 3px 8px;
+  font-size: 11px;
 }
 
 .setting-row {

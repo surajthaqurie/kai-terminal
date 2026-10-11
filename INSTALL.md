@@ -53,19 +53,19 @@ kai mcp .
 1. Download the `.deb` package from [GitHub Releases](https://github.com/surajthaqurie/kai-terminal/releases/latest).
 2. Install via terminal:
    ```bash
-   sudo apt install ./Kai_0.1.0_amd64.deb
+   sudo apt install ./kai_0.1.0_amd64.deb
    ```
-   *(Or using dpkg: `sudo dpkg -i ./Kai_0.1.0_amd64.deb && sudo apt-get install -f`)*
+   *(Or using dpkg: `sudo dpkg -i ./kai_0.1.0_amd64.deb && sudo apt-get install -f`)*
 3. Launch **Kai Terminal** from your application menu.
 
 #### Option 2: AppImage
 1. Download the `.AppImage` file.
 2. Make it executable and run:
    ```bash
-   chmod +x ./Kai_0.1.0_amd64.AppImage
-   ./Kai_0.1.0_amd64.AppImage
+   chmod +x ./kai_0.1.0_amd64.AppImage
+   ./kai_0.1.0_amd64.AppImage
    ```
-   *(If FUSE is not installed on your system, extract and run: `./Kai_0.1.0_amd64.AppImage --appimage-extract && ./squashfs-root/AppRun`)*
+   *(If FUSE is not installed on your system, extract and run: `./kai_0.1.0_amd64.AppImage --appimage-extract && ./squashfs-root/AppRun`)*
 
 #### Other Linux Packaging Templates
 Templates for building non-Debian formats are located in the `packaging/` folder:

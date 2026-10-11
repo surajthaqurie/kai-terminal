@@ -157,7 +157,14 @@ pub fn detect_available_shells() -> Vec<ShellProfile> {
             };
 
             if let Some(path) = path_to_use {
-                if !profiles.iter().any(|p| p.path == path) {
+                let canonical_target = Path::new(&path).canonicalize().ok();
+                let already_present = profiles.iter().any(|p| {
+                    p.id == *id
+                        || p.path == path
+                        || (canonical_target.is_some()
+                            && Path::new(&p.path).canonicalize().ok() == canonical_target)
+                });
+                if !already_present {
                     let is_def = !default_set;
                     if is_def {
                         default_set = true;
@@ -218,7 +225,14 @@ pub fn detect_available_shells() -> Vec<ShellProfile> {
             };
 
             if let Some(path) = path_to_use {
-                if !profiles.iter().any(|p| p.path == path) {
+                let canonical_target = Path::new(&path).canonicalize().ok();
+                let already_present = profiles.iter().any(|p| {
+                    p.id == *id
+                        || p.path == path
+                        || (canonical_target.is_some()
+                            && Path::new(&p.path).canonicalize().ok() == canonical_target)
+                });
+                if !already_present {
                     let is_def = !default_set;
                     if is_def {
                         default_set = true;

@@ -13,11 +13,11 @@ const STATS: Array<[string, string]> = [
 ];
 
 export function Hero({ tag, short, version, rel }: { tag: string; short: string; version: string; rel?: LatestRelease }) {
-  const macUrl = rel?.asset((n) => n.toLowerCase().endsWith('.dmg'), `Kai_${short}_aarch64.dmg`) ?? `${REPO_URL}/releases/download/${tag}/Kai_${short}_aarch64.dmg`;
+  const macUrl = rel?.asset((n) => n.toLowerCase().endsWith('.dmg'), `kai_${short}_aarch64.dmg`) ?? `${REPO_URL}/releases/download/${tag}/kai_${short}_aarch64.dmg`;
   const linuxDeb = rel?.asset((n) => n.toLowerCase().includes('amd64') && n.toLowerCase().endsWith('.deb'), `kai_${short}_amd64.deb`) ?? `${REPO_URL}/releases/download/${tag}/kai_${short}_amd64.deb`;
   const linuxApp = rel?.asset((n) => n.toLowerCase().includes('amd64') && n.toLowerCase().endsWith('.appimage'), `kai_${short}_amd64.AppImage`) ?? `${REPO_URL}/releases/download/${tag}/kai_${short}_amd64.AppImage`;
-  const winExe = rel?.asset((n) => n.toLowerCase().endsWith('setup.exe'), `Kai_${short}_x64-setup.exe`) ?? `${REPO_URL}/releases/download/${tag}/Kai_${short}_x64-setup.exe`;
-  const winMsi = rel?.asset((n) => n.toLowerCase().endsWith('.msi'), `Kai_${short}_x64_en-US.msi`) ?? `${REPO_URL}/releases/download/${tag}/Kai_${short}_x64_en-US.msi`;
+  const winExe = rel?.asset((n) => n.toLowerCase().endsWith('setup.exe'), `kai_${short}_x64-setup.exe`) ?? `${REPO_URL}/releases/download/${tag}/kai_${short}_x64-setup.exe`;
+  const winMsi = rel?.asset((n) => n.toLowerCase().endsWith('.msi'), `kai_${short}_x64_en-US.msi`) ?? `${REPO_URL}/releases/download/${tag}/kai_${short}_x64_en-US.msi`;
 
   return (
     <section className="t-hero">

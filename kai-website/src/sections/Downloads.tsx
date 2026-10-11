@@ -42,8 +42,8 @@ export function Downloads({ rel }: { rel: LatestRelease }) {
       sub: 'macOS 12 or newer · For M1, M2, M3 and M4 Macs',
       installers: [
         {
-          name: `Kai_${rel.short}_aarch64.dmg`,
-          url: rel.asset((n) => n.toLowerCase().endsWith('.dmg'), `Kai_${rel.short}_aarch64.dmg`),
+          name: `kai_${rel.short}_aarch64.dmg`,
+          url: rel.asset((n) => n.toLowerCase().endsWith('.dmg'), `kai_${rel.short}_aarch64.dmg`),
           size: rel.assets.find((a) => a.name.toLowerCase().endsWith('.dmg'))?.size ?? 0,
           label: 'Mac Installer',
           format: '.dmg',
@@ -52,7 +52,7 @@ export function Downloads({ rel }: { rel: LatestRelease }) {
           recommended: true,
         },
       ],
-      cmd: `open Kai_${rel.short}_aarch64.dmg`,
+      cmd: `open kai_${rel.short}_aarch64.dmg`,
       cmdLabel: 'Open and install',
       note: 'First time? Right-click Kai and choose Open.',
     },
@@ -111,8 +111,8 @@ export function Downloads({ rel }: { rel: LatestRelease }) {
       sub: 'Windows 10 and 11 · 64-bit',
       installers: [
         {
-          name: `Kai_${rel.short}_x64-setup.exe`,
-          url: rel.asset((n) => n.toLowerCase().endsWith('setup.exe'), `Kai_${rel.short}_x64-setup.exe`),
+          name: `kai_${rel.short}_x64-setup.exe`,
+          url: rel.asset((n) => n.toLowerCase().endsWith('setup.exe'), `kai_${rel.short}_x64-setup.exe`),
           size: rel.assets.find((a) => a.name.toLowerCase().endsWith('setup.exe'))?.size ?? 0,
           label: 'Windows Setup',
           format: '.exe',
@@ -121,8 +121,8 @@ export function Downloads({ rel }: { rel: LatestRelease }) {
           recommended: true,
         },
         {
-          name: `Kai_${rel.short}_x64_en-US.msi`,
-          url: rel.asset((n) => n.toLowerCase().endsWith('.msi'), `Kai_${rel.short}_x64_en-US.msi`),
+          name: `kai_${rel.short}_x64_en-US.msi`,
+          url: rel.asset((n) => n.toLowerCase().endsWith('.msi'), `kai_${rel.short}_x64_en-US.msi`),
           size: rel.assets.find((a) => a.name.toLowerCase().endsWith('.msi'))?.size ?? 0,
           label: 'Windows Installer',
           format: '.msi',

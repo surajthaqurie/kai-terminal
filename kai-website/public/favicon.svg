@@ -1,11 +1,36 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
   <defs>
-    <linearGradient id="kaiGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#06b6d4" />
-      <stop offset="100%" stop-color="#2563eb" />
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0a0e17" />
+      <stop offset="100%" stop-color="#070a10" />
+    </linearGradient>
+    <linearGradient id="windowBorder" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#10b981" stop-opacity="0.9" />
+      <stop offset="100%" stop-color="#06b6d4" stop-opacity="0.9" />
+    </linearGradient>
+    <linearGradient id="promptGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00f2fe" />
+      <stop offset="100%" stop-color="#06b6d4" />
     </linearGradient>
   </defs>
-  <rect width="100" height="100" rx="24" fill="url(#kaiGrad)" />
-  <path d="M28 36 L46 50 L28 64" fill="none" stroke="#ffffff" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
-  <line x1="54" y1="64" x2="72" y2="64" stroke="#ffffff" stroke-width="8" stroke-linecap="round"/>
+
+  <!-- Near-black navy rounded base -->
+  <rect width="1024" height="1024" rx="224" fill="url(#bgGrad)" />
+
+  <!-- Terminal Window Outline with Emerald / Cyan border -->
+  <rect x="112" y="112" width="800" height="800" rx="144" fill="#0d131f" stroke="url(#windowBorder)" stroke-width="28" />
+
+  <!-- Terminal Header Bar Dots -->
+  <circle cx="216" cy="220" r="22" fill="#10b981" />
+  <circle cx="288" cy="220" r="22" fill="#06b6d4" />
+  <circle cx="360" cy="220" r="22" fill="#3b82f6" opacity="0.8" />
+
+  <!-- Window Header Divider -->
+  <line x1="112" y1="288" x2="912" y2="288" stroke="#1f293d" stroke-width="12" />
+
+  <!-- Bold High-Contrast > Prompt (Readable at 32px) -->
+  <path d="M272 416 L488 560 L272 704" fill="none" stroke="url(#promptGrad)" stroke-width="76" stroke-linecap="round" stroke-linejoin="round" />
+
+  <!-- Bold High-Contrast _ Cursor -->
+  <line x1="568" y1="704" x2="752" y2="704" stroke="url(#promptGrad)" stroke-width="76" stroke-linecap="round" />
 </svg>

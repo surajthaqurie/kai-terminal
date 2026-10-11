@@ -84,6 +84,62 @@ export function normalizeBinding(binding: string, isMac = false): string | null 
   return segs.join("+");
 }
 
+/** Helper to convert keyboard events to shortcut string (e.g. "Ctrl+Shift+T" or "Cmd+Alt+W"). */
+export function eventToBindingString(
+  e:
+    | KeyboardEvent
+    | {
+        key: string;
+        code: string;
+        ctrlKey: boolean;
+        metaKey: boolean;
+        altKey: boolean;
+        shiftKey: boolean;
+      },
+  isMac: boolean = false
+): string | null {
+  const ctrlOrCmd = isMac ? e.metaKey : e.ctrlKey;
+  const alt = e.altKey;
+  const shift = e.shiftKey;
+
+  const k = e.key;
+  if (["Control", "Shift", "Alt", "Meta", "OS"].includes(k)) {
+    return null;
+  }
+
+  // Must include a modifier
+  if (!ctrlOrCmd && !alt) return null;
+
+  const parts: string[] = [];
+  if (ctrlOrCmd) parts.push(isMac ? "Cmd" : "Ctrl");
+  if (alt) parts.push("Alt");
+  if (shift) parts.push("Shift");
+
+  if (k.length === 1 && /^[a-zA-Z0-9]$/.test(k)) {
+    parts.push(k.toUpperCase());
+  } else if (k === "," || k === "." || k === "/" || k === "[" || k === "]") {
+    parts.push(k);
+  } else if (e.code.startsWith("Key")) {
+    parts.push(e.code.replace("Key", ""));
+  } else if (e.code.startsWith("Digit")) {
+    parts.push(e.code.replace("Digit", ""));
+  } else if (e.code === "Comma") {
+    parts.push(",");
+  } else if (e.code === "Period") {
+    parts.push(".");
+  } else if (e.code === "Slash") {
+    parts.push("/");
+  } else if (e.code === "BracketLeft") {
+    parts.push("[");
+  } else if (e.code === "BracketRight") {
+    parts.push("]");
+  } else {
+    return null;
+  }
+
+  return parts.join("+");
+}
+
 /** True when a keyboard event matches a binding string. */
 export function eventMatchesBinding(e: KeyboardEvent, binding: string): boolean {
   const parsed = parseBinding(binding);

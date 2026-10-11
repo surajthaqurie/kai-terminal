@@ -20,12 +20,12 @@ No auto-detection here. All installers are published on [GitHub Releases](https:
 
 | OS | File | Install |
 | --- | --- | --- |
-| macOS 12+ (M1–M4) | `Kai_0.1.0_aarch64.dmg` | Open the `.dmg`, drag `Kai.app` to `/Applications` |
+| macOS 12+ (M1–M4) | `kai_0.1.0_aarch64.dmg` | Open the `.dmg`, drag `Kai.app` to `/Applications` |
 | Linux x64 | `kai_0.1.0_amd64.deb` | `sudo dpkg -i kai_0.1.0_amd64.deb` |
 | Linux (any distro) | `kai_0.1.0_amd64.AppImage` | `chmod +x kai_*.AppImage && ./kai_*.AppImage` |
 | Linux ARM64 | `kai_0.1.0_arm64.deb` / `.AppImage` | Same as above, ARM build |
-| Windows 10/11 x64 | `Kai_0.1.0_x64-setup.exe` | Download and run |
-| Windows x64 (admin) | `Kai_0.1.0_x64_en-US.msi` | For silent/admin installs |
+| Windows 10/11 x64 | `kai_0.1.0_x64-setup.exe` | Download and run |
+| Windows x64 (admin) | `kai_0.1.0_x64_en-US.msi` | For silent/admin installs |
 
 The website lists the same files and does not choose for you. If your browser guessed wrong, just click another tab — nothing is locked in.
 

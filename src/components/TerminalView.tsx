@@ -140,8 +140,9 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       term.options.fontFamily = settings.fontFamily;
       term.options.fontSize = settings.fontSize;
       term.options.cursorBlink = settings.cursorBlink;
+      term.options.cursorStyle = settings.cursorStyle || "block";
       term.options.scrollback = settings.scrollback;
-      term.options.theme = SettingsService.getThemeColors(settings.theme);
+      term.options.theme = SettingsService.getThemeColors(settings.theme, settings.opacity ?? 1.0);
       try {
         fitAddonRef.current?.fit();
       } catch {
@@ -154,15 +155,16 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
 
       // 1. Initialize xterm.js instance with optimal terminal options for AI CLIs and TUIs
       const term = new Terminal({
+        allowTransparency: true,
         cursorBlink: settings.cursorBlink,
-        cursorStyle: "block",
+        cursorStyle: settings.cursorStyle || "block",
         fontFamily: settings.fontFamily,
         fontSize: settings.fontSize,
         lineHeight: 1.2,
         scrollback: settings.scrollback,
         allowProposedApi: true,
         convertEol: false, // Do not modify raw line endings from PTY
-        theme: SettingsService.getThemeColors(settings.theme),
+        theme: SettingsService.getThemeColors(settings.theme, settings.opacity ?? 1.0),
       });
 
       const fitAddon = new FitAddon();
@@ -358,7 +360,15 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
     };
 
     return (
-      <div className="terminal-container">
+      <div
+        className="terminal-container"
+        style={{
+          backgroundColor: SettingsService.getThemeBackgroundColor(
+            settings.theme,
+            settings.opacity ?? 1.0
+          ),
+        }}
+      >
         {isSearchVisible && (
           <SearchBar
             onSearch={handleSearch}

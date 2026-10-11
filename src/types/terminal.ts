@@ -122,7 +122,18 @@ export interface GitInfoLike {
  * Available color theme names.
  */
 export type ThemeName =
-  "catppuccin-mocha" | "one-dark" | "dracula" | "solarized-dark" | "solarized-light";
+  | "catppuccin-mocha"
+  | "one-dark"
+  | "dracula"
+  | "solarized-dark"
+  | "solarized-light"
+  | "nord"
+  | "tokyo-night";
+
+/**
+ * Terminal cursor appearance styles.
+ */
+export type CursorStyle = "block" | "underline" | "bar";
 
 /**
  * Configurable keyboard shortcuts map.
@@ -151,6 +162,8 @@ export interface UserSettings {
   fontSize: number;
   scrollback: number;
   cursorBlink: boolean;
+  cursorStyle?: CursorStyle;
+  opacity?: number;
   defaultShellId?: string;
   /** Optional user-supplied shell executable path; validated by the backend. */
   customShellPath?: string;

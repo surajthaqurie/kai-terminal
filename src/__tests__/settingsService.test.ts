@@ -26,13 +26,15 @@ describe("SettingsService", () => {
     expect(reloaded.fontFamily).toBe(DEFAULT_SETTINGS.fontFamily);
   });
 
-  it("should return theme color objects for all supported theme names", () => {
+  it("should return theme color objects for all supported theme names including nord and tokyo-night", () => {
     const themes = [
       "catppuccin-mocha",
       "one-dark",
       "dracula",
       "solarized-dark",
       "solarized-light",
+      "nord",
+      "tokyo-night",
     ] as const;
     for (const themeName of themes) {
       const colors = SettingsService.getThemeColors(themeName);
@@ -41,5 +43,27 @@ describe("SettingsService", () => {
       expect(colors.foreground).toBeDefined();
       expect(colors.cursor).toBeDefined();
     }
+  });
+
+  it("should apply opacity to theme background color correctly", () => {
+    const defaultColors = SettingsService.getThemeColors("catppuccin-mocha", 1.0);
+    expect(defaultColors.background).toBe("#1e1e2e");
+
+    const transparentColors = SettingsService.getThemeColors("catppuccin-mocha", 0.85);
+    expect(transparentColors.background).toContain("rgba");
+
+    const normalized = SettingsService.normalize({ opacity: 0.1 });
+    expect(normalized.opacity).toBe(0.2); // clamped to min 0.2
+
+    const normalizedMax = SettingsService.normalize({ opacity: 1.5 });
+    expect(normalizedMax.opacity).toBe(1.0); // clamped to max 1.0
+  });
+
+  it("should normalize cursorStyle safely", () => {
+    const valid = SettingsService.normalize({ cursorStyle: "underline" });
+    expect(valid.cursorStyle).toBe("underline");
+
+    const invalid = SettingsService.normalize({ cursorStyle: "invalid" as never });
+    expect(invalid.cursorStyle).toBe("block");
   });
 });
