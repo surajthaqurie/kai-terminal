@@ -1,5 +1,56 @@
 # Changelog
 
+## 0.1.1
+
+### Patch Changes
+
+- 1257891: Expand AI coding agent ecosystem and harden MCP stream and retrieval staleness:
+  - Add verified agent setup generators for Gemini CLI, GitHub Copilot (VS Code), Windsurf, and Cline alongside Claude Code, Cursor, and Codex (`kai agent setup <agent>`).
+  - Expand Rust desktop AI CLI auto-detection catalog to 6 tools (`codex`, `claude`, `gemini`, `opencode`, `copilot`, `aider`) with non-intrusive local auth checks.
+  - Add stream-level `BoundedLineTransform` to MCP stdio server to reject oversized requests (>10MB) before buffer accumulation.
+  - Add real-time file staleness detection in context retrieval comparing live disk SHA-256 with index metadata.
+  - Track inode change timestamps (ctimeMs) alongside mtime and size in indexer.
+  - Support orphaned project index cleanup by 16-hex hash ID when meta.json is missing or corrupted.
+  - Enforce strict allowlist for `kai config get` keys, bound task classifier inputs to 4,000 characters, and validate LSP command names.
+  - Ensure prototype-safe index maps (`Object.create(null)` + `hasOwnProperty` guards) and POSIX path normalization across platforms.
+  - Update documentation (README, SECURITY, KNOWN_LIMITATIONS, ARCHITECTURE, INSTALL) and website components to reflect expanded agent support, catalogued CLIs, and streaming/staleness boundaries.
+- d22f36e: Enhance customization, app branding, and release standardization:
+  - Redesign app and website icons with a 1024x1024 high-contrast flat vector terminal prompt (`>_`) on a near-black navy canvas with emerald and cyan accents.
+  - Modernize terminal settings dialog into a structured 4-tab interface (Appearance, Font & Display, Shell & Tools, Shortcuts).
+  - Add system-based and popular monospace font selection dropdown with real-time typography preview.
+  - Add terminal background opacity slider (20%-100%) with dynamic rgba background rendering and expanded theme gallery (Nord, Tokyo Night).
+  - Support configurable code editor selection with automated tool detection and custom binary paths.
+  - Add interactive keyboard shortcut recording with conflict resolution.
+  - Standardize all downloadable release filenames to lowercase (`kai_0.1.0_*`).
+  - Fix Linux WebKitGTK dropdown visibility by enforcing `color-scheme: dark` and explicit option styling.
+- d404981: Clean and professionalize release download interface and update deployment URL:
+  - Modernize Releases & Direct Downloads section with a stacked, executive-grade card architecture for Apple (macOS), Linux, and Windows.
+  - Remove emoji clutter and extraneous icons from platform filters and headings for a sleek developer-tool aesthetic.
+  - Add direct installer cards with format tags, file descriptions, architecture badges, and download triggers.
+  - Update live site deployment URLs to `https://kai-terminal.vercel.app/` across canonical tags, OpenGraph metadata, sitemaps, robots.txt, and project documentation.
+- 92fc5ba: Fix Tauri IPC command macro name collisions (E0255) and import missing `tauri::Manager` trait for state resolution (E0599).
+- f1a7926: Enhance group-wise release architecture and direct download pipelines:
+  - Implement structured group-wise releases ordered strictly across Apple (macOS), Linux, and Windows platforms with dedicated architecture badges and format indicators.
+  - Provide direct installer download paths for Apple Silicon macOS (.dmg), Linux x86_64 and ARM64 packages (.deb and portable .AppImage), and Windows 64-bit installers (NSIS .exe and MSI).
+  - Add interactive platform filtering, command-line quick-install snippets with copy controls, and system prerequisites/security guidance (macOS Gatekeeper xattr, Linux FUSE 2, Windows WebView2 runtime).
+  - Elevate website changelog presentation with categorized release highlights for v0.1.0, latest release badges, and structured parsing of pending unreleased changesets.
+  - Synchronize marketing hero quick download pills and installation bar platform order to Apple (macOS), Linux, Windows, and From source.
+- d01d25f: Harden intelligence subsystem: early rejection of unknown MCP tools, strict two-pass token budget enforcement, short-symbol search fallback, safe Windows MCP agent setup path escaping, and first-run CLI config directory creation.
+- e6c5844: Independent production audit and security release gate fixes:
+  - Fix npm package distribution: add files whitelist and prepack script to guarantee CLI bundle in published tarballs.
+  - Resolve critical symlink escape vulnerability in loadProjectRules and loadIgnorePatterns with realpath boundary verification and size bounding.
+  - Harden secret detection with PKCS#8 private keys, fine-grained GitHub PATs, and Anthropic/OpenAI API keys.
+  - Enforce MCP workspace boundary confinement to prevent unauthorized project directory access.
+  - Demarcate untrusted context boundaries and add safe code fence dynamic backtick escaping in context templates.
+  - Improve retrieval ranking: filter common task stop words from partial symbol matches, add singular/plural stem matching, and extract constant/variable symbols.
+  - Harmonize benchmark evaluations for equivalent condition testing across configs.
+  - Support flexible flag ordering in CLI unregister command.
+- Handle terminal process exit cleanly without error:
+  - Prevent BrokenPipe and SessionNotFound race conditions during shell exit in PTY backend.
+  - Catch unhandled promise rejections on window resize, paste, and disconnect events.
+  - Automatically close split panes and secondary tabs when the shell process exits with status 0.
+  - Allow restarting a disconnected single-session terminal by pressing Enter.
+
 All notable changes to **Kai Terminal** (`kai-terminal`) will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
@@ -10,6 +61,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+
 - **Clean Professional Release Interface & Domain Migration**:
   - Transitioned website deployment URL to `https://kai-website-jet.vercel.app/` across all meta tags, canonical links, and documentation.
   - Redesigned Releases & Direct Downloads with stacked, professional container boxes for Apple (macOS), Linux, and Windows.
@@ -30,6 +82,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Orphaned project index cleanup by 16-hex hash ID when `meta.json` is missing or corrupted.
 
 ### Fixed
+
 - **Security & Confinement**:
   - Symlink boundary validation in `loadProjectRules` and `loadIgnorePatterns` preventing escape beyond project roots.
   - Secret scrubbing for PKCS#8 private keys, fine-grained GitHub PATs, and Anthropic/OpenAI API keys.
@@ -43,6 +96,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.0] - 2026-10-11
 
 ### Added
+
 - **Native Rust Portable-PTY Core**:
   - Native pseudoterminal integration via `portable-pty` crate.
   - ConPTY subsystem support on Windows 10/11 with sub-millisecond ANSI throughput.

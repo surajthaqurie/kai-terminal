@@ -59,6 +59,13 @@ export type PublishedRelease = { tag: string; name: string; date: string; url: s
 
 export const FALLBACK_RELEASES: PublishedRelease[] = [
   {
+    tag: 'v0.1.1',
+    name: 'Kai v0.1.1 — Clean Process Exit, Customization & Multi-Agent Hardening',
+    date: '2026-10-11T17:40:00Z',
+    url: `${REPO_URL}/releases/tag/v0.1.1`,
+    notes: 'Release v0.1.1:\n- Clean terminal process exit and auto-close for finished panes/tabs\n- Enter to restart disconnected shell sessions\n- Tab-based settings dialog (Appearance, Font & Display, Shell & Tools, Shortcuts)\n- Expanded system font selector and background opacity customization\n- AI CLI auto-detection & MCP stdio streaming hardening\n- Standardized lowercase release packages',
+  },
+  {
     tag: 'v0.1.0',
     name: 'Kai v0.1.0 — First release',
     date: '2026-10-11T12:00:00Z',

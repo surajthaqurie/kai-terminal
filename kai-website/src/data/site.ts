@@ -2,7 +2,7 @@ import { Bot, Cpu, Layers, Monitor, ShieldCheck, Zap, type LucideIcon } from 'lu
 
 export const REPO_URL = 'https://github.com/surajthaqurie/kai-terminal';
 export const LATEST_RELEASE_URL = `${REPO_URL}/releases/latest`;
-export const FALLBACK_TAG = 'v0.1.0';
+export const FALLBACK_TAG = 'v0.1.1';
 // Single source of truth for the production URL.
 // Static files (index.html, robots.txt, sitemap.xml) must match this by hand.
 export const SITE_URL = 'https://kai-terminal.vercel.app';

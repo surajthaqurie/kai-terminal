@@ -7,7 +7,7 @@ import type { LatestRelease } from '../hooks/useRepo';
 
 const STATS: Array<[string, string]> = [
   ['~30MB', 'idle, one tab open'],
-  ['v0.1.0', 'current release'],
+  ['v0.1.1', 'current release'],
   ['MIT', 'license'],
   ['3', 'installers: macOS, Linux, Windows'],
 ];
@@ -38,7 +38,7 @@ export function Hero({ tag, short, version, rel }: { tag: string; short: string;
         </p>
 
         <p className="t-hero-reassure t-enter" style={{ animationDelay: '190ms' }}>
-          <span>v0.1.0 is an early release. If something breaks, check the changelog or open an issue on GitHub.</span>
+          <span>v0.1.1 is an early release. If something breaks, check the changelog or open an issue on GitHub.</span>
         </p>
 
         <div className="t-enter" style={{ animationDelay: '230ms' }}>

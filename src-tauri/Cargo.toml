@@ -1,6 +1,6 @@
 [package]
 name = "cross-platform-terminal-backend"
-version = "0.1.0"
+version = "0.1.1"
 description = "Cross-Platform Kai Rust Backend"
 authors = ["Kai Team"]
 license = "MIT"
