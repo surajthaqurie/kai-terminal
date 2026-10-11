@@ -1,10 +1,10 @@
 # Dependencies
 node_modules/
-website/node_modules/
+kai-website/node_modules/
 
 # Build outputs
 dist/
-website/dist/
+kai-website/dist/
 src-tauri/target/
 
 # IDE / OS files
