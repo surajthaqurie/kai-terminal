@@ -1,4 +1,5 @@
 import { spawn, execSync } from "child_process";
+import fs from "fs";
 import path from "path";
 import { resolveCanonicalPath } from "./registry";
 
@@ -75,9 +76,38 @@ export function isCommandAvailable(command: string): boolean {
   if (!/^[a-zA-Z0-9_-]+$/.test(command)) {
     return false;
   }
+  if (command === "node") {
+    return true;
+  }
+
+  const isWindows = process.platform === "win32";
+  const envPath = process.env.PATH || process.env.Path || "";
+  const exts = isWindows
+    ? (process.env.PATHEXT || ".EXE;.CMD;.BAT;.COM").split(";").map((e) => e.toLowerCase())
+    : [""];
+
+  for (const dir of envPath.split(path.delimiter)) {
+    if (!dir) continue;
+    for (const ext of exts) {
+      const candidate = path.join(
+        dir,
+        isWindows && command.toLowerCase().endsWith(ext) ? command : command + ext
+      );
+      try {
+        if (fs.existsSync(candidate)) {
+          const stat = fs.statSync(candidate);
+          if (stat.isFile()) {
+            return true;
+          }
+        }
+      } catch {
+        // ignore access errors
+      }
+    }
+  }
+
   try {
-    const isWindows = process.platform === "win32";
-    const checkCmd = isWindows ? `where ${command}` : `which ${command}`;
+    const checkCmd = isWindows ? `where.exe "${command}"` : `which "${command}"`;
     execSync(checkCmd, { stdio: "ignore", timeout: 2000 });
     return true;
   } catch {
