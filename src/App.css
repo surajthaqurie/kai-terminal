@@ -961,6 +961,290 @@ input::-webkit-calendar-picker-indicator {
   white-space: nowrap;
 }
 
+.git-badge-empty {
+  color: #6c7086;
+  background-color: transparent;
+  border: 1px dashed #313244;
+}
+
+.toolbar-update-btn {
+  position: relative;
+}
+
+.toolbar-update-btn.has-update {
+  color: #f9e2af;
+  border-color: #f9e2af;
+}
+
+.toolbar-update-dot {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: #f9e2af;
+}
+
+/* Update banner (alert for newer releases) */
+.update-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  background-color: #2a2113;
+  border-bottom: 1px solid #f9e2af;
+  font-size: 12px;
+  color: #f9e2af;
+  flex: 0 0 auto;
+}
+
+.update-banner-icon {
+  display: flex;
+  align-items: center;
+  color: #f9e2af;
+}
+
+.update-banner-text {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.update-banner-versions {
+  font-family: monospace;
+}
+
+.update-banner-release {
+  color: #cdd6f4;
+  opacity: 0.85;
+}
+
+.update-banner-hint {
+  color: #cdd6f4;
+  opacity: 0.7;
+}
+
+.update-banner-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.update-banner-close {
+  border: none;
+}
+
+/* Status bar (always-visible git branch + version + update check) */
+.status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  height: 30px;
+  min-height: 30px;
+  padding: 0 12px;
+  background-color: #0a1e3c;
+  border-top: 1px solid #1e3a5f;
+  font-size: 12px;
+  color: #a6adc8;
+  flex: 0 0 auto;
+  user-select: none;
+}
+
+.status-left,
+.status-center,
+.status-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.status-center {
+  flex: 1;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.status-git-wrap {
+  position: relative;
+}
+
+.status-git-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background-color: #11111b;
+  border: 1px solid #313244;
+  border-radius: 4px;
+  color: #a6e3a1;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px;
+  cursor: pointer;
+  max-width: 320px;
+}
+
+.status-git-btn:hover {
+  border-color: #a6e3a1;
+}
+
+.status-git-branch {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 180px;
+}
+
+.status-git-dot {
+  font-size: 8px;
+  color: #a6e3a1;
+}
+
+.status-git-dot.dirty {
+  color: #f9e2af;
+}
+
+.status-git-repo {
+  font-weight: 400;
+  color: #6c7086;
+  white-space: nowrap;
+}
+
+.status-git-empty {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #6c7086;
+  font-size: 12px;
+  border: 1px dashed #313244;
+  border-radius: 4px;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+
+.status-git-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  min-width: 200px;
+  background-color: #0a1e3c;
+  border: 1px solid #1e3a5f;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  z-index: 60;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+}
+
+.status-git-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  padding: 7px 10px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: #e8eef7;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.status-git-menu button:hover {
+  background-color: #1e3a5f;
+}
+
+.status-dir {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: #8b9bb4;
+}
+
+.status-dir-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 420px;
+}
+
+.status-dir-empty {
+  color: #6c7086;
+}
+
+.status-right {
+  margin-left: auto;
+}
+
+.status-version {
+  font-family: monospace;
+  color: #6c7086;
+  white-space: nowrap;
+}
+
+.status-update-available {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background-color: #2a2113;
+  border: 1px solid #f9e2af;
+  border-radius: 4px;
+  color: #f9e2af;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: monospace;
+  padding: 2px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.status-update-available:hover {
+  background-color: #3a2f1a;
+}
+
+.status-check-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: #8b9bb4;
+  font-size: 11px;
+  padding: 2px 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.status-check-btn:hover:not(:disabled) {
+  color: #cdd6f4;
+  border-color: #313244;
+}
+
+.status-check-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.status-check-btn .spin {
+  animation: status-spin 1s linear infinite;
+}
+
+@keyframes status-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .intelligence-badge {
   display: inline-flex;
   align-items: center;

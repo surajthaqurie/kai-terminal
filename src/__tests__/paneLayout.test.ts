@@ -68,4 +68,37 @@ describe("pane layout model", () => {
     };
     expect(closePane(tab).panes).toHaveLength(1);
   });
+
+  it("splits only the active pane: inserts adjacent and keeps layout direction", () => {
+    let tab: SplitTabState = {
+      panes: [pane("t-p1")],
+      activePaneId: "t-p1",
+      splitDirection: "none" as const,
+    };
+    tab = splitTab(tab, "t", "vertical", (id) => pane(id));
+    expect(tab.splitDirection).toBe("vertical");
+    // Focus first pane, then split: new pane lands right after it.
+    tab = { ...tab, activePaneId: tab.panes[0].id };
+    const before = tab.panes.map((p) => p.id);
+    tab = splitTab(tab, "t", "vertical", (id) => pane(id));
+    expect(tab.panes).toHaveLength(3);
+    expect(tab.panes[0].id).toBe(before[0]);
+    expect(tab.panes[1].id).toBe(tab.activePaneId);
+    expect(tab.panes[2].id).toBe(before[1]);
+    // A different direction must NOT flip the whole tab layout.
+    tab = splitTab(tab, "t", "horizontal", (id) => pane(id));
+    expect(tab.splitDirection).toBe("vertical");
+    expect(tab.panes).toHaveLength(4);
+  });
+
+  it("closes the active pane and focuses its neighbor", () => {
+    const tab: SplitTabState = {
+      panes: [pane("t-p1"), pane("t-p2"), pane("t-p3")],
+      activePaneId: "t-p2",
+      splitDirection: "vertical" as const,
+    };
+    const closed = closePane(tab);
+    expect(closed.panes.map((p) => p.id)).toEqual(["t-p1", "t-p3"]);
+    expect(closed.activePaneId).toBe("t-p3");
+  });
 });

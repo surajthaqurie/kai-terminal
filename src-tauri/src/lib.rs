@@ -24,7 +24,7 @@ use git::{get_git_info, run_git_action, GitInfo};
 #[cfg(feature = "tauri")]
 use pty::{PtyCreateOptions, PtyManager, PtySessionInfo};
 #[cfg(feature = "tauri")]
-use shell::{detect_available_shells, open_in_editor, ShellProfile};
+use shell::{detect_available_shells, detect_installed_editors, open_in_editor, EditorInfo, ShellProfile};
 #[cfg(feature = "tauri")]
 use tauri::{AppHandle, Manager, State};
 
@@ -77,6 +77,12 @@ fn open_project_in_editor(
     cwd: String,
 ) -> Result<String, error::TerminalError> {
     open_in_editor(editor_path.as_deref(), &cwd)
+}
+
+#[cfg(feature = "tauri")]
+#[tauri::command]
+fn detect_installed_editors_cmd() -> Vec<EditorInfo> {
+    detect_installed_editors()
 }
 
 #[cfg(feature = "tauri")]
@@ -178,6 +184,7 @@ pub fn run() {
             get_git_info_cmd,
             run_git_action_cmd,
             open_project_in_editor,
+            detect_installed_editors_cmd,
             get_diagnostics,
             create_pty,
             write_to_pty,

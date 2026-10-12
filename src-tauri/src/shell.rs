@@ -422,6 +422,11 @@ pub fn validate_and_resolve_shell(requested_path: Option<&str>) -> Result<String
 }
 
 /// Validates working directory path. Rejects NUL bytes and over-long inputs.
+///
+/// Accepts a directory OR a file path: when `requested_cwd` points at a
+/// file, its parent directory is used (so pasting a file path or an editor
+/// buffer path still opens the containing project). When the path does not
+/// exist, a single parent-directory fallback is attempted before erroring.
 pub fn validate_and_resolve_cwd(requested_cwd: Option<&str>) -> Result<String, TerminalError> {
     if let Some(cwd_str) = requested_cwd {
         if cwd_str.contains('\0') {
@@ -440,13 +445,34 @@ pub fn validate_and_resolve_cwd(requested_cwd: Option<&str>) -> Result<String, T
             if p.exists() {
                 if p.is_dir() {
                     return Ok(trimmed.to_string());
-                } else {
+                }
+                // File path -> use its parent directory ("proper parent path").
+                if p.is_file() {
+                    if let Some(parent) = p.parent() {
+                        let parent_str = parent.to_string_lossy().to_string();
+                        if !parent_str.is_empty() && Path::new(&parent_str).is_dir() {
+                            return Ok(parent_str);
+                        }
+                    }
                     return Err(TerminalError::InvalidDirectory(format!(
                         "Working directory path '{}' is a file, not a directory",
                         trimmed
                     )));
                 }
+                return Err(TerminalError::InvalidDirectory(format!(
+                    "Working directory path '{}' is not a directory",
+                    trimmed
+                )));
             } else {
+                // Non-existent path: try the parent (handles trailing
+                // filenames / not-yet-created subpaths pasted from elsewhere).
+                let parent = p.parent();
+                if let Some(par) = parent {
+                    let parent_str = par.to_string_lossy().to_string();
+                    if !parent_str.is_empty() && Path::new(&parent_str).is_dir() {
+                        return Ok(parent_str);
+                    }
+                }
                 return Err(TerminalError::InvalidDirectory(format!(
                     "Working directory '{}' does not exist",
                     trimmed
@@ -513,18 +539,190 @@ fn is_executable(path: &Path) -> bool {
     }
 }
 
+/// Installed code editor discovered on the host.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EditorInfo {
+    pub id: String,
+    pub name: String,
+    pub binary: String,
+    pub path: String,
+}
+
+/// Candidate editors with display names. `binary` is the primary PATH lookup
+/// name; `aliases` covers alternate binary names for the same editor
+/// (e.g. VSCodium ships as `codium` or `vscodium` depending on install).
+fn editor_candidates() -> Vec<(&'static str, &'static str, Vec<&'static str>)> {
+    vec![
+        ("vscode", "Visual Studio Code", vec!["code"]),
+        ("cursor", "Cursor", vec!["cursor"]),
+        ("windsurf", "Windsurf", vec!["windsurf"]),
+        ("vscodium", "VSCodium", vec!["codium", "vscodium"]),
+        ("sublime", "Sublime Text", vec!["subl", "sublime_text"]),
+        ("zed", "Zed", vec!["zed"]),
+        ("neovim", "Neovim", vec!["nvim"]),
+        ("vim", "Vim", vec!["vim", "vi"]),
+        ("atom", "Atom", vec!["atom"]),
+        ("idea", "IntelliJ IDEA", vec!["idea"]),
+        ("fleet", "JetBrains Fleet", vec!["fleet"]),
+        ("webstorm", "WebStorm", vec!["webstorm"]),
+        ("clion", "CLion", vec!["clion"]),
+    ]
+}
+
+/// PATH lookup trying each alias in order. Returns the first resolved path.
+fn which_editor_alias(aliases: &[&str]) -> Option<String> {
+    for a in aliases {
+        if let Ok(p) = which_path(a) {
+            return Some(p);
+        }
+    }
+    None
+}
+
+/// Detects installed code editors without spawning shells: PATH lookup plus
+/// well-known install locations per OS. Never fails — returns an empty vec
+/// when nothing is found so the frontend can show "No editors found".
+pub fn detect_installed_editors() -> Vec<EditorInfo> {
+    let mut out: Vec<EditorInfo> = Vec::new();
+    let mut seen_paths: Vec<String> = Vec::new();
+    // Dedup key: canonicalized path. Case-insensitive only on
+    // case-insensitive filesystems (Windows/macOS); Linux paths are
+    // case-sensitive so `Code` and `code` are distinct files there.
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    let normalize_key = |s: &str| s.to_lowercase();
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    let normalize_key = |s: &str| s.to_string();
+    let mut push_unique = |id: &str, name: &str, binary: &str, path: String| {
+        let canon = Path::new(&path)
+            .canonicalize()
+            .ok()
+            .map(|p| normalize_key(&p.to_string_lossy()))
+            .unwrap_or_else(|| normalize_key(&path));
+        if seen_paths.iter().any(|s| *s == canon) {
+            return;
+        }
+        seen_paths.push(canon);
+        out.push(EditorInfo {
+            id: id.to_string(),
+            name: name.to_string(),
+            binary: binary.to_string(),
+            path,
+        });
+    };
+
+    for (id, name, aliases) in editor_candidates() {
+        let binary = aliases[0];
+        if let Some(p) = which_editor_alias(&aliases) {
+            push_unique(id, name, binary, p);
+            continue;
+        }
+        // Fall back to well-known absolute locations (not on PATH).
+        #[cfg(target_os = "windows")]
+        {
+            let pf = env::var("ProgramFiles").unwrap_or_else(|_| "C:\\Program Files".into());
+            let pf86 =
+                env::var("ProgramFiles(x86)").unwrap_or_else(|_| "C:\\Program Files (x86)".into());
+            let local = env::var("LOCALAPPDATA").unwrap_or_default();
+            let guesses: Vec<String> = match id {
+                "vscode" => vec![
+                    format!("{}\\Microsoft VS Code\\Code.exe", pf),
+                    format!("{}\\Microsoft VS Code\\bin\\code.cmd", pf),
+                ],
+                "cursor" => vec![format!("{}\\Cursor\\Cursor.exe", local)],
+                "sublime" => vec![
+                    format!("{}\\Sublime Text\\sublime_text.exe", pf),
+                    format!("{}\\Sublime Text\\sublime_text.exe", pf86),
+                ],
+                "zed" => vec![format!("{}\\Zed\\zed.exe", pf)],
+                _ => vec![],
+            };
+            for g in guesses {
+                if Path::new(&g).exists() {
+                    push_unique(id, name, binary, g);
+                    break;
+                }
+            }
+        }
+        #[cfg(target_os = "macos")]
+        {
+            // Prefer the CLI shim (`bin/code`); fall back to the .app bundle
+            // itself, which `open_in_editor` launches via `open -a`.
+            // (The shim only exists after "Install 'code' command in PATH".)
+            let guesses: Vec<(String, String)> = match id {
+                "vscode" => vec![
+                    (
+                        "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code".into(),
+                        "/Applications/Visual Studio Code.app".into(),
+                    ),
+                    (
+                        "/Applications/Visual Studio Code - Insiders.app/Contents/Resources/app/bin/code-insiders".into(),
+                        "/Applications/Visual Studio Code - Insiders.app".into(),
+                    ),
+                ],
+                "cursor" => vec![(
+                    "/Applications/Cursor.app/Contents/Resources/app/bin/cursor".into(),
+                    "/Applications/Cursor.app".into(),
+                )],
+                "sublime" => vec![(
+                    "/Applications/Sublime Text.app/Contents/SharedSupport/bin/subl".into(),
+                    "/Applications/Sublime Text.app".into(),
+                )],
+                "zed" => vec![(
+                    "/Applications/Zed.app/Contents/MacOS/zed".into(),
+                    "/Applications/Zed.app".into(),
+                )],
+                _ => vec![],
+            };
+            for (shim, bundle) in guesses {
+                if Path::new(&shim).exists() {
+                    push_unique(id, name, binary, shim);
+                    break;
+                }
+                if Path::new(&bundle).exists() {
+                    push_unique(id, name, binary, bundle);
+                    break;
+                }
+            }
+        }
+        #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+        {
+            let guesses: Vec<String> = match id {
+                "vscode" => vec!["/usr/bin/code".into(), "/snap/bin/code".into()],
+                "cursor" => vec!["/usr/bin/cursor".into()],
+                "sublime" => vec!["/usr/bin/subl".into(), "/opt/sublime_text/sublime_text".into()],
+                "zed" => vec!["/usr/bin/zed".into()],
+                _ => vec![],
+            };
+            for g in guesses {
+                if Path::new(&g).exists() {
+                    push_unique(id, name, binary, g);
+                    break;
+                }
+            }
+        }
+    }
+    out
+}
+
 /// Opens a project directory in a configured editor (Phase D).
 ///
-/// Supported default editor binaries checked on PATH (matches the frontend
-/// preset list): `code`, `cursor`, `windsurf`, `codium`, `vscodium`, `subl`,
-/// `zed`, `nvim`, `vim`, `atom`, `idea`, `clion`.
-/// Does not use shell string interpolation; launches binary directly with `[cwd]` arg.
+/// Auto-detect order matches `editor_candidates` (VS Code first, then
+/// Cursor, Windsurf, VSCodium, Sublime, Zed, terminal editors, JetBrains).
+/// Cross-platform launch notes:
+/// - Windows `.cmd`/`.bat`/`.ps1` shims (e.g. `code.cmd` on PATH) cannot be
+///   spawned directly via `CreateProcess`; they run through `cmd /c`.
+/// - macOS `.app` bundles (recorded when the CLI shim is not installed)
+///   open via `open -a <bundle> <dir>`.
+/// - Unix binaries spawn directly with `[cwd]` as argv[1].
+/// Never uses shell string interpolation; argv arrays only.
 pub fn open_in_editor(requested_editor: Option<&str>, cwd: &str) -> Result<String, TerminalError> {
     let valid_cwd = validate_and_resolve_cwd(Some(cwd))?;
 
+    // Flattened alias order from `editor_candidates` — single source of
+    // truth for auto-detect priority on every OS.
     let candidate_editors = [
-        "code", "cursor", "windsurf", "codium", "vscodium", "subl", "zed", "nvim", "vim", "atom",
-        "idea", "clion",
+        "code", "cursor", "windsurf", "codium", "vscodium", "subl", "sublime_text", "zed",
+        "nvim", "vim", "vi", "atom", "idea", "fleet", "webstorm", "clion",
     ];
 
     let editor_bin = if let Some(req) = requested_editor {
@@ -564,6 +762,37 @@ pub fn open_in_editor(requested_editor: Option<&str>, cwd: &str) -> Result<Strin
         })?
     };
 
+    // Cross-platform spawn (argv arrays only, no shell interpolation):
+    #[cfg(target_os = "windows")]
+    {
+        if is_windows_script_shim(&editor_bin) {
+            std::process::Command::new("cmd")
+                .args(["/c", &editor_bin, &valid_cwd])
+                .spawn()
+                .map_err(|e| {
+                    TerminalError::IoError(format!(
+                        "Failed to launch editor '{}': {}",
+                        editor_bin, e
+                    ))
+                })?;
+            return Ok(editor_bin);
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if editor_bin.ends_with(".app") {
+            std::process::Command::new("open")
+                .args(["-a", &editor_bin, &valid_cwd])
+                .spawn()
+                .map_err(|e| {
+                    TerminalError::IoError(format!(
+                        "Failed to launch editor '{}': {}",
+                        editor_bin, e
+                    ))
+                })?;
+            return Ok(editor_bin);
+        }
+    }
     std::process::Command::new(&editor_bin)
         .arg(&valid_cwd)
         .spawn()
@@ -572,6 +801,14 @@ pub fn open_in_editor(requested_editor: Option<&str>, cwd: &str) -> Result<Strin
         })?;
 
     Ok(editor_bin)
+}
+
+/// Returns true for Windows script shims that `CreateProcess` cannot run
+/// directly (`.cmd`, `.bat`, `.ps1` — e.g. VS Code's `code.cmd` on PATH).
+#[cfg(target_os = "windows")]
+fn is_windows_script_shim(path: &str) -> bool {
+    let lower = path.to_lowercase();
+    lower.ends_with(".cmd") || lower.ends_with(".bat") || lower.ends_with(".ps1")
 }
 
 #[cfg(test)]
@@ -688,6 +925,38 @@ mod tests {
         assert!(open_in_editor(Some("/non_existent_editor_xyz_99"), "/tmp").is_err());
         assert!(open_in_editor(Some("invalid\0editor"), "/tmp").is_err());
         assert!(open_in_editor(Some(""), "/tmp").is_err());
+    }
+
+    #[test]
+    fn test_detect_installed_editors_never_fails_and_dedups() {
+        // Must not panic on any OS — returns empty vec when nothing found.
+        let editors = detect_installed_editors();
+        let mut paths: Vec<String> = editors.iter().map(|e| e.path.clone()).collect();
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        {
+            paths = paths.iter().map(|p| p.to_lowercase()).collect();
+        }
+        let mut deduped = paths.clone();
+        deduped.sort();
+        deduped.dedup();
+        assert_eq!(paths.len(), deduped.len(), "editor paths must be unique");
+        for e in &editors {
+            assert!(!e.id.is_empty() && !e.name.is_empty() && !e.binary.is_empty());
+            assert!(!e.path.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_validate_cwd_file_resolves_to_parent_dir() {
+        // A file path must resolve to its containing directory on every OS
+        // ("proper parent path" for pasted file paths).
+        let dir = std::env::temp_dir();
+        let file = dir.join("kai_cwd_parent_probe.tmp");
+        let _ = File::create(&file);
+        let file_str = file.to_string_lossy().to_string();
+        let resolved = validate_and_resolve_cwd(Some(&file_str));
+        let _ = fs::remove_file(&file);
+        assert_eq!(resolved.unwrap(), dir.to_string_lossy().to_string());
     }
 
     #[test]

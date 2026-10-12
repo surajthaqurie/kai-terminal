@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useCallback, Fragment } from "react";
 import { Toolbar } from "./components/Toolbar";
 import { TabBar } from "./components/TabBar";
+import { StatusBar } from "./components/StatusBar";
+import { UpdateBanner } from "./components/UpdateBanner";
 import { TerminalView, TerminalViewRef } from "./components/TerminalView";
 import { CommandPalette, CommandAction } from "./components/CommandPalette";
 import { SettingsModal } from "./components/SettingsModal";
@@ -17,6 +19,9 @@ import {
   openProjectInEditor,
   runGitAction,
   getProjectIntelligence,
+  getInstalledEditors,
+  resolveEffectiveProjectDir,
+  InstalledEditor,
   ProjectIntelligenceInfo,
 } from "./services/projectService";
 import {
@@ -26,6 +31,18 @@ import {
   ShortcutActionId,
 } from "./services/shortcuts";
 import { splitTab, closePane, clampPaneFraction } from "./services/paneLayout";
+import {
+  APP_VERSION_FALLBACK,
+  UPDATE_PERIODIC_MS,
+  UpdateCheckResult,
+  checkForUpdates,
+  dismissVersion,
+  getAppVersion,
+  isDismissed,
+  openReleasePage,
+  recordCheckTime,
+  shouldAutoCheck,
+} from "./services/updateService";
 import { PersistedTabV2, sanitizeTab, Workspace } from "./services/workspaces";
 import {
   ShellProfile,
@@ -167,6 +184,11 @@ export function App() {
   const [recentProjects, setRecentProjects] = useState<string[]>(() => loadRecentProjects());
   const [gitBranch, setGitBranch] = useState<string | null>(null);
   const [gitDirty, setGitDirty] = useState<boolean>(false);
+  const [gitRepoRoot, setGitRepoRoot] = useState<string | null>(null);
+  const [appVersion, setAppVersion] = useState<string>(APP_VERSION_FALLBACK);
+  const [updateInfo, setUpdateInfo] = useState<UpdateCheckResult | null>(null);
+  const [isCheckingUpdates, setIsCheckingUpdates] = useState<boolean>(false);
+  const [updateBannerVisible, setUpdateBannerVisible] = useState<boolean>(false);
   const [projectIntel, setProjectIntel] = useState<ProjectIntelligenceInfo | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
   const [userSettings, setUserSettings] = useState<UserSettings>(() =>
@@ -223,7 +245,24 @@ export function App() {
 
   const activeTab = tabs.find((t) => t.id === activeTabId) || tabs[0];
   const activePaneId = activeTab?.activePaneId || activeTab?.panes[0]?.id;
+  const activePane = activeTab?.panes.find((p) => p.id === activePaneId);
   const getActiveTerminal = () => terminalRefs.current[activePaneId];
+  /** Effective project dir: active pane -> tab -> global toolbar input. */
+  const effectiveProjectDir = resolveEffectiveProjectDir(activePane?.cwd, activeTab?.cwd, cwd);
+
+  const [installedEditors, setInstalledEditors] = useState<InstalledEditor[]>([]);
+  const [isLoadingEditors, setIsLoadingEditors] = useState(false);
+  const refreshInstalledEditors = useCallback(() => {
+    setIsLoadingEditors(true);
+    void getInstalledEditors()
+      .then((list) => setInstalledEditors(list))
+      .catch(() => setInstalledEditors([]))
+      .finally(() => setIsLoadingEditors(false));
+  }, []);
+  // Detect installed IDEs once on startup (desktop only; no-op in browser).
+  useEffect(() => {
+    refreshInstalledEditors();
+  }, [refreshInstalledEditors]);
 
   // Saving preferences applies a changed default shell to new sessions
   // and syncs the launch-at-startup toggle with the OS (all platforms).
@@ -364,19 +403,18 @@ export function App() {
     setTabs((prev) => prev.map((t) => (t.id === id ? { ...t, color } : t)));
   }, []);
 
-  // Poll git status for the active working directory: debounced on change
-  // plus a controlled 30 s refresh. Git + intelligence queries run in
-  // parallel and are cached (30 s TTL) so renders never spam the backend
-  // and session startup is never blocked by badge refreshes.
+  // Poll git status for the effective project directory (active pane ->
+  // tab -> toolbar): debounced on change plus a controlled 30 s refresh.
   useEffect(() => {
-    if (!cwd.trim()) {
+    if (!effectiveProjectDir) {
       setGitBranch(null);
       setGitDirty(false);
+      setGitRepoRoot(null);
       setProjectIntel(null);
       return;
     }
     let cancelled = false;
-    const dir = cwd.trim();
+    const dir = effectiveProjectDir;
     const fetch = () => {
       if (typeof document !== "undefined" && document.hidden) return;
       void Promise.allSettled([getGitInfoCached(dir), getProjectIntelligence(dir)]).then(
@@ -385,9 +423,11 @@ export function App() {
           if (gitRes.status === "fulfilled") {
             setGitBranch(gitRes.value.branch);
             setGitDirty(gitRes.value.dirty);
+            setGitRepoRoot(gitRes.value.repo_root ?? null);
           } else {
             setGitBranch(null);
             setGitDirty(false);
+            setGitRepoRoot(null);
           }
           if (intelRes.status === "fulfilled") {
             setProjectIntel(intelRes.value);
@@ -404,7 +444,7 @@ export function App() {
       clearTimeout(timer);
       clearInterval(interval);
     };
-  }, [cwd]);
+  }, [effectiveProjectDir]);
 
   const handleNewTab = useCallback(
     (opts?: { cwd?: string }) => {
@@ -449,10 +489,16 @@ export function App() {
         prev.map((tab) => {
           if (tab.id !== activeTabId) return tab;
           const selectedShell = shells.find((s) => s.id === selectedShellId);
+          // Split ONLY the active pane: inherit the active pane's cwd
+          // (proper parent path chain: active pane -> tab -> toolbar).
+          const fromPane = tab.panes.find((p) => p.id === tab.activePaneId);
+          const inheritCwd =
+            resolveEffectiveProjectDir(fromPane?.cwd, tab.cwd, cwd.trim() || undefined) ||
+            undefined;
           const next = splitTab(tab, tab.id, direction, (id) => ({
             id,
             shellPath: selectedShell?.path,
-            cwd: tab.cwd || cwd.trim() || undefined,
+            cwd: inheritCwd,
             status: "connecting",
           }));
           return { ...tab, ...next };
@@ -540,34 +586,113 @@ export function App() {
     });
   }, []);
 
-  const handleOpenEditor = useCallback(async () => {
-    try {
-      await openProjectInEditor(cwd.trim() || "/", userSettings.editorPath);
-    } catch (err) {
-      setLastError(err instanceof Error ? err.message : String(err));
-    }
-  }, [cwd, userSettings.editorPath]);
+  const handleOpenEditor = useCallback(
+    async (editorBinary?: string) => {
+      try {
+        const dir = effectiveProjectDir;
+        if (!dir) {
+          setLastError("No project directory set. Enter a working directory first.");
+          return;
+        }
+        // Explicit picker choice wins; otherwise fall back to Settings default.
+        const configured = userSettings.editorPath?.trim() || undefined;
+        await openProjectInEditor(dir, editorBinary || configured);
+        setLastError(null);
+      } catch (err) {
+        setLastError(err instanceof Error ? err.message : String(err));
+      }
+    },
+    [effectiveProjectDir, userSettings.editorPath]
+  );
 
   const handleGitActionRun = useCallback(
     async (action: "fetch" | "pull" | "status") => {
       try {
-        const res = await runGitAction(cwd.trim() || "/", action);
-        invalidateGitCache(cwd.trim());
+        const dir = effectiveProjectDir;
+        if (!dir) {
+          setLastError("No project directory set. Enter a working directory first.");
+          return;
+        }
+        const res = await runGitAction(dir, action);
+        invalidateGitCache(dir);
         if (action === "status" && res) {
-          alert(`Git Status (${cwd}):\n${res}`);
+          alert(`Git Status (${dir}):\n${res}`);
         } else {
           // Trigger immediate git badge refresh
-          getGitInfoCached(cwd.trim()).then((info) => {
+          getGitInfoCached(dir).then((info) => {
             setGitBranch(info.branch);
             setGitDirty(info.dirty);
+            setGitRepoRoot(info.repo_root ?? null);
           });
         }
       } catch (err) {
         setLastError(err instanceof Error ? err.message : String(err));
       }
     },
-    [cwd]
+    [effectiveProjectDir]
   );
+
+  const handleCheckUpdates = useCallback(
+    async (manual = false) => {
+      if (isCheckingUpdates) return;
+      setIsCheckingUpdates(true);
+      try {
+        const current = await getAppVersion();
+        setAppVersion(current);
+        const result = await checkForUpdates(current);
+        setUpdateInfo(result);
+        recordCheckTime();
+        if (result.updateAvailable && result.latestVersion) {
+          // Respect a previous dismiss unless this is a manual re-check.
+          if (manual || !isDismissed(result.latestVersion)) {
+            setUpdateBannerVisible(true);
+          }
+        } else if (manual && !result.updateAvailable && !result.error) {
+          setLastError(null);
+        } else if (manual && result.error) {
+          setLastError(`Update check: ${result.error}`);
+        }
+      } catch (err) {
+        if (manual) {
+          setLastError(err instanceof Error ? err.message : String(err));
+        }
+      } finally {
+        setIsCheckingUpdates(false);
+      }
+    },
+    [isCheckingUpdates]
+  );
+
+  // App version for the status bar + automatic update check on startup and
+  // every few hours while the window stays open. Failures are silent unless
+  // the user triggered the check manually.
+  useEffect(() => {
+    void getAppVersion().then((v) => setAppVersion(v));
+    if (shouldAutoCheck()) {
+      void handleCheckUpdates(false);
+    }
+    const interval = setInterval(() => {
+      void handleCheckUpdates(false);
+    }, UPDATE_PERIODIC_MS);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleViewUpdate = useCallback(() => {
+    const url = updateInfo?.releaseUrl ?? undefined;
+    void openReleasePage(url ?? "https://github.com/surajthaqurie/kai-terminal/releases/latest");
+  }, [updateInfo]);
+
+  const handleDismissUpdate = useCallback(() => {
+    if (updateInfo?.latestVersion) {
+      dismissVersion(updateInfo.latestVersion);
+    }
+    setUpdateBannerVisible(false);
+  }, [updateInfo]);
+
+  const handleLaterUpdate = useCallback(() => {
+    setUpdateBannerVisible(false);
+  }, []);
 
   const handleToggleSearch = useCallback(() => {
     getActiveTerminal()?.toggleSearch();
@@ -821,6 +946,13 @@ export function App() {
       perform: () => handleGitActionRun("pull"),
     },
     {
+      id: "check-updates",
+      label: "Check for Application Updates",
+      category: "Help",
+      icon: <Activity size={16} />,
+      perform: () => handleCheckUpdates(true),
+    },
+    {
       id: "close-tab",
       label: "Close Active Terminal Session",
       category: "Terminal",
@@ -942,6 +1074,9 @@ export function App() {
           onSplitVertical={() => handleSplitPane("vertical")}
           onOpenEditor={handleOpenEditor}
           editorPath={userSettings.editorPath}
+          installedEditors={installedEditors}
+          isLoadingEditors={isLoadingEditors}
+          onRefreshEditors={refreshInstalledEditors}
           onGitAction={handleGitActionRun}
           onRestart={handleRestartActive}
           onClear={handleClearActive}
@@ -962,8 +1097,27 @@ export function App() {
           onOpenWorkspaces={() => setIsWorkspaceOpen(true)}
           onOpenAiCli={() => setIsAiCliOpen(true)}
           onOpenDiagnostics={() => setIsDiagnosticsOpen(true)}
+          onCheckUpdates={() => handleCheckUpdates(true)}
+          isCheckingUpdates={isCheckingUpdates}
+          updateAvailable={updateInfo?.updateAvailable ?? false}
+          latestVersion={updateInfo?.latestVersion ?? null}
+          appVersion={appVersion}
         />
       </div>
+
+      {updateBannerVisible && updateInfo?.updateAvailable && updateInfo.latestVersion && (
+        <UpdateBanner
+          currentVersion={updateInfo.currentVersion}
+          latestVersion={updateInfo.latestVersion}
+          releaseUrl={
+            updateInfo.releaseUrl ?? "https://github.com/surajthaqurie/kai-terminal/releases/latest"
+          }
+          releaseName={updateInfo.releaseName}
+          onViewRelease={handleViewUpdate}
+          onDismiss={handleDismissUpdate}
+          onLater={handleLaterUpdate}
+        />
+      )}
 
       <div className="app-body">
         {pendingRestore !== null && pendingRestore.length > 0 && (
@@ -1099,7 +1253,7 @@ export function App() {
       <AiCliPanel
         isOpen={isAiCliOpen}
         onClose={() => setIsAiCliOpen(false)}
-        projectDir={cwd.trim()}
+        projectDir={effectiveProjectDir}
         onLaunchInTerminal={(dir) => {
           handleNewTab({ cwd: dir || undefined });
           setIsAiCliOpen(false);
@@ -1110,6 +1264,20 @@ export function App() {
         isOpen={isDiagnosticsOpen}
         onClose={() => setIsDiagnosticsOpen(false)}
         lastError={lastError}
+      />
+
+      <StatusBar
+        gitBranch={gitBranch}
+        gitDirty={gitDirty}
+        gitRepoRoot={gitRepoRoot}
+        projectDir={effectiveProjectDir}
+        appVersion={appVersion}
+        updateAvailable={updateInfo?.updateAvailable ?? false}
+        latestVersion={updateInfo?.latestVersion ?? null}
+        isCheckingUpdates={isCheckingUpdates}
+        onCheckUpdates={() => handleCheckUpdates(true)}
+        onViewUpdate={handleViewUpdate}
+        onGitAction={handleGitActionRun}
       />
     </div>
   );

@@ -94,12 +94,61 @@ export function recordRecentProject(cwd: string): string[] {
   }
 }
 
+export interface InstalledEditor {
+  id: string;
+  name: string;
+  binary: string;
+  path: string;
+}
+
+/** Well-known editors used as a fallback when the backend is unavailable (browser/mock). */
+export const KNOWN_EDITORS_FALLBACK: InstalledEditor[] = [
+  { id: "vscode", name: "Visual Studio Code", binary: "code", path: "code" },
+  { id: "cursor", name: "Cursor", binary: "cursor", path: "cursor" },
+  { id: "windsurf", name: "Windsurf", binary: "windsurf", path: "windsurf" },
+  { id: "vscodium", name: "VSCodium", binary: "codium", path: "codium" },
+  { id: "sublime", name: "Sublime Text", binary: "subl", path: "subl" },
+  { id: "zed", name: "Zed", binary: "zed", path: "zed" },
+];
+
+export async function getInstalledEditors(): Promise<InstalledEditor[]> {
+  if (!isTauriAvailable()) return [];
+  try {
+    const list = await invoke<InstalledEditor[]>("detect_installed_editors_cmd");
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Resolves the effective project directory for actions like "Open in
+ * editor", git badges, and new tabs/splits.
+ * Priority: active pane cwd -> tab cwd -> global toolbar cwd.
+ * Trims whitespace/quotes; returns "" when nothing usable was provided
+ * (callers must NOT fall back to "/" — the backend defaults to HOME).
+ */
+export function resolveEffectiveProjectDir(
+  ...candidates: Array<string | undefined | null>
+): string {
+  for (const c of candidates) {
+    if (typeof c !== "string") continue;
+    const t = c.trim().replace(/^["']+|["']+$/g, "");
+    if (t) return t;
+  }
+  return "";
+}
+
 export async function openProjectInEditor(cwd: string, editorPath?: string): Promise<string> {
   if (!isTauriAvailable()) {
     throw new Error("Editor launch is only available inside the desktop app.");
   }
+  const dir = resolveEffectiveProjectDir(cwd);
+  if (!dir) {
+    throw new Error("No project directory set. Enter a working directory first.");
+  }
   return await invoke<string>("open_project_in_editor", {
-    cwd,
+    cwd: dir,
     editorPath: editorPath?.trim() || null,
   });
 }
