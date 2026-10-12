@@ -9,7 +9,6 @@ import { SettingsModal } from "./components/SettingsModal";
 import { AiCliPanel } from "./components/AiCliPanel";
 import { DiagnosticsModal } from "./components/DiagnosticsModal";
 import { WorkspaceModal } from "./components/WorkspaceModal";
-import { PaneHeader } from "./components/PaneHeader";
 import { GitStatusModal } from "./components/GitStatusModal";
 import { GitChangesModal } from "./components/GitChangesModal";
 import { PtyService, isTauriAvailable } from "./services/ptyService";
@@ -565,6 +564,43 @@ export function App() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paneDirsKey, activeTabId]);
+
+  // Immediately synchronize active pane's git status and code mode when active
+  // pane changes or user clicks a split.
+  useEffect(() => {
+    if (!effectiveProjectDir) {
+      setGitBranch(null);
+      setGitDirty(false);
+      setGitRepoRoot(null);
+      return;
+    }
+    const cached = gitInfoByDir[effectiveProjectDir];
+    if (cached !== undefined) {
+      setGitBranch(cached?.branch ?? null);
+      setGitDirty(cached?.dirty ?? false);
+      setGitRepoRoot(cached?.repo_root ?? null);
+    }
+    let cancelled = false;
+    void getGitInfoCached(effectiveProjectDir).then(
+      (info) => {
+        if (cancelled) return;
+        setGitInfoByDir((prev) => ({ ...prev, [effectiveProjectDir]: info }));
+        setGitBranch(info.branch);
+        setGitDirty(info.dirty);
+        setGitRepoRoot(info.repo_root ?? null);
+      },
+      () => {
+        if (cancelled) return;
+        setGitInfoByDir((prev) => ({ ...prev, [effectiveProjectDir]: null }));
+        setGitBranch(null);
+        setGitDirty(false);
+        setGitRepoRoot(null);
+      }
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [effectiveProjectDir, activePaneId, activeTabId]);
 
   const handleNewTab = useCallback(
     (opts?: { cwd?: string }) => {
@@ -1230,6 +1266,8 @@ export function App() {
           onSelectShell={setSelectedShellId}
           onSplitHorizontal={() => handleSplitPane("horizontal")}
           onSplitVertical={() => handleSplitPane("vertical")}
+          canClosePane={(activeTab?.panes.length ?? 0) > 1}
+          onClosePane={handleClosePane}
           onOpenEditor={handleOpenEditor}
           editorPath={userSettings.editorPath}
           installedEditors={installedEditors}
@@ -1311,8 +1349,6 @@ export function App() {
             if (node.kind === "pane") {
               const pane = paneById.get(node.paneId);
               if (!pane) return null;
-              const paneDir = resolveEffectiveProjectDir(pane.cwd, tab.cwd, cwd);
-              const paneGit = paneDir ? (gitInfoByDir[paneDir] ?? null) : null;
               const isPaneActive = pane.id === tab.activePaneId;
               const focusPane = () => {
                 setTabs((prev) =>
@@ -1325,23 +1361,8 @@ export function App() {
                   className={`pane-item ${isPaneActive ? "active-pane" : ""}`}
                   style={{ flex: "1 1 0%" }}
                   onClick={focusPane}
+                  onPointerDown={focusPane}
                 >
-                  <PaneHeader
-                    paneId={pane.id}
-                    cwd={paneDir}
-                    isActive={isPaneActive}
-                    gitInfo={paneGit}
-                    showClose={tab.panes.length > 1}
-                    onFocus={focusPane}
-                    onGitStatus={() => setGitChangesModal({ dir: paneDir })}
-                    onOpenChanges={() => setGitChangesModal({ dir: paneDir })}
-                    onOpenAi={() => {
-                      setAiCliDir(paneDir);
-                      setIsAiCliOpen(true);
-                    }}
-                    onOpenEditor={() => void handleOpenEditor(undefined, paneDir)}
-                    onClosePane={handleClosePane}
-                  />
                   <TerminalView
                     ref={(el) => {
                       terminalRefs.current[pane.id] = el;
@@ -1558,9 +1579,21 @@ export function App() {
       )}
 
       <StatusBar
-        gitBranch={gitBranch}
-        gitDirty={gitDirty}
-        gitRepoRoot={gitRepoRoot}
+        gitBranch={
+          effectiveProjectDir && gitInfoByDir[effectiveProjectDir] !== undefined
+            ? gitInfoByDir[effectiveProjectDir]?.branch ?? null
+            : gitBranch
+        }
+        gitDirty={
+          effectiveProjectDir && gitInfoByDir[effectiveProjectDir] !== undefined
+            ? gitInfoByDir[effectiveProjectDir]?.dirty ?? false
+            : gitDirty
+        }
+        gitRepoRoot={
+          effectiveProjectDir && gitInfoByDir[effectiveProjectDir] !== undefined
+            ? gitInfoByDir[effectiveProjectDir]?.repo_root ?? null
+            : gitRepoRoot
+        }
         projectDir={effectiveProjectDir}
         appVersion={appVersion}
         updateAvailable={updateInfo?.updateAvailable ?? false}

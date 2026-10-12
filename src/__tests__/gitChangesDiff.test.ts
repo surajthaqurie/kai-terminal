@@ -286,3 +286,54 @@ describe("Active Split Terminal and PaneHeader Component", () => {
   });
 });
 
+describe("StatusBar Footer with Active Split Directory, Mode and Git", () => {
+  it("renders active split current path, code mode, and git branch in footer", async () => {
+    const React = await import("react");
+    const { createRoot } = await import("react-dom/client");
+    const { StatusBar } = await import("../components/StatusBar");
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await React.act(async () => {
+      root.render(
+        React.createElement(StatusBar, {
+          gitBranch: "feature/split-terminal",
+          gitDirty: true,
+          gitRepoRoot: "/home/user/workspace/kai",
+          projectDir: "/home/user/workspace/kai",
+          appVersion: "1.0.0",
+          updateAvailable: false,
+          onViewUpdate: () => {},
+          onGitAction: () => {},
+          mode: "code",
+        })
+      );
+    });
+
+    // 1. Current path is displayed in status-dir with Folder icon
+    const dirBtn = container.querySelector(".status-dir");
+    expect(dirBtn).not.toBeNull();
+    expect(dirBtn?.textContent).toContain("/home/user/workspace/kai");
+
+    // 2. Code mode pill is displayed
+    const modePill = container.querySelector(".status-mode-pill");
+    expect(modePill?.textContent).toContain("Code Mode");
+
+    // 3. Git branch and dirty dot are displayed
+    const branchText = container.querySelector(".status-git-branch");
+    expect(branchText?.textContent).toBe("feature/split-terminal");
+
+    const gitDot = container.querySelector(".status-git-dot");
+    expect(gitDot?.classList.contains("dirty")).toBe(true);
+
+    // 4. Path text is rendered cleanly for selection
+    const dirText = container.querySelector(".status-dir-text");
+    expect(dirText?.textContent).toBe("/home/user/workspace/kai");
+
+    root.unmount();
+    container.remove();
+  });
+});
+

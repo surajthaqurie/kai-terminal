@@ -1308,18 +1308,26 @@ input::-webkit-calendar-picker-indicator {
 }
 
 .status-dir {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
+  background: transparent;
+  padding: 1px 4px;
+  color: #89b4fa;
+  font-size: 11px;
+  max-width: 320px;
   min-width: 0;
-  color: #8b9bb4;
+  user-select: text;
 }
 
 .status-dir-text {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 420px;
+  max-width: 260px;
+  font-family: monospace;
+  user-select: text;
+  cursor: text;
 }
 
 .status-dir-empty {
@@ -1497,8 +1505,8 @@ input::-webkit-calendar-picker-indicator {
   flex: 1 1 auto;
   min-height: 0;
   min-width: 0;
-  gap: 2px;
-  background-color: #1e3a5f;
+  gap: 0;
+  background-color: transparent;
 }
 
 .pane-container-vertical {
@@ -1509,8 +1517,8 @@ input::-webkit-calendar-picker-indicator {
   flex: 1 1 auto;
   min-height: 0;
   min-width: 0;
-  gap: 2px;
-  background-color: #1e3a5f;
+  gap: 0;
+  background-color: transparent;
 }
 
 .pane-item {
@@ -1522,26 +1530,55 @@ input::-webkit-calendar-picker-indicator {
   background-color: #0a1428;
   display: flex;
   flex-direction: column;
+  border: none;
+  outline: none;
 }
 
 .pane-item.active-pane {
-  outline: 1px solid #45475a;
-  outline-offset: -1px;
+  outline: none;
+  border: none;
 }
 
 .pane-divider {
-  flex: 0 0 6px;
-  background-color: #313244;
-  cursor: row-resize;
+  position: relative;
+  background-color: #1e3a5f;
   z-index: 5;
+  transition: background-color 0.15s ease;
 }
 
 .pane-divider-vertical {
+  flex: 0 0 1px;
+  width: 1px;
   cursor: col-resize;
 }
 
 .pane-divider-horizontal {
+  flex: 0 0 1px;
+  height: 1px;
   cursor: row-resize;
+}
+
+/* Expanded invisible hit area for easy grabbing without visual bulk */
+.pane-divider-vertical::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  right: -3px;
+  cursor: col-resize;
+  z-index: 2;
+}
+
+.pane-divider-horizontal::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -3px;
+  bottom: -3px;
+  cursor: row-resize;
+  z-index: 2;
 }
 
 .pane-divider:hover,
@@ -1557,8 +1594,8 @@ input::-webkit-calendar-picker-indicator {
   flex: 1 1 0;
   min-height: 0;
   min-width: 0;
-  gap: 2px;
-  background-color: #1e3a5f;
+  gap: 0;
+  background-color: transparent;
   overflow: hidden;
   scrollbar-width: none;
 }

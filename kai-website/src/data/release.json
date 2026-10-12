@@ -1,19 +1,26 @@
 {
-  "version": "0.1.1",
-  "tag": "v0.1.1",
-  "generatedAt": "2026-10-12T02:20:00.353Z",
+  "version": "0.1.2",
+  "tag": "v0.1.2",
+  "generatedAt": "2026-10-12T15:58:51.345Z",
   "releases": [
+    {
+      "tag": "v0.1.2",
+      "name": "Kai v0.1.2 — Automatic agent registration",
+      "date": "2026-10-12T15:58:51.345Z",
+      "url": "https://github.com/surajthaqurie/kai-terminal/releases/tag/v0.1.2",
+      "notes": "- Automatic agent registration: `kai agent setup <agent>` now installs kai MCP wiring directly into the agent's own config file (JSON merge with `.kai.bak` backup, idempotent re-runs, `--dry-run`/`--force`/`--print` flags) instead of only printing a snippet. New `kai agent setup all` wires every system-installed agent at once, `kai agent register` aliases setup, and `kai agent list` reports per-agent kai wiring state. The desktop AI providers panel shows wiring status with one-click Auto-wire backed by new `setup_agent_mcp_cmd` / `get_kai_cli_launch_cmd` IPC commands. Aider and opencode use verified config shapes (`mcpServers` in `~/.config/aider/mcp.json`, `mcp` local entry in `~/.config/opencode/opencode.json`).\n- Slim toolbar and footer: removed the toolbar New Session button (use TabBar + / Ctrl+Shift+T), the Recent dropdown, the top git badges, the top Code Mode pill, and the Clear button — git branch, project directory, and Code Mode (now an explicit exit toggle button) live only in the bottom status bar. AI providers panel: dropped per-provider Auto-wire buttons (kai wiring is auto-detected read-only), redesigned provider cards with proper spacing, added a Re-detect button. Detection fix: desktop probing now also covers well-known install locations (`~/.local/bin`, `~/.opencode/bin`, `~/.cargo/bin`, nvm node bins, `/usr/local/bin`, …) so GUI launches with a minimal PATH still find user-installed CLIs, added the `agy` CLI to the catalog plus extra binary aliases (`claude-code`, `cursor-agent`, `opencode2`, `github-copilot`).\n- Refine split terminals: remove per-split pane headers, display active terminal directory as selectable text in footer status bar, sync Code Mode and Git status on pane click, and replace borders with a subtle 1px hairline separator."
+    },
     {
       "tag": "v0.1.1",
       "name": "Kai v0.1.1 — Expand AI coding agent ecosystem and harden MCP stream and retrieval staleness",
-      "date": "2026-10-12T02:20:00.353Z",
+      "date": "2026-10-12T15:58:51.345Z",
       "url": "https://github.com/surajthaqurie/kai-terminal/releases/tag/v0.1.1",
       "notes": "- Expand AI coding agent ecosystem and harden MCP stream and retrieval staleness:\n- Add verified agent setup generators for Gemini CLI, GitHub Copilot (VS Code), Windsurf, and Cline alongside Claude Code, Cursor, and Codex (`kai agent setup <agent>`).\n- Expand Rust desktop AI CLI auto-detection catalog to 6 tools (`codex`, `claude`, `gemini`, `opencode`, `copilot`, `aider`) with non-intrusive local auth checks.\n- Add stream-level `BoundedLineTransform` to MCP stdio server to reject oversized requests (>10MB) before buffer accumulation.\n- Add real-time file staleness detection in context retrieval comparing live disk SHA-256 with index metadata.\n- Track inode change timestamps (ctimeMs) alongside mtime and size in indexer.\n- Support orphaned project index cleanup by 16-hex hash ID when meta.json is missing or corrupted.\n- Enforce strict allowlist for `kai config get` keys, bound task classifier inputs to 4,000 characters, and validate LSP command names."
     },
     {
       "tag": "v0.1.0",
       "name": "Kai v0.1.0 — **Native Rust Portable-PTY Core**",
-      "date": "2026-10-12T02:20:00.353Z",
+      "date": "2026-10-12T15:58:51.345Z",
       "url": "https://github.com/surajthaqurie/kai-terminal/releases/tag/v0.1.0",
       "notes": "- **Native Rust Portable-PTY Core**:\n- Native pseudoterminal integration via `portable-pty` crate.\n- ConPTY subsystem support on Windows 10/11 with sub-millisecond ANSI throughput.\n- POSIX pty streaming on macOS and Linux with isolated per-tab process trees.\n- **GPU Canvas Terminal Rendering**:\n- Tauri 2 desktop shell with GPU-accelerated `@xterm/xterm` canvas renderer running at 60fps.\n- ~30MB idle RAM footprint (10× lighter than Electron-based terminals).\n- Split pane layouts (up to 4 panes per tab) with independent cwd and pty channels."
     }

@@ -13,6 +13,7 @@ import {
   Rows,
   Code,
   ChevronDown,
+  X,
 } from "lucide-react";
 import { InstalledEditor } from "../services/projectService";
 
@@ -22,6 +23,8 @@ interface ToolbarProps {
   onSelectShell: (shellId: string) => void;
   onSplitHorizontal?: () => void;
   onSplitVertical?: () => void;
+  canClosePane?: boolean;
+  onClosePane?: () => void;
   onOpenEditor?: (editorBinary?: string) => void;
   editorPath?: string;
   installedEditors?: InstalledEditor[];
@@ -54,6 +57,8 @@ export const Toolbar: FC<ToolbarProps> = ({
   onSelectShell,
   onSplitHorizontal,
   onSplitVertical,
+  canClosePane = false,
+  onClosePane,
   onOpenEditor,
   editorPath,
   installedEditors = [],
@@ -287,6 +292,16 @@ export const Toolbar: FC<ToolbarProps> = ({
             aria-label="Split horizontal"
           >
             <Rows size={15} />
+          </button>
+        )}
+        {canClosePane && onClosePane && (
+          <button
+            className="btn btn-icon danger-hover"
+            onClick={onClosePane}
+            title="Close Active Split (Ctrl+Shift+W)"
+            aria-label="Close active split"
+          >
+            <X size={15} />
           </button>
         )}
         <button

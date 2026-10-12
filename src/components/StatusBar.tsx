@@ -4,6 +4,7 @@ import {
   ArrowUpCircle,
   Check,
   Copy,
+  Folder,
   ArrowDownToLine,
   ArrowUpFromLine,
   ListOrdered,
@@ -115,6 +116,16 @@ export const StatusBar: FC<StatusBarProps> = ({
               <span>Terminal</span>
             </span>
           )
+        )}
+        {projectDir && (
+          <span
+            className="status-dir"
+            title={projectDir}
+            aria-label={`Current directory: ${projectDir}`}
+          >
+            <Folder size={12} aria-hidden="true" />
+            <span className="status-dir-text">{projectDir}</span>
+          </span>
         )}
         {gitBranch ? (
           <div ref={menuRef} className="status-git-wrap">
