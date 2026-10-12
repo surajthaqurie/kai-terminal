@@ -73,6 +73,10 @@ Run all verification checks locally prior to committing:
 # 1. Full TypeScript, Formatting & Intelligence Test Suite (Vitest - 16 test files, 109 tests)
 npm run check
 
+# 1b. Same gate inside Docker (no host Node/Rust install needed)
+npm run test:docker:build
+npm run test:docker            # all | frontend | rust | pty via npm run test:docker:<step>
+
 # 2. Standalone CLI Build
 npm run build:cli
 

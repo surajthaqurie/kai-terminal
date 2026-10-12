@@ -27,6 +27,11 @@
     "format": "prettier --write \"src/**/*.{ts,tsx,css,json}\"",
     "format:check": "prettier --check \"src/**/*.{ts,tsx,css,json}\"",
     "check": "npm run typecheck && npm run format:check && npm run test",
+    "test:docker": "docker compose -f docker-compose.test.yml run --rm kai-test all",
+    "test:docker:frontend": "docker compose -f docker-compose.test.yml run --rm kai-test frontend",
+    "test:docker:rust": "docker compose -f docker-compose.test.yml run --rm kai-test rust",
+    "test:docker:pty": "docker compose -f docker-compose.test.yml run --rm kai-test pty",
+    "test:docker:build": "docker compose -f docker-compose.test.yml build",
     "tauri": "tauri",
     "changeset": "changeset",
     "version-packages": "changeset version"

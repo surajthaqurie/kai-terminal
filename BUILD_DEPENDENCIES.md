@@ -70,3 +70,29 @@ cargo test --no-default-features --manifest-path src-tauri/Cargo.toml --lib
 # 4. Run real PTY integration tests
 cargo test --no-default-features --manifest-path src-tauri/Cargo.toml --test pty_integration_tests
 ```
+
+## 5. Docker Local Test Setup (no host toolchain install)
+
+Requires only Docker + Docker Compose. The image (`Dockerfile.test`) mirrors the
+CI Linux job: Node.js 22 + stable Rust + WebKit2GTK build deps.
+
+```bash
+# Build the test image once
+npm run test:docker:build
+
+# Full gate: frontend + rust + pty + builds (same as CI)
+npm run test:docker
+
+# Faster subsets:
+npm run test:docker:frontend  # typecheck + format:check + vitest + CLI smoke
+npm run test:docker:rust      # cargo fmt + clippy + lib unit tests
+npm run test:docker:pty       # real PTY integration tests (/dev/ptmx mapped)
+
+# Raw compose equivalent (pick step: all|frontend|rust|pty|build)
+docker compose -f docker-compose.test.yml run --rm kai-test frontend
+```
+
+Notes:
+- Source is bind-mounted (`.:/app`); `node_modules`, cargo registry/git, and
+  `src-tauri/target` persist in named volumes for fast re-runs.
+- PTY tests need `/dev/ptmx` (already mapped in `docker-compose.test.yml`).

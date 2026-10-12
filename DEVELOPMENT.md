@@ -42,6 +42,15 @@ npm run dev
 ```
 The browser preview will be accessible at `http://localhost:1420`.
 
+### Step 3b: Run Tests in Docker (no host toolchain install)
+Requires only Docker + Docker Compose. Mirrors the CI Linux job:
+```bash
+npm run test:docker:build  # build kai-terminal:test image once
+npm run test:docker         # full gate: frontend + rust + pty + builds
+```
+Subsets: `npm run test:docker:frontend`, `npm run test:docker:rust`, `npm run test:docker:pty`.
+See `docker-compose.test.yml`, `Dockerfile.test`, `scripts/docker-test.sh`.
+
 ---
 
 ## 3. Project Structure

@@ -1,0 +1,43 @@
+# Kai Terminal — local test image (mirrors .github/workflows/ci.yml Linux job)
+# Base matches CI: Node.js 22 on Debian bookworm + stable Rust.
+FROM node:22-bookworm
+
+ENV DEBIAN_FRONTEND=noninteractive \
+  CI=true \
+  CARGO_TERM_COLOR=always \
+  RUSTUP_HOME=/usr/local/rustup \
+  CARGO_HOME=/usr/local/cargo \
+  PATH=/usr/local/cargo/bin:/usr/local/bin:$PATH
+
+# Native build deps required for Tauri/Rust backend (see BUILD_DEPENDENCIES.md)
+# + ca-certificates/curl/git for rustup + node toolchain.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    git \
+    bash \
+    build-essential \
+    pkg-config \
+    libssl-dev \
+    libwebkit2gtk-4.1-dev \
+    libgtk-3-dev \
+    libayatana-appindicator3-dev \
+    librsvg2-dev \
+  && rm -rf /var/lib/apt/lists/*
+
+# Stable Rust with CI components (rustfmt, clippy)
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --component rustfmt,clippy \
+  && rustc --version && cargo --version && node --version && npm --version
+
+WORKDIR /app
+
+# Layer-cache npm deps first
+COPY package.json package-lock.json ./
+RUN npm ci
+
+# Copy the rest (compose mounts source over this for live local runs)
+COPY . .
+
+# Local test entrypoint (frontend + rust + pty integration, same as CI)
+ENTRYPOINT ["./scripts/docker-test.sh"]
+CMD ["all"]

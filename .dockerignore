@@ -1,0 +1,10 @@
+node_modules/
+kai-website/node_modules/
+dist/
+kai-website/dist/
+src-tauri/target/
+.git/
+coverage/
+*.log
+.env
+.env.local

@@ -1,0 +1,35 @@
+# Local test stack — reproduces CI Linux job without installing toolchains on host.
+# Source is bind-mounted so edits are reflected instantly; dependencies are cached
+# in named volumes (npm + cargo registry + rust target dir).
+name: kai-local-test
+
+services:
+  kai-test:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    image: kai-terminal:test
+    volumes:
+      # Live source tree
+      - .:/app
+      # Keep container-installed node_modules (don't shadow with host dir)
+      - kai-node-modules:/app/node_modules
+      # Cargo caches for fast re-runs
+      - kai-cargo-registry:/usr/local/cargo/registry
+      - kai-cargo-git:/usr/local/cargo/git
+      - kai-rust-target:/app/src-tauri/target
+    working_dir: /app
+    # PTY integration tests spawn real shells via /dev/ptmx
+    devices:
+      - /dev/ptmx:/dev/ptmx
+    entrypoint: ./scripts/docker-test.sh
+    # Override with: docker compose -f docker-compose.test.yml run --rm kai-test frontend
+    command: all
+    tty: true
+    stdin_open: true
+
+volumes:
+  kai-node-modules:
+  kai-cargo-registry:
+  kai-cargo-git:
+  kai-rust-target:
