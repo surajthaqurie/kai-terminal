@@ -933,13 +933,18 @@ pub fn detect_system_terminal_config() -> SystemTerminalConfig {
                     if let Some(val) = line.strip_prefix("fontFamily=") {
                         let trimmed = val.trim();
                         if !trimmed.is_empty() {
-                            font_family = format!("'{}', 'Fira Code', 'FiraCode', monospace", trimmed);
+                            font_family =
+                                format!("'{}', 'Fira Code', 'FiraCode', monospace", trimmed);
                         }
                     } else if let Some(val) = line.strip_prefix("colorScheme=") {
                         let trimmed = val.trim();
-                        if trimmed.eq_ignore_ascii_case("Kali-Dark") || trimmed.to_lowercase().contains("kali") {
+                        if trimmed.eq_ignore_ascii_case("Kali-Dark")
+                            || trimmed.to_lowercase().contains("kali")
+                        {
                             theme = "kali".to_string();
-                        } else if trimmed.to_lowercase().contains("solarized") && trimmed.to_lowercase().contains("light") {
+                        } else if trimmed.to_lowercase().contains("solarized")
+                            && trimmed.to_lowercase().contains("light")
+                        {
                             theme = "solarized-light".to_string();
                         } else if trimmed.to_lowercase().contains("solarized") {
                             theme = "solarized-dark".to_string();
@@ -1000,7 +1005,8 @@ pub fn detect_system_terminal_config() -> SystemTerminalConfig {
                     let out_str = String::from_utf8_lossy(&output.stdout);
                     let detected = out_str.trim();
                     if !detected.is_empty() {
-                        font_family = format!("'{}', 'Fira Code', 'DejaVu Sans Mono', monospace", detected);
+                        font_family =
+                            format!("'{}', 'Fira Code', 'DejaVu Sans Mono', monospace", detected);
                     }
                 }
             }

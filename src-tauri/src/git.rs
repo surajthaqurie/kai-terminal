@@ -505,7 +505,13 @@ mod tests {
         let empty_base = std::env::temp_dir().join(format!("kai-git-empty-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&empty_base);
         std::fs::create_dir_all(&empty_base).unwrap();
-        assert!(std::process::Command::new("git").current_dir(&empty_base).arg("init").output().unwrap().status.success());
+        assert!(std::process::Command::new("git")
+            .current_dir(&empty_base)
+            .arg("init")
+            .output()
+            .unwrap()
+            .status
+            .success());
         let empty_info = get_git_info(&empty_base.to_string_lossy());
         assert!(empty_info.error.is_none());
         assert!(empty_info.repo_root.is_some());
