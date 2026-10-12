@@ -54,8 +54,8 @@ export function HeroTerminal({ version }: { version: string }) {
     } else if (['claude', 'codex', 'gemini', 'copilot', 'opencode', 'aider', 'windsurf', 'cline', 'ai'].includes(input) || input.startsWith('kai agent') || input.startsWith('kai ')) {
       reply = (
         <div style={{ color: '#d8b4fe' }}>
-          <p>codex <span style={{ color: '#34d399' }}>✓</span> · claude <span style={{ color: '#34d399' }}>✓</span> · gemini <span style={{ color: '#34d399' }}>✓</span> · copilot <span style={{ color: '#34d399' }}>✓</span> · opencode <span style={{ color: '#34d399' }}>✓</span> · aider <span style={{ color: '#34d399' }}>✓</span></p>
-          <p style={{ color: '#94a3b8', fontSize: '0.75rem' }}>Connect one with: kai agent setup &lt;name&gt;. Example: kai agent setup claude.</p>
+          <p>codex <span style={{ color: '#34d399' }}>✓</span> · claude <span style={{ color: '#34d399' }}>✓</span> · gemini <span style={{ color: '#34d399' }}>✓</span> · copilot <span style={{ color: '#34d399' }}>✓</span> · opencode <span style={{ color: '#34d399' }}>✓</span> · aider <span style={{ color: '#34d399' }}>✓</span> · cursor · windsurf · cline</p>
+          <p style={{ color: '#94a3b8', fontSize: '0.75rem' }}>Detect installed ones with: kai agent list. Example: kai agent setup opencode.</p>
         </div>
       );
     } else if (['downloads', 'download', 'install'].includes(input)) {

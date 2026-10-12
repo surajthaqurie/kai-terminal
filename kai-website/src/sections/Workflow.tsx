@@ -20,7 +20,7 @@ const STEPS = [
     icon: Bot,
     step: 'Step 3',
     title: 'Use with your AI tool',
-    body: 'Run kai agent setup for one tool (Claude, Cursor, Codex, Gemini, Copilot, Windsurf or Cline), then work as usual.',
+    body: 'Run kai agent setup for one tool (Claude, Cursor, Codex, Gemini, Copilot, Windsurf, Cline, opencode or Aider), then work as usual. Run kai agent list to see what is installed.',
     code: 'kai agent setup claude',
   },
 ];

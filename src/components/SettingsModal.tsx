@@ -16,9 +16,10 @@ import {
   platformLabel,
   eventToBindingString,
 } from "../services/shortcuts";
-import { X, Save, RotateCcw, Palette, Type, Terminal, Keyboard } from "lucide-react";
+import { X, Save, RotateCcw, Palette, Type, Terminal, Keyboard, ArrowUpCircle } from "lucide-react";
+import type { UpdateCheckResult } from "../services/updateService";
 
-export type SettingsTab = "appearance" | "terminal" | "shell" | "shortcuts";
+export type SettingsTab = "appearance" | "terminal" | "shell" | "shortcuts" | "updates";
 
 export const FONT_PRESETS = [
   {
@@ -126,6 +127,11 @@ interface SettingsModalProps {
   settings: UserSettings;
   onSaveSettings: (newSettings: UserSettings) => void;
   shells: ShellProfile[];
+  appVersion?: string;
+  updateInfo?: UpdateCheckResult | null;
+  isCheckingUpdates?: boolean;
+  onCheckUpdates?: () => void;
+  onViewUpdate?: () => void;
 }
 
 export const SettingsModal: FC<SettingsModalProps> = ({
@@ -134,6 +140,11 @@ export const SettingsModal: FC<SettingsModalProps> = ({
   settings,
   onSaveSettings,
   shells,
+  appVersion = "",
+  updateInfo = null,
+  isCheckingUpdates = false,
+  onCheckUpdates,
+  onViewUpdate,
 }) => {
   const [formData, setFormData] = useState<UserSettings>(settings);
   const [activeTab, setActiveTab] = useState<SettingsTab>("appearance");
@@ -238,7 +249,7 @@ export const SettingsModal: FC<SettingsModalProps> = ({
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="settings-modal" onClick={(e) => e.stopPropagation()}>
+      <div className="settings-modal settings-tabs-modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <h3>Terminal Settings</h3>
           <button className="btn-close" onClick={onClose} title="Close">
@@ -287,6 +298,19 @@ export const SettingsModal: FC<SettingsModalProps> = ({
           >
             <Keyboard size={16} />
             <span>Shortcuts</span>
+          </button>
+          <button
+            type="button"
+            className={`modal-tab-btn ${activeTab === "updates" ? "active" : ""}`}
+            onClick={() => setActiveTab("updates")}
+            role="tab"
+            aria-selected={activeTab === "updates"}
+          >
+            <ArrowUpCircle size={16} />
+            <span>Updates</span>
+            {updateInfo?.updateAvailable && (
+              <span className="toolbar-update-dot" aria-hidden="true" />
+            )}
           </button>
         </div>
 
@@ -660,6 +684,89 @@ export const SettingsModal: FC<SettingsModalProps> = ({
                     Conflicting shortcuts must be resolved before saving.
                   </p>
                 )}
+              </div>
+            </div>
+          )}
+
+          {/* 5. UPDATES TAB */}
+          {activeTab === "updates" && (
+            <div className="settings-tab-panel">
+              <div className="setting-field">
+                <label>Application Version</label>
+                <div className="update-version-row">
+                  <span className="status-version" title={`Kai Terminal v${appVersion}`}>
+                    v{appVersion || "unknown"}
+                  </span>
+                  {updateInfo?.latestVersion && (
+                    <span className="muted-text">Latest: v{updateInfo.latestVersion}</span>
+                  )}
+                </div>
+                {updateInfo?.updateAvailable && updateInfo.latestVersion ? (
+                  <p className="update-available-text" role="status">
+                    Update available: v{appVersion} → v{updateInfo.latestVersion}
+                    {updateInfo.releaseName ? ` (${updateInfo.releaseName})` : ""}
+                  </p>
+                ) : updateInfo && !updateInfo.error ? (
+                  <p className="muted-text" role="status">
+                    You are running the latest version.
+                  </p>
+                ) : null}
+                {updateInfo?.error && (
+                  <p className="muted-text" role="status">
+                    Last check: {updateInfo.error}
+                  </p>
+                )}
+                {updateInfo?.checkedAt ? (
+                  <p className="muted-text">
+                    Last checked: {new Date(updateInfo.checkedAt).toLocaleString()}
+                  </p>
+                ) : (
+                  <p className="muted-text">Not checked yet in this session.</p>
+                )}
+              </div>
+
+              <div className="setting-field">
+                <div className="footer-actions" style={{ justifyContent: "flex-start" }}>
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-small"
+                    onClick={onCheckUpdates}
+                    disabled={isCheckingUpdates || !onCheckUpdates}
+                  >
+                    <ArrowUpCircle size={14} />
+                    <span>{isCheckingUpdates ? "Checking…" : "Check for Updates"}</span>
+                  </button>
+                  {updateInfo?.updateAvailable && onViewUpdate && (
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-small"
+                      onClick={onViewUpdate}
+                    >
+                      <span>View Release</span>
+                    </button>
+                  )}
+                </div>
+                <p className="muted-text">
+                  Checks the public GitHub releases page. Failures (offline, rate-limited) never
+                  block the app.
+                </p>
+              </div>
+
+              <div className="setting-field checkbox-field">
+                <label className="checkbox-label">
+                  <input
+                    type="checkbox"
+                    checked={formData.autoCheckUpdates ?? true}
+                    onChange={(e) =>
+                      setFormData({ ...formData, autoCheckUpdates: e.target.checked })
+                    }
+                  />
+                  <span>Automatically check for updates</span>
+                </label>
+                <p className="muted-text">
+                  When enabled, Kai checks once per day on startup and every few hours while open.
+                  Applies when you save settings.
+                </p>
               </div>
             </div>
           )}

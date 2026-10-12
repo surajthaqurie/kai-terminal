@@ -1,6 +1,11 @@
-import { SplitDirection, TerminalPane } from "../types/terminal";
+import {
+  PaneLayoutNode,
+  PaneSplitDirection,
+  SplitDirection,
+  TerminalPane,
+} from "../types/terminal";
 
-export const MAX_PANES_PER_TAB = 4;
+export const MAX_PANES_PER_TAB = 16;
 export const MIN_PANE_FRACTION = 0.2;
 export const MAX_PANE_FRACTION = 0.8;
 
@@ -13,10 +18,17 @@ export interface SplitTabState {
   panes: TerminalPane[];
   activePaneId: string;
   splitDirection: SplitDirection;
+  layout?: PaneLayoutNode;
 }
 
 export function nextPaneId(tabId: string, panes: TerminalPane[]): string {
   return `${tabId}-p${panes.length + 1}-${Date.now().toString(36)}`;
+}
+
+let splitSeq = 0;
+export function nextSplitId(): string {
+  splitSeq += 1;
+  return `split-${Date.now().toString(36)}-${splitSeq}-${Math.floor(Math.random() * 0xffff).toString(16)}`;
 }
 
 export function activePaneIndex(tab: SplitTabState): number {
@@ -28,11 +40,12 @@ export function activePaneIndex(tab: SplitTabState): number {
  * Splits ONLY the active pane: the new pane is inserted immediately after
  * the active pane (not appended at the end), and focus moves to it.
  *
- * The tab keeps a single flat flex direction. When the tab already has
- * >1 pane and the requested direction differs, the existing direction is
- * preserved so the whole tab layout is not flipped — the new pane still
- * appears adjacent to the active one. A fresh direction applies only when
- * going from 1 -> 2 panes.
+ * Sets the layout split direction to the requested direction (horizontal or vertical)
+ * and supports arbitrary N splits up to MAX_PANES_PER_TAB.
+ *
+ * NOTE: legacy flat helper kept for compat/tests. New UI should prefer the
+ * nested tree helpers below (`createPaneLayout` / `splitLayoutNode`), which
+ * preserve mixed directions instead of overwriting one global axis.
  */
 export function splitTab(
   tab: SplitTabState,
@@ -46,12 +59,20 @@ export function splitTab(
   const pane = makePane(id);
   const at = activePaneIndex(tab);
   const panes = [...tab.panes.slice(0, at + 1), pane, ...tab.panes.slice(at + 1)];
+  const layout = splitLayoutNode(
+    tab.layout ?? layoutFromFlat(
+      tab.panes.map((p) => p.id),
+      tab.splitDirection
+    ),
+    tab.activePaneId,
+    direction,
+    id
+  );
   return {
     panes,
     activePaneId: id,
-    // Only the first split sets the direction; later splits keep the tab's
-    // existing direction so only the active pane's neighborhood changes.
-    splitDirection: tab.panes.length <= 1 ? direction : tab.splitDirection,
+    splitDirection: direction,
+    layout,
   };
 }
 
@@ -64,14 +85,137 @@ export function closePane(tab: SplitTabState): SplitTabState {
   const at = activePaneIndex(tab);
   const remaining = tab.panes.filter((p) => p.id !== tab.activePaneId);
   const nextIdx = Math.min(at, remaining.length - 1);
+  const baseLayout =
+    tab.layout ??
+    layoutFromFlat(
+      tab.panes.map((p) => p.id),
+      tab.splitDirection
+    );
+  const pruned = removePaneFromLayout(baseLayout, tab.activePaneId) ?? createPaneLayout(remaining[0].id);
   return {
     panes: remaining,
     activePaneId: remaining[nextIdx].id,
     splitDirection: remaining.length === 1 ? "none" : tab.splitDirection,
+    layout: remaining.length === 1 ? createPaneLayout(remaining[0].id) : pruned,
   };
 }
 
 export function setActivePane(tab: SplitTabState, paneId: string): SplitTabState {
   if (!tab.panes.some((p) => p.id === paneId)) return tab;
   return { ...tab, activePaneId: paneId };
+}
+
+// ---------------------------------------------------------------------------
+// Nested binary split tree (proper mixed-direction layouts)
+// ---------------------------------------------------------------------------
+
+/** Single-pane tree. */
+export function createPaneLayout(paneId: string): PaneLayoutNode {
+  return { kind: "pane", paneId };
+}
+
+/**
+ * Build a tree from a legacy flat pane list + one global direction.
+ * 1 pane -> leaf. 2 panes -> one split. N panes -> left-leaning chain
+ * along the same axis (matches the old flat rendering exactly).
+ */
+export function layoutFromFlat(paneIds: string[], direction: SplitDirection): PaneLayoutNode {
+  if (paneIds.length === 0) return { kind: "pane", paneId: "" };
+  if (paneIds.length === 1 || direction === "none") return createPaneLayout(paneIds[0]);
+  const axis: PaneSplitDirection = direction === "horizontal" ? "horizontal" : "vertical";
+  let node: PaneLayoutNode = createPaneLayout(paneIds[0]);
+  for (const id of paneIds.slice(1)) {
+    node = {
+      kind: "split",
+      id: nextSplitId(),
+      direction: axis,
+      ratio: 0.5,
+      first: node,
+      second: createPaneLayout(id),
+    };
+  }
+  return node;
+}
+
+/**
+ * Split ONLY the leaf holding `targetPaneId` along `direction`.
+ * The target stays as `first`, the new pane becomes `second` and receives
+ * focus. Unknown target -> tree unchanged.
+ */
+export function splitLayoutNode(
+  node: PaneLayoutNode,
+  targetPaneId: string,
+  direction: PaneSplitDirection,
+  newPaneId: string
+): PaneLayoutNode {
+  if (node.kind === "pane") {
+    if (node.paneId !== targetPaneId) return node;
+    return {
+      kind: "split",
+      id: nextSplitId(),
+      direction,
+      ratio: 0.5,
+      first: { kind: "pane", paneId: targetPaneId },
+      second: { kind: "pane", paneId: newPaneId },
+    };
+  }
+  return {
+    ...node,
+    first: splitLayoutNode(node.first, targetPaneId, direction, newPaneId),
+    second: splitLayoutNode(node.second, targetPaneId, direction, newPaneId),
+  };
+}
+
+/**
+ * Remove a leaf and collapse its parent split (the surviving sibling takes
+ * the parent's place). Returns null when the tree becomes empty.
+ */
+export function removePaneFromLayout(node: PaneLayoutNode, paneId: string): PaneLayoutNode | null {
+  if (node.kind === "pane") {
+    return node.paneId === paneId ? null : node;
+  }
+  const first = removePaneFromLayout(node.first, paneId);
+  const second = removePaneFromLayout(node.second, paneId);
+  if (first && second) {
+    if (first === node.first && second === node.second) return node;
+    return { ...node, first, second };
+  }
+  // One side vanished: collapse.
+  return first ?? second;
+}
+
+/** All pane ids referenced by the tree (depth-first, first-before-second). */
+export function collectLayoutPaneIds(node: PaneLayoutNode): string[] {
+  if (node.kind === "pane") return [node.paneId];
+  return [...collectLayoutPaneIds(node.first), ...collectLayoutPaneIds(node.second)];
+}
+
+export function countLayoutPanes(node: PaneLayoutNode): number {
+  if (node.kind === "pane") return 1;
+  return countLayoutPanes(node.first) + countLayoutPanes(node.second);
+}
+
+/** Update one split's ratio by id (clamped). Unknown id -> tree unchanged. */
+export function setLayoutSplitRatio(
+  node: PaneLayoutNode,
+  splitId: string,
+  ratio: number
+): PaneLayoutNode {
+  if (node.kind === "pane") return node;
+  if (node.id === splitId) return { ...node, ratio: clampPaneFraction(ratio) };
+  return {
+    ...node,
+    first: setLayoutSplitRatio(node.first, splitId, ratio),
+    second: setLayoutSplitRatio(node.second, splitId, ratio),
+  };
+}
+
+/** Find a split node by id (for drag handlers). */
+export function findLayoutSplit(
+  node: PaneLayoutNode,
+  splitId: string
+): PaneLayoutNode | null {
+  if (node.kind === "pane") return null;
+  if (node.id === splitId) return node;
+  return findLayoutSplit(node.first, splitId) ?? findLayoutSplit(node.second, splitId);
 }

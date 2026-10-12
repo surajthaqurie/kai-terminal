@@ -4,9 +4,20 @@ import { getAiCliStatus, isAnyAiCliAvailable } from "../services/aiCliService";
 describe("aiCliService (optional, safe detection)", () => {
   it("works without Tauri and without any CLI installed", async () => {
     const statuses = await getAiCliStatus();
-    expect(statuses).toHaveLength(6);
+    expect(statuses).toHaveLength(10);
     for (const s of statuses) {
-      expect(["codex", "claude", "gemini", "opencode", "copilot", "aider"]).toContain(s.id);
+      expect([
+        "codex",
+        "claude",
+        "gemini",
+        "opencode",
+        "copilot",
+        "aider",
+        "cursor",
+        "windsurf",
+        "cline",
+        "agy",
+      ]).toContain(s.id);
       // In jsdom (no Tauri) every CLI must report unavailable, never throw.
       expect(s.available).toBe(false);
       expect(s.path).toBeNull();

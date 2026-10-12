@@ -739,3 +739,63 @@ fn test_13_real_ai_cli_compatibility() {
 
     manager.close_pty(&session.id).unwrap();
 }
+
+// ---------------------------------------------------------------------------
+// 14. Shell Exit Command Terminates Session Cleanly
+// ---------------------------------------------------------------------------
+#[test]
+fn test_14_exit_command_terminates_session() {
+    let manager = PtyManager::new();
+    let (emitter, _, exited) = TestEventEmitter::new();
+
+    let session = manager
+        .create_pty(
+            Arc::new(emitter.clone()),
+            PtyCreateOptions {
+                shell_path: default_test_shell(),
+                args: None,
+                cwd: None,
+                cols: 80,
+                rows: 24,
+                env: None,
+            },
+        )
+        .expect("Failed to launch shell for exit test");
+
+    let session_id = session.id.clone();
+    assert!(
+        manager.get_session_info(&session_id).is_some(),
+        "Session must be active initially"
+    );
+
+    // Send exit command to shell
+    #[cfg(not(target_os = "windows"))]
+    let exit_cmd = "exit\n";
+    #[cfg(target_os = "windows")]
+    let exit_cmd = "exit\r\n";
+
+    manager
+        .write_to_pty(&session_id, exit_cmd)
+        .expect("Failed to write exit command to PTY");
+
+    // Wait up to 5 seconds for shell process to exit and emit exit event
+    let start = Instant::now();
+    while start.elapsed() < Duration::from_secs(5) {
+        if exited.load(Ordering::SeqCst) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    assert!(
+        exited.load(Ordering::SeqCst),
+        "PtyManager must emit exit event when shell exits after `exit` command"
+    );
+
+    // Verify session was automatically cleaned up from manager
+    assert!(
+        manager.get_session_info(&session_id).is_none(),
+        "Session must be removed from manager map after shell exits"
+    );
+}
+

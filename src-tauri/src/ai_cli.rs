@@ -74,12 +74,387 @@ pub struct AiCliDetails {
     /// Never inferred from arbitrary stdout/stderr.
     #[serde(default = "default_auth_status")]
     pub auth_status: String,
+    /// True when the agent's own config file already contains a kai MCP
+    /// entry. Pure read-only probe; drives the desktop "Auto-wire" button.
+    #[serde(default)]
+    pub kai_wired: bool,
 }
 
 fn default_auth_status() -> String {
     "unknown".to_string()
 }
 
+/// MCP config merge style per agent (mirrors `src/core/agents.ts`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum McpKeyStyle {
+    McpServers,
+    McpOpencode,
+    VscodeServers,
+    TomlCodex,
+}
+
+/// Home-relative config file + merge style for automatic kai MCP wiring.
+/// Returns `None` for unknown ids; callers must reject those.
+fn agent_mcp_target(id: &str) -> Option<(&'static str, McpKeyStyle, Option<&'static str>)> {
+    match id {
+        "claude" => Some((".claude.json", McpKeyStyle::McpServers, None)),
+        "cursor" => Some((".cursor/mcp.json", McpKeyStyle::McpServers, None)),
+        "codex" => Some((".codex/config.toml", McpKeyStyle::TomlCodex, None)),
+        "gemini" => Some((".muse/settings.json", McpKeyStyle::McpServers, None)),
+        // copilot is project-scoped (.vscode/mcp.json) and needs a project
+        // directory, so the desktop command declines it with guidance.
+        "copilot" => None,
+        "windsurf" => Some((
+            ".codeium/windsurf/mcp_config.json",
+            McpKeyStyle::McpServers,
+            None,
+        )),
+        "cline" => Some((
+            cline_config_rel(),
+            McpKeyStyle::McpServers,
+            Some(cline_app_dir()),
+        )),
+        "opencode" => Some((
+            ".config/opencode/opencode.json",
+            McpKeyStyle::McpOpencode,
+            None,
+        )),
+        "aider" => Some((".config/aider/mcp.json", McpKeyStyle::McpServers, None)),
+        _ => None,
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn cline_config_rel() -> &'static str {
+    "Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json"
+}
+#[cfg(target_os = "macos")]
+fn cline_app_dir() -> &'static str {
+    "Library/Application Support/Code"
+}
+#[cfg(target_os = "windows")]
+fn cline_config_rel() -> &'static str {
+    "AppData/Roaming/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json"
+}
+#[cfg(target_os = "windows")]
+fn cline_app_dir() -> &'static str {
+    "AppData/Roaming/Code"
+}
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn cline_config_rel() -> &'static str {
+    ".config/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json"
+}
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn cline_app_dir() -> &'static str {
+    ".config/Code"
+}
+
+/// Read-only probe: does the agent's config already contain a kai entry?
+fn is_kai_wired(id: &str) -> bool {
+    let home = match env::var("HOME").or_else(|_| env::var("USERPROFILE")) {
+        Ok(h) => std::path::PathBuf::from(h),
+        Err(_) => return false,
+    };
+    let (rel, style, _) = match agent_mcp_target(id) {
+        Some(t) => t,
+        None => return false,
+    };
+    let file = home.join(rel);
+    let raw = match std::fs::read_to_string(&file) {
+        Ok(r) => r,
+        Err(_) => return false,
+    };
+    if raw.len() > 1024 * 1024 {
+        return false;
+    }
+    if style == McpKeyStyle::TomlCodex {
+        return raw.contains("[mcp_servers.kai]");
+    }
+    let parsed: serde_json::Value = match serde_json::from_str(&raw) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    for key in ["mcpServers", "mcp", "mcp_servers", "servers"] {
+        if parsed.get(key).and_then(|c| c.get("kai")).is_some() {
+            return true;
+        }
+    }
+    false
+}
+
+/// Result of automatically installing kai MCP wiring for one agent.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentSetupResult {
+    pub id: String,
+    pub path: String,
+    pub wrote: bool,
+    pub already_configured: bool,
+    pub backup_path: Option<String>,
+    pub message: String,
+}
+
+/// Best-effort launcher for the installed kai CLI (`["kai"]` when the
+/// `kai` binary is on PATH). The desktop panel uses this to auto-wire
+/// providers without guessing paths.
+pub fn get_kai_cli_launch() -> Result<Vec<String>, String> {
+    if let Some(p) = find_on_path("kai") {
+        return Ok(vec![p]);
+    }
+    Err("kai CLI not found on PATH. Install it first (npm i -g kai-terminal), then retry auto-wire.".to_string())
+}
+
+fn validate_launcher(launcher: &[String]) -> Result<(), String> {
+    if launcher.is_empty() || launcher.len() > 8 {
+        return Err("Launcher must hold 1-8 command parts.".to_string());
+    }
+    for part in launcher {
+        if part.is_empty() || part.len() > 4096 || part.contains('\0') {
+            return Err("Launcher contains an invalid command part.".to_string());
+        }
+    }
+    let head = &launcher[0];
+    if head.contains('/') || head.contains('\\') {
+        let p = Path::new(head);
+        if !p.is_file() {
+            return Err(format!("Launcher '{}' does not exist.", head));
+        }
+    } else if find_on_path(head).is_none() {
+        return Err(format!("Launcher '{}' not found on PATH.", head));
+    }
+    Ok(())
+}
+
+fn kai_entry_json(style: McpKeyStyle, launcher: &[String], project_arg: &str) -> serde_json::Value {
+    let mut cmd: Vec<String> = launcher.to_vec();
+    cmd.push("mcp".to_string());
+    cmd.push(project_arg.to_string());
+    match style {
+        McpKeyStyle::McpOpencode => serde_json::json!({
+            "type": "local",
+            "command": cmd,
+            "enabled": true,
+        }),
+        McpKeyStyle::VscodeServers => serde_json::json!({
+            "type": "stdio",
+            "command": cmd[0],
+            "args": cmd[1..],
+        }),
+        _ => {
+            let (head, rest) = cmd.split_first().expect("launcher validated non-empty");
+            serde_json::json!({ "command": head, "args": rest })
+        }
+    }
+}
+
+/// Automatically install kai MCP wiring into an agent's own config file.
+///
+/// Safety contract (mirrors the Node CLI):
+/// - `id` must be a known registry id (copilot is project-scoped and
+///   rejected here); anything else is an error, never a path.
+/// - Existing files are backed up to `<file>.kai.bak` before any write;
+///   unrelated keys are preserved via JSON merge.
+/// - Invalid/oversized configs are never rewritten; the error tells the
+///   user to merge manually.
+/// - Writes are atomic (temp file + rename).
+pub fn setup_agent_mcp(
+    id: &str,
+    launcher: Vec<String>,
+    project_arg: &str,
+    force: bool,
+) -> Result<AgentSetupResult, String> {
+    let (rel, style, require_app_dir) = agent_mcp_target(id).ok_or_else(|| {
+        if id == "copilot" {
+            "Copilot uses project-scoped .vscode/mcp.json — run `kai agent setup copilot` inside the project instead.".to_string()
+        } else {
+            format!(
+                "Unknown agent id '{}'. Auto-wire supports the built-in providers only.",
+                id
+            )
+        }
+    })?;
+    validate_launcher(&launcher)?;
+    if project_arg.len() > 1024 || project_arg.contains('\0') {
+        return Err("Invalid project argument.".to_string());
+    }
+    let home = env::var("HOME")
+        .or_else(|_| env::var("USERPROFILE"))
+        .map_err(|_| "Cannot resolve home directory.".to_string())?;
+    let home = std::path::PathBuf::from(home);
+    if let Some(app_dir) = require_app_dir {
+        if !home.join(app_dir).exists() {
+            return Err(format!(
+                "VS Code storage not found on this machine; wire Cline manually via its MCP settings panel."
+            ));
+        }
+    }
+    let file = home.join(rel);
+
+    if style == McpKeyStyle::TomlCodex {
+        return setup_codex_toml(id, &file, &launcher, project_arg, force);
+    }
+
+    let container_key = match style {
+        McpKeyStyle::McpOpencode => "mcp",
+        McpKeyStyle::VscodeServers => "servers",
+        _ => "mcpServers",
+    };
+    let existing_raw = std::fs::read_to_string(&file).ok();
+    let mut doc: serde_json::Value = match &existing_raw {
+        None => serde_json::json!({}),
+        Some(raw) => {
+            if raw.trim().is_empty() {
+                serde_json::json!({})
+            } else if raw.len() > 1024 * 1024 {
+                return Err(format!(
+                    "{} exceeds 1 MB; merge the kai entry manually to avoid data loss.",
+                    file.to_string_lossy()
+                ));
+            } else {
+                serde_json::from_str(raw).map_err(|_| {
+                    format!(
+                        "{} is not valid JSON; merge the kai entry manually to avoid data loss.",
+                        file.to_string_lossy()
+                    )
+                })?
+            }
+        }
+    };
+    if !doc.is_object() {
+        return Err(format!(
+            "{} does not hold a JSON object; merge the kai entry manually.",
+            file.to_string_lossy()
+        ));
+    }
+    let entry = kai_entry_json(style, &launcher, project_arg);
+    let already = doc.get(container_key).and_then(|c| c.get("kai")).is_some();
+    if already && !force {
+        return Ok(AgentSetupResult {
+            id: id.to_string(),
+            path: file.to_string_lossy().to_string(),
+            wrote: false,
+            already_configured: true,
+            backup_path: None,
+            message: "Kai entry already present.".to_string(),
+        });
+    }
+    if doc
+        .get(container_key)
+        .map(|v| v.is_object())
+        .unwrap_or(false)
+        == false
+    {
+        doc[container_key] = serde_json::json!({});
+    }
+    doc[container_key]["kai"] = entry;
+
+    if let Some(parent) = file.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Cannot create config directory: {}", e))?;
+    }
+    let backup_path = if existing_raw.is_some() {
+        // Human-friendly `<file>.kai.bak` next to the original.
+        let bak = file.with_file_name(format!(
+            "{}.kai.bak",
+            file.file_name().unwrap_or_default().to_string_lossy()
+        ));
+        std::fs::copy(&file, &bak).map_err(|e| format!("Cannot back up existing config: {}", e))?;
+        Some(bak.to_string_lossy().to_string())
+    } else {
+        None
+    };
+    let tmp = file.with_file_name(format!(
+        "{}.kai.tmp.{}.tmp",
+        file.file_name().unwrap_or_default().to_string_lossy(),
+        std::process::id()
+    ));
+    std::fs::write(
+        &tmp,
+        format!("{}\n", serde_json::to_string_pretty(&doc).unwrap()),
+    )
+    .map_err(|e| format!("Cannot write config: {}", e))?;
+    std::fs::rename(&tmp, &file).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("Cannot replace config: {}", e)
+    })?;
+    Ok(AgentSetupResult {
+        id: id.to_string(),
+        path: file.to_string_lossy().to_string(),
+        wrote: true,
+        already_configured: false,
+        backup_path,
+        message: "Kai MCP entry installed.".to_string(),
+    })
+}
+
+fn setup_codex_toml(
+    id: &str,
+    file: &Path,
+    launcher: &[String],
+    project_arg: &str,
+    force: bool,
+) -> Result<AgentSetupResult, String> {
+    let existing = std::fs::read_to_string(file).ok();
+    let has_kai = existing
+        .as_deref()
+        .map(|r| r.contains("[mcp_servers.kai]"))
+        .unwrap_or(false);
+    if has_kai && !force {
+        return Ok(AgentSetupResult {
+            id: id.to_string(),
+            path: file.to_string_lossy().to_string(),
+            wrote: false,
+            already_configured: true,
+            backup_path: None,
+            message: "Kai entry already present.".to_string(),
+        });
+    }
+    let mut cmd = launcher.to_vec();
+    cmd.push("mcp".to_string());
+    cmd.push(project_arg.to_string());
+    let (head, rest) = cmd.split_first().expect("launcher validated non-empty");
+    let section = format!(
+        "[mcp_servers.kai]\ncommand = {}\nargs = {}\n",
+        serde_json::to_string(head).unwrap(),
+        serde_json::to_string(rest).unwrap()
+    );
+    if let Some(parent) = file.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Cannot create config directory: {}", e))?;
+    }
+    let backup_path = if existing.is_some() {
+        let bak = file.with_file_name(format!(
+            "{}.kai.bak",
+            file.file_name().unwrap_or_default().to_string_lossy()
+        ));
+        std::fs::copy(file, &bak).map_err(|e| format!("Cannot back up existing config: {}", e))?;
+        Some(bak.to_string_lossy().to_string())
+    } else {
+        None
+    };
+    let content = match existing {
+        Some(raw) if raw.ends_with('\n') => format!("\n{}", section),
+        Some(raw) => format!("{}\n\n{}", raw, section),
+        None => section,
+    };
+    let tmp = file.with_file_name(format!(
+        "{}.kai.tmp.{}.tmp",
+        file.file_name().unwrap_or_default().to_string_lossy(),
+        std::process::id()
+    ));
+    std::fs::write(&tmp, content).map_err(|e| format!("Cannot write config: {}", e))?;
+    std::fs::rename(&tmp, file).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("Cannot replace config: {}", e)
+    })?;
+    Ok(AgentSetupResult {
+        id: id.to_string(),
+        path: file.to_string_lossy().to_string(),
+        wrote: true,
+        already_configured: false,
+        backup_path,
+        message: "Kai MCP section installed.".to_string(),
+    })
+}
 /// Configuration for a user-defined custom AI CLI tool.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CustomAiCliConfig {
@@ -105,7 +480,7 @@ fn ai_cli_catalog() -> Vec<(&'static str, &'static str, Vec<&'static str>, &'sta
         (
             "claude",
             "Claude Code",
-            vec!["claude"],
+            vec!["claude", "claude-code"],
             "Install via npm: npm install -g @anthropic-ai/claude-code — docs: https://docs.anthropic.com/en/docs/claude-code",
         ),
         (
@@ -117,20 +492,44 @@ fn ai_cli_catalog() -> Vec<(&'static str, &'static str, Vec<&'static str>, &'sta
         (
             "opencode",
             "opencode",
-            vec!["opencode"],
+            vec!["opencode", "opencode-ai", "opencode2"],
             "Install via npm: npm install -g opencode-ai — docs: https://opencode.ai/docs",
         ),
         (
             "copilot",
             "Muse CLI",
-            vec!["copilot", "gh-copilot"],
+            vec!["copilot", "gh-copilot", "github-copilot"],
             "Install via npm: npm install -g @github/copilot — docs: https://docs.github.com/en/copilot",
         ),
         (
             "aider",
             "Aider",
-            vec!["aider"],
+            vec!["aider", "aider-chat"],
             "Install via pip: pip install aider-chat — docs: https://aider.chat/docs/install.html",
+        ),
+        (
+            "cursor",
+            "Cursor",
+            vec!["cursor", "cursor-cli", "cursor-agent"],
+            "Install Cursor from https://cursor.com — MCP docs: https://docs.cursor.com/mcp",
+        ),
+        (
+            "windsurf",
+            "Windsurf",
+            vec!["windsurf"],
+            "Install Windsurf from https://windsurf.com — MCP docs: https://docs.windsurf.com",
+        ),
+        (
+            "cline",
+            "Cline",
+            vec!["cline"],
+            "Install the Cline VS Code extension — docs: https://docs.cline.bot/mcp",
+        ),
+        (
+            "agy",
+            "Agy",
+            vec!["agy"],
+            "Agy AI agent CLI (`agy` on PATH). See your Agy vendor docs for install steps.",
         ),
     ]
 }
@@ -196,6 +595,7 @@ pub fn detect_ai_cli_details() -> Vec<AiCliDetails> {
                         .to_string(),
                     state: AiCliDiagnosticState::Unknown,
                     auth_status: default_auth_status(),
+                    kai_wired: false,
                 })
             })
             .collect()
@@ -232,7 +632,7 @@ fn check_local_auth_presence(id: &str) -> String {
             }
         }
         "opencode" => {
-            if home.join(".config").join("opencode").exists() {
+            if home.join(".config").join("opencode").exists() || home.join(".opencode").exists() {
                 "configured".to_string()
             } else {
                 "not_configured".to_string()
@@ -250,7 +650,49 @@ fn check_local_auth_presence(id: &str) -> String {
         "aider" => {
             if home.join(".aider.conf.yml").exists()
                 || home.join(".aider.model.settings.yml").exists()
+                || home.join(".config").join("aider").exists()
             {
+                "configured".to_string()
+            } else {
+                "not_configured".to_string()
+            }
+        }
+        "cursor" => {
+            if home.join(".cursor").join("mcp.json").exists()
+                || home.join(".cursor-server").exists()
+            {
+                "configured".to_string()
+            } else {
+                "not_configured".to_string()
+            }
+        }
+        "windsurf" => {
+            if home
+                .join(".codeium")
+                .join("windsurf")
+                .join("mcp_config.json")
+                .exists()
+                || home.join(".windsurf").exists()
+            {
+                "configured".to_string()
+            } else {
+                "not_configured".to_string()
+            }
+        }
+        "cline" => {
+            if home.join(".config").join("cline").exists()
+                || home
+                    .join(".vscode")
+                    .join("cline_mcp_settings.json")
+                    .exists()
+            {
+                "configured".to_string()
+            } else {
+                "not_configured".to_string()
+            }
+        }
+        "agy" => {
+            if home.join(".config").join("agy").exists() || home.join(".agy").exists() {
                 "configured".to_string()
             } else {
                 "not_configured".to_string()
@@ -284,9 +726,11 @@ fn details_for_entry(
             diagnostic: "Binary not found on PATH. Install it, then restart detection.".to_string(),
             state: AiCliDiagnosticState::NotFound,
             auth_status: check_local_auth_presence(id),
+            kai_wired: is_kai_wired(id),
         },
         Some(path) => {
             let auth_status = check_local_auth_presence(id);
+            let kai_wired = is_kai_wired(id);
             match probe_version(&path) {
                 Some(v) => AiCliDetails {
                     id: id.to_string(),
@@ -301,6 +745,7 @@ fn details_for_entry(
                     ),
                     state: AiCliDiagnosticState::VersionDetected,
                     auth_status,
+                    kai_wired,
                 },
                 None => AiCliDetails {
                     id: id.to_string(),
@@ -312,6 +757,7 @@ fn details_for_entry(
                     diagnostic: "Found on PATH but --version probe failed or timed out. Launch it in a terminal tab for details.".to_string(),
                     state: AiCliDiagnosticState::ProbeFailed,
                     auth_status,
+                    kai_wired,
                 },
             }
         }
@@ -374,6 +820,7 @@ pub fn check_custom_ai_cli_path(id: &str, custom_path: &str) -> Result<AiCliDeta
             None => AiCliDiagnosticState::ProbeFailed,
         },
         auth_status: default_auth_status(),
+        kai_wired: is_kai_wired(id),
     })
 }
 
@@ -427,14 +874,23 @@ fn probe_version(binary_path: &str) -> Option<String> {
 
 /// Local `PATH` lookup. No shell is spawned; each directory entry is checked
 /// for existence (and the executable bit on Unix).
+///
+/// Desktop GUI launches typically inherit a minimal `PATH` that misses
+/// user-level installers (nvm shims, `~/.local/bin`, `~/.opencode/bin`,
+/// `~/.cargo/bin`, ...), so after the live `PATH` is searched a bounded set
+/// of well-known install locations is probed as well. Still purely local
+/// file stats — no execution, no network.
 fn find_on_path(cmd: &str) -> Option<String> {
-    let path_env = env::var("PATH").ok()?;
+    if cmd.contains('/') || cmd.contains('\\') {
+        let p = Path::new(cmd);
+        if p.exists() && is_usable_executable(p) {
+            return Some(p.to_string_lossy().to_string());
+        }
+        return None;
+    }
+    let path_env = env::var("PATH").unwrap_or_default();
     for dir in env::split_paths(&path_env) {
-        if cmd.contains('/') || cmd.contains('\\') {
-            let p = Path::new(cmd);
-            if p.exists() && is_usable_executable(p) {
-                return Some(p.to_string_lossy().to_string());
-            }
+        if dir.as_os_str().is_empty() {
             continue;
         }
         let candidate = dir.join(cmd);
@@ -449,7 +905,61 @@ fn find_on_path(cmd: &str) -> Option<String> {
             }
         }
     }
+    // Fallback: well-known per-user install locations absent from GUI PATH.
+    for dir in supplementary_search_dirs() {
+        let candidate = dir.join(cmd);
+        if candidate.exists() && is_usable_executable(&candidate) {
+            return Some(candidate.to_string_lossy().to_string());
+        }
+        #[cfg(target_os = "windows")]
+        {
+            let with_exe = dir.join(format!("{}.exe", cmd));
+            if with_exe.exists() {
+                return Some(with_exe.to_string_lossy().to_string());
+            }
+        }
+    }
     None
+}
+
+/// Well-known install locations probed when the live `PATH` misses.
+/// Bounded, home-relative or system-wide only — never user-controlled input.
+fn supplementary_search_dirs() -> Vec<std::path::PathBuf> {
+    use std::path::PathBuf;
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    if let Ok(home) = env::var("HOME").or_else(|_| env::var("USERPROFILE")) {
+        let h = PathBuf::from(home);
+        for rel in [
+            "bin",
+            ".local/bin",
+            ".opencode/bin",
+            ".cargo/bin",
+            "go/bin",
+            ".npm-global/bin",
+            ".local/share/mise/shims",
+        ] {
+            dirs.push(h.join(rel));
+        }
+        // nvm node versions: ~/.nvm/versions/node/<version>/bin
+        let nvm_versions = h.join(".nvm/versions/node");
+        if let Ok(entries) = std::fs::read_dir(&nvm_versions) {
+            for entry in entries.flatten() {
+                let bin = entry.path().join("bin");
+                if bin.is_dir() {
+                    dirs.push(bin);
+                }
+            }
+        }
+    }
+    for abs in [
+        "/usr/local/bin",
+        "/opt/homebrew/bin",
+        "/opt/local/bin",
+        "/snap/bin",
+    ] {
+        dirs.push(PathBuf::from(abs));
+    }
+    dirs
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -480,7 +990,11 @@ mod tests {
         assert!(ids.contains(&"opencode"));
         assert!(ids.contains(&"copilot"));
         assert!(ids.contains(&"aider"));
-        assert_eq!(statuses.len(), 6);
+        assert!(ids.contains(&"cursor"));
+        assert!(ids.contains(&"windsurf"));
+        assert!(ids.contains(&"cline"));
+        assert!(ids.contains(&"agy"));
+        assert_eq!(statuses.len(), 10);
     }
 
     #[test]
@@ -513,7 +1027,7 @@ mod tests {
     #[test]
     fn test_details_always_return_guidance() {
         let details = detect_ai_cli_details();
-        assert_eq!(details.len(), 6);
+        assert_eq!(details.len(), 10);
         for d in &details {
             assert!(!d.install_guidance.is_empty());
             assert!(!d.diagnostic.is_empty());
@@ -543,14 +1057,28 @@ mod tests {
 
     #[test]
     fn test_missing_cli_reports_not_found_state() {
-        // Point PATH at an empty dir so nothing is found.
+        // Point PATH at an empty dir so nothing is found. HOME is sandboxed
+        // too so the supplementary well-known-dir fallback (which ignores
+        // PATH) also finds nothing on machines with user-level installs.
         let tmp = std::env::temp_dir().join("kai-ai-empty-path-test");
         let _ = std::fs::create_dir_all(&tmp);
         let old_path = std::env::var("PATH").unwrap_or_default();
+        let old_home = std::env::var("HOME").ok();
+        let old_profile = std::env::var("USERPROFILE").ok();
         std::env::set_var("PATH", tmp.to_string_lossy().to_string());
+        std::env::set_var("HOME", tmp.to_string_lossy().to_string());
+        std::env::set_var("USERPROFILE", tmp.to_string_lossy().to_string());
         let details = detect_ai_cli_details();
         std::env::set_var("PATH", old_path);
-        assert_eq!(details.len(), 6);
+        match old_home {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
+        match old_profile {
+            Some(v) => std::env::set_var("USERPROFILE", v),
+            None => std::env::remove_var("USERPROFILE"),
+        }
+        assert_eq!(details.len(), 10);
         for d in &details {
             assert!(!d.available);
             assert_eq!(d.state, AiCliDiagnosticState::NotFound);
@@ -603,5 +1131,160 @@ mod tests {
         let back: AiCliDetails = serde_json::from_str(legacy).expect("legacy compat");
         assert_eq!(back.state, AiCliDiagnosticState::Unknown);
         assert_eq!(back.auth_status, "unknown");
+        assert!(!back.kai_wired);
+    }
+
+    /// Run `f` with HOME/USERPROFILE pointed at a fresh temp dir.
+    fn with_temp_home(name: &str, f: impl FnOnce(std::path::PathBuf)) {
+        let dir =
+            std::env::temp_dir().join(format!("kai-agent-setup-{}-{}", name, std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp home");
+        let old_home = std::env::var("HOME").ok();
+        let old_profile = std::env::var("USERPROFILE").ok();
+        std::env::set_var("HOME", &dir);
+        std::env::set_var("USERPROFILE", &dir);
+        f(dir.clone());
+        match old_home {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
+        match old_profile {
+            Some(v) => std::env::set_var("USERPROFILE", v),
+            None => std::env::remove_var("USERPROFILE"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn test_launcher() -> Vec<String> {
+        // An executable that always exists on any CI runner.
+        vec![std::env::current_exe()
+            .unwrap()
+            .to_string_lossy()
+            .to_string()]
+    }
+
+    #[test]
+    fn test_setup_rejects_unknown_and_project_scoped_ids() {
+        let launcher = test_launcher();
+        assert!(setup_agent_mcp("no-such-agent", launcher.clone(), ".", false).is_err());
+        assert!(setup_agent_mcp("custom:mine", launcher.clone(), ".", false).is_err());
+        // copilot is project-scoped (.vscode/mcp.json): desktop declines it.
+        assert!(setup_agent_mcp("copilot", launcher, ".", false).is_err());
+    }
+
+    #[test]
+    fn test_setup_validates_launcher() {
+        assert!(setup_agent_mcp("aider", vec![], ".", false).is_err());
+        assert!(setup_agent_mcp(
+            "aider",
+            vec!["/non_existent_xyz_12345_launcher".to_string()],
+            ".",
+            false
+        )
+        .is_err());
+        assert!(setup_agent_mcp(
+            "aider",
+            vec!["definitely-not-on-path-xyz-12345".to_string()],
+            ".",
+            false
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn test_setup_writes_merges_and_reports_wired_aider() {
+        with_temp_home("aider", |home| {
+            assert!(!is_kai_wired("aider"));
+            let res = setup_agent_mcp("aider", test_launcher(), ".", false).expect("setup");
+            assert!(res.wrote);
+            assert!(!res.already_configured);
+            assert!(res.backup_path.is_none());
+            assert_eq!(
+                res.path,
+                home.join(".config/aider/mcp.json").to_string_lossy()
+            );
+            assert!(is_kai_wired("aider"));
+            // Idempotent second run without force.
+            let again = setup_agent_mcp("aider", test_launcher(), ".", false).expect("setup");
+            assert!(!again.wrote);
+            assert!(again.already_configured);
+            // Force refresh rewrites and keeps a backup.
+            let forced = setup_agent_mcp("aider", test_launcher(), ".", true).expect("setup");
+            assert!(forced.wrote);
+            assert!(forced.backup_path.is_some());
+        });
+    }
+
+    #[test]
+    fn test_setup_preserves_unrelated_servers() {
+        with_temp_home("merge", |home| {
+            let dir = home.join(".config/aider");
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(
+                dir.join("mcp.json"),
+                r#"{"mcpServers":{"other":{"command":"other-bin","args":[]}}}"#,
+            )
+            .unwrap();
+            let res = setup_agent_mcp("aider", test_launcher(), ".", false).expect("setup");
+            assert!(res.wrote);
+            assert!(res.backup_path.is_some());
+            let raw = std::fs::read_to_string(dir.join("mcp.json")).unwrap();
+            let doc: serde_json::Value = serde_json::from_str(&raw).unwrap();
+            assert!(doc["mcpServers"]["other"].is_object());
+            assert!(doc["mcpServers"]["kai"].is_object());
+        });
+    }
+
+    #[test]
+    fn test_setup_refuses_to_rewrite_invalid_json() {
+        with_temp_home("invalid", |home| {
+            let dir = home.join(".config/aider");
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("mcp.json"), "{not valid json").unwrap();
+            assert!(setup_agent_mcp("aider", test_launcher(), ".", false).is_err());
+            // File left untouched.
+            assert_eq!(
+                std::fs::read_to_string(dir.join("mcp.json")).unwrap(),
+                "{not valid json"
+            );
+            assert!(!is_kai_wired("aider"));
+        });
+    }
+
+    #[test]
+    fn test_setup_opencode_uses_mcp_key_style() {
+        with_temp_home("opencode", |_| {
+            let res = setup_agent_mcp("opencode", test_launcher(), ".", false).expect("setup");
+            assert!(res.wrote);
+            let raw = std::fs::read_to_string(&res.path).unwrap();
+            let doc: serde_json::Value = serde_json::from_str(&raw).unwrap();
+            assert_eq!(doc["mcp"]["kai"]["type"], serde_json::json!("local"));
+            assert!(doc.get("mcpServers").is_none());
+            assert!(is_kai_wired("opencode"));
+        });
+    }
+
+    #[test]
+    fn test_setup_codex_toml_append_is_idempotent() {
+        with_temp_home("codex", |home| {
+            let res = setup_agent_mcp("codex", test_launcher(), ".", false).expect("setup");
+            assert!(res.wrote);
+            let raw = std::fs::read_to_string(home.join(".codex/config.toml")).unwrap();
+            assert!(raw.contains("[mcp_servers.kai]"));
+            assert!(is_kai_wired("codex"));
+            let again = setup_agent_mcp("codex", test_launcher(), ".", false).expect("setup");
+            assert!(again.already_configured);
+        });
+    }
+
+    #[test]
+    fn test_setup_cline_declines_without_vscode_storage() {
+        with_temp_home("cline", |_| {
+            // Fresh temp HOME has no VS Code storage dir: must decline, not
+            // fabricate foreign app directories.
+            let err = setup_agent_mcp("cline", test_launcher(), ".", false).unwrap_err();
+            assert!(err.contains("manually"));
+        });
     }
 }

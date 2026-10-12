@@ -1,5 +1,5 @@
-import { FC, useEffect, useState } from "react";
-import { X, Plus } from "lucide-react";
+import { FC, useCallback, useEffect, useState } from "react";
+import { X, Plus, RefreshCw, Terminal } from "lucide-react";
 import {
   getAiCliDetails,
   checkCustomAiCliPath,
@@ -14,6 +14,13 @@ interface AiCliPanelProps {
   onLaunchInTerminal?: (projectDir: string) => void;
 }
 
+/**
+ * Read-only provider overview. Everything on screen is auto-detected locally:
+ * binary presence (PATH plus well-known install locations such as
+ * `~/.local/bin` and `~/.opencode/bin`), a bounded `--version` probe, local
+ * config presence, and whether the provider's own config already contains a
+ * kai entry. Nothing here writes files or stores credentials.
+ */
 export const AiCliPanel: FC<AiCliPanelProps> = ({
   isOpen,
   onClose,
@@ -21,6 +28,7 @@ export const AiCliPanel: FC<AiCliPanelProps> = ({
   onLaunchInTerminal,
 }) => {
   const [details, setDetails] = useState<AiCliDetails[]>([]);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [customPaths, setCustomPaths] = useState<Record<string, string>>({});
   const [customError, setCustomError] = useState<string | null>(null);
 
@@ -28,13 +36,17 @@ export const AiCliPanel: FC<AiCliPanelProps> = ({
   const [newCliName, setNewCliName] = useState("");
   const [newCliPath, setNewCliPath] = useState("");
 
+  const refresh = useCallback(() => {
+    setIsRefreshing(true);
+    getAiCliDetails()
+      .then(setDetails)
+      .catch(() => setDetails([]))
+      .finally(() => setIsRefreshing(false));
+  }, []);
+
   useEffect(() => {
-    if (isOpen) {
-      getAiCliDetails()
-        .then(setDetails)
-        .catch(() => setDetails([]));
-    }
-  }, [isOpen]);
+    if (isOpen) refresh();
+  }, [isOpen, refresh]);
 
   if (!isOpen) return null;
 
@@ -85,56 +97,88 @@ export const AiCliPanel: FC<AiCliPanelProps> = ({
         </div>
         <div className="modal-body" style={{ maxHeight: "70vh", overflowY: "auto" }}>
           <p className="muted-text">
-            The terminal works with or without these tools. Detection is local-only and never stores
-            credentials. Launching runs the CLI as an ordinary terminal process in{" "}
+            The terminal works with or without these tools. Everything below is detected
+            automatically on this machine (binary on PATH or in well-known install locations,
+            version probe, local config presence, kai wiring) and never stores credentials.
+            Launching runs the CLI as an ordinary terminal process in{" "}
             <code>{projectDir || "the active directory"}</code>.
           </p>
-          {details.map((d) => (
-            <div key={d.id} className="setting-field">
-              <label>
-                {d.name} —{" "}
-                {d.available ? `found${d.version ? ` (${d.version})` : ""}` : "not found"}
-              </label>
-              {d.state && (
-                <p className="muted-text">
-                  Status: <code>{d.state.replace(/_/g, " ")}</code>
-                  {d.auth_status ? ` · auth: ${d.auth_status}` : " · auth: unknown"}
-                </p>
-              )}
-              <p className="muted-text">{d.diagnostic}</p>
-              <p className="muted-text">{d.install_guidance}</p>
-              {d.path && (
-                <p className="muted-text">
-                  <code>{d.path}</code>
-                </p>
-              )}
-              {d.available && d.path && onLaunchInTerminal && (
-                <button
-                  className="btn btn-secondary"
-                  onClick={() => onLaunchInTerminal(projectDir)}
-                >
-                  Open project directory in new tab
-                </button>
-              )}
-              <div className="setting-row">
-                <input
-                  type="text"
-                  className="text-input modal-input"
-                  placeholder={`Custom path to ${d.id} binary...`}
-                  value={customPaths[d.id] || ""}
-                  onChange={(e) => setCustomPaths({ ...customPaths, [d.id]: e.target.value })}
-                  aria-label={`Custom path for ${d.name}`}
-                />
-                <button className="btn btn-secondary" onClick={() => void handleCheckCustom(d.id)}>
-                  Validate
-                </button>
+          <div className="setting-row" style={{ marginTop: "8px" }}>
+            <button
+              type="button"
+              className="btn btn-secondary btn-small"
+              onClick={refresh}
+              disabled={isRefreshing}
+              title="Re-run local detection"
+            >
+              <RefreshCw size={13} />
+              <span>{isRefreshing ? "Detecting…" : "Re-detect providers"}</span>
+            </button>
+          </div>
+
+          <div className="ai-provider-list">
+            {details.map((d) => (
+              <div key={d.id} className={`ai-provider-card${d.available ? " is-available" : ""}`}>
+                <div className="ai-provider-head">
+                  <span className="ai-provider-name">{d.name}</span>
+                  <span
+                    className={`ai-provider-badge${d.available ? " found" : ""}`}
+                    title={d.available ? "Binary detected on this system" : "Binary not found"}
+                  >
+                    {d.available ? `Found${d.version ? ` · ${d.version}` : ""}` : "Not found"}
+                  </span>
+                </div>
+                {d.path && <code className="ai-provider-path">{d.path}</code>}
+                <div className="ai-provider-meta">
+                  <span>
+                    Auth:{" "}
+                    <strong>{d.auth_status ? d.auth_status.replace(/_/g, " ") : "unknown"}</strong>
+                  </span>
+                  <span>
+                    Kai wiring: <strong>{d.kai_wired ? "Configured ✓" : "Not configured"}</strong>
+                  </span>
+                </div>
+                <p className="muted-text">{d.diagnostic}</p>
+                {!d.available && <p className="muted-text">{d.install_guidance}</p>}
+                <div className="ai-provider-actions">
+                  {d.available && d.path && onLaunchInTerminal && (
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-small"
+                      onClick={() => onLaunchInTerminal(projectDir)}
+                      title={`Launch ${d.name} in a new terminal tab`}
+                    >
+                      <Terminal size={13} />
+                      <span>Open in new tab</span>
+                    </button>
+                  )}
+                  {!d.id.startsWith("custom:") && (
+                    <>
+                      <input
+                        type="text"
+                        className="text-input modal-input"
+                        placeholder={`Custom path to ${d.id} binary…`}
+                        value={customPaths[d.id] || ""}
+                        onChange={(e) => setCustomPaths({ ...customPaths, [d.id]: e.target.value })}
+                        aria-label={`Custom path for ${d.name}`}
+                      />
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-small"
+                        onClick={() => void handleCheckCustom(d.id)}
+                      >
+                        Validate
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            ))}
+          </div>
 
           <div
             className="setting-field"
-            style={{ borderTop: "1px solid #313244", paddingTop: "12px" }}
+            style={{ borderTop: "1px solid #313244", paddingTop: "12px", marginTop: "12px" }}
           >
             <label>Register User-Defined AI Executable</label>
             <div className="setting-row">

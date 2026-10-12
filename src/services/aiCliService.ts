@@ -28,6 +28,17 @@ export interface AiCliDetails extends AiCliStatus {
   state?: AiCliDiagnosticState;
   /** "unknown" unless a safe provider check proves otherwise. Never inferred. */
   auth_status?: string;
+  /** True when the agent's config already contains a kai MCP entry. */
+  kai_wired?: boolean;
+}
+
+export interface AgentSetupResult {
+  id: string;
+  path: string;
+  wrote: boolean;
+  already_configured: boolean;
+  backup_path: string | null;
+  message: string;
 }
 
 /**
@@ -41,7 +52,18 @@ export interface AiCliDetails extends AiCliStatus {
  *   to a diagnostic string instead of an error.
  * - Third-party AI CLI executables are never bundled into the installer.
  */
-export const KNOWN_AI_CLIS = ["codex", "claude", "gemini", "opencode", "copilot", "aider"] as const;
+export const KNOWN_AI_CLIS = [
+  "codex",
+  "claude",
+  "gemini",
+  "opencode",
+  "copilot",
+  "aider",
+  "cursor",
+  "windsurf",
+  "cline",
+  "agy",
+] as const;
 
 function unavailableFallback(): AiCliStatus[] {
   return [
@@ -51,6 +73,10 @@ function unavailableFallback(): AiCliStatus[] {
     { id: "opencode", name: "opencode", available: false, path: null },
     { id: "copilot", name: "Muse CLI", available: false, path: null },
     { id: "aider", name: "Aider", available: false, path: null },
+    { id: "cursor", name: "Cursor", available: false, path: null },
+    { id: "windsurf", name: "Windsurf", available: false, path: null },
+    { id: "cline", name: "Cline", available: false, path: null },
+    { id: "agy", name: "Agy", available: false, path: null },
   ];
 }
 
@@ -161,6 +187,43 @@ export async function checkCustomAiCliPath(id: string, customPath: string): Prom
     customPath,
   });
   return details;
+}
+
+/**
+ * Best-effort launcher for the installed kai CLI, resolved by the desktop
+ * backend (e.g. `["/usr/local/bin/kai"]`). Used to auto-wire providers
+ * without guessing paths. Rejects outside the desktop app.
+ */
+export async function getKaiCliLaunch(): Promise<string[]> {
+  if (!isTauriAvailable()) {
+    throw new Error("Auto-wire is only available inside the desktop app.");
+  }
+  const launcher = await invoke<string[]>("get_kai_cli_launch_cmd");
+  if (!Array.isArray(launcher) || launcher.length === 0) {
+    throw new Error("kai CLI is not installed on this system.");
+  }
+  return launcher;
+}
+
+/**
+ * Automatically install the kai MCP entry into a provider's own config
+ * file (with `.kai.bak` backup). `launcher` comes from getKaiCliLaunch().
+ */
+export async function setupAgentMcp(
+  id: string,
+  launcher: string[],
+  projectArg: string = ".",
+  force: boolean = false
+): Promise<AgentSetupResult> {
+  if (!isTauriAvailable()) {
+    throw new Error("Auto-wire is only available inside the desktop app.");
+  }
+  return await invoke<AgentSetupResult>("setup_agent_mcp_cmd", {
+    id,
+    launcher,
+    projectArg,
+    force,
+  });
 }
 
 export async function registerUserCustomAiCli(config: CustomAiCliConfig): Promise<AiCliDetails> {

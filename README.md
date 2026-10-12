@@ -61,30 +61,49 @@ kai mcp .               # serve the 7 MCP tools over stdio
 kai lsp status          # local language server availability
 kai bench .             # local retrieval benchmark
 
-kai agent setup claude    # ~/.claude.json
-kai agent setup cursor    # .cursor/mcp.json
-kai agent setup codex
-kai agent setup gemini    # ~/.muse/settings.json
-kai agent setup copilot   # .vscode/mcp.json
-kai agent setup windsurf  # ~/.codeium/windsurf/mcp_config.json
-kai agent setup cline     # cline_mcp_settings.json
+kai agent setup claude    # install wiring into ~/.claude.json
+kai agent setup cursor    # install wiring into .cursor/mcp.json
+kai agent setup codex     # install wiring into ~/.codex/config.toml
+kai agent setup gemini    # install wiring into ~/.muse/settings.json
+kai agent setup copilot   # install wiring into .vscode/mcp.json (project)
+kai agent setup windsurf  # install wiring into ~/.codeium/windsurf/mcp_config.json
+kai agent setup cline     # install wiring into Cline's VS Code storage
+kai agent setup opencode  # install wiring into ~/.config/opencode/opencode.json
+kai agent setup aider     # install wiring into ~/.config/aider/mcp.json
+kai agent setup all       # auto-wire every agent installed on this system
+kai agent list            # dynamically detect installs + kai wiring state
+# flags: --print (snippet only), --dry-run (preview), --force (refresh),
+#        --global / --project (config scope)
 ```
+`kai agent setup` writes the config automatically (merging the `kai` MCP
+entry, keeping a `.kai.bak` backup, never touching other keys). Invalid or
+oversized configs are left alone with manual merge instructions.
 
 ### Supported agents
 
 | Agent | Config file | Notes |
 | --- | --- | --- |
 | Claude Code | `~/.claude.json` | `mcpServers.kai` stdio entry |
-| Cursor | `.cursor/mcp.json` | uses `${workspaceFolder}` |
-| Codex | Codex MCP stdio config | `mcp_servers` array format |
+| Cursor | `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` (project) | uses `${workspaceFolder}` |
+| Codex | `~/.codex/config.toml` | `[mcp_servers.kai]` section |
 | Gemini CLI | `~/.muse/settings.json` | `mcpServers.kai` stdio entry |
-| Copilot / VS Code | `.vscode/mcp.json` | `servers.kai` with `"type": "stdio"` |
+| Copilot / VS Code | `.vscode/mcp.json` (project) | `servers.kai` with `"type": "stdio"` |
 | Windsurf | `~/.codeium/windsurf/mcp_config.json` | `mcpServers.kai` stdio entry |
-| Cline | `cline_mcp_settings.json` | `mcpServers.kai` stdio entry |
+| Cline | VS Code global storage `cline_mcp_settings.json` | skipped with manual steps when VS Code is absent |
+| opencode | `~/.config/opencode/opencode.json` | `mcp.kai` with `"type": "local"` |
+| Aider | `~/.config/aider/mcp.json` | `mcpServers.kai` stdio entry |
+
+Agent detection is dynamic: `kai agent list` probes the live system
+PATH plus known config files at runtime, so newly installed agents show
+up without any code changes. All nine agents share one registry
+(`src/core/agents.ts`).
 
 The desktop app also lists locally installed CLIs
-(`codex`, `claude`, `gemini`, `opencode`, `copilot`, `aider`) without
-running them — missing tools report `available: false`.
+(`codex`, `claude`, `gemini`, `opencode`, `copilot`, `aider`, `cursor`,
+`windsurf`, `cline`) without
+running them — missing tools report `available: false`. Each provider row
+shows its kai wiring state and offers one-click **Auto-wire Kai MCP** for
+system-installed tools.
 
 ### Notes on speed
 

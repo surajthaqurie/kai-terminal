@@ -12,7 +12,8 @@ use std::sync::Arc;
 
 #[cfg(feature = "tauri")]
 use ai_cli::{
-    check_custom_ai_cli_path, detect_ai_cli_details, detect_ai_clis, AiCliDetails, AiCliStatus,
+    check_custom_ai_cli_path, detect_ai_cli_details, detect_ai_clis, get_kai_cli_launch,
+    setup_agent_mcp, AgentSetupResult, AiCliDetails, AiCliStatus,
 };
 
 #[cfg(feature = "tauri")]
@@ -52,6 +53,23 @@ fn get_ai_cli_details() -> Vec<AiCliDetails> {
 #[tauri::command]
 fn check_ai_cli_path(id: String, custom_path: String) -> Result<AiCliDetails, String> {
     check_custom_ai_cli_path(&id, &custom_path)
+}
+
+#[cfg(feature = "tauri")]
+#[tauri::command]
+fn get_kai_cli_launch_cmd() -> Result<Vec<String>, String> {
+    get_kai_cli_launch()
+}
+
+#[cfg(feature = "tauri")]
+#[tauri::command]
+fn setup_agent_mcp_cmd(
+    id: String,
+    launcher: Vec<String>,
+    project_arg: String,
+    force: bool,
+) -> Result<AgentSetupResult, String> {
+    setup_agent_mcp(&id, launcher, &project_arg, force)
 }
 
 #[cfg(feature = "tauri")]
@@ -183,6 +201,8 @@ pub fn run() {
             get_ai_cli_status,
             get_ai_cli_details,
             check_ai_cli_path,
+            get_kai_cli_launch_cmd,
+            setup_agent_mcp_cmd,
             get_git_info_cmd,
             run_git_action_cmd,
             open_project_in_editor,

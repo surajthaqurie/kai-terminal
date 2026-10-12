@@ -4,6 +4,7 @@ kai-website/node_modules/
 
 # Build outputs
 dist/
+dist.old/
 kai-website/dist/
 src-tauri/target/
 

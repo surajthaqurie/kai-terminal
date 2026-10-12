@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, Fragment } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Toolbar } from "./components/Toolbar";
 import { TabBar } from "./components/TabBar";
 import { StatusBar } from "./components/StatusBar";
@@ -12,17 +12,16 @@ import { WorkspaceModal } from "./components/WorkspaceModal";
 import { PtyService, isTauriAvailable } from "./services/ptyService";
 import { SettingsService } from "./services/settingsService";
 import {
+  getActiveProject,
   getGitInfoCached,
   invalidateGitCache,
   loadRecentProjects,
   recordRecentProject,
   openProjectInEditor,
   runGitAction,
-  getProjectIntelligence,
   getInstalledEditors,
   resolveEffectiveProjectDir,
   InstalledEditor,
-  ProjectIntelligenceInfo,
 } from "./services/projectService";
 import {
   matchShortcut,
@@ -30,7 +29,7 @@ import {
   platformLabel,
   ShortcutActionId,
 } from "./services/shortcuts";
-import { splitTab, closePane, clampPaneFraction } from "./services/paneLayout";
+import { splitTab, closePane, setLayoutSplitRatio, createPaneLayout, removePaneFromLayout, clampPaneFraction } from "./services/paneLayout";
 import {
   APP_VERSION_FALLBACK,
   UPDATE_PERIODIC_MS,
@@ -43,20 +42,27 @@ import {
   recordCheckTime,
   shouldAutoCheck,
 } from "./services/updateService";
-import { PersistedTabV2, sanitizeTab, Workspace } from "./services/workspaces";
+import {
+  PersistedTabV2,
+  sanitizeTab,
+  Workspace,
+  nodeToPersistedLayout,
+  persistedLayoutToNode,
+} from "./services/workspaces";
 import {
   ShellProfile,
   TerminalTab,
   UserSettings,
   TerminalPane,
   SplitDirection,
+  PaneLayoutNode,
+  PaneSplitDirection,
 } from "./types/terminal";
 import {
   Plus,
   Search,
   Settings,
   Trash2,
-  RefreshCw,
   XCircle,
   Bot,
   Activity,
@@ -96,6 +102,7 @@ interface PersistedTab {
   cwd?: string;
   splitDirection?: PersistedTabV2["splitDirection"];
   panes?: Array<{ shellPath?: string; cwd?: string }>;
+  layout?: PersistedTabV2["layout"];
 }
 
 function loadPersistedLayout(): PersistedTab[] | null {
@@ -118,6 +125,7 @@ function loadPersistedLayout(): PersistedTab[] | null {
         cwd: t.cwd,
         splitDirection: t.splitDirection,
         panes: t.panes,
+        layout: t.layout,
       }));
   } catch {
     return null;
@@ -164,6 +172,34 @@ function createDefaultTab(
           },
         ];
   const splitDirection = panes.length > 1 ? (persisted?.splitDirection ?? "vertical") : "none";
+  const paneIds = panes.map((p) => p.id);
+  // Restore the nested split tree when refs are valid; otherwise fall back
+  // to the legacy flat chain so old sessions still render.
+  const restoredLayout = persisted?.layout
+    ? persistedLayoutToNode(persisted.layout, paneIds)
+    : undefined;
+  let fullLayout: PaneLayoutNode | undefined = restoredLayout;
+  if (!fullLayout) {
+    if (paneIds.length <= 1) {
+      fullLayout = { kind: "pane", paneId: paneIds[0] };
+    } else {
+      const axis = (splitDirection === "horizontal"
+        ? "horizontal"
+        : "vertical") as PaneSplitDirection;
+      let node: PaneLayoutNode = { kind: "pane", paneId: paneIds[0] };
+      for (const id of paneIds.slice(1)) {
+        node = {
+          kind: "split",
+          id: `restored-${tabId}-${id}`,
+          direction: axis,
+          ratio: 0.5,
+          first: node,
+          second: { kind: "pane", paneId: id },
+        };
+      }
+      fullLayout = node;
+    }
+  }
   return {
     id: tabId,
     title,
@@ -174,6 +210,7 @@ function createDefaultTab(
     panes,
     activePaneId: panes[0].id,
     splitDirection,
+    layout: fullLayout,
   };
 }
 
@@ -181,7 +218,9 @@ export function App() {
   const [shells, setShells] = useState<ShellProfile[]>([]);
   const [selectedShellId, setSelectedShellId] = useState<string>("");
   const [cwd, setCwd] = useState<string>("");
-  const [recentProjects, setRecentProjects] = useState<string[]>(() => loadRecentProjects());
+  // Recent-project history is still recorded (initial cwd + persistence),
+  // but it is surfaced only via the status-bar footer — not the toolbar.
+  const [, setRecentProjects] = useState<string[]>(() => loadRecentProjects());
   const [gitBranch, setGitBranch] = useState<string | null>(null);
   const [gitDirty, setGitDirty] = useState<boolean>(false);
   const [gitRepoRoot, setGitRepoRoot] = useState<string | null>(null);
@@ -189,7 +228,6 @@ export function App() {
   const [updateInfo, setUpdateInfo] = useState<UpdateCheckResult | null>(null);
   const [isCheckingUpdates, setIsCheckingUpdates] = useState<boolean>(false);
   const [updateBannerVisible, setUpdateBannerVisible] = useState<boolean>(false);
-  const [projectIntel, setProjectIntel] = useState<ProjectIntelligenceInfo | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
   const [userSettings, setUserSettings] = useState<UserSettings>(() =>
     SettingsService.loadSettings()
@@ -252,6 +290,34 @@ export function App() {
 
   const [installedEditors, setInstalledEditors] = useState<InstalledEditor[]>([]);
   const [isLoadingEditors, setIsLoadingEditors] = useState(false);
+  const [renameModalTab, setRenameModalTab] = useState<TerminalTab | null>(null);
+  const [renameInputValue, setRenameInputValue] = useState("");
+  // Code Mode badge state: driven by the persisted active project
+  // (`kai code <path>` sets it, `kai stop code` clears it). Polled so an
+  // externally-run CLI updates the footer without a restart.
+  const [codeModeProject, setCodeModeProject] = useState<string | null>(() => {
+    try {
+      return getActiveProject();
+    } catch {
+      return null;
+    }
+  });
+  useEffect(() => {
+    const syncCodeMode = () => {
+      try {
+        setCodeModeProject(getActiveProject());
+      } catch {
+        // ignore storage errors
+      }
+    };
+    syncCodeMode();
+    window.addEventListener("focus", syncCodeMode);
+    const id = setInterval(syncCodeMode, 2000);
+    return () => {
+      window.removeEventListener("focus", syncCodeMode);
+      clearInterval(id);
+    };
+  }, []);
   const refreshInstalledEditors = useCallback(() => {
     setIsLoadingEditors(true);
     void getInstalledEditors()
@@ -331,17 +397,24 @@ export function App() {
   useEffect(() => {
     if (pendingRestore !== null) return;
     try {
-      const safe: PersistedTab[] = tabs.slice(0, 10).map((t) => ({
-        title: t.title,
-        color: t.color,
-        shellPath: t.shellPath,
-        cwd: t.cwd,
-        splitDirection: t.splitDirection,
-        panes:
-          t.panes.length > 1
-            ? t.panes.map((p) => ({ shellPath: p.shellPath, cwd: p.cwd }))
-            : undefined,
-      }));
+      const safe: PersistedTab[] = tabs.slice(0, 10).map((t) => {
+        const paneIds = t.panes.map((p) => p.id);
+        return {
+          title: t.title,
+          color: t.color,
+          shellPath: t.shellPath,
+          cwd: t.cwd,
+          splitDirection: t.splitDirection,
+          panes:
+            t.panes.length > 1
+              ? t.panes.map((p) => ({ shellPath: p.shellPath, cwd: p.cwd }))
+              : undefined,
+          layout:
+            t.layout && t.panes.length > 1
+              ? nodeToPersistedLayout(t.layout, paneIds)
+              : undefined,
+        };
+      });
       localStorage.setItem(LAYOUT_KEY, JSON.stringify(safe));
     } catch {
       // ignore quota errors
@@ -404,36 +477,30 @@ export function App() {
   }, []);
 
   // Poll git status for the effective project directory (active pane ->
-  // tab -> toolbar): debounced on change plus a controlled 30 s refresh.
+  // tab -> stored cwd): debounced on change plus a controlled 30 s refresh.
   useEffect(() => {
     if (!effectiveProjectDir) {
       setGitBranch(null);
       setGitDirty(false);
       setGitRepoRoot(null);
-      setProjectIntel(null);
       return;
     }
     let cancelled = false;
     const dir = effectiveProjectDir;
     const fetch = () => {
       if (typeof document !== "undefined" && document.hidden) return;
-      void Promise.allSettled([getGitInfoCached(dir), getProjectIntelligence(dir)]).then(
-        ([gitRes, intelRes]) => {
+      void getGitInfoCached(dir).then(
+        (info) => {
           if (cancelled) return;
-          if (gitRes.status === "fulfilled") {
-            setGitBranch(gitRes.value.branch);
-            setGitDirty(gitRes.value.dirty);
-            setGitRepoRoot(gitRes.value.repo_root ?? null);
-          } else {
-            setGitBranch(null);
-            setGitDirty(false);
-            setGitRepoRoot(null);
-          }
-          if (intelRes.status === "fulfilled") {
-            setProjectIntel(intelRes.value);
-          } else {
-            setProjectIntel(null);
-          }
+          setGitBranch(info.branch);
+          setGitDirty(info.dirty);
+          setGitRepoRoot(info.repo_root ?? null);
+        },
+        () => {
+          if (cancelled) return;
+          setGitBranch(null);
+          setGitDirty(false);
+          setGitRepoRoot(null);
         }
       );
     };
@@ -500,6 +567,7 @@ export function App() {
             shellPath: selectedShell?.path,
             cwd: inheritCwd,
             status: "connecting",
+            parentId: fromPane?.id,
           }));
           return { ...tab, ...next };
         })
@@ -536,21 +604,32 @@ export function App() {
     if (targetTab.panes.some((p) => p.id === paneId) === false) return;
 
     if (targetTab.panes.length > 1) {
+      const at = targetTab.panes.findIndex((p) => p.id === paneId);
       const remainingPanes = targetTab.panes.filter((p) => p.id !== paneId);
-      const nextActivePane =
-        targetTab.activePaneId === paneId ? remainingPanes[0].id : targetTab.activePaneId;
+      const nextIdx = Math.min(Math.max(0, at), remainingPanes.length - 1);
       setTabs((prev) =>
-        prev.map((t) =>
-          t.id === tabId
-            ? {
-                ...t,
-                panes: t.panes.filter((p) => p.id !== paneId),
-                activePaneId: nextActivePane,
-                splitDirection:
-                  t.panes.filter((p) => p.id !== paneId).length > 1 ? t.splitDirection : "none",
-              }
-            : t
-        )
+        prev.map((t) => {
+          if (t.id !== tabId) return t;
+          const nextRemaining = t.panes.filter((p) => p.id !== paneId);
+          const baseLayout: PaneLayoutNode = t.layout ?? {
+            kind: "pane",
+            paneId: t.panes[0]?.id ?? paneId,
+          };
+          const collapsed =
+            nextRemaining.length === 1
+              ? createPaneLayout(nextRemaining[0].id)
+              : (removePaneFromLayout(baseLayout, paneId) ??
+                createPaneLayout(nextRemaining[0].id));
+          return {
+            ...t,
+            panes: nextRemaining,
+            activePaneId:
+              t.activePaneId === paneId ? nextRemaining[nextIdx].id : t.activePaneId,
+            splitDirection:
+              nextRemaining.length > 1 ? t.splitDirection : ("none" as SplitDirection),
+            layout: collapsed,
+          };
+        })
       );
       return;
     }
@@ -589,11 +668,7 @@ export function App() {
   const handleOpenEditor = useCallback(
     async (editorBinary?: string) => {
       try {
-        const dir = effectiveProjectDir;
-        if (!dir) {
-          setLastError("No project directory set. Enter a working directory first.");
-          return;
-        }
+        const dir = effectiveProjectDir || cwd.trim() || ".";
         // Explicit picker choice wins; otherwise fall back to Settings default.
         const configured = userSettings.editorPath?.trim() || undefined;
         await openProjectInEditor(dir, editorBinary || configured);
@@ -602,7 +677,7 @@ export function App() {
         setLastError(err instanceof Error ? err.message : String(err));
       }
     },
-    [effectiveProjectDir, userSettings.editorPath]
+    [effectiveProjectDir, cwd, userSettings.editorPath]
   );
 
   const handleGitActionRun = useCallback(
@@ -698,10 +773,6 @@ export function App() {
     getActiveTerminal()?.toggleSearch();
   }, [getActiveTerminal]);
 
-  const handleRestartActive = useCallback(() => {
-    getActiveTerminal()?.restart();
-  }, [getActiveTerminal]);
-
   const handleClearActive = useCallback(() => {
     getActiveTerminal()?.clear();
   }, [getActiveTerminal]);
@@ -716,6 +787,7 @@ export function App() {
         cwd: t.cwd,
         splitDirection: t.splitDirection,
         panes: t.panes,
+        layout: t.layout,
       })
     );
     setTabs(restoredTabs);
@@ -753,9 +825,6 @@ export function App() {
           break;
         case "search":
           handleToggleSearch();
-          break;
-        case "restart":
-          handleRestartActive();
           break;
         case "settings":
           setIsSettingsOpen((prev) => !prev);
@@ -809,7 +878,6 @@ export function App() {
     activeTab,
     activePaneId,
     handleToggleSearch,
-    handleRestartActive,
     handleSplitPane,
     handleClosePane,
   ]);
@@ -920,8 +988,8 @@ export function App() {
       category: "Terminal",
       icon: <Edit3 size={16} />,
       perform: () => {
-        const name = prompt("Rename session title:", activeTab.title);
-        if (name && name.trim()) handleRenameTab(activeTabId, name.trim());
+        setRenameInputValue(activeTab.title);
+        setRenameModalTab(activeTab);
       },
     },
     {
@@ -969,14 +1037,6 @@ export function App() {
       perform: handleToggleSearch,
     },
     {
-      id: "restart-session",
-      label: "Restart Active Session",
-      category: "Terminal",
-      shortcut: platformLabel(kb.restart, isMac),
-      icon: <RefreshCw size={16} />,
-      perform: handleRestartActive,
-    },
-    {
       id: "clear-terminal",
       label: "Clear Active Terminal Screen",
       category: "Terminal",
@@ -1007,30 +1067,45 @@ export function App() {
     },
   ];
 
-  // Drag-to-resize: per-tab first-pane fraction (0.2–0.8). Each pane keeps its
-  // own TerminalView + ResizeObserver, so dragging automatically resizes the
-  // correct backend PTY with real cols/rows (never zero/oversize: backend clamps).
-  const [paneFractions, setPaneFractions] = useState<Record<string, number>>({});
-  const dragRef = useRef<{ tabId: string; start: number; base: number } | null>(null);
+  // Drag-to-resize: per-split ratio (0.2–0.8) stored inside each tab's
+  // nested layout tree, so every divider drags along its own axis.
+  // Each pane keeps its own TerminalView + ResizeObserver, so dragging
+  // resizes the correct backend PTY with real cols/rows (backend clamps).
+  const dragRef = useRef<{ tabId: string; splitId: string; start: number; base: number } | null>(
+    null
+  );
 
-  const paneFractionFor = (tabId: string) => clampPaneFraction(paneFractions[tabId] ?? 0.5);
+  const handleSplitResize = useCallback((tabId: string, splitId: string, ratio: number) => {
+    setTabs((prev) =>
+      prev.map((t) =>
+        t.id === tabId && t.layout
+          ? { ...t, layout: setLayoutSplitRatio(t.layout, splitId, ratio) }
+          : t
+      )
+    );
+  }, []);
 
-  const beginPaneDrag = (tabId: string, clientPos: number) => {
-    dragRef.current = { tabId, start: clientPos, base: paneFractionFor(tabId) };
+  const beginSplitDrag = (
+    tabId: string,
+    splitId: string,
+    direction: PaneSplitDirection,
+    clientPos: number,
+    containerEl: HTMLElement | null,
+    baseRatio: number
+  ) => {
+    dragRef.current = { tabId, splitId, start: clientPos, base: baseRatio };
     const move = (ev: PointerEvent) => {
       const drag = dragRef.current;
-      if (!drag || drag.tabId !== tabId) return;
-      const container = document.querySelector(`[data-pane-container="${tabId}"]`);
-      const rect = container?.getBoundingClientRect();
+      if (!drag || drag.tabId !== tabId || drag.splitId !== splitId) return;
+      const rect = containerEl?.getBoundingClientRect();
       if (!rect) return;
-      const vertical = activeTab?.splitDirection === "vertical";
+      // Vertical split = side-by-side (row axis -> width/clientX).
+      // Horizontal split = stacked (column axis -> height/clientY).
+      const vertical = direction === "vertical";
       const size = vertical ? rect.width : rect.height;
       if (size <= 0) return;
       const delta = ((vertical ? ev.clientX : ev.clientY) - drag.start) / size;
-      setPaneFractions((prev) => ({
-        ...prev,
-        [tabId]: clampPaneFraction(drag.base + delta),
-      }));
+      handleSplitResize(tabId, splitId, clampPaneFraction(drag.base + delta));
     };
     const up = () => {
       dragRef.current = null;
@@ -1059,17 +1134,6 @@ export function App() {
           shells={shells}
           selectedShellId={selectedShellId}
           onSelectShell={setSelectedShellId}
-          cwd={cwd}
-          onCwdChange={setCwd}
-          recentProjects={recentProjects}
-          onSelectRecent={(dir) => {
-            setCwd(dir);
-            setRecentProjects(recordRecentProject(dir));
-          }}
-          gitBranch={gitBranch}
-          gitDirty={gitDirty}
-          projectIntelligence={projectIntel}
-          onNewTab={() => handleNewTab()}
           onSplitHorizontal={() => handleSplitPane("horizontal")}
           onSplitVertical={() => handleSplitPane("vertical")}
           onOpenEditor={handleOpenEditor}
@@ -1077,9 +1141,6 @@ export function App() {
           installedEditors={installedEditors}
           isLoadingEditors={isLoadingEditors}
           onRefreshEditors={refreshInstalledEditors}
-          onGitAction={handleGitActionRun}
-          onRestart={handleRestartActive}
-          onClear={handleClearActive}
           onCopy={() => getActiveTerminal()?.copySelection()}
           onPaste={async () => {
             try {
@@ -1097,11 +1158,6 @@ export function App() {
           onOpenWorkspaces={() => setIsWorkspaceOpen(true)}
           onOpenAiCli={() => setIsAiCliOpen(true)}
           onOpenDiagnostics={() => setIsDiagnosticsOpen(true)}
-          onCheckUpdates={() => handleCheckUpdates(true)}
-          isCheckingUpdates={isCheckingUpdates}
-          updateAvailable={updateInfo?.updateAvailable ?? false}
-          latestVersion={updateInfo?.latestVersion ?? null}
-          appVersion={appVersion}
         />
       </div>
 
@@ -1148,85 +1204,138 @@ export function App() {
             </div>
           </div>
         )}
-        {tabs.map((tab) => (
-          <div
-            key={tab.id}
-            className="tab-content"
-            style={{ display: tab.id === activeTabId ? "block" : "none" }}
-          >
-            <div className={`pane-container-${tab.splitDirection}`} data-pane-container={tab.id}>
-              {tab.panes.map((pane, idx) => (
-                <Fragment key={pane.id}>
-                  {idx > 0 && (
-                    <div
-                      className={`pane-divider pane-divider-${tab.splitDirection}`}
-                      role="separator"
-                      aria-orientation={
-                        tab.splitDirection === "vertical" ? "vertical" : "horizontal"
-                      }
-                      aria-label="Resize panes"
-                      onPointerDown={(e) => {
-                        e.preventDefault();
-                        if (tab.panes.length === 2) {
-                          beginPaneDrag(
-                            tab.id,
-                            tab.splitDirection === "vertical" ? e.clientX : e.clientY
-                          );
-                        }
-                      }}
-                    />
-                  )}
-                  <div
-                    className={`pane-item ${pane.id === tab.activePaneId ? "active-pane" : ""}`}
-                    style={
-                      tab.panes.length === 2
-                        ? {
-                            flex: `1 1 ${(idx === 0 ? paneFractionFor(tab.id) : 1 - paneFractionFor(tab.id)) * 100}%`,
-                          }
-                        : undefined
-                    }
-                    onClick={() => {
-                      setTabs((prev) =>
-                        prev.map((t) => (t.id === tab.id ? { ...t, activePaneId: pane.id } : t))
-                      );
+        {tabs.map((tab) => {
+          const paneById = new Map(tab.panes.map((p) => [p.id, p]));
+          const layout: PaneLayoutNode = tab.layout ?? {
+            kind: "pane",
+            paneId: tab.panes[0]?.id ?? tab.activePaneId,
+          };
+          const renderNode = (node: PaneLayoutNode): React.ReactNode => {
+            if (node.kind === "pane") {
+              const pane = paneById.get(node.paneId);
+              if (!pane) return null;
+              return (
+                <div
+                  key={pane.id}
+                  className={`pane-item ${pane.id === tab.activePaneId ? "active-pane" : ""}`}
+                  style={{ flex: "1 1 0%" }}
+                  onClick={() => {
+                    setTabs((prev) =>
+                      prev.map((t) => (t.id === tab.id ? { ...t, activePaneId: pane.id } : t))
+                    );
+                  }}
+                >
+                  <TerminalView
+                    ref={(el) => {
+                      terminalRefs.current[pane.id] = el;
                     }}
-                  >
-                    <TerminalView
-                      ref={(el) => {
-                        terminalRefs.current[pane.id] = el;
-                      }}
-                      sessionId={pane.id}
-                      selectedShell={selectedShell}
-                      cwd={pane.cwd || tab.cwd || cwd}
-                      settings={userSettings}
-                      visible={tab.id === activeTabId}
-                      onExit={(exitCode) => {
-                        handleSessionExit(tab.id, pane.id, exitCode);
-                      }}
-                      onSessionStatusChange={(status, message) => {
-                        if (status === "error" && message) setLastError(message);
+                    sessionId={pane.id}
+                    selectedShell={selectedShell}
+                    cwd={pane.cwd || tab.cwd || cwd}
+                    settings={userSettings}
+                    visible={tab.id === activeTabId}
+                    onCwdResolved={(resolved) => {
+                      if (resolved) {
                         setTabs((prev) =>
                           prev.map((t) =>
                             t.id === tab.id
                               ? {
                                   ...t,
-                                  status,
-                                  errorMessage: message,
+                                  cwd: t.panes.length === 1 ? resolved : t.cwd,
                                   panes: t.panes.map((p) =>
-                                    p.id === pane.id ? { ...p, status, errorMessage: message } : p
+                                    p.id === pane.id ? { ...p, cwd: resolved } : p
                                   ),
                                 }
                               : t
                           )
                         );
-                      }}
-                    />
-                  </div>
-                </Fragment>
-              ))}
+                        setCwd(resolved);
+                        setRecentProjects(recordRecentProject(resolved));
+                      }
+                    }}
+                    onExit={(exitCode) => {
+                      handleSessionExit(tab.id, pane.id, exitCode);
+                    }}
+                    onSessionStatusChange={(status, message) => {
+                      if (status === "error" && message) setLastError(message);
+                      setTabs((prev) =>
+                        prev.map((t) =>
+                          t.id === tab.id
+                            ? {
+                                ...t,
+                                status,
+                                errorMessage: message,
+                                panes: t.panes.map((p) =>
+                                  p.id === pane.id ? { ...p, status, errorMessage: message } : p
+                                ),
+                              }
+                            : t
+                        )
+                      );
+                    }}
+                  />
+                </div>
+              );
+            }
+            // Each split owns its axis: vertical = side-by-side (width),
+            // horizontal = stacked (height). Mixed directions nest.
+            // NOTE: flex-basis 0 with proportional grow (NOT percentage basis)
+            // so gap (2px) + divider (6px) never push the row past 100% and
+            // create an outer scrollbar next to the divider. Only the xterm
+            // viewport scrolls.
+            const ratio = clampPaneFraction(node.ratio);
+            return (
+              <div
+                key={node.id}
+                className={`pane-split pane-split-${node.direction}`}
+                data-split-id={node.id}
+              >
+                <div
+                  className="pane-leaf"
+                  style={{ flexGrow: ratio, flexShrink: 1, flexBasis: "0%" }}
+                >
+                  {renderNode(node.first)}
+                </div>
+                <div
+                  className={`pane-divider pane-divider-${node.direction}`}
+                  role="separator"
+                  aria-orientation={node.direction === "vertical" ? "vertical" : "horizontal"}
+                  aria-label={`Resize ${node.direction} split`}
+                  onPointerDown={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const container = (e.currentTarget.parentElement as HTMLElement) ?? null;
+                    beginSplitDrag(
+                      tab.id,
+                      node.id,
+                      node.direction,
+                      node.direction === "vertical" ? e.clientX : e.clientY,
+                      container,
+                      ratio
+                    );
+                  }}
+                />
+                <div
+                  className="pane-leaf"
+                  style={{ flexGrow: 1 - ratio, flexShrink: 1, flexBasis: "0%" }}
+                >
+                  {renderNode(node.second)}
+                </div>
+              </div>
+            );
+          };
+          return (
+            <div
+              key={tab.id}
+              className="tab-content"
+              style={{ display: tab.id === activeTabId ? "block" : "none" }}
+            >
+              <div className="pane-container-none" data-pane-container={tab.id}>
+                {renderNode(layout)}
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       <CommandPalette
@@ -1266,6 +1375,54 @@ export function App() {
         lastError={lastError}
       />
 
+      {renameModalTab && (
+        <div className="modal-backdrop" onClick={() => setRenameModalTab(null)}>
+          <div
+            className="command-palette-modal"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-label="Rename session"
+            style={{ padding: 16 }}
+          >
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (renameInputValue.trim()) {
+                  handleRenameTab(renameModalTab.id, renameInputValue.trim());
+                }
+                setRenameModalTab(null);
+              }}
+            >
+              <label htmlFor="rename-session-input" className="shortcut-label">
+                Rename session
+              </label>
+              <input
+                id="rename-session-input"
+                type="text"
+                className="text-input modal-input"
+                autoFocus
+                value={renameInputValue}
+                onChange={(e) => setRenameInputValue(e.target.value)}
+                placeholder="Session name"
+                style={{ marginTop: 8 }}
+              />
+              <div className="footer-actions" style={{ marginTop: 12, justifyContent: "flex-end" }}>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-small"
+                  onClick={() => setRenameModalTab(null)}
+                >
+                  Cancel
+                </button>
+                <button type="submit" className="btn btn-primary btn-small">
+                  Save
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       <StatusBar
         gitBranch={gitBranch}
         gitDirty={gitDirty}
@@ -1278,6 +1435,7 @@ export function App() {
         onCheckUpdates={() => handleCheckUpdates(true)}
         onViewUpdate={handleViewUpdate}
         onGitAction={handleGitActionRun}
+        mode={codeModeProject ? "code" : "terminal"}
       />
     </div>
   );

@@ -1,9 +1,6 @@
 import { FC, useEffect, useRef, useState } from "react";
 import { ShellProfile } from "../types/terminal";
 import {
-  Plus,
-  RefreshCw,
-  Trash2,
   Copy,
   Clipboard,
   Folder,
@@ -15,25 +12,14 @@ import {
   Columns,
   Rows,
   Code,
-  GitBranch,
-  Cpu,
   ChevronDown,
-  ArrowUpCircle,
 } from "lucide-react";
-import { InstalledEditor, ProjectIntelligenceInfo } from "../services/projectService";
+import { InstalledEditor } from "../services/projectService";
 
 interface ToolbarProps {
   shells: ShellProfile[];
   selectedShellId: string;
   onSelectShell: (shellId: string) => void;
-  cwd: string;
-  onCwdChange: (cwd: string) => void;
-  recentProjects: string[];
-  onSelectRecent: (dir: string) => void;
-  gitBranch?: string | null;
-  gitDirty?: boolean;
-  projectIntelligence?: ProjectIntelligenceInfo | null;
-  onNewTab: () => void;
   onSplitHorizontal?: () => void;
   onSplitVertical?: () => void;
   onOpenEditor?: (editorBinary?: string) => void;
@@ -41,9 +27,6 @@ interface ToolbarProps {
   installedEditors?: InstalledEditor[];
   isLoadingEditors?: boolean;
   onRefreshEditors?: () => void;
-  onGitAction?: (action: "fetch" | "pull" | "status") => void;
-  onRestart: () => void;
-  onClear: () => void;
   onCopy: () => void;
   onPaste: () => void;
   onSearch: () => void;
@@ -52,25 +35,23 @@ interface ToolbarProps {
   onOpenWorkspaces?: () => void;
   onOpenAiCli: () => void;
   onOpenDiagnostics: () => void;
-  onCheckUpdates?: () => void;
-  isCheckingUpdates?: boolean;
-  updateAvailable?: boolean;
-  latestVersion?: string | null;
-  appVersion?: string;
 }
 
+/**
+ * Slim toolbar: shell picker on the left, terminal/editor actions on the right.
+ * Working directory is shown directly in the terminal (pwd/prompt) —
+ * no duplicated cwd input here.
+ *
+ * Deliberately NOT duplicated here (single source of truth lives elsewhere):
+ * - New tabs: TabBar "+" / Ctrl+Shift+T / command palette.
+ * - Git branch + recent projects: bottom status bar footer.
+ * - Code Mode badge (display-only; `kai code` / `kai stop code`): bottom status bar footer.
+ * - Clear screen: `clear` command / command palette.
+ */
 export const Toolbar: FC<ToolbarProps> = ({
   shells,
   selectedShellId,
   onSelectShell,
-  cwd,
-  onCwdChange,
-  recentProjects,
-  onSelectRecent,
-  gitBranch,
-  gitDirty,
-  projectIntelligence,
-  onNewTab,
   onSplitHorizontal,
   onSplitVertical,
   onOpenEditor,
@@ -78,9 +59,6 @@ export const Toolbar: FC<ToolbarProps> = ({
   installedEditors = [],
   isLoadingEditors = false,
   onRefreshEditors,
-  onGitAction,
-  onRestart,
-  onClear,
   onCopy,
   onPaste,
   onSearch,
@@ -89,11 +67,6 @@ export const Toolbar: FC<ToolbarProps> = ({
   onOpenWorkspaces,
   onOpenAiCli,
   onOpenDiagnostics,
-  onCheckUpdates,
-  isCheckingUpdates = false,
-  updateAvailable = false,
-  latestVersion = null,
-  appVersion = "",
 }) => {
   const [editorMenuOpen, setEditorMenuOpen] = useState(false);
   const editorMenuRef = useRef<HTMLDivElement>(null);
@@ -123,16 +96,6 @@ export const Toolbar: FC<ToolbarProps> = ({
   return (
     <div className="terminal-toolbar">
       <div className="toolbar-group">
-        <button
-          className="btn btn-primary"
-          onClick={onNewTab}
-          title="New Terminal Tab (Ctrl+Shift+T)"
-          aria-label="New terminal tab"
-        >
-          <Plus size={16} />
-          <span>New Session</span>
-        </button>
-
         <select
           className="select-input"
           value={selectedShellId || (shells[0]?.id ?? "")}
@@ -149,82 +112,6 @@ export const Toolbar: FC<ToolbarProps> = ({
             </option>
           ))}
         </select>
-      </div>
-
-      <div className="toolbar-group cwd-group">
-        <Folder size={14} className="icon-muted" />
-        <input
-          type="text"
-          className="text-input cwd-input"
-          placeholder="Initial working directory..."
-          value={cwd}
-          onChange={(e) => onCwdChange(e.target.value)}
-          title="Initial Working Directory"
-          aria-label="Initial working directory"
-          list="recent-projects"
-        />
-        <datalist id="recent-projects">
-          {recentProjects.map((p) => (
-            <option key={p} value={p} />
-          ))}
-        </datalist>
-        {recentProjects.length > 0 && (
-          <select
-            className="select-input"
-            value=""
-            onChange={(e) => {
-              if (e.target.value) onSelectRecent(e.target.value);
-            }}
-            title="Recent projects"
-            aria-label="Recent projects"
-          >
-            <option value="">Recent…</option>
-            {recentProjects.map((p) => (
-              <option key={p} value={p}>
-                {p}
-              </option>
-            ))}
-          </select>
-        )}
-        {gitBranch ? (
-          <span
-            className="git-badge"
-            title={
-              gitDirty
-                ? "Working tree has changes — click to show git status"
-                : "Working tree clean — click to show git status"
-            }
-            onClick={() => onGitAction?.("status")}
-            style={{ cursor: "pointer" }}
-            role="button"
-            aria-label={`Git branch ${gitBranch}${gitDirty ? ", uncommitted changes" : ", clean"}`}
-          >
-            <GitBranch size={12} style={{ display: "inline", marginRight: "4px" }} />
-            {gitBranch}
-            {gitDirty ? " ●" : ""}
-          </span>
-        ) : (
-          cwd.trim() && (
-            <span
-              className="git-badge git-badge-empty"
-              title="Current directory is not a git repository"
-              aria-label="Not a git repository"
-            >
-              <GitBranch size={12} style={{ display: "inline", marginRight: "4px" }} />
-              No git repo
-            </span>
-          )
-        )}
-        {projectIntelligence && projectIntelligence.status !== "unindexed" && (
-          <span
-            className={`intelligence-badge intel-${projectIntelligence.status}`}
-            title={`Kai Project Intelligence\nStatus: ${projectIntelligence.status}\nFiles: ${projectIntelligence.file_count}\nSymbols: ${projectIntelligence.symbol_count}\nEst. Tokens: ~${projectIntelligence.total_tokens_estimated.toLocaleString()}\nLast indexed: ${projectIntelligence.last_indexed_at || "Never"}`}
-          >
-            <Cpu size={12} style={{ display: "inline", marginRight: "4px" }} />
-            <span>~{Math.round(projectIntelligence.total_tokens_estimated / 1000)}k tok</span>
-            <span className="intel-status-dot">●</span>
-          </span>
-        )}
       </div>
 
       <div className="toolbar-group">
@@ -426,22 +313,6 @@ export const Toolbar: FC<ToolbarProps> = ({
         >
           <Clipboard size={15} />
         </button>
-        <button
-          className="btn btn-icon"
-          onClick={onClear}
-          title="Clear Terminal"
-          aria-label="Clear terminal"
-        >
-          <Trash2 size={15} />
-        </button>
-        <button
-          className="btn btn-icon"
-          onClick={onRestart}
-          title="Restart Session (Ctrl+Shift+R)"
-          aria-label="Restart session"
-        >
-          <RefreshCw size={15} />
-        </button>
         {onOpenWorkspaces && (
           <button
             className="btn btn-icon"
@@ -468,26 +339,6 @@ export const Toolbar: FC<ToolbarProps> = ({
         >
           <Activity size={15} />
         </button>
-        {onCheckUpdates && (
-          <button
-            className={`btn btn-icon toolbar-update-btn${updateAvailable ? " has-update" : ""}`}
-            onClick={onCheckUpdates}
-            disabled={isCheckingUpdates}
-            title={
-              updateAvailable && latestVersion
-                ? `Update available: v${latestVersion} — click to view`
-                : appVersion
-                  ? `Check for updates (current v${appVersion})`
-                  : "Check for updates"
-            }
-            aria-label={
-              updateAvailable ? "Update available. Check for updates" : "Check for updates"
-            }
-          >
-            <ArrowUpCircle size={15} />
-            {updateAvailable && <span className="toolbar-update-dot" aria-hidden="true" />}
-          </button>
-        )}
         <button
           className="btn btn-icon"
           onClick={onOpenCommandPalette}

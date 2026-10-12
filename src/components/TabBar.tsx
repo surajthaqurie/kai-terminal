@@ -248,7 +248,7 @@ export const TabBar: FC<TabBarProps> = ({
               startEditing(menuTab);
             }}
           >
-            Rename tab
+            Rename session
           </button>
           <div className="tab-menu-row" aria-label="Tab color">
             <span className="tab-menu-label">Color</span>

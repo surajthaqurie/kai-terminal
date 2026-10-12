@@ -12,7 +12,6 @@ export const SHORTCUT_ACTION_LABELS: Record<ShortcutActionId, string> = {
   search: "Find in terminal",
   commandPalette: "Toggle command palette",
   settings: "Open settings",
-  restart: "Restart session",
   nextTab: "Next tab",
   prevTab: "Previous tab",
   nextPane: "Next active pane",

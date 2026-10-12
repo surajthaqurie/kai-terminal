@@ -1,14 +1,15 @@
 import { FC, useEffect, useRef, useState } from "react";
 import {
   GitBranch,
-  Folder,
-  RefreshCw,
   ArrowUpCircle,
   Check,
   Copy,
   ArrowDownToLine,
   ArrowUpFromLine,
   ListOrdered,
+  Code,
+  Terminal,
+  RefreshCw,
 } from "lucide-react";
 
 interface StatusBarProps {
@@ -19,17 +20,20 @@ interface StatusBarProps {
   appVersion: string;
   updateAvailable: boolean;
   latestVersion?: string | null;
-  isCheckingUpdates: boolean;
-  onCheckUpdates: () => void;
+  isCheckingUpdates?: boolean;
+  onCheckUpdates?: () => void;
   onViewUpdate: () => void;
   onGitAction: (action: "fetch" | "pull" | "status") => void;
+  mode?: string;
+  /** @deprecated Kept for backwards compat. Code Mode is now entered/cleared
+   * via the CLI (`kai code <path>` / `kai stop code`), so the badge is
+   * display-only and this callback is unused. */
+  onToggleMode?: () => void;
 }
 
 /**
  * Always-visible bottom status bar: git branch (with dirty dot + quick
- * actions) on the left, project directory in the middle, app version +
- * update check on the right. The branch is clickable so it is easy to
- * handle, and it degrades to "No git repo" instead of disappearing.
+ * actions) on the left, app version + update check on the right.
  */
 export const StatusBar: FC<StatusBarProps> = ({
   gitBranch,
@@ -39,10 +43,11 @@ export const StatusBar: FC<StatusBarProps> = ({
   appVersion,
   updateAvailable,
   latestVersion,
-  isCheckingUpdates,
+  isCheckingUpdates = false,
   onCheckUpdates,
   onViewUpdate,
   onGitAction,
+  mode = "code",
 }) => {
   const [gitMenuOpen, setGitMenuOpen] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -89,6 +94,27 @@ export const StatusBar: FC<StatusBarProps> = ({
   return (
     <footer className="status-bar" role="status" aria-label="Application status bar">
       <div className="status-left">
+        {mode === "code" ? (
+          <span
+            className="status-mode-pill"
+            title="Code Mode — project intelligence active. Run `kai stop code` to clear."
+            aria-label="Code Mode active"
+          >
+            <Code size={12} aria-hidden="true" />
+            <span>Code Mode</span>
+          </span>
+        ) : (
+          projectDir && (
+            <span
+              className="status-mode-pill status-mode-terminal"
+              title="Terminal mode — run `kai code <path>` to enter Code Mode."
+              aria-label="Terminal mode"
+            >
+              <Terminal size={12} aria-hidden="true" />
+              <span>Terminal</span>
+            </span>
+          )
+        )}
         {gitBranch ? (
           <div ref={menuRef} className="status-git-wrap">
             <button
@@ -151,17 +177,6 @@ export const StatusBar: FC<StatusBarProps> = ({
         )}
       </div>
 
-      <div className="status-center">
-        {projectDir ? (
-          <span className="status-dir" title={projectDir}>
-            <Folder size={12} aria-hidden="true" />
-            <span className="status-dir-text">{projectDir}</span>
-          </span>
-        ) : (
-          <span className="status-dir status-dir-empty">No directory selected</span>
-        )}
-      </div>
-
       <div className="status-right">
         {updateAvailable && latestVersion ? (
           <button
@@ -185,16 +200,11 @@ export const StatusBar: FC<StatusBarProps> = ({
           type="button"
           className="status-check-btn"
           onClick={onCheckUpdates}
-          disabled={isCheckingUpdates}
+          disabled={isCheckingUpdates || !onCheckUpdates}
           title={isCheckingUpdates ? "Checking for updates…" : "Check for updates"}
           aria-label={isCheckingUpdates ? "Checking for updates" : "Check for updates"}
         >
-          <RefreshCw
-            size={12}
-            className={isCheckingUpdates ? "spin" : undefined}
-            aria-hidden="true"
-          />
-          <span>{isCheckingUpdates ? "Checking…" : "Check for updates"}</span>
+          <RefreshCw size={12} aria-hidden="true" className={isCheckingUpdates ? "spin" : ""} />
         </button>
       </div>
     </footer>

@@ -632,15 +632,35 @@ pub fn detect_installed_editors() -> Vec<EditorInfo> {
             let local = env::var("LOCALAPPDATA").unwrap_or_default();
             let guesses: Vec<String> = match id {
                 "vscode" => vec![
+                    format!("{}\\Programs\\Microsoft VS Code\\Code.exe", local),
+                    format!("{}\\Programs\\Microsoft VS Code\\bin\\code.cmd", local),
                     format!("{}\\Microsoft VS Code\\Code.exe", pf),
                     format!("{}\\Microsoft VS Code\\bin\\code.cmd", pf),
+                    format!("{}\\Microsoft VS Code\\Code.exe", pf86),
                 ],
-                "cursor" => vec![format!("{}\\Cursor\\Cursor.exe", local)],
+                "cursor" => vec![
+                    format!("{}\\Programs\\cursor\\Cursor.exe", local),
+                    format!("{}\\Programs\\Cursor\\Cursor.exe", local),
+                    format!("{}\\Cursor\\Cursor.exe", local),
+                ],
+                "windsurf" => vec![
+                    format!("{}\\Programs\\Windsurf\\Windsurf.exe", local),
+                    format!("{}\\Windsurf\\Windsurf.exe", local),
+                    format!("{}\\Windsurf\\Windsurf.exe", pf),
+                ],
+                "vscodium" => vec![
+                    format!("{}\\Programs\\VSCodium\\VSCodium.exe", local),
+                    format!("{}\\Programs\\VSCodium\\bin\\codium.cmd", local),
+                    format!("{}\\VSCodium\\VSCodium.exe", pf),
+                ],
                 "sublime" => vec![
                     format!("{}\\Sublime Text\\sublime_text.exe", pf),
                     format!("{}\\Sublime Text\\sublime_text.exe", pf86),
                 ],
-                "zed" => vec![format!("{}\\Zed\\zed.exe", pf)],
+                "zed" => vec![
+                    format!("{}\\Programs\\Zed\\zed.exe", local),
+                    format!("{}\\Zed\\zed.exe", pf),
+                ],
                 _ => vec![],
             };
             for g in guesses {
@@ -767,10 +787,19 @@ pub fn open_in_editor(requested_editor: Option<&str>, cwd: &str) -> Result<Strin
         } else if let Ok(p) = which_path(trimmed) {
             p
         } else {
-            return Err(TerminalError::ShellNotFound(format!(
-                "Editor binary '{}' not found on system PATH",
-                trimmed
-            )));
+            let installed = detect_installed_editors();
+            if let Some(ed) = installed.iter().find(|e| {
+                e.id.eq_ignore_ascii_case(trimmed)
+                    || e.binary.eq_ignore_ascii_case(trimmed)
+                    || e.name.eq_ignore_ascii_case(trimmed)
+            }) {
+                ed.path.clone()
+            } else {
+                return Err(TerminalError::ShellNotFound(format!(
+                    "Editor binary '{}' not found on system PATH",
+                    trimmed
+                )));
+            }
         }
     } else {
         let mut found = None;
@@ -778,6 +807,12 @@ pub fn open_in_editor(requested_editor: Option<&str>, cwd: &str) -> Result<Strin
             if let Ok(p) = which_path(cand) {
                 found = Some(p);
                 break;
+            }
+        }
+        if found.is_none() {
+            let installed = detect_installed_editors();
+            if let Some(first) = installed.into_iter().next() {
+                found = Some(first.path);
             }
         }
         found.ok_or_else(|| {
@@ -790,6 +825,35 @@ pub fn open_in_editor(requested_editor: Option<&str>, cwd: &str) -> Result<Strin
     // Cross-platform spawn (argv arrays only, no shell interpolation):
     #[cfg(target_os = "windows")]
     {
+        let exe_candidate = if is_windows_script_shim(&editor_bin) {
+            let p = Path::new(&editor_bin);
+            p.parent()
+                .and_then(|bin_dir| bin_dir.parent())
+                .map(|root| root.join("Code.exe"))
+                .filter(|p| p.exists())
+                .or_else(|| {
+                    p.parent()
+                        .and_then(|bin_dir| bin_dir.parent())
+                        .map(|root| root.join("VSCodium.exe"))
+                        .filter(|p| p.exists())
+                })
+        } else {
+            None
+        };
+
+        if let Some(exe_path) = exe_candidate {
+            std::process::Command::new(exe_path)
+                .arg(&valid_cwd)
+                .spawn()
+                .map_err(|e| {
+                    TerminalError::IoError(format!(
+                        "Failed to launch editor '{}': {}",
+                        editor_bin, e
+                    ))
+                })?;
+            return Ok(editor_bin);
+        }
+
         if is_windows_script_shim(&editor_bin) {
             std::process::Command::new("cmd")
                 .args(["/c", &editor_bin, &valid_cwd])

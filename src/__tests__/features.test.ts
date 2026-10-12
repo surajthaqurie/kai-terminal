@@ -6,7 +6,14 @@ import {
   loadUserCustomClis,
   getAiCliDetails,
 } from "../services/aiCliService";
-import { openProjectInEditor, runGitAction } from "../services/projectService";
+import {
+  openProjectInEditor,
+  runGitAction,
+  getActiveProject,
+  setActiveProject,
+  getActiveMode,
+  setActiveMode,
+} from "../services/projectService";
 
 describe("Project Workspace Settings", () => {
   beforeEach(() => {
@@ -73,5 +80,23 @@ describe("Project Services Fallbacks", () => {
     await expect(runGitAction("/tmp", "status")).rejects.toThrow(
       "Git actions are only available inside the desktop app."
     );
+  });
+});
+
+describe("Active Project and Code Mode Persistence", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it("stores and retrieves active project and code mode", () => {
+    expect(getActiveProject()).toBeNull();
+    expect(getActiveMode()).toBe("code");
+
+    setActiveProject("/home/kali/Documents/project", "code");
+    expect(getActiveProject()).toBe("/home/kali/Documents/project");
+    expect(getActiveMode()).toBe("code");
+
+    setActiveMode("terminal");
+    expect(getActiveMode()).toBe("terminal");
   });
 });

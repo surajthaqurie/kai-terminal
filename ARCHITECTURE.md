@@ -101,7 +101,7 @@ flowchart TD
 
 - **`pty.rs` (`PtyManager`)**: Manages session handles (`HashMap<String, PtySessionHandle>`) wrapped in thread-safe locks. Handles PTY spawning, chunked byte writing (`write_bytes_chunked`), and cleanup.
 - **`shell.rs`**: Cross-platform shell discovery logic for Windows (PowerShell Core, Windows PowerShell, CMD, WSL), Linux (`$SHELL`, bash, zsh, fish, sh), and macOS (`$SHELL`, zsh, Homebrew shells, bash, fish). Includes Windows build version gate checking (minimum build 17763).
-- **`ai_cli.rs`**: Checks local PATH presence and config presence for 6 catalogued AI tools (`codex`, `claude`, `gemini`, `opencode`, `copilot`, `aider`), running safe, bounded `--version` checks (with an 8-second execution timeout and auto-reap) without network calls.
+- **`ai_cli.rs`**: Checks local PATH presence and config presence for 10 catalogued AI tools (`codex`, `claude`, `gemini`, `opencode`, `copilot`, `aider`, `cursor`, `windsurf`, `cline`, `agy`), running safe, bounded `--version` checks (with an 8-second execution timeout and auto-reap) without network calls.
 - **`git.rs`**: Reads current branch name and status using local system `git` commands with timeout bounds.
 - **`error.rs`**: Strongly typed Rust error definitions returned via IPC.
 
@@ -116,7 +116,7 @@ flowchart TD
 - **`src/core/contextAssembler.ts`**: Orchestrates classification, freshness checks, rule extraction, retrieval, and skills into a structured `ContextPackage`. Enforces the token budget as a hard guarantee on the rendered prompt (drops skills, lowest-scored sources, then rules; hard-truncates only as a last resort — the verbatim task section leads so it survives).
 - **`src/core/tokenCounter.ts`**: Deterministic `cl100k` token estimation distinguishing estimates from exact tokenizer measurements.
 - **`src/core/mcp.ts`**: Standard Model Context Protocol (MCP) server communicating over `stdio` JSON-RPC with stream-level 10 MB line limits (`BoundedLineTransform`) and strict workspace boundary confinement. Exposes 7 read-only tools: `kai_project_info`, `kai_search_code`, `kai_find_symbol`, `kai_get_dependencies`, `kai_get_context`, `kai_refresh_index`, and `kai_get_lsp_status`.
-- **`src/cli/index.ts` & `bin/kai.js`**: Unified CLI dispatcher providing terminal commands for project registration, status inspection, unregistration (`unregister` deletes only Kai-owned data under `~/.kai/projects/` by path or 16-hex ID), querying, benchmarking, and automated agent setup (`kai agent setup <agent>`).
+- **`src/cli/index.ts` & `bin/kai.js`**: Unified CLI dispatcher providing terminal commands for project registration, status inspection, unregistration (`unregister` deletes only Kai-owned data under `~/.kai/projects/` by path or 16-hex ID), querying, benchmarking, and automated agent setup (`kai agent setup <agent|all>` writes kai MCP wiring into agent configs with backup; `kai agent list` shows live install + wiring state).
 
 ---
 

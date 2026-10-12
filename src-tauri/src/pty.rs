@@ -1,4 +1,4 @@
-use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
+use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -91,7 +91,7 @@ pub struct PtyExitPayload {
     pub exit_code: Option<i32>,
 }
 
-/// Internal session handle holding native PTY master, writer, and child process handle.
+/// Internal session handle holding native PTY master, writer, and process killer handle.
 pub struct PtySessionHandle {
     pub id: String,
     pub pid: Option<u32>,
@@ -99,7 +99,7 @@ pub struct PtySessionHandle {
     pub cwd: String,
     pub master: Box<dyn MasterPty + Send>,
     pub writer: Box<dyn Write + Send>,
-    pub child: Box<dyn Child + Send + Sync>,
+    pub killer: Box<dyn ChildKiller + Send + Sync>,
     pub cols: u16,
     pub rows: u16,
     pub status: SessionStatus,
@@ -203,7 +203,11 @@ impl PtyManager {
             TerminalError::PtyCreationFailed(msg)
         })?;
 
+        // Explicitly drop slave handle so PTY reference count drops when child exits
+        drop(pair.slave);
+
         let pid = child.process_id();
+        let killer = child.clone_killer();
         let writer = pair
             .master
             .take_writer()
@@ -233,7 +237,7 @@ impl PtyManager {
             cwd,
             master: pair.master,
             writer,
-            child,
+            killer,
             cols,
             rows,
             status: SessionStatus::Connected,
@@ -248,11 +252,11 @@ impl PtyManager {
             sessions.insert(session_id.clone(), handle);
         }
 
-        // Spawn dedicated background reader thread for continuous output streaming with flow control
+        // 1. Dedicated background reader thread for continuous output streaming with flow control
         let id_clone = session_id.clone();
-        let sessions_map = self.sessions.clone();
+        let emitter_reader = emitter.clone();
 
-        std::thread::spawn(move || {
+        let reader_thread = std::thread::spawn(move || {
             let mut read_buf = [0u8; READ_BUFFER_CHUNK_BYTES];
             let mut batch_buf = Vec::with_capacity(MAX_OUTPUT_BATCH_BYTES);
 
@@ -265,7 +269,7 @@ impl PtyManager {
                         // Flush buffered UTF-8 text immediately when read
                         let text = split_valid_utf8(&mut batch_buf);
                         if !text.is_empty() {
-                            emitter.emit_output(PtyOutputPayload {
+                            emitter_reader.emit_output(PtyOutputPayload {
                                 id: id_clone.clone(),
                                 data: text,
                             });
@@ -280,35 +284,48 @@ impl PtyManager {
                 let text = String::from_utf8_lossy(&batch_buf).to_string();
                 batch_buf.clear();
                 if !text.is_empty() {
-                    emitter.emit_output(PtyOutputPayload {
-                        id: id_clone.clone(),
+                    emitter_reader.emit_output(PtyOutputPayload {
+                        id: id_clone,
                         data: text,
                     });
                 }
             }
+        });
 
-            // Clean up session entry & wait on child process exit code
-            // (preserves the real OS exit code; signal deaths surface as 1 with no code loss for success).
-            // NOTE: the map entry is removed under a short lock, then `wait()`
-            // runs WITHOUT holding the mutex so concurrent write/resize/close
-            // calls are never starved by a slow-exiting child (hang fix).
-            let mut exited_child = {
+        // 2. Dedicated waiter thread monitors child process lifecycle.
+        // When the child process terminates (e.g. `exit` command, logout, signal):
+        // 1. `child.wait()` unblocks with the process exit code.
+        // 2. We remove the session from `sessions` and drop `master`.
+        //    Crucial on Windows (ConPTY): dropping `master` drops `PsuedoCon` and
+        //    calls `ClosePseudoConsole`. This closes the ConPTY pipe and unblocks
+        //    the blocking `reader.read()` in `reader_thread` above (hang fix).
+        // 3. We join `reader_thread` so all buffered output is guaranteed to be
+        //    emitted before `emit_exit` reaches the frontend.
+        // 4. We emit `emit_exit` with the real exit code.
+        let id_clone_waiter = session_id.clone();
+        let sessions_map = self.sessions.clone();
+
+        std::thread::spawn(move || {
+            let mut child = child;
+            let exit_status = child.wait();
+            let exit_code = exit_status.ok().map(|status| status.exit_code() as i32);
+
+            // Clean up session entry & drop master so reader unblocks (hang fix on Windows ConPTY)
+            {
                 let mut sessions = sessions_map.lock().ok();
-                sessions
-                    .as_mut()
-                    .and_then(|s| s.remove(&id_clone))
-                    .map(|mut session| {
-                        session.status = SessionStatus::Disconnected;
-                        session.child
-                    })
-            };
-            let exit_code = exited_child
-                .as_mut()
-                .and_then(|child| child.wait().ok().map(|status| status.exit_code() as i32));
+                if let Some(mut session) =
+                    sessions.as_mut().and_then(|s| s.remove(&id_clone_waiter))
+                {
+                    session.status = SessionStatus::Disconnected;
+                }
+            }
+
+            // Ensure reader thread finishes flushing before exit event is sent
+            let _ = reader_thread.join();
 
             // Emit session exit event
             emitter.emit_exit(PtyExitPayload {
-                id: id_clone,
+                id: id_clone_waiter,
                 exit_code,
             });
         });
@@ -418,7 +435,7 @@ impl PtyManager {
 
     /// Explicitly closes and cleans up a PTY session.
     pub fn close_pty(&self, id: &str) -> Result<(), TerminalError> {
-        // Remove under a short lock, then kill/wait WITHOUT holding it so a
+        // Remove under a short lock, then kill WITHOUT holding it so a
         // slow child cannot block other sessions (hang fix).
         let mut session = {
             let mut sessions = self
@@ -430,8 +447,7 @@ impl PtyManager {
 
         if let Some(s) = session.as_mut() {
             s.status = SessionStatus::Disconnected;
-            let _ = s.child.kill();
-            let _ = s.child.wait();
+            let _ = s.killer.kill();
             Ok(())
         } else {
             // Already closed or clean
@@ -448,8 +464,7 @@ impl PtyManager {
         };
         for (_, mut session) in drained.drain(..) {
             session.status = SessionStatus::Disconnected;
-            let _ = session.child.kill();
-            let _ = session.child.wait();
+            let _ = session.killer.kill();
         }
     }
 

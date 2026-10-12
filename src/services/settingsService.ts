@@ -15,7 +15,6 @@ export const DEFAULT_KEYBINDINGS: KeybindingsConfig = {
   search: "Ctrl+Shift+F",
   commandPalette: "Ctrl+Shift+P",
   settings: "Ctrl+Shift+,",
-  restart: "Ctrl+Shift+R",
   nextTab: "Ctrl+Shift+]",
   prevTab: "Ctrl+Shift+[",
   nextPane: "Ctrl+Alt+]",
@@ -33,6 +32,7 @@ export const DEFAULT_SETTINGS: UserSettings = {
   editorPath: "",
   launchAtStartup: false,
   autoRestoreSession: false,
+  autoCheckUpdates: true,
   keybindings: DEFAULT_KEYBINDINGS,
 };
 
@@ -57,6 +57,10 @@ export class SettingsService {
     // instead of breaking the shortcut registry. Full conflict detection
     // lives in shortcuts.ts + the settings UI.
     const kb = merged.keybindings as unknown as Record<string, unknown>;
+    // Drop obsolete bindings from older versions (e.g. removed restart).
+    for (const key of Object.keys(kb)) {
+      if (!(key in DEFAULT_KEYBINDINGS)) delete kb[key];
+    }
     for (const key of Object.keys(DEFAULT_KEYBINDINGS) as Array<keyof KeybindingsConfig>) {
       const v = kb[key];
       if (typeof v !== "string" || !v.includes("+") || v.length > 32 || /[\0\n\r]/.test(v)) {
@@ -117,6 +121,7 @@ export class SettingsService {
     }
     merged.launchAtStartup = Boolean(merged.launchAtStartup);
     merged.autoRestoreSession = Boolean(merged.autoRestoreSession);
+    merged.autoCheckUpdates = merged.autoCheckUpdates === undefined ? true : Boolean(merged.autoCheckUpdates);
     return merged;
   }
 

@@ -10,10 +10,24 @@
  * structure. Restoring never executes old commands.
  */
 
+import type { PaneLayoutNode } from "../types/terminal";
+
 export interface PersistedPaneV2 {
   shellPath?: string;
   cwd?: string;
 }
+
+export interface PersistedSplitV2 {
+  id?: string;
+  direction: "horizontal" | "vertical";
+  ratio?: number;
+  first: PersistedLayoutV2;
+  second: PersistedLayoutV2;
+}
+
+export type PersistedLayoutV2 =
+  | { kind: "pane"; paneId?: string; paneIndex?: number }
+  | { kind: "split" } & PersistedSplitV2;
 
 export interface PersistedTabV2 {
   title: string;
@@ -23,6 +37,8 @@ export interface PersistedTabV2 {
   cwd?: string;
   splitDirection?: "none" | "horizontal" | "vertical";
   panes?: PersistedPaneV2[];
+  /** Nested split tree (ids + ratios). Pane refs stored as indexes. */
+  layout?: PersistedLayoutV2;
 }
 
 export interface Workspace {
@@ -85,6 +101,7 @@ export function sanitizeTab(raw: unknown): PersistedTabV2 | null {
   const sd = r.splitDirection;
   const splitDirection =
     sd === "horizontal" || sd === "vertical" ? sd : panes && panes.length > 1 ? "vertical" : "none";
+  const layout = sanitizeLayout(r.layout, panes?.length ?? 1);
   return {
     title: safeTitle(r.title),
     color: safeColor(r.color),
@@ -92,6 +109,102 @@ export function sanitizeTab(raw: unknown): PersistedTabV2 | null {
     cwd: safeOptPath(r.cwd),
     splitDirection,
     ...(panes ? { panes } : {}),
+    ...(layout ? { layout } : {}),
+  };
+}
+
+function clampRatio(v: unknown): number {
+  return typeof v === "number" && Number.isFinite(v)
+    ? Math.min(0.8, Math.max(0.2, v))
+    : 0.5;
+}
+
+function safeSplitId(v: unknown): string | undefined {
+  if (typeof v !== "string") return undefined;
+  const t = v.trim().slice(0, 64);
+  return t ? t : undefined;
+}
+
+/** Validate a persisted nested layout tree (pane refs as indexes). */
+export function sanitizeLayout(raw: unknown, paneCount: number): PersistedLayoutV2 | undefined {
+  const depthGuard = (node: unknown, depth: number): PersistedLayoutV2 | null => {
+    if (depth > 8 || typeof node !== "object" || node === null) return null;
+    const n = node as Record<string, unknown>;
+    if (n.kind === "pane") {
+      const idx = typeof n.paneIndex === "number" ? Math.floor(n.paneIndex) : 0;
+      if (!Number.isFinite(idx) || idx < 0 || idx >= Math.max(1, paneCount)) return null;
+      return { kind: "pane", paneIndex: idx };
+    }
+    if (n.kind === "split") {
+      if (n.direction !== "horizontal" && n.direction !== "vertical") return null;
+      const first = depthGuard(n.first, depth + 1);
+      const second = depthGuard(n.second, depth + 1);
+      if (!first || !second) return null;
+      const out: PersistedLayoutV2 = {
+        kind: "split",
+        direction: n.direction,
+        ratio: clampRatio(n.ratio),
+        first,
+        second,
+      };
+      const id = safeSplitId(n.id);
+      if (id) (out as PersistedSplitV2).id = id;
+      return out;
+    }
+    return null;
+  };
+  if (raw === undefined) return undefined;
+  const clean = depthGuard(raw, 0);
+  return clean ?? undefined;
+}
+
+/**
+ * Convert a sanitized persisted layout (index refs) into a live tree with
+ * real pane ids. Returns undefined when refs are stale so callers fall back
+ * to the legacy flat layout.
+ */
+export function persistedLayoutToNode(
+  layout: PersistedLayoutV2 | undefined,
+  paneIds: string[]
+): PaneLayoutNode | undefined {
+  if (!layout) return undefined;
+  const build = (node: PersistedLayoutV2): PaneLayoutNode | null => {
+    if (node.kind === "pane") {
+      const idx = node.paneIndex ?? 0;
+      const id = paneIds[idx];
+      return id ? { kind: "pane", paneId: id } : null;
+    }
+    const first = build(node.first);
+    const second = build(node.second);
+    if (!first || !second) return null;
+    return {
+      kind: "split",
+      id: node.id || `restored-${Math.floor(Math.random() * 0xffffffff).toString(16)}`,
+      direction: node.direction,
+      ratio: clampRatio(node.ratio ?? 0.5),
+      first,
+      second,
+    };
+  };
+  return build(layout) ?? undefined;
+}
+
+/** Convert a live tree into a persistable tree (pane ids -> indexes). */
+export function nodeToPersistedLayout(
+  node: PaneLayoutNode,
+  paneIds: string[]
+): PersistedLayoutV2 {
+  if (node.kind === "pane") {
+    const idx = Math.max(0, paneIds.indexOf(node.paneId));
+    return { kind: "pane", paneIndex: idx };
+  }
+  return {
+    kind: "split",
+    id: node.id,
+    direction: node.direction,
+    ratio: clampRatio(node.ratio),
+    first: nodeToPersistedLayout(node.first, paneIds),
+    second: nodeToPersistedLayout(node.second, paneIds),
   };
 }
 

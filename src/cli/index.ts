@@ -1,5 +1,7 @@
 import path from "path";
 import fs from "fs";
+import os from "os";
+import { spawn, execSync } from "child_process";
 import {
   registerProject,
   getProjectMeta,
@@ -17,8 +19,189 @@ import { startMcpServer } from "../core/mcp";
 import { runBenchmarks } from "../core/benchmarks";
 import { getTelemetrySummary, clearMetricsLog } from "../core/telemetry";
 import { detectInstalledLspServers } from "../core/lspBridge";
+import {
+  AGENT_REGISTRY,
+  applyAgentSetup,
+  autoSetupDetectedAgents,
+  buildAgentSetup,
+  detectInstalledAgentsSync,
+  listAgentIds,
+} from "../core/agents";
 
 export const KAI_VERSION = "0.1.0";
+
+/**
+ * Persist active project info and sync SQLite localStorage for WebKitGTK/Tauri
+ * so that when Kai opens (or gains focus), it automatically selects this project in Code Mode.
+ */
+export function saveActiveProjectState(
+  projectPath: string,
+  projectName: string,
+  projectId: string,
+  mode: string = "code"
+): void {
+  try {
+    ensureKaiDirectories();
+    const activeFile = path.join(getKaiHomeDir(), "active_project.json");
+    fs.writeFileSync(
+      activeFile,
+      JSON.stringify(
+        {
+          id: projectId,
+          name: projectName,
+          path: projectPath,
+          mode,
+          timestamp: Date.now(),
+        },
+        null,
+        2
+      ),
+      { mode: 0o600, encoding: "utf-8" }
+    );
+  } catch {
+    // ignore
+  }
+
+  // Attempt to sync SQLite localStorage for WebKitGTK if available
+  try {
+    const dbPath = path.join(
+      os.homedir(),
+      ".local/share/com.kai.terminal/localstorage/tauri_localhost_0.localstorage"
+    );
+    if (fs.existsSync(dbPath)) {
+      const toHex = (str: string) => Buffer.from(str, "utf16le").toString("hex");
+      const sql = `INSERT OR REPLACE INTO ItemTable (key, value) VALUES ('kai_active_project', X'${toHex(projectPath)}'); INSERT OR REPLACE INTO ItemTable (key, value) VALUES ('kai_active_mode', X'${toHex(mode)}'); INSERT OR REPLACE INTO ItemTable (key, value) VALUES ('kai_recent_projects', X'${toHex(JSON.stringify([projectPath]))}');`;
+      execSync(`sqlite3 "${dbPath}" "${sql}"`, { stdio: "ignore" });
+    }
+  } catch {
+    // ignore if sqlite3 is not available
+  }
+}
+
+/**
+ * Clear Code Mode: removes the persisted active project so the desktop app
+ * falls back to plain terminal mode. Never touches the project index data
+ * (use `unregister` for that) or the repository itself.
+ */
+export function clearActiveProjectState(): void {
+  try {
+    ensureKaiDirectories();
+    const activeFile = path.join(getKaiHomeDir(), "active_project.json");
+    if (fs.existsSync(activeFile)) {
+      fs.unlinkSync(activeFile);
+    }
+  } catch {
+    // ignore
+  }
+
+  try {
+    const dbPath = path.join(
+      os.homedir(),
+      ".local/share/com.kai.terminal/localstorage/tauri_localhost_0.localstorage"
+    );
+    if (fs.existsSync(dbPath)) {
+      const toHex = (str: string) => Buffer.from(str, "utf16le").toString("hex");
+      const sql = `DELETE FROM ItemTable WHERE key = 'kai_active_project'; INSERT OR REPLACE INTO ItemTable (key, value) VALUES ('kai_active_mode', X'${toHex("terminal")}');`;
+      execSync(`sqlite3 "${dbPath}" "${sql}"`, { stdio: "ignore" });
+    }
+  } catch {
+    // ignore if sqlite3 is not available
+  }
+}
+
+import { fileURLToPath } from "url";
+
+/**
+ * Locate the installed Kai Terminal desktop executable.
+ */
+export function findKaiAppBinary(): string | null {
+  const home = os.homedir();
+  let baseDir = process.cwd();
+  try {
+    baseDir = path.dirname(fileURLToPath(import.meta.url));
+  } catch {
+    // fallback to process.cwd()
+  }
+
+  const candidates = [
+    path.join(home, ".local/bin/cross-platform-terminal-backend"),
+    path.join(home, ".local/bin/kai-terminal"),
+    "/usr/local/bin/cross-platform-terminal-backend",
+    "/usr/bin/cross-platform-terminal-backend",
+    path.resolve(baseDir, "../../src-tauri/target/debug/cross-platform-terminal-backend"),
+    path.resolve(baseDir, "../../src-tauri/target/release/cross-platform-terminal-backend"),
+  ];
+
+  for (const c of candidates) {
+    try {
+      if (fs.existsSync(c) && fs.statSync(c).isFile()) {
+        return c;
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  try {
+    const cmd =
+      process.platform === "win32"
+        ? "where cross-platform-terminal-backend"
+        : "which cross-platform-terminal-backend";
+    const found = execSync(cmd, { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] })
+      .trim()
+      .split("\n")[0];
+    if (found && fs.existsSync(found)) {
+      return found;
+    }
+  } catch {
+    // ignore
+  }
+
+  return null;
+}
+
+/**
+ * Check if the Kai Terminal desktop app process is already running.
+ */
+export function isKaiAppRunning(): boolean {
+  if (process.platform === "win32") {
+    try {
+      const out = execSync('tasklist /FI "IMAGENAME eq cross-platform-terminal-backend.exe"', {
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+      return out.includes("cross-platform-terminal-backend");
+    } catch {
+      return false;
+    }
+  }
+
+  try {
+    const pids = execSync("pidof cross-platform-terminal-backend kai-terminal", {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    if (pids) return true;
+  } catch {
+    // pidof may not be installed or no match
+  }
+
+  try {
+    const out = execSync("ps -A -o pid,comm", {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    for (const line of out.split("\n")) {
+      if (line.includes("cross-platform-") || line.includes("kai-terminal")) {
+        return true;
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  return false;
+}
 
 /**
  * Build the verified MCP configuration snippet for an external agent.
@@ -27,155 +210,12 @@ export const KAI_VERSION = "0.1.0";
  * Windows path (`C:\tools\...`) into the snippet would emit invalid JSON
  * (`\t` parses as a tab escape).
  *
- * Supported agents: claude, cursor, codex, gemini, copilot (vscode),
- * windsurf, cline. Unknown ids return null.
+ * Supported agents are defined in `src/core/agents.ts` (single source of
+ * truth shared with dynamic system detection). Unknown ids return null.
  */
-export const SUPPORTED_AGENTS = [
-  "claude",
-  "cursor",
-  "codex",
-  "gemini",
-  "copilot",
-  "windsurf",
-  "cline",
-] as const;
+export const SUPPORTED_AGENTS: readonly string[] = listAgentIds();
 
-export function buildAgentSetup(agent: string, kaiBin: string): string | null {
-  const normalized = agent.toLowerCase();
-  const quotedBin = JSON.stringify(kaiBin);
-  if (normalized === "claude") {
-    return `
-Verified Claude Code MCP Configuration:
-Add the following to your Claude Code settings (e.g., ~/.claude.json or project config):
-
-{
-  "mcpServers": {
-    "kai": {
-      "command": "node",
-      "args": [${quotedBin}, "mcp", "."]
-    }
-  }
-}
-
-Verification:
-Run: claude
-In chat: "Use kai_project_info to inspect the codebase."
-`;
-  }
-
-  if (normalized === "cursor") {
-    return `
-Verified Cursor MCP Configuration:
-Add to .cursor/mcp.json or Cursor Settings > MCP:
-
-{
-  "mcpServers": {
-    "kai": {
-      "command": "node",
-      "args": [${quotedBin}, "mcp", "\${workspaceFolder}"]
-    }
-  }
-}
-`;
-  }
-
-  if (normalized === "codex") {
-    return `
-Verified OpenAI Codex / CLI Agent Configuration:
-Launch Codex with MCP stdio configuration pointing to Kai:
-
-{
-  "mcp_servers": [
-    {
-      "name": "kai",
-      "command": "node",
-      "args": [${quotedBin}, "mcp", "."]
-    }
-  ]
-}
-`;
-  }
-
-  if (normalized === "gemini") {
-    return `
-Verified Gemini CLI MCP Configuration:
-Add to ~/.muse/settings.json (or .muse/settings.json for project scope):
-
-{
-  "mcpServers": {
-    "kai": {
-      "command": "node",
-      "args": [${quotedBin}, "mcp", "."]
-    }
-  }
-}
-
-Verification:
-Run: gemini
-In chat: "Use kai_project_info to inspect the codebase."
-`;
-  }
-
-  if (normalized === "copilot" || normalized === "vscode") {
-    return `
-Verified VS Code / Copilot MCP Configuration:
-Add to .vscode/mcp.json:
-
-{
-  "servers": {
-    "kai": {
-      "type": "stdio",
-      "command": "node",
-      "args": [${quotedBin}, "mcp", "."]
-    }
-  }
-}
-
-Verification:
-Open VS Code MCP settings and confirm the "kai" server is running.
-`;
-  }
-
-  if (normalized === "windsurf" || normalized === "codeium") {
-    return `
-Verified Windsurf MCP Configuration:
-Add to ~/.codeium/windsurf/mcp_config.json:
-
-{
-  "mcpServers": {
-    "kai": {
-      "command": "node",
-      "args": [${quotedBin}, "mcp", "."]
-    }
-  }
-}
-
-Verification:
-Restart Windsurf and confirm the "kai" MCP server is connected.
-`;
-  }
-
-  if (normalized === "cline") {
-    return `
-Verified Cline MCP Configuration:
-Add to cline_mcp_settings.json (VS Code Cline extension settings):
-
-{
-  "mcpServers": {
-    "kai": {
-      "command": "node",
-      "args": [${quotedBin}, "mcp", "."]
-    }
-  }
-}
-
-Verification:
-Open the Cline MCP settings panel and confirm the "kai" server is listed.
-`;
-  }
-
-  return null;
-}
+export { buildAgentSetup, AGENT_REGISTRY };
 
 export function printHelp(): void {
   console.log(`
@@ -186,7 +226,8 @@ Usage:
   kai <command> [options]
 
 Commands:
-  code [path]             Register and index a project (does not launch an agent)
+  code [path]             Register, index, and open project in Kai Terminal (Code Mode)
+  stop [code]             Clear Code Mode and return to plain terminal mode
   status [path]           Show project registration, index health, and file statistics
   unregister <path|id>    Delete a project's Kai-owned index data (repo untouched)
   graph rebuild [path]    Rebuild project symbol index and dependency graph
@@ -198,7 +239,9 @@ Commands:
   lsp [status]            Probe locally installed Language Server Protocol (LSP) servers
   mcp [path]              Start stdio JSON-RPC Model Context Protocol (MCP) server
   bench [path]            Run privacy-safe evaluation benchmark across 4 configurations
-  agent setup <agent>     Output verified MCP configuration for external agents (claude, cursor, codex, gemini, copilot, windsurf, cline)
+  agent setup <agent|all> Install kai MCP wiring for an agent (auto-detects system)
+  agent register ...     Alias of 'agent setup' (writes config files automatically)
+  agent list              Dynamically detect AI agents installed on this system
   metrics [clear]         Display local privacy-safe telemetry summary
 
 Flags:
@@ -207,6 +250,8 @@ Flags:
 
 Examples:
   kai code .
+  kai stop code
+  kai .
   kai status
   kai unregister . --dry-run
   kai query "Explain PtyManager lifecycle"
@@ -214,6 +259,7 @@ Examples:
   kai session clean --dry-run
   kai mcp .
   kai agent setup claude
+  kai agent setup all       # auto-wire every agent installed on this system
 `);
 }
 
@@ -232,9 +278,36 @@ export async function runCli(argv: string[]): Promise<number> {
   }
 
   try {
-    // 1. kai code [path]
-    if (command === "code") {
-      const targetPath = args[1] || process.cwd();
+    // Direct folder invocation: support `kai .` or `kai <path>` directly
+    const isDirectPath =
+      command === "." ||
+      (!command.startsWith("-") &&
+        command !== "code" &&
+        command !== "stop" &&
+        command !== "status" &&
+        command !== "unregister" &&
+        command !== "graph" &&
+        command !== "query" &&
+        command !== "cost" &&
+        command !== "config" &&
+        command !== "session" &&
+        command !== "mcp" &&
+        command !== "bench" &&
+        command !== "agent" &&
+        command !== "metrics" &&
+        command !== "lsp" &&
+        (() => {
+          try {
+            return fs.existsSync(command) && fs.statSync(command).isDirectory();
+          } catch {
+            return false;
+          }
+        })());
+
+    // 1. kai code [path] OR kai [path]
+    if (command === "code" || isDirectPath) {
+      const targetArg = command === "code" ? args[1] : command;
+      const targetPath = targetArg && !targetArg.startsWith("-") ? targetArg : process.cwd();
       const meta = registerProject(targetPath);
       console.log(`[kai] Registered project: "${meta.name}"`);
       console.log(`[kai] Canonical path: ${meta.canonicalPath}`);
@@ -246,6 +319,52 @@ export async function runCli(argv: string[]): Promise<number> {
       console.log(`- Symbols indexed: ${Object.keys(index.symbolIndex).length}`);
       console.log(`- Project rules loaded: ${index.rules.length}`);
       console.log(`- Storage directory: ${getProjectStorageDir(meta.id)}`);
+
+      // Persist active project in Code Mode
+      saveActiveProjectState(meta.canonicalPath, meta.name, meta.id, "code");
+
+      const noLaunch =
+        args.includes("--no-launch") ||
+        args.includes("--headless") ||
+        args.includes("--no-gui") ||
+        Boolean(process.env.VITEST);
+
+      if (!noLaunch) {
+        const appBinary = findKaiAppBinary();
+        if (appBinary) {
+          if (isKaiAppRunning()) {
+            console.log(
+              `[kai] Kai Terminal is running — active project set to "${meta.name}" in Code Mode.`
+            );
+          } else {
+            console.log(`[kai] Launching Kai Terminal in Code Mode for "${meta.canonicalPath}"...`);
+            try {
+              const child = spawn(appBinary, [meta.canonicalPath], {
+                detached: true,
+                stdio: "ignore",
+                env: {
+                  ...process.env,
+                  KAI_ACTIVE_PROJECT: meta.canonicalPath,
+                  KAI_MODE: "code",
+                },
+              });
+              child.unref();
+            } catch {
+              // ignore spawn failure
+            }
+          }
+        }
+      }
+
+      return 0;
+    }
+
+    // 1b. kai stop [code] — clear Code Mode, back to plain terminal mode.
+    // Accepts `kai stop`, `kai stop code`, and `kai clear [code]` (alias).
+    if (command === "stop" || command === "clear") {
+      clearActiveProjectState();
+      console.log(`[kai] Code Mode cleared — back to plain terminal mode.`);
+      console.log(`Run 'kai code .' to enter Code Mode again.`);
       return 0;
     }
 
@@ -594,29 +713,127 @@ export async function runCli(argv: string[]): Promise<number> {
       return 0;
     }
 
-    // 11. kai agent setup <agent>
-    if (command === "agent" && args[1] === "setup") {
-      const agent = (args[2] || "").toLowerCase();
+    // 11. kai agent list (dynamic system detection + wiring state)
+    if (command === "agent" && (args[1] === "list" || args[1] === "status")) {
+      const detected = detectInstalledAgentsSync({ projectDir: process.cwd() });
+      console.log(`[kai] AI Agent Detection (live system probe):`);
+      for (const d of detected) {
+        const icon = d.binaryFound ? "✓" : "✗";
+        const state = d.binaryFound
+          ? `Installed (${d.binaryPath})${d.configured ? ", configured" : ""}`
+          : d.configured
+            ? "Config found (binary not on PATH)"
+            : "Not found";
+        const wired = d.kaiWired ? "kai wired ✓" : "kai not wired";
+        console.log(`  ${icon} ${d.id.padEnd(10)} ${d.name.padEnd(16)} ${state} · ${wired}`);
+        if (!d.binaryFound) {
+          console.log(`    └─ ${d.installGuidance} | config: ${d.configFile}`);
+        }
+      }
+      console.log(
+        `\nRun 'kai agent setup <name>' to install MCP wiring, e.g. 'kai agent setup opencode'.`
+      );
+      console.log(`Run 'kai agent setup all' to wire every installed agent at once.`);
+      return 0;
+    }
+
+    // 11b. kai agent setup <agent|all> / kai agent register ...
+    // Automatically installs kai MCP wiring into the agent's own config
+    // file (with backup). Use --print for the snippet only, --dry-run to
+    // preview, --force to refresh an existing kai entry.
+    if (command === "agent" && (args[1] === "setup" || args[1] === "register")) {
+      // Flags may appear before or after the agent name.
+      const rest = args.slice(2);
+      const positionals = rest.filter((a) => !a.startsWith("-"));
+      const rawTarget = (positionals[0] || "").toLowerCase();
+      const printOnly = args.includes("--print");
+      const dryRun = args.includes("--dry-run");
+      const force = args.includes("--force");
+      const scope = args.includes("--project")
+        ? ("project" as const)
+        : args.includes("--global")
+          ? ("global" as const)
+          : ("auto" as const);
       // Resolve the installed entry point, not the cwd. The old code used
       // process.cwd()/bin/kai.js which is wrong for global installs.
       const kaiBin = process.argv[1] ? path.resolve(process.argv[1]) : "kai";
-      const snippet = buildAgentSetup(agent, kaiBin);
 
-      if (snippet) {
-        console.log(snippet);
+      if (!rawTarget || rawTarget.startsWith("-")) {
+        // Missing target: show dynamic system state so users can see at a
+        // glance which agents are actually installed right now.
+        const detected = detectInstalledAgentsSync({ projectDir: process.cwd() });
+        console.log(`\nAvailable agent setup targets (live system status):`);
+        for (const d of detected) {
+          const icon = d.binaryFound ? "✓" : "✗";
+          const wired = d.kaiWired ? "wired ✓" : "not wired";
+          console.log(`  ${icon} kai agent setup ${d.id.padEnd(10)} ${d.configFile} (${wired})`);
+        }
+        console.log(`\nTip: 'kai agent list' shows full install paths and config state.`);
+        console.log(`Tip: 'kai agent setup all' wires every installed agent automatically.`);
         return 0;
       }
 
-      console.log(`
-Available agent setup targets:
-  kai agent setup claude
-  kai agent setup cursor
-  kai agent setup codex
-  kai agent setup gemini
-  kai agent setup copilot   (VS Code)
-  kai agent setup windsurf
-  kai agent setup cline
-`);
+      if (rawTarget === "all" || rawTarget === "--all") {
+        const results = autoSetupDetectedAgents(kaiBin, {
+          projectDir: process.cwd(),
+          scope,
+          force,
+          dryRun,
+        });
+        let wrote = 0;
+        let already = 0;
+        let skipped = 0;
+        console.log(`[kai] Agent auto-setup${dryRun ? " (dry-run, nothing written)" : ""}:`);
+        for (const r of results) {
+          const icon = r.wrote ? "✓" : r.alreadyConfigured ? "=" : "✗";
+          console.log(`  ${icon} ${r.id.padEnd(10)} ${r.message}`);
+          if (r.backupPath) console.log(`      backup: ${r.backupPath}`);
+          if (r.wrote) wrote++;
+          else if (r.alreadyConfigured) already++;
+          else skipped++;
+        }
+        console.log(
+          `[kai] Done: ${wrote} wired, ${already} already configured, ${skipped} skipped.`
+        );
+        return skipped > 0 && wrote === 0 && already === 0 ? 1 : 0;
+      }
+
+      const snippet = buildAgentSetup(rawTarget, kaiBin);
+      if (!snippet) {
+        console.log(`[kai] Unknown agent "${rawTarget}".`);
+        const detected = detectInstalledAgentsSync({ projectDir: process.cwd() });
+        console.log(`\nAvailable agent setup targets (live system status):`);
+        for (const d of detected) {
+          const icon = d.binaryFound ? "✓" : "✗";
+          console.log(`  ${icon} kai agent setup ${d.id.padEnd(10)} ${d.configFile}`);
+        }
+        console.log(`\nTip: 'kai agent list' shows full install paths and config state.`);
+        return 1;
+      }
+
+      const result = applyAgentSetup(rawTarget, kaiBin, {
+        projectDir: process.cwd(),
+        scope,
+        force,
+        dryRun: dryRun || printOnly,
+      });
+      if (result.skipped && !printOnly) {
+        console.error(`[kai] ${result.message}`);
+        if (printOnly) console.log(snippet);
+        return 2;
+      }
+      if (dryRun || printOnly) {
+        if (result.skipped) console.log(`[kai] Note: ${result.message}`);
+        console.log(snippet);
+        if (dryRun && !result.skipped)
+          console.log(`[kai] ${result.message} (dry-run, nothing written)`);
+        return 0;
+      }
+      console.log(`[kai] ${result.message}`);
+      if (result.backupPath) {
+        console.log(`[kai] Previous config backed up to: ${result.backupPath}`);
+      }
+      console.log(`[kai] Restart ${result.name} so it picks up the kai MCP server.`);
       return 0;
     }
 

@@ -65,6 +65,8 @@ export async function getGitInfo(cwd: string): Promise<GitInfo> {
 
 const RECENT_KEY = "kai_recent_projects";
 const LEGACY_RECENT_KEY = "terminal_recent_projects";
+export const ACTIVE_PROJECT_KEY = "kai_active_project";
+export const ACTIVE_MODE_KEY = "kai_active_mode";
 const MAX_RECENT = 10;
 
 export function loadRecentProjects(): string[] {
@@ -77,6 +79,68 @@ export function loadRecentProjects(): string[] {
       : [];
   } catch {
     return [];
+  }
+}
+
+/** Get the currently selected active project, falling back to most recent project. */
+export function getActiveProject(): string | null {
+  try {
+    const active = localStorage.getItem(ACTIVE_PROJECT_KEY);
+    if (active && active.trim()) {
+      return active.trim();
+    }
+    const recent = loadRecentProjects();
+    if (recent.length > 0 && recent[0].trim()) {
+      return recent[0].trim();
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+/** Set the active project directory and mode. */
+export function setActiveProject(dir: string, mode: string = "code"): void {
+  const trimmed = dir.trim();
+  if (!trimmed) return;
+  try {
+    localStorage.setItem(ACTIVE_PROJECT_KEY, trimmed);
+    localStorage.setItem(ACTIVE_MODE_KEY, mode);
+    recordRecentProject(trimmed);
+  } catch {
+    // ignore
+  }
+}
+
+/** Get active mode ("code" by default, or "terminal"). */
+export function getActiveMode(): string {
+  try {
+    return localStorage.getItem(ACTIVE_MODE_KEY) || "code";
+  } catch {
+    return "code";
+  }
+}
+
+/** Set active mode. */
+export function setActiveMode(mode: string): void {
+  try {
+    localStorage.setItem(ACTIVE_MODE_KEY, mode);
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * Clear Code Mode: drops the active project and returns to plain terminal
+ * mode. Recent-project history is kept — only the active selection is
+ * cleared (mirrors `kai stop code` in the CLI).
+ */
+export function clearActiveProject(): void {
+  try {
+    localStorage.removeItem(ACTIVE_PROJECT_KEY);
+    localStorage.setItem(ACTIVE_MODE_KEY, "terminal");
+  } catch {
+    // ignore
   }
 }
 
@@ -139,14 +203,11 @@ export function resolveEffectiveProjectDir(
   return "";
 }
 
-export async function openProjectInEditor(cwd: string, editorPath?: string): Promise<string> {
+export async function openProjectInEditor(cwd?: string, editorPath?: string): Promise<string> {
   if (!isTauriAvailable()) {
     throw new Error("Editor launch is only available inside the desktop app.");
   }
-  const dir = resolveEffectiveProjectDir(cwd);
-  if (!dir) {
-    throw new Error("No project directory set. Enter a working directory first.");
-  }
+  const dir = resolveEffectiveProjectDir(cwd) || ".";
   return await invoke<string>("open_project_in_editor", {
     cwd: dir,
     editorPath: editorPath?.trim() || null,

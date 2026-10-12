@@ -69,7 +69,7 @@ describe("pane layout model", () => {
     expect(closePane(tab).panes).toHaveLength(1);
   });
 
-  it("splits only the active pane: inserts adjacent and keeps layout direction", () => {
+  it("splits only the active pane: inserts adjacent and updates layout direction", () => {
     let tab: SplitTabState = {
       panes: [pane("t-p1")],
       activePaneId: "t-p1",
@@ -85,9 +85,9 @@ describe("pane layout model", () => {
     expect(tab.panes[0].id).toBe(before[0]);
     expect(tab.panes[1].id).toBe(tab.activePaneId);
     expect(tab.panes[2].id).toBe(before[1]);
-    // A different direction must NOT flip the whole tab layout.
+    // Splitting with horizontal updates splitDirection to horizontal.
     tab = splitTab(tab, "t", "horizontal", (id) => pane(id));
-    expect(tab.splitDirection).toBe("vertical");
+    expect(tab.splitDirection).toBe("horizontal");
     expect(tab.panes).toHaveLength(4);
   });
 

@@ -11,7 +11,9 @@ const CLI_ROWS: Array<[string, string]> = [
   ['kai query "<task>"', 'Print ranked context for a task (budgeted)'],
   ['kai cost', 'Show token usage for the last query'],
   ['kai mcp .', 'Serve the 7 MCP tools over stdio'],
-  ['kai agent setup <agent>', 'Write config for: claude, cursor, codex, gemini, copilot, windsurf, cline'],
+  ['kai agent setup <agent>', 'Install wiring for: claude, cursor, codex, gemini, copilot, windsurf, cline, opencode, aider'],
+  ['kai agent setup all', 'Auto-wire every agent installed on this system'],
+  ['kai agent list', 'Dynamically detect installed agents + kai wiring state'],
   ['kai bench .', 'Run the local retrieval benchmark'],
   ['kai unregister <path|id>', 'Delete an index (repo untouched)'],
 ];

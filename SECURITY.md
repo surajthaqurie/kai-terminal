@@ -17,7 +17,8 @@ This document describes process execution controls, IPC capabilities, permission
 - **Minimal Capability Permissions:** Tauri capabilities (`src-tauri/capabilities/default.json`) restrict IPC commands exclusively to the main application window with `core:default` minimal permissions.
 - **Content Security Policy (CSP):** Enforced in `tauri.conf.json`:
   `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:;`
-- **Exposed IPC Commands:** `create_pty`, `write_to_pty`, `resize_pty`, `close_pty`, `get_available_shells`, `get_ai_cli_status`, `get_ai_cli_details`, `get_git_info_cmd`, `get_diagnostics`. No remote code execution interfaces exist.
+- **Exposed IPC Commands:** `create_pty`, `write_to_pty`, `resize_pty`, `close_pty`, `get_available_shells`, `get_ai_cli_status`, `get_ai_cli_details`, `check_ai_cli_path`, `get_kai_cli_launch_cmd`, `setup_agent_mcp_cmd`, `get_git_info_cmd`, `get_diagnostics`. No remote code execution interfaces exist.
+- **Agent Auto-Wire Safety:** `setup_agent_mcp_cmd` only accepts built-in provider ids (never paths); the launcher binary must exist on PATH or as a file; configs over 1 MB or with invalid JSON/TOML are never rewritten; existing files are backed up to `<file>.kai.bak` and replaced atomically (temp file + rename).
 
 ---
 

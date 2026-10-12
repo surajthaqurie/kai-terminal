@@ -7,13 +7,20 @@ import { ptyService, PtyService } from "../services/ptyService";
 import { isCopyKeyEvent, isPasteKeyEvent } from "../services/shortcuts";
 import { ShellProfile, SessionStatus, UserSettings } from "../types/terminal";
 import { SettingsService, DEFAULT_SETTINGS } from "../services/settingsService";
+import {
+  completionRemainder,
+  currentToken,
+  getCompletions,
+  loadCommandHistory,
+  recordCommand,
+  saveCommandHistory,
+} from "../services/autocomplete";
 import { SearchBar } from "./SearchBar";
 
 export interface TerminalViewRef {
   clear: () => void;
   copySelection: () => Promise<string>;
   pasteText: (text: string) => void;
-  restart: () => void;
   focus: () => void;
   toggleSearch: () => void;
 }
@@ -31,6 +38,7 @@ interface TerminalViewProps {
   visible?: boolean;
   onSessionStatusChange?: (status: SessionStatus, message?: string) => void;
   onExit?: (exitCode: number) => void;
+  onCwdResolved?: (cwd: string) => void;
 }
 
 export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
@@ -43,6 +51,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       visible = true,
       onSessionStatusChange,
       onExit,
+      onCwdResolved,
     },
     ref
   ) => {
@@ -58,9 +67,100 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
     const initSeqRef = useRef<number>(0);
     const [isSearchVisible, setIsSearchVisible] = useState(false);
     // `exit` leaves the shell dead: track it so the pane always offers an
-    // explicit Restart / Close affordance instead of a terminal the user
+    // explicit Close affordance instead of a terminal the user
     // "is not able to close". Cleared on (re)connect.
     const [exitedCode, setExitedCode] = useState<number | null>(null);
+
+    // ---- Inline command autocomplete -------------------------------------
+    // Fish-style helper over local history + builtin commands. The shell
+    // keeps native Tab completion; we only intercept Tab while our popup
+    // has a match, otherwise the keystroke passes through untouched.
+    const lineBufferRef = useRef("");
+    const historyRef = useRef<string[]>([]);
+    const [suggestions, setSuggestions] = useState<string[]>([]);
+    const [selectedSuggestion, setSelectedSuggestion] = useState(0);
+    const suggestionsRef = useRef<string[]>([]);
+    suggestionsRef.current = suggestions;
+    const selectedRef = useRef(0);
+    selectedRef.current = selectedSuggestion;
+    const lineBufferForSuggestRef = useRef("");
+    // Whether the backend has data for this pane (avoids popup on dead pane).
+    const hasBackendRef = useRef(false);
+
+    const refreshSuggestions = (line: string) => {
+      lineBufferForSuggestRef.current = line;
+      if (!hasBackendRef.current || exitedCode !== null) {
+        setSuggestions([]);
+        return;
+      }
+      const token = currentToken(line);
+      if (!token) {
+        setSuggestions([]);
+        return;
+      }
+      const matches = getCompletions(token, historyRef.current);
+      setSuggestions(matches);
+      setSelectedSuggestion(0);
+    };
+
+    const commitLineBuffer = () => {
+      const line = lineBufferRef.current;
+      lineBufferRef.current = "";
+      setSuggestions([]);
+      if (line.trim()) {
+        historyRef.current = recordCommand(historyRef.current, line);
+        saveCommandHistory(historyRef.current);
+      }
+    };
+
+    const trackInputData = (data: string) => {
+      // Enter submits the line.
+      if (data === "\r" || data === "\n" || data === "\r\n") {
+        commitLineBuffer();
+        return;
+      }
+      // Ctrl+C / Ctrl+U cancel the line.
+      if (data === "\x03" || data === "\x15") {
+        lineBufferRef.current = "";
+        setSuggestions([]);
+        return;
+      }
+      // Ctrl+W deletes the last word.
+      if (data === "\x17") {
+        lineBufferRef.current = lineBufferRef.current.replace(/[^ \t\n]+\s*$/, "");
+        refreshSuggestions(lineBufferRef.current);
+        return;
+      }
+      // Backspace / DEL.
+      if (data === "\x7f" || data === "\b") {
+        lineBufferRef.current = lineBufferRef.current.slice(0, -1);
+        refreshSuggestions(lineBufferRef.current);
+        return;
+      }
+      // Escape sequences (arrows, alt combos): don't corrupt the buffer.
+      if (data.startsWith("\x1b")) return;
+      // Other control chars: ignore for completion tracking.
+      if (/[\x00-\x1f]/.test(data)) return;
+      const next = (lineBufferRef.current + data).slice(-4096);
+      lineBufferRef.current = next;
+      refreshSuggestions(next);
+    };
+
+    const acceptSuggestion = (suggestion: string) => {
+      const token = currentToken(lineBufferForSuggestRef.current || lineBufferRef.current);
+      const remainder = completionRemainder(token, suggestion);
+      const backendId = backendPtyIdRef.current;
+      if (remainder && backendId) {
+        lineBufferRef.current = (lineBufferRef.current + remainder).slice(-4096);
+        ptyService.writeToPty(backendId, remainder).catch(() => {});
+      }
+      setSuggestions([]);
+      xtermRef.current?.focus();
+    };
+    const acceptSuggestionRef = useRef(acceptSuggestion);
+    acceptSuggestionRef.current = acceptSuggestion;
+    // ----------------------------------------------------------------------
+
     // The pty-output/pty-exit listeners are registered once per pane
     // (effect deps `[sessionId]`), so they must go through refs to always
     // call the LATEST callbacks/props. Otherwise `exit` fires a stale
@@ -70,6 +170,8 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
     onExitRef.current = onExit;
     const onStatusRef = useRef(onSessionStatusChange);
     onStatusRef.current = onSessionStatusChange;
+    const onCwdResolvedRef = useRef(onCwdResolved);
+    onCwdResolvedRef.current = onCwdResolved;
     const shellRef = useRef(selectedShell);
     shellRef.current = selectedShell;
     const cwdRef = useRef(cwd);
@@ -95,13 +197,14 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       pasteText: (text: string) => {
         const backendId = backendPtyIdRef.current;
         if (text && backendId) {
+          // Pasted text becomes part of the current line buffer so
+          // completions stay in sync.
+          lineBufferRef.current = (lineBufferRef.current + text).slice(-4096);
+          refreshSuggestions(lineBufferRef.current);
           PtyService.writeToPty(backendId, text).catch((e) => {
             console.error("Paste failed:", e);
           });
         }
-      },
-      restart: () => {
-        void initPtySession();
       },
       focus: () => {
         xtermRef.current?.focus();
@@ -122,6 +225,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       // before spawning a replacement (prevents orphan PTY processes).
       const previousId = backendPtyIdRef.current;
       backendPtyIdRef.current = null;
+      hasBackendRef.current = false;
       if (previousId) {
         try {
           await PtyService.closePty(previousId);
@@ -155,7 +259,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
           rows,
         });
         if (mySeq !== initSeqRef.current) {
-          // A newer restart superseded this attempt; reap the orphan.
+          // A newer init superseded this attempt; reap the orphan.
           try {
             await PtyService.closePty(sessionInfo.id);
           } catch {
@@ -165,7 +269,11 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         }
 
         backendPtyIdRef.current = sessionInfo.id;
+        hasBackendRef.current = true;
         onStatusRef.current?.("connected");
+        if (sessionInfo.cwd) {
+          onCwdResolvedRef.current?.(sessionInfo.cwd);
+        }
         term.writeln(
           `\x1b[32m[Connected to ${shellRef.current?.name || selectedShell?.name || "Shell"} (PID ${sessionInfo.pid ?? "N/A"})]\x1b[0m\r\n`
         );
@@ -194,6 +302,10 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         // ignore hidden-tab layout errors
       }
     }, [settings]);
+
+    useEffect(() => {
+      historyRef.current = loadCommandHistory();
+    }, []);
 
     useEffect(() => {
       if (!containerRef.current) return;
@@ -230,9 +342,44 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       searchAddonRef.current = searchAddon;
 
       // 2. Custom key event handler: universal copy/paste across
-      // Windows / Linux / macOS + search toggle. Plain Ctrl+C (no selection)
-      // always reaches the shell as SIGINT.
+      // Windows / Linux / macOS + search toggle + autocomplete popup.
+      // Plain Ctrl+C (no selection) always reaches the shell as SIGINT.
       term.attachCustomKeyEventHandler((event: KeyboardEvent) => {
+        // Autocomplete popup navigation (only when we have matches).
+        // Tab is intercepted ONLY here; otherwise it passes through so
+        // native shell completion keeps working.
+        const popupOpen = suggestionsRef.current.length > 0;
+        if (popupOpen && event.type === "keydown" && !event.ctrlKey && !event.metaKey && !event.altKey) {
+          if (event.code === "Tab") {
+            event.preventDefault();
+            event.stopPropagation();
+            const list = suggestionsRef.current;
+            acceptSuggestionRef.current(list[selectedRef.current] ?? list[0]);
+            return false;
+          }
+          if (event.code === "ArrowDown") {
+            event.preventDefault();
+            event.stopPropagation();
+            setSelectedSuggestion((prev) =>
+              prev + 1 >= suggestionsRef.current.length ? 0 : prev + 1
+            );
+            return false;
+          }
+          if (event.code === "ArrowUp") {
+            event.preventDefault();
+            event.stopPropagation();
+            setSelectedSuggestion((prev) =>
+              prev - 1 < 0 ? suggestionsRef.current.length - 1 : prev - 1
+            );
+            return false;
+          }
+          if (event.code === "Escape") {
+            event.preventDefault();
+            event.stopPropagation();
+            setSuggestions([]);
+            return false;
+          }
+        }
         // Copy: Ctrl+Shift+C (Win/Linux), Cmd+C / Cmd+Shift+C (macOS),
         // Ctrl+Insert (Win/Linux). Plain Ctrl+C always reaches the shell as
         // SIGINT; Shift+Insert is paste on every OS, never copy.
@@ -261,6 +408,8 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
               .then((text) => {
                 const backendId = backendPtyIdRef.current;
                 if (text && backendId) {
+                  lineBufferRef.current = (lineBufferRef.current + text).slice(-4096);
+                  refreshSuggestions(lineBufferRef.current);
                   ptyService.writeToPty(backendId, text).catch(() => {});
                 }
               })
@@ -278,19 +427,52 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         return true;
       });
 
+      // Register OSC 7 handler (supported by bash, zsh, fish for CWD reporting)
+      try {
+        term.parser.registerOscHandler(7, (data) => {
+          try {
+            const url = new URL(data);
+            let p = decodeURIComponent(url.pathname);
+            if (/^\/[a-zA-Z]:/.test(p)) {
+              p = p.slice(1);
+            }
+            if (p) {
+              onCwdResolvedRef.current?.(p);
+            }
+          } catch {
+            if (data.startsWith("file://")) {
+              let p = data.replace(/^file:\/\/[^/]*\//, "/");
+              if (/^\/[a-zA-Z]:/.test(p)) {
+                p = p.slice(1);
+              }
+              if (p) onCwdResolvedRef.current?.(p);
+            }
+          }
+          return false;
+        });
+
+        // Register OSC 9;9 handler (Windows Terminal / ConEmu CWD reporting)
+        term.parser.registerOscHandler(9, (data) => {
+          if (data.startsWith("9;")) {
+            const p = data.slice(2);
+            if (p) onCwdResolvedRef.current?.(p);
+          }
+          return false;
+        });
+      } catch {
+        // parser handler registration not supported in some mock environments
+      }
+
       // 3. User keyboard input forwarding without altering terminal escape sequences
       const inputDisposable = term.onData((data) => {
         const backendId = backendPtyIdRef.current;
         if (backendId) {
+          trackInputData(data);
           ptyService.writeToPty(backendId, data).catch(() => {
             // Backend already reaped the session; status update arrives via pty-exit.
           });
-        } else {
-          // Terminal disconnected/exited: Enter restarts a fresh shell session
-          if (data === "\r" || data === "\n") {
-            void initPtySession();
-          }
         }
+        // Dead pane: input is ignored (use Close pane). No auto-restart.
       });
 
       // 4. Output streaming (batched per animation frame to avoid UI freeze
@@ -342,20 +524,20 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
           if (payload.id === backendPtyIdRef.current) {
             flushOutput();
             backendPtyIdRef.current = null;
+            hasBackendRef.current = false;
             const exitCode = payload.exit_code ?? 0;
             setExitedCode(exitCode);
+            setSuggestions([]);
             if (exitCode === 0) {
-              term.writeln("\r\n\x1b[90m[Process completed — press Enter to restart]\x1b[0m\r\n");
+              term.writeln("\r\n\x1b[90m[Process completed]\x1b[0m\r\n");
             } else {
-              term.writeln(
-                `\r\n\x1b[33m[Process exited with code ${exitCode} — press Enter to restart]\x1b[0m\r\n`
-              );
+              term.writeln(`\r\n\x1b[33m[Process exited with code ${exitCode}]\x1b[0m\r\n`);
             }
             onStatusRef.current?.("disconnected");
-            // Notify the parent on the next tick so the "press Enter"
-            // message above is flushed to the screen before the tab
-            // unmounts (auto-close). Uses the ref so the exit of a tab
-            // opened long after mount still closes the right pane.
+            // Notify the parent on the next tick so the message above is
+            // flushed to the screen before the tab unmounts (auto-close).
+            // Uses the ref so the exit of a tab opened long after mount
+            // still closes the right pane.
             const code = exitCode;
             setTimeout(() => onExitRef.current?.(code), 0);
           }
@@ -411,6 +593,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         if (unlistenExit) unlistenExit();
         const backendId = backendPtyIdRef.current;
         backendPtyIdRef.current = null;
+        hasBackendRef.current = false;
         if (backendId) {
           ptyService.closePty(backendId).catch(() => {
             // Already reaped; safe to ignore.
@@ -418,7 +601,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         }
         term.dispose();
       };
-      // sessionId scopes the tab lifetime; shell/cwd changes apply on restart.
+      // sessionId scopes the tab lifetime; shell/cwd changes apply on next launch.
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [sessionId]);
 
@@ -502,10 +685,38 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         )}
         <div
           ref={containerRef}
-          className="xterm-viewport"
+          className="terminal-xterm-host"
           role="log"
           aria-label="Terminal output"
         />
+        {suggestions.length > 0 && exitedCode === null && (
+          <div
+            className="terminal-autocomplete"
+            role="listbox"
+            aria-label="Command suggestions. Press Tab to accept, Escape to dismiss."
+          >
+            <div className="terminal-autocomplete-hint">
+              <span>Tab to accept</span>
+              <span>↑↓ to navigate</span>
+              <span>Esc to dismiss</span>
+            </div>
+            {suggestions.map((s, idx) => (
+              <button
+                key={`${s}-${idx}`}
+                type="button"
+                role="option"
+                aria-selected={idx === selectedSuggestion}
+                className={`terminal-autocomplete-item ${idx === selectedSuggestion ? "selected" : ""}`}
+                onMouseEnter={() => setSelectedSuggestion(idx)}
+                onClick={() => acceptSuggestion(s)}
+                title={s}
+              >
+                <span className="terminal-autocomplete-text">{s}</span>
+                <kbd className="terminal-autocomplete-key">{idx === selectedSuggestion ? "Tab" : ""}</kbd>
+              </button>
+            ))}
+          </div>
+        )}
         {exitedCode !== null && (
           <div
             role="status"
@@ -528,22 +739,8 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
           >
             <span style={{ flex: 1 }}>
               Shell exited{exitedCode !== 0 ? ` (code ${exitedCode})` : ""} after `exit`. This pane
-              is dead — restart it or close it.
+              is dead — close it.
             </span>
-            <button
-              type="button"
-              onClick={() => void initPtySession()}
-              style={{
-                padding: "4px 10px",
-                borderRadius: 6,
-                border: "1px solid #4ade80",
-                background: "#166534",
-                color: "#fff",
-                cursor: "pointer",
-              }}
-            >
-              Restart
-            </button>
             <button
               type="button"
               onClick={() => onExitRef.current?.(exitedCode ?? 0)}

@@ -17,7 +17,7 @@ const SNIPPETS: Record<'run' | 'ai' | 'config', { tab: string; code: string }> =
   },
   ai: {
     tab: '$ AI setup',
-    code: '# start the local bridge your AI tool calls\nkai mcp .\n\n# or write the config for one tool\nkai agent setup claude    # ~/.claude.json\nkai agent setup cursor    # .cursor/mcp.json\nkai agent setup codex\nkai agent setup gemini    # ~/.muse/settings.json\nkai agent setup copilot   # .vscode/mcp.json\nkai agent setup windsurf\nkai agent setup cline',
+    code: '# start the local bridge your AI tool calls\nkai mcp .\n\n# install kai wiring automatically (merges config, keeps .kai.bak backup)\nkai agent setup opencode  # ~/.config/opencode/opencode.json\nkai agent setup aider     # ~/.config/aider/mcp.json\nkai agent setup all       # wire every installed agent at once\n\n# detect what is installed right now\nkai agent list',
   },
   config: {
     tab: '$ notes',

@@ -90,12 +90,42 @@ export interface TerminalPane {
   cwd?: string;
   status: SessionStatus;
   errorMessage?: string;
+  parentId?: string;
 }
 
 /**
  * Split layout arrangement options.
+ * `none` = single pane. `horizontal` = stacked top/bottom (row divider).
+ * `vertical` = side-by-side left/right (column divider).
  */
 export type SplitDirection = "none" | "horizontal" | "vertical";
+
+/** Single-axis direction for a nested split node. */
+export type PaneSplitDirection = "horizontal" | "vertical";
+
+/** Leaf of the nested pane layout tree (references a TerminalPane by id). */
+export interface PaneLayoutLeaf {
+  kind: "pane";
+  paneId: string;
+}
+
+/** Inner split node: `first`/`second` laid out along `direction`. */
+export interface PaneLayoutSplit {
+  kind: "split";
+  id: string;
+  direction: PaneSplitDirection;
+  /** Fraction (0.2–0.8) allocated to `first`. `second` gets the remainder. */
+  ratio: number;
+  first: PaneLayoutNode;
+  second: PaneLayoutNode;
+}
+
+/**
+ * Nested binary split tree. Each split action wraps ONLY the active leaf,
+ * so mixed directions compose correctly (e.g. vertical then horizontal
+ * yields side-by-side panes where one side is itself stacked).
+ */
+export type PaneLayoutNode = PaneLayoutLeaf | PaneLayoutSplit;
 
 /**
  * Represents a tab component state for multi-tab UI layout.
@@ -112,6 +142,12 @@ export interface TerminalTab {
   panes: TerminalPane[];
   activePaneId: string;
   splitDirection: SplitDirection;
+  /**
+   * Nested split tree. Source of truth for rendering/resize.
+   * `splitDirection` is kept as a legacy summary (last split axis) for
+   * persistence compat; new code must read `layout`.
+   */
+  layout?: PaneLayoutNode;
 }
 
 /** Minimal git badge data shared with the toolbar (no repo scanning here). */
@@ -150,7 +186,6 @@ export interface KeybindingsConfig {
   search: string;
   commandPalette: string;
   settings: string;
-  restart: string;
   nextTab: string;
   prevTab: string;
   nextPane: string;
@@ -176,6 +211,8 @@ export interface UserSettings {
   launchAtStartup?: boolean;
   /** Restore the previous session's tabs automatically instead of asking. */
   autoRestoreSession?: boolean;
+  /** Periodically check GitHub releases for a newer version (default true). */
+  autoCheckUpdates?: boolean;
   /** Customizable keyboard shortcut map. */
   keybindings: KeybindingsConfig;
 }

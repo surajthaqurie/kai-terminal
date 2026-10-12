@@ -435,6 +435,14 @@ input::-webkit-calendar-picker-indicator {
   left: 0;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
+  /* Splits must never show an outer scrollbar: only the xterm viewport
+     scrolls (see .xterm-viewport rules below). */
+  scrollbar-width: none;
+}
+
+.tab-content::-webkit-scrollbar {
+  display: none;
 }
 
 .terminal-container {
@@ -449,14 +457,50 @@ input::-webkit-calendar-picker-indicator {
   position: relative;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
-.xterm-viewport {
+/* Host element that xterm renders into. NOTE: must NOT be named
+   `xterm-viewport` — that class belongs to xterm's internal scroll element
+   (which sets `overflow-y: scroll`). Reusing the name made our wrapper
+   itself scrollable, producing a second outer scrollbar in splits. */
+.terminal-xterm-host {
   width: 100%;
   height: 100%;
   flex: 1 1 auto;
   min-height: 0;
   min-width: 0;
+  overflow: hidden;
+}
+
+/* Like other terminals (GNOME Terminal, VS Code): the scrollback scrollbar
+   lives inside the terminal and only appears when there is content to
+   scroll — no always-on outer scrollbar. The !important is load-bearing:
+   xterm sets `overflow-y: scroll` inline on the viewport, which would
+   otherwise force an always-visible scrollbar in every pane (most obvious
+   in splits). */
+.xterm .xterm-viewport {
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  scrollbar-width: thin;
+  scrollbar-color: #313244 transparent;
+}
+
+.xterm .xterm-viewport::-webkit-scrollbar {
+  width: 8px;
+}
+
+.xterm .xterm-viewport::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.xterm .xterm-viewport::-webkit-scrollbar-thumb {
+  background-color: #313244;
+  border-radius: 4px;
+}
+
+.xterm .xterm-viewport::-webkit-scrollbar-thumb:hover {
+  background-color: #45475a;
 }
 
 /* Search Bar Overlay styling */
@@ -653,6 +697,23 @@ input::-webkit-calendar-picker-indicator {
   overflow: hidden;
 }
 
+/* Settings with tabs: fixed uniform layout so all tabs share same size */
+.settings-modal.settings-tabs-modal {
+  height: min(640px, 92vh);
+  min-height: min(640px, 92vh);
+}
+
+.settings-tabs-modal .modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+}
+
+.settings-tabs-modal .settings-tab-panel {
+  flex: 1 1 auto;
+  min-height: 420px;
+}
+
 .modal-header {
   display: flex;
   align-items: center;
@@ -689,6 +750,7 @@ input::-webkit-calendar-picker-indicator {
   padding: 0 12px;
   background-color: #11111b;
   border-bottom: 1px solid #313244;
+  overflow-x: auto;
 }
 
 .modal-tab-btn {
@@ -704,6 +766,8 @@ input::-webkit-calendar-picker-indicator {
   font-weight: 500;
   cursor: pointer;
   transition: all 0.15s ease;
+  position: relative;
+  white-space: nowrap;
 }
 
 .modal-tab-btn:hover {
@@ -857,7 +921,9 @@ input::-webkit-calendar-picker-indicator {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-height: 280px;
+  flex: 1 1 auto;
+  min-height: 320px;
+  max-height: 380px;
   overflow-y: auto;
   padding-right: 4px;
 }
@@ -952,19 +1018,87 @@ input::-webkit-calendar-picker-indicator {
   gap: 8px;
 }
 
-.git-badge {
-  font-size: 12px;
-  color: #a6e3a1;
-  background-color: #313244;
-  border-radius: 4px;
-  padding: 2px 8px;
-  white-space: nowrap;
+/* AI provider cards (AI CLI panel) */
+.ai-provider-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 12px;
 }
 
-.git-badge-empty {
-  color: #6c7086;
-  background-color: transparent;
-  border: 1px dashed #313244;
+.ai-provider-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  background-color: #11111b;
+  border: 1px solid #313244;
+  border-radius: 8px;
+}
+
+.ai-provider-card.is-available {
+  border-color: rgba(166, 227, 161, 0.35);
+}
+
+.ai-provider-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ai-provider-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #e8eef7;
+}
+
+.ai-provider-badge {
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid #45475a;
+  color: #a6adc8;
+  background-color: #1e1e2e;
+}
+
+.ai-provider-badge.found {
+  color: #a6e3a1;
+  border-color: rgba(166, 227, 161, 0.45);
+  background-color: rgba(166, 227, 161, 0.08);
+}
+
+.ai-provider-path {
+  font-family: monospace;
+  font-size: 11px;
+  color: #8b9bb4;
+  word-break: break-all;
+}
+
+.ai-provider-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  font-size: 11px;
+  color: #8b9bb4;
+}
+
+.ai-provider-meta strong {
+  color: #cdd6f4;
+  font-weight: 600;
+}
+
+.ai-provider-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.ai-provider-actions .text-input {
+  flex: 1 1 180px;
 }
 
 .toolbar-update-btn {
@@ -984,6 +1118,20 @@ input::-webkit-calendar-picker-indicator {
   height: 8px;
   border-radius: 50%;
   background-color: #f9e2af;
+}
+
+/* Settings → Updates tab */
+.update-version-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.update-available-text {
+  font-size: 13px;
+  font-weight: 600;
+  color: #f9e2af;
+  margin: 0;
 }
 
 /* Update banner (alert for newer releases) */
@@ -1279,6 +1427,32 @@ input::-webkit-calendar-picker-indicator {
   color: #89b4fa;
 }
 
+.status-mode-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #89b4fa;
+  background-color: rgba(137, 180, 250, 0.15);
+  border: 1px solid rgba(137, 180, 250, 0.35);
+  border-radius: 4px;
+  padding: 2px 8px;
+  white-space: nowrap;
+  user-select: none;
+  /* Status badge only: Code Mode is entered/cleared via the CLI
+     (`kai code <path>` / `kai stop code`), not via a close button. */
+  cursor: default;
+  font-family: inherit;
+}
+
+.status-mode-terminal {
+  color: #8b9bb4;
+  background-color: transparent;
+  border-color: #313244;
+  font-weight: 500;
+}
+
 .muted-text {
   font-size: 12px;
   color: #9399b2;
@@ -1295,6 +1469,10 @@ input::-webkit-calendar-picker-indicator {
   color: #f38ba8;
 }
 
+/* Split-pane containers must never scroll themselves: every level clips
+   (the gap + divider widths would otherwise push percentage-based leaves
+   8px over 100% and produce an outer scrollbar next to the divider).
+   Only `.xterm-viewport` scrolls. */
 /* Split Pane Layout styling */
 .pane-container-none {
   width: 100%;
@@ -1303,6 +1481,12 @@ input::-webkit-calendar-picker-indicator {
   min-height: 0;
   min-width: 0;
   display: flex;
+  overflow: hidden;
+  scrollbar-width: none;
+}
+
+.pane-container-none::-webkit-scrollbar {
+  display: none;
 }
 
 .pane-container-horizontal {
@@ -1363,6 +1547,122 @@ input::-webkit-calendar-picker-indicator {
 .pane-divider:hover,
 .pane-divider:active {
   background-color: #89b4fa;
+}
+
+/* Nested split containers: each split node owns its own axis so mixed
+   directions compose (vertical side-by-side containing horizontal stacks).
+   All levels clip — no outer scrollbars, matching single-pane behavior. */
+.pane-split {
+  display: flex;
+  flex: 1 1 0;
+  min-height: 0;
+  min-width: 0;
+  gap: 2px;
+  background-color: #1e3a5f;
+  overflow: hidden;
+  scrollbar-width: none;
+}
+
+.pane-split::-webkit-scrollbar {
+  display: none;
+}
+
+.pane-split-vertical {
+  flex-direction: row;
+}
+
+.pane-split-horizontal {
+  flex-direction: column;
+}
+
+.pane-leaf {
+  flex: 1 1 0;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  scrollbar-width: none;
+}
+
+.pane-leaf::-webkit-scrollbar {
+  display: none;
+}
+
+.pane-item {
+  scrollbar-width: none;
+}
+
+.pane-item::-webkit-scrollbar {
+  display: none;
+}
+
+/* Terminal inline autocomplete popup */
+.terminal-autocomplete {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  z-index: 20;
+  min-width: 260px;
+  max-width: 420px;
+  background-color: #0a1e3c;
+  border: 1px solid #1e3a5f;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.terminal-autocomplete-hint {
+  display: flex;
+  gap: 10px;
+  padding: 4px 10px;
+  font-size: 10px;
+  color: #8b9bb4;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.terminal-autocomplete-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  padding: 7px 10px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: #e8eef7;
+  font-size: 12px;
+  font-family: monospace;
+  cursor: pointer;
+}
+
+.terminal-autocomplete-item:hover,
+.terminal-autocomplete-item.selected {
+  background-color: #1e3a5f;
+}
+
+.terminal-autocomplete-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.terminal-autocomplete-key {
+  background-color: #11111b;
+  border: 1px solid #45475a;
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 10px;
+  color: #a6adc8;
+  font-family: monospace;
+  min-width: 28px;
+  text-align: center;
 }
 
 .shortcut-row {

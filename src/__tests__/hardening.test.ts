@@ -53,7 +53,7 @@ describe("projectService (no filesystem scanning)", () => {
 describe("aiCliService details fallback", () => {
   it("returns safe unavailable details outside Tauri", async () => {
     const details = await getAiCliDetails();
-    expect(details).toHaveLength(6);
+    expect(details).toHaveLength(10);
     for (const d of details) {
       expect(d.available).toBe(false);
       expect(d.install_guidance.length).toBeGreaterThan(0);
