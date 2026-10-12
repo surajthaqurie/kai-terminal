@@ -523,8 +523,8 @@ pub fn open_in_editor(requested_editor: Option<&str>, cwd: &str) -> Result<Strin
     let valid_cwd = validate_and_resolve_cwd(Some(cwd))?;
 
     let candidate_editors = [
-        "code", "cursor", "windsurf", "codium", "vscodium", "subl", "zed", "nvim", "vim",
-        "atom", "idea", "clion",
+        "code", "cursor", "windsurf", "codium", "vscodium", "subl", "zed", "nvim", "vim", "atom",
+        "idea", "clion",
     ];
 
     let editor_bin = if let Some(req) = requested_editor {

@@ -294,10 +294,13 @@ impl PtyManager {
             // calls are never starved by a slow-exiting child (hang fix).
             let mut exited_child = {
                 let mut sessions = sessions_map.lock().ok();
-                sessions.as_mut().and_then(|s| s.remove(&id_clone)).map(|mut session| {
-                    session.status = SessionStatus::Disconnected;
-                    session.child
-                })
+                sessions
+                    .as_mut()
+                    .and_then(|s| s.remove(&id_clone))
+                    .map(|mut session| {
+                        session.status = SessionStatus::Disconnected;
+                        session.child
+                    })
             };
             let exit_code = exited_child
                 .as_mut()
