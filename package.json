@@ -18,6 +18,8 @@
     "build:website": "npm --prefix kai-website run build",
     "build:all": "npm run build && npm run build:website",
     "prepack": "npm run build:cli",
+    "setup:cli": "node ./scripts/setup-cli.cjs",
+    "doctor": "node ./bin/kai.js --version",
     "preview": "vite preview",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",

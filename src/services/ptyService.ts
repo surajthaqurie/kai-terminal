@@ -89,7 +89,12 @@ export class PtyServiceImpl implements IPtyService {
         rows: options.rows,
       };
     }
-    return await invoke<PtySessionInfo>("create_pty", { options });
+    // 20 s launch timeout so a wedged backend never leaves the UI stuck on
+    // "Initializing…" forever; callers surface the error instead.
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("PTY launch timed out after 20s")), 20000)
+    );
+    return await Promise.race([invoke<PtySessionInfo>("create_pty", { options }), timeout]);
   }
 
   static async writeToPty(id: string, data: string): Promise<void> {

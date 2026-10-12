@@ -53,7 +53,9 @@ export function parseBinding(binding: string): ParsedBinding | null {
   const upper = last.toUpperCase();
   let code: string;
   let key = last;
-  if (/^[A-Z0-9]$/.test(upper)) {
+  if (/^F([1-9]|1[0-2])$/.test(upper)) {
+    code = upper;
+  } else if (/^[A-Z0-9]$/.test(upper)) {
     code = upper.match(/^[0-9]$/) ? `Digit${upper}` : `Key${upper}`;
   } else if (upper === ",") {
     code = "Comma";
@@ -65,6 +67,30 @@ export function parseBinding(binding: string): ParsedBinding | null {
     code = "BracketLeft";
   } else if (upper === "]" || upper === "BRACKETRIGHT") {
     code = "BracketRight";
+  } else if (upper === "TAB") {
+    code = "Tab";
+  } else if (upper === "ENTER" || upper === "RETURN") {
+    code = "Enter";
+  } else if (upper === "ESC" || upper === "ESCAPE") {
+    code = "Escape";
+  } else if (upper === "SPACE") {
+    code = "Space";
+  } else if (upper === "BACKSPACE") {
+    code = "Backspace";
+  } else if (upper === "DELETE" || upper === "DEL") {
+    code = "Delete";
+  } else if (upper === "UP" || upper === "ARROWUP") {
+    code = "ArrowUp";
+  } else if (upper === "DOWN" || upper === "ARROWDOWN") {
+    code = "ArrowDown";
+  } else if (upper === "LEFT" || upper === "ARROWLEFT") {
+    code = "ArrowLeft";
+  } else if (upper === "RIGHT" || upper === "ARROWRIGHT") {
+    code = "ArrowRight";
+  } else if (upper === "-" || upper === "MINUS") {
+    code = "Minus";
+  } else if (upper === "=" || upper === "EQUAL" || upper === "+") {
+    code = "Equal";
   } else {
     return null;
   }
@@ -117,6 +143,10 @@ export function eventToBindingString(
 
   if (k.length === 1 && /^[a-zA-Z0-9]$/.test(k)) {
     parts.push(k.toUpperCase());
+  } else if (/^F([1-9]|1[0-2])$/i.test(k) || /^F([1-9]|1[0-2])$/.test(e.code)) {
+    const f = (/^F([1-9]|1[0-2])$/i.exec(k) ?? /^F([1-9]|1[0-2])$/.exec(e.code))?.[0].toUpperCase();
+    if (!f) return null;
+    parts.push(f);
   } else if (k === "," || k === "." || k === "/" || k === "[" || k === "]") {
     parts.push(k);
   } else if (e.code.startsWith("Key")) {
@@ -144,10 +174,15 @@ export function eventToBindingString(
 export function eventMatchesBinding(e: KeyboardEvent, binding: string): boolean {
   const parsed = parseBinding(binding);
   if (!parsed) return false;
+  // Cross-OS: Ctrl (Win/Linux) and Cmd (macOS) are interchangeable so one
+  // binding works everywhere without per-OS configuration.
   const ctrlOrCmd = e.ctrlKey || e.metaKey;
   if (parsed.ctrlOrCmd !== ctrlOrCmd) return false;
   if (parsed.alt !== e.altKey) return false;
   if (parsed.shift !== e.shiftKey) return false;
+  if (parsed.code.startsWith("F") && /^F([1-9]|1[0-2])$/.test(parsed.code)) {
+    return e.code === parsed.code || e.key === parsed.code;
+  }
   return e.code === parsed.code;
 }
 
@@ -199,7 +234,7 @@ export function validateBinding(value: string): string | null {
   if (!value.trim()) return "Binding must not be empty.";
   const parsed = parseBinding(value);
   if (!parsed) {
-    return "Use modifiers Ctrl/Cmd + Alt/Shift plus a letter, digit, comma, period, or slash (e.g. Ctrl+Shift+T).";
+    return "Use Ctrl/Cmd and/or Alt plus a letter, digit, F1–F12, arrow, Tab, Enter, Esc, or , . / [ ] - = (e.g. Ctrl+Shift+T).";
   }
   return null;
 }

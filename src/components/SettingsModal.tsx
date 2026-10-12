@@ -80,6 +80,13 @@ export const THEME_OPTIONS: Array<{
   accent: string;
 }> = [
   {
+    id: "kali",
+    name: "Kali (Default)",
+    bg: "#0a1428",
+    fg: "#e8eef7",
+    accent: "#00a8e8",
+  },
+  {
     id: "catppuccin-mocha",
     name: "Catppuccin Mocha",
     bg: "#1e1e2e",

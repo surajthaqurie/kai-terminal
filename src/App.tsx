@@ -21,7 +21,6 @@ import {
 } from "./services/projectService";
 import {
   matchShortcut,
-  isTypingTarget,
   isMacPlatform,
   platformLabel,
   ShortcutActionId,
@@ -236,8 +235,9 @@ export function App() {
   }, [tabs]);
 
   // Poll git status for the active working directory: debounced on change
-  // plus a controlled 15 s refresh. Results are cached per directory (5 s
-  // TTL) so renders never spam the backend.
+  // plus a controlled 30 s refresh. Git + intelligence queries run in
+  // parallel and are cached (30 s TTL) so renders never spam the backend
+  // and session startup is never blocked by badge refreshes.
   useEffect(() => {
     if (!cwd.trim()) {
       setGitBranch(null);
@@ -246,31 +246,29 @@ export function App() {
       return;
     }
     let cancelled = false;
+    const dir = cwd.trim();
     const fetch = () => {
-      getGitInfoCached(cwd.trim())
-        .then((info) => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      void Promise.allSettled([getGitInfoCached(dir), getProjectIntelligence(dir)]).then(
+        ([gitRes, intelRes]) => {
           if (cancelled) return;
-          setGitBranch(info.branch);
-          setGitDirty(info.dirty);
-        })
-        .catch(() => {
-          if (cancelled) return;
-          setGitBranch(null);
-          setGitDirty(false);
-        });
-
-      getProjectIntelligence(cwd.trim())
-        .then((intel) => {
-          if (cancelled) return;
-          setProjectIntel(intel);
-        })
-        .catch(() => {
-          if (cancelled) return;
-          setProjectIntel(null);
-        });
+          if (gitRes.status === "fulfilled") {
+            setGitBranch(gitRes.value.branch);
+            setGitDirty(gitRes.value.dirty);
+          } else {
+            setGitBranch(null);
+            setGitDirty(false);
+          }
+          if (intelRes.status === "fulfilled") {
+            setProjectIntel(intelRes.value);
+          } else {
+            setProjectIntel(null);
+          }
+        }
+      );
     };
-    const timer = setTimeout(fetch, 400);
-    const interval = setInterval(fetch, 15000);
+    const timer = setTimeout(fetch, 600);
+    const interval = setInterval(fetch, 30000);
     return () => {
       cancelled = true;
       clearTimeout(timer);
@@ -340,47 +338,57 @@ export function App() {
   }, [activeTabId]);
 
   const handleSessionExit = useCallback(
-    (tabId: string, paneId: string, exitCode: number) => {
-      // If the process exited cleanly (exit code 0), close the pane or tab automatically
-      if (exitCode === 0) {
-        setTabs((prev) => {
-          const targetTab = prev.find((t) => t.id === tabId);
-          if (!targetTab) return prev;
+    (tabId: string, paneId: string, _exitCode: number) => {
+      // Any shell exit (`exit`, `logout`, Ctrl+D, kill) closes the pane/tab.
+      // Previous behavior only closed on exit code 0, which made `exit`
+      // appear broken whenever the shell reported a non-zero status.
+      // If the last remaining pane exits, spawn a fresh tab so the window
+      // never ends up empty/disconnected.
+      const targetTab = tabs.find((t) => t.id === tabId);
+      if (!targetTab) return;
 
-          // If the tab has multiple split panes, close only the pane that exited
-          if (targetTab.panes.length > 1) {
-            const remainingPanes = targetTab.panes.filter((p) => p.id !== paneId);
-            const nextActivePane =
-              targetTab.activePaneId === paneId ? remainingPanes[0].id : targetTab.activePaneId;
-            return prev.map((t) =>
-              t.id === tabId
-                ? {
-                    ...t,
-                    panes: remainingPanes,
-                    activePaneId: nextActivePane,
-                    splitDirection: remainingPanes.length > 1 ? t.splitDirection : "none",
-                  }
-                : t
-            );
-          }
-
-          // If there are multiple tabs in the window, close this tab
-          if (prev.length > 1) {
-            const remainingTabs = prev.filter((t) => t.id !== tabId);
-            if (activeTabId === tabId) {
-              const targetIdx = prev.findIndex((t) => t.id === tabId);
-              const nextIdx = Math.max(0, targetIdx - 1);
-              setActiveTabId(remainingTabs[nextIdx]?.id || remainingTabs[0].id);
-            }
-            return remainingTabs;
-          }
-
-          // Single remaining tab & pane: keep tab open in disconnected state for Enter-to-restart
-          return prev;
-        });
+      if (targetTab.panes.length > 1) {
+        const remainingPanes = targetTab.panes.filter((p) => p.id !== paneId);
+        const nextActivePane =
+          targetTab.activePaneId === paneId ? remainingPanes[0].id : targetTab.activePaneId;
+        setTabs((prev) =>
+          prev.map((t) =>
+            t.id === tabId
+              ? {
+                  ...t,
+                  panes: remainingPanes,
+                  activePaneId: nextActivePane,
+                  splitDirection: remainingPanes.length > 1 ? t.splitDirection : "none",
+                }
+              : t
+          )
+        );
+        return;
       }
+
+      if (tabs.length > 1) {
+        const remainingTabs = tabs.filter((t) => t.id !== tabId);
+        setTabs(remainingTabs);
+        if (activeTabId === tabId) {
+          const targetIdx = tabs.findIndex((t) => t.id === tabId);
+          const nextIdx = Math.max(0, targetIdx - 1);
+          setActiveTabId(remainingTabs[nextIdx]?.id || remainingTabs[0].id);
+        }
+        return;
+      }
+
+      // Last pane of last tab exited: replace with a fresh session so
+      // `exit` always visibly works instead of leaving a dead prompt.
+      const selectedShell = shells.find((s) => s.id === selectedShellId);
+      const fresh = createDefaultTab(
+        `${selectedShell?.name || "Terminal"} 1`,
+        selectedShell?.path,
+        cwd.trim() || undefined
+      );
+      setTabs([fresh]);
+      setActiveTabId(fresh.id);
     },
-    [activeTabId]
+    [tabs, activeTabId, shells, selectedShellId, cwd]
   );
 
   const handleOpenEditor = useCallback(async () => {
@@ -443,12 +451,18 @@ export function App() {
   }, []);
 
   // Centralized application shortcuts: honors user-configured bindings,
-  // never fires while typing in text inputs, and leaves all other terminal
-  // keys untouched so shell input (e.g. Ctrl+C) keeps working.
+  // works on Windows / Linux / macOS (Ctrl and Cmd treated as equivalent),
+  // fires for Alt-based combos too, and stays active while focus is in
+  // toolbar inputs (all bindings require a modifier, so normal typing is
+  // never hijacked). Terminal keys (e.g. plain Ctrl+C) still reach the shell.
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (!(e.ctrlKey || e.metaKey)) return;
-      if (isTypingTarget(e.target)) return;
+      if (!(e.ctrlKey || e.metaKey || e.altKey)) return;
+      // Never steal plain typing: every registered binding includes
+      // Ctrl/Cmd or Alt, so typing in inputs is safe. Only skip when the
+      // event target is a text field AND no modifier combo matches — handled
+      // implicitly by matchShortcut returning null there.
+      if (e.key === "Control" || e.key === "Shift" || e.key === "Alt" || e.key === "Meta") return;
       const action: ShortcutActionId | null = matchShortcut(e, userSettings.keybindings);
       if (!action) return;
       e.preventDefault();

@@ -122,6 +122,7 @@ export interface GitInfoLike {
  * Available color theme names.
  */
 export type ThemeName =
+  | "kali"
   | "catppuccin-mocha"
   | "one-dark"
   | "dracula"

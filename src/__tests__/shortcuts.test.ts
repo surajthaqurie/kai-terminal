@@ -39,6 +39,14 @@ describe("shortcut registry", () => {
     ).toBe(true);
   });
 
+  it("supports extended universal bindings (F-keys, Alt-only, arrows)", () => {
+    expect(parseBinding("Alt+T")).not.toBeNull();
+    expect(parseBinding("Ctrl+F5")).not.toBeNull();
+    expect(parseBinding("Ctrl+Up")).not.toBeNull();
+    expect(eventMatchesBinding(keyEvent("KeyT", { altKey: true }), "Alt+T")).toBe(true);
+    expect(validateBinding("Ctrl+F5")).toBeNull();
+  });
+
   it("detects conflicting bindings", () => {
     const conflicts = findConflicts({
       ...DEFAULT_KEYBINDINGS,

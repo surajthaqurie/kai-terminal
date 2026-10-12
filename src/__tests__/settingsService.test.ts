@@ -28,6 +28,7 @@ describe("SettingsService", () => {
 
   it("should return theme color objects for all supported theme names including nord and tokyo-night", () => {
     const themes = [
+      "kali",
       "catppuccin-mocha",
       "one-dark",
       "dracula",
@@ -45,6 +46,15 @@ describe("SettingsService", () => {
     }
   });
 
+  it("should default to the Kali theme", () => {
+    expect(DEFAULT_SETTINGS.theme).toBe("kali");
+    const kali = SettingsService.getThemeColors("kali");
+    expect(kali.background).toBe("#0a1428");
+    expect(kali.foreground).toBeDefined();
+    expect(kali.cursor).toBeDefined();
+    // Legacy stored settings without kali migrate safely.
+    expect(SettingsService.normalize({ theme: "kali" as never }).theme).toBe("kali");
+  });
   it("should apply opacity to theme background color correctly", () => {
     const defaultColors = SettingsService.getThemeColors("catppuccin-mocha", 1.0);
     expect(defaultColors.background).toBe("#1e1e2e");

@@ -288,20 +288,20 @@ impl PtyManager {
             }
 
             // Clean up session entry & wait on child process exit code
-            // (preserves the real OS exit code; signal deaths surface as 1 with no code loss for success)
-            let exit_code = {
+            // (preserves the real OS exit code; signal deaths surface as 1 with no code loss for success).
+            // NOTE: the map entry is removed under a short lock, then `wait()`
+            // runs WITHOUT holding the mutex so concurrent write/resize/close
+            // calls are never starved by a slow-exiting child (hang fix).
+            let mut exited_child = {
                 let mut sessions = sessions_map.lock().ok();
-                if let Some(mut session) = sessions.as_mut().and_then(|s| s.remove(&id_clone)) {
+                sessions.as_mut().and_then(|s| s.remove(&id_clone)).map(|mut session| {
                     session.status = SessionStatus::Disconnected;
-                    session
-                        .child
-                        .wait()
-                        .ok()
-                        .map(|status| status.exit_code() as i32)
-                } else {
-                    None
-                }
+                    session.child
+                })
             };
+            let exit_code = exited_child
+                .as_mut()
+                .and_then(|child| child.wait().ok().map(|status| status.exit_code() as i32));
 
             // Emit session exit event
             emitter.emit_exit(PtyExitPayload {
@@ -410,15 +410,20 @@ impl PtyManager {
 
     /// Explicitly closes and cleans up a PTY session.
     pub fn close_pty(&self, id: &str) -> Result<(), TerminalError> {
-        let mut sessions = self
-            .sessions
-            .lock()
-            .map_err(|e| TerminalError::IoError(format!("Lock failure: {}", e)))?;
+        // Remove under a short lock, then kill/wait WITHOUT holding it so a
+        // slow child cannot block other sessions (hang fix).
+        let mut session = {
+            let mut sessions = self
+                .sessions
+                .lock()
+                .map_err(|e| TerminalError::IoError(format!("Lock failure: {}", e)))?;
+            sessions.remove(id)
+        };
 
-        if let Some(mut session) = sessions.remove(id) {
-            session.status = SessionStatus::Disconnected;
-            let _ = session.child.kill();
-            let _ = session.child.wait();
+        if let Some(s) = session.as_mut() {
+            s.status = SessionStatus::Disconnected;
+            let _ = s.child.kill();
+            let _ = s.child.wait();
             Ok(())
         } else {
             // Already closed or clean
@@ -428,12 +433,15 @@ impl PtyManager {
 
     /// Reaps all child process handles on application shutdown.
     pub fn close_all(&self) {
-        if let Ok(mut sessions) = self.sessions.lock() {
-            for (_, mut session) in sessions.drain() {
-                session.status = SessionStatus::Disconnected;
-                let _ = session.child.kill();
-                let _ = session.child.wait();
-            }
+        let mut drained = if let Ok(mut sessions) = self.sessions.lock() {
+            sessions.drain().collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        for (_, mut session) in drained.drain(..) {
+            session.status = SessionStatus::Disconnected;
+            let _ = session.child.kill();
+            let _ = session.child.wait();
         }
     }
 

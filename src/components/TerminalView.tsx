@@ -188,18 +188,31 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       fitAddonRef.current = fitAddon;
       searchAddonRef.current = searchAddon;
 
-      // 2. Custom key event handler for selection copy/paste & search toggle
+      // 2. Custom key event handler: universal copy/paste across
+      // Windows / Linux / macOS + search toggle. Plain Ctrl+C (no selection)
+      // always reaches the shell as SIGINT.
       term.attachCustomKeyEventHandler((event: KeyboardEvent) => {
-        // Handle Ctrl+Shift+C / Cmd+C for copying when selection exists
-        if ((event.ctrlKey || event.metaKey) && event.code === "KeyC" && term.hasSelection()) {
+        const mod = event.ctrlKey || event.metaKey;
+        // Copy: Ctrl+Shift+C (Win/Linux), Cmd+C (macOS), Ctrl+Insert
+        const isCopy =
+          (mod &&
+            event.code === "KeyC" &&
+            (event.shiftKey || event.metaKey) &&
+            term.hasSelection()) ||
+          (event.shiftKey && event.code === "Insert" && term.hasSelection());
+        if (isCopy) {
           if (event.type === "keydown") {
             const selection = term.getSelection();
-            navigator.clipboard.writeText(selection);
+            navigator.clipboard.writeText(selection).catch(() => {});
           }
-          return false; // Prevent sending ^C to shell when copying text selection
+          return false;
         }
-        // Handle Ctrl+Shift+V / Cmd+V for pasting from clipboard
-        if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.code === "KeyV") {
+        // Paste: Ctrl+Shift+V (Win/Linux), Cmd+V (macOS), Shift+Insert
+        const isPaste =
+          (mod && event.shiftKey && event.code === "KeyV") ||
+          (event.metaKey && !event.ctrlKey && event.code === "KeyV") ||
+          (event.shiftKey && event.code === "Insert");
+        if (isPaste) {
           if (event.type === "keydown") {
             navigator.clipboard
               .readText()
@@ -303,17 +316,23 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
           unlistenExit = unlisten;
         });
 
-      // 5. Container Resize handling
+      // 5. Container resize handling (debounced 150 ms so drag-resize and
+      // rapid layout changes send at most one IPC resize each).
+      let resizeTimer: ReturnType<typeof setTimeout> | null = null;
       const resizeObserver = new ResizeObserver(() => {
-        try {
-          fitAddon.fit();
-          const backendId = backendPtyIdRef.current;
-          if (term.cols && term.rows && backendId) {
-            ptyService.resizePty(backendId, term.cols, term.rows).catch(() => {});
+        if (resizeTimer) return;
+        resizeTimer = setTimeout(() => {
+          resizeTimer = null;
+          try {
+            fitAddon.fit();
+            const backendId = backendPtyIdRef.current;
+            if (term.cols && term.rows && backendId) {
+              ptyService.resizePty(backendId, term.cols, term.rows).catch(() => {});
+            }
+          } catch {
+            // Ignore layout errors during component unmount
           }
-        } catch {
-          // Ignore layout errors during component unmount
-        }
+        }, 150);
       });
 
       resizeObserver.observe(containerRef.current);
@@ -327,6 +346,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         initSeqRef.current += 1;
         inputDisposable.dispose();
         resizeObserver.disconnect();
+        if (resizeTimer) clearTimeout(resizeTimer);
         if (unlistenOutput) unlistenOutput();
         if (unlistenExit) unlistenExit();
         const backendId = backendPtyIdRef.current;

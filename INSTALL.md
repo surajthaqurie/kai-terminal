@@ -23,12 +23,23 @@ The `kai` CLI and Model Context Protocol (MCP) server can be installed globally 
 
 ### Global Installation via npm
 ```bash
-cd kai
 npm install
 npm run build:cli
+npm run setup:cli
+```
+`setup:cli` builds the minified bundle if needed (only when sources changed),
+installs a `kai` launcher onto a user-level bin dir on every OS (no admin
+needed), **and adds that dir to your user PATH automatically**:
+- Windows: `%USERPROFILE%\.kai\bin\kai.cmd` (+ `kai.ps1`) → User PATH registry entry
+- Linux / macOS: `~/.local/bin/kai` → marked line in your shell rc files
+
+Afterwards just **restart your terminal** (PATH is read at shell startup) and run `kai --version`. No manual `setx` / `export PATH` step.
+
+Alternative (npm global bin, requires that dir to already be on PATH):
+```bash
 npm link
 ```
-After linking, the `kai` command is available in your shell:
+After installing, the `kai` command is available in your shell:
 ```bash
 kai --version
 kai code .
@@ -146,6 +157,11 @@ npm run tauri build
 
 | Problem | Cause / Solution |
 | :--- | :--- |
+| **`kai: command not found` after installing the desktop app** | The Tauri `.exe`/`.msi`/`.deb`/`.dmg` installer ships the terminal UI only — it never puts the Node `kai` CLI on PATH. Fix: `npm install && npm run setup:cli`, **restart the terminal**, then `kai --version`. |
+| **`kai` still not found right after `setup:cli`** | PATH is read when a shell starts. Open a **new** terminal window (or restart the IDE terminal) — no reinstall needed. |
+| **Manual PATH fallback (Windows)** | If auto-update failed: `setx PATH "%PATH%;%USERPROFILE%\.kai\bin"`, then open a **new** terminal. |
+| **Manual PATH fallback (Linux/macOS)** | If auto-update failed: add `export PATH="$HOME/.local/bin:$PATH"` to `~/.bashrc` / `~/.zshrc` / `~/.profile`, then restart the terminal. |
+| **`bin/kai.js` reports "Compiled CLI bundle not found"** | `dist/cli/index.js` was never built (it is gitignored). Run `npm run build:cli` (or `npm run setup:cli`, which builds automatically). |
 | **"WebView2 runtime not found" (Windows)** | Install Microsoft WebView2 runtime, then rerun the installer. |
 | **Missing `.deb` dependencies on Linux** | Run `sudo apt-get install -f` to fetch missing GTK/WebKit libraries. |
 | **AppImage fails with FUSE error** | Install `libfuse2` package, or launch with `--appimage-extract`. |

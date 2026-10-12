@@ -106,7 +106,9 @@ export async function openProjectInEditor(cwd: string, editorPath?: string): Pro
 
 /** Bounded per-directory git cache: avoids repeated expensive git spawns on every render. */
 const gitCache = new Map<string, { info: GitInfo; at: number }>();
-export const GIT_CACHE_TTL_MS = 5000;
+export const GIT_CACHE_TTL_MS = 30000;
+// In-flight dedup: concurrent callers for the same dir share one IPC round-trip.
+const gitInflight = new Map<string, Promise<GitInfo>>();
 
 export function gitCacheKey(cwd: string): string {
   return cwd.trim();
@@ -139,9 +141,19 @@ export function invalidateGitCache(cwd?: string): void {
 export async function getGitInfoCached(cwd: string): Promise<GitInfo> {
   const hit = getCachedGitInfo(cwd);
   if (hit) return hit;
-  const info = await getGitInfo(cwd);
-  setCachedGitInfo(cwd, info);
-  return info;
+  const key = gitCacheKey(cwd);
+  const inflight = gitInflight.get(key);
+  if (inflight) return inflight;
+  const p = getGitInfo(cwd)
+    .then((info) => {
+      setCachedGitInfo(cwd, info);
+      return info;
+    })
+    .finally(() => {
+      gitInflight.delete(key);
+    });
+  gitInflight.set(key, p);
+  return p;
 }
 
 export async function runGitAction(

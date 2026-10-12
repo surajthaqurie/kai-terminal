@@ -305,14 +305,19 @@ pub fn check_windows_build_supported(build: u32) -> Result<(), TerminalError> {
 }
 
 /// Verifies host PTY support before attempting `openpty`/ConPTY creation.
-/// On Windows, queries the current build number and rejects unsupported
-/// hosts with an actionable error instead of a cryptic ConPTY failure.
+/// On Windows, queries the current build number ONCE per process (cached in
+/// a `OnceLock`) and rejects unsupported hosts with an actionable error
+/// instead of a cryptic ConPTY failure. Caching matters: every PTY spawn
+/// previously ran `cmd /c ver` synchronously, adding seconds to session open.
 /// On Unix/macOS this is a no-op (native `openpty` is always present).
 pub fn check_host_pty_support() -> Result<(), TerminalError> {
     #[cfg(target_os = "windows")]
     {
-        match current_windows_build() {
-            Some(build) => check_windows_build_supported(build),
+        use std::sync::OnceLock;
+        static BUILD_CACHE: OnceLock<Option<u32>> = OnceLock::new();
+        let build = *BUILD_CACHE.get_or_init(current_windows_build);
+        match build {
+            Some(b) => check_windows_build_supported(b),
             None => Err(TerminalError::PtyCreationFailed(
                 "Unable to determine Windows version: Kai requires Windows 10 version 1809 (build 17763) or later / Windows 11 with ConPTY and the WebView2 runtime. Update Windows and reinstall if this persists.".to_string(),
             )),
@@ -510,13 +515,16 @@ fn is_executable(path: &Path) -> bool {
 
 /// Opens a project directory in a configured editor (Phase D).
 ///
-/// Supported default editor binaries checked on PATH: `code`, `cursor`, `vscodium`, `subl`, `zed`.
+/// Supported default editor binaries checked on PATH (matches the frontend
+/// preset list): `code`, `cursor`, `windsurf`, `codium`, `vscodium`, `subl`,
+/// `zed`, `nvim`, `vim`, `atom`, `idea`, `clion`.
 /// Does not use shell string interpolation; launches binary directly with `[cwd]` arg.
 pub fn open_in_editor(requested_editor: Option<&str>, cwd: &str) -> Result<String, TerminalError> {
     let valid_cwd = validate_and_resolve_cwd(Some(cwd))?;
 
     let candidate_editors = [
-        "code", "cursor", "vscodium", "subl", "zed", "atom", "idea", "clion",
+        "code", "cursor", "windsurf", "codium", "vscodium", "subl", "zed", "nvim", "vim",
+        "atom", "idea", "clion",
     ];
 
     let editor_bin = if let Some(req) = requested_editor {

@@ -22,7 +22,7 @@ export const DEFAULT_KEYBINDINGS: KeybindingsConfig = {
 };
 
 export const DEFAULT_SETTINGS: UserSettings = {
-  theme: "catppuccin-mocha",
+  theme: "kali",
   fontFamily: 'Menlo, Monaco, "Courier New", monospace',
   fontSize: 14,
   scrollback: 10000,
@@ -64,6 +64,7 @@ export class SettingsService {
       }
     }
     const themes: Array<UserSettings["theme"]> = [
+      "kali",
       "catppuccin-mocha",
       "one-dark",
       "dracula",
@@ -167,6 +168,33 @@ export class SettingsService {
   static getThemeColors(themeName: ThemeName, opacity: number = 1.0): ITheme {
     let baseTheme: ITheme;
     switch (themeName) {
+      case "kali":
+        // Kali Linux default terminal: near-black blue background,
+        // light foreground, signature Kali blue prompt + green/red accents.
+        baseTheme = {
+          background: "#0a1428",
+          foreground: "#e8eef7",
+          cursor: "#00a8e8",
+          selectionBackground: "#1e3a5f",
+          selectionForeground: "#ffffff",
+          black: "#0a1428",
+          red: "#ff5f56",
+          green: "#00d484",
+          yellow: "#e0af68",
+          blue: "#00a8e8",
+          magenta: "#bd93f9",
+          cyan: "#56b6c2",
+          white: "#e8eef7",
+          brightBlack: "#435267",
+          brightRed: "#ff7a72",
+          brightGreen: "#33e0a1",
+          brightYellow: "#f9e2af",
+          brightBlue: "#4fc3f7",
+          brightMagenta: "#d6acff",
+          brightCyan: "#7dcfff",
+          brightWhite: "#ffffff",
+        };
+        break;
       case "nord":
         baseTheme = {
           background: "#2e3440",
@@ -368,6 +396,6 @@ export class SettingsService {
 
   static getThemeBackgroundColor(themeName: ThemeName, opacity: number = 1.0): string {
     const colors = SettingsService.getThemeColors(themeName, opacity);
-    return colors.background || "#1e1e2e";
+    return colors.background || "#0a1428";
   }
 }
