@@ -598,7 +598,7 @@ pub fn detect_installed_editors() -> Vec<EditorInfo> {
             .ok()
             .map(|p| normalize_key(&p.to_string_lossy()))
             .unwrap_or_else(|| normalize_key(&path));
-        if seen_paths.iter().any(|s| *s == canon) {
+        if seen_paths.contains(&canon) {
             return;
         }
         seen_paths.push(canon);
@@ -717,6 +717,7 @@ pub fn detect_installed_editors() -> Vec<EditorInfo> {
 /// - macOS `.app` bundles (recorded when the CLI shim is not installed)
 ///   open via `open -a <bundle> <dir>`.
 /// - Unix binaries spawn directly with `[cwd]` as argv[1].
+///
 /// Never uses shell string interpolation; argv arrays only.
 pub fn open_in_editor(requested_editor: Option<&str>, cwd: &str) -> Result<String, TerminalError> {
     let valid_cwd = validate_and_resolve_cwd(Some(cwd))?;
@@ -948,11 +949,9 @@ mod tests {
     fn test_detect_installed_editors_never_fails_and_dedups() {
         // Must not panic on any OS — returns empty vec when nothing found.
         let editors = detect_installed_editors();
-        let mut paths: Vec<String> = editors.iter().map(|e| e.path.clone()).collect();
+        let paths: Vec<String> = editors.iter().map(|e| e.path.clone()).collect();
         #[cfg(any(target_os = "windows", target_os = "macos"))]
-        {
-            paths = paths.iter().map(|p| p.to_lowercase()).collect();
-        }
+        let paths: Vec<String> = paths.iter().map(|p| p.to_lowercase()).collect();
         let mut deduped = paths.clone();
         deduped.sort();
         deduped.dedup();
