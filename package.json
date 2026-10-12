@@ -15,6 +15,8 @@
     "dev": "vite",
     "build": "tsc && vite build && npm run build:cli",
     "build:cli": "vite build --config vite.cli.config.ts",
+    "build:website": "npm --prefix kai-website run build",
+    "build:all": "npm run build && npm run build:website",
     "prepack": "npm run build:cli",
     "preview": "vite preview",
     "test": "vitest run",

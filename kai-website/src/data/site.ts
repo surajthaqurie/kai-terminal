@@ -1,6 +1,6 @@
 import { Bot, Cpu, Layers, Monitor, ShieldCheck, Zap, type LucideIcon } from 'lucide-react';
 
-import releaseInfo from '../generated/release.json';
+import releaseInfo from './release.json';
 
 export const REPO_URL = 'https://github.com/surajthaqurie/kai-terminal';
 export const LATEST_RELEASE_URL = `${REPO_URL}/releases/latest`;

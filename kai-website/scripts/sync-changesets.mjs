@@ -9,6 +9,7 @@ const dir = [join(here, '..', '..', '.changeset'), join(here, '..', '.changeset'
   .find((d) => existsSync(d)) ?? join(here, '..', '..', '.changeset');
 const out = join(here, '..', 'src', 'generated', 'changesets.json');
 const releaseOut = join(here, '..', 'src', 'generated', 'release.json');
+const dataReleaseOut = join(here, '..', 'src', 'data', 'release.json');
 
 const entries = [];
 try {
@@ -61,19 +62,19 @@ try {
   }
 
   let existingReleases = [];
-  if (existsSync(releaseOut)) {
+  const existingPath = [dataReleaseOut, releaseOut].find((p) => existsSync(p));
+  if (existingPath) {
     try {
-      const prev = JSON.parse(readFileSync(releaseOut, 'utf8'));
+      const prev = JSON.parse(readFileSync(existingPath, 'utf8'));
       if (Array.isArray(prev.releases) && prev.releases.length > 0) existingReleases = prev.releases;
     } catch { /* ignore */ }
   }
 
   const finalReleases = releases.length > 0 ? releases : existingReleases;
-  writeFileSync(
-    releaseOut,
-    JSON.stringify({ version, tag, generatedAt: new Date().toISOString(), releases: finalReleases }, null, 2) + '\n'
-  );
-  console.log(`[sync-changesets] version ${tag} (${finalReleases.length} releases) -> src/generated/release.json`);
+  const releasePayload = JSON.stringify({ version, tag, generatedAt: new Date().toISOString(), releases: finalReleases }, null, 2) + '\n';
+  writeFileSync(releaseOut, releasePayload);
+  writeFileSync(dataReleaseOut, releasePayload);
+  console.log(`[sync-changesets] version ${tag} (${finalReleases.length} releases) -> src/data/release.json & src/generated/release.json`);
 } catch (err) {
   console.warn('[sync-changesets] failed to sync release metadata:', err.message);
 }

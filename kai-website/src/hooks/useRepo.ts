@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { FALLBACK_TAG, LATEST_RELEASE_URL, REPO_URL } from '../data/site';
-import releaseInfo from '../generated/release.json';
+import releaseInfo from '../data/release.json';
 
 export type ReleaseAsset = { name: string; url: string; size: number };
 export type LatestRelease = {
