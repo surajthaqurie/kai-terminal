@@ -22,6 +22,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   # ------------------------------------------------------------------
@@ -34,10 +35,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js v22 environment
+      - name: Setup Node.js v24 environment
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: "npm"
           cache-dependency-path: "package-lock.json"
 
@@ -116,10 +117,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js v22 environment
+      - name: Setup Node.js v24 environment
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: "npm"
           cache-dependency-path: "package-lock.json"
 

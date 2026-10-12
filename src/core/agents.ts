@@ -427,12 +427,18 @@ function findBinaryOnPath(bin: string): string | null {
   const envPath = process.env.PATH || process.env.Path || "";
   const isWindows = process.platform === "win32";
   const exts = isWindows
-    ? (process.env.PATHEXT || ".EXE;.CMD;.BAT;.COM").split(";").map((e) => e.toLowerCase())
+    ? [
+        ...(process.env.PATHEXT || ".EXE;.CMD;.BAT;.COM")
+          .split(";")
+          .filter(Boolean)
+          .map((e) => (e.startsWith(".") ? e.toLowerCase() : `.${e.toLowerCase()}`)),
+        "",
+      ]
     : [""];
   for (const dir of envPath.split(path.delimiter)) {
     if (!dir) continue;
     for (const ext of exts) {
-      const name = isWindows && bin.toLowerCase().endsWith(ext) ? bin : bin + ext;
+      const name = isWindows && ext && bin.toLowerCase().endsWith(ext) ? bin : bin + ext;
       const candidate = path.join(dir, name);
       try {
         if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;

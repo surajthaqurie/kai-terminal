@@ -198,12 +198,19 @@ describe("autoSetupDetectedAgents (system-driven wiring)", () => {
     const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "kai-agent-bin-"));
     tempHomes.push(binDir);
     // Fake installed binaries (never executed, only PATH-probed).
+    const exts = process.platform === "win32" ? ["", ".cmd", ".exe"] : [""];
     for (const bin of ["opencode", "aider"]) {
-      const p = path.join(binDir, bin);
-      fs.writeFileSync(p, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      for (const ext of exts) {
+        const p = path.join(binDir, `${bin}${ext}`);
+        fs.writeFileSync(p, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      }
     }
-    const oldPath = process.env.PATH || "";
-    process.env.PATH = `${binDir}${path.delimiter}${oldPath}`;
+    const oldPath = process.env.PATH || process.env.Path || "";
+    const newPath = `${binDir}${path.delimiter}${oldPath}`;
+    process.env.PATH = newPath;
+    if (process.env.Path !== undefined) {
+      process.env.Path = newPath;
+    }
     try {
       const results = autoSetupDetectedAgents(KAI_BIN, { homeDir: home });
       expect(results).toHaveLength(AGENT_REGISTRY.length);
@@ -216,6 +223,9 @@ describe("autoSetupDetectedAgents (system-driven wiring)", () => {
       expect(isAgentWired("aider", { homeDir: home })).toBe(true);
     } finally {
       process.env.PATH = oldPath;
+      if (process.env.Path !== undefined) {
+        process.env.Path = oldPath;
+      }
     }
   });
 });

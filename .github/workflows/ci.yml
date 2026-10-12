@@ -7,6 +7,9 @@ on:
     branches: [main, master]
   workflow_dispatch:
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   matrix-test-and-build:
     name: Build & Test (${{ matrix.target-name }})
@@ -29,10 +32,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js v22 environment
+      - name: Setup Node.js v24 environment
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: "npm"
           cache-dependency-path: "package-lock.json"
 
