@@ -187,6 +187,10 @@ impl PtyManager {
             cmd.args(args);
         }
         cmd.cwd(&cwd);
+        // Ensure standard terminal capabilities so shells (zsh, bash, fish) and tools
+        // enable line-editing (ZLE/Readline), 256 colors, truecolor, and autosuggestions.
+        cmd.env("TERM", "xterm-256color");
+        cmd.env("COLORTERM", "truecolor");
         if let Some(ref env_vars) = options.env {
             validate_spawn_env(env_vars)?;
             for (k, v) in env_vars {

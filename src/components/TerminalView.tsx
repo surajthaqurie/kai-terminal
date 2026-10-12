@@ -7,14 +7,7 @@ import { ptyService, PtyService } from "../services/ptyService";
 import { isCopyKeyEvent, isPasteKeyEvent } from "../services/shortcuts";
 import { ShellProfile, SessionStatus, UserSettings } from "../types/terminal";
 import { SettingsService, DEFAULT_SETTINGS } from "../services/settingsService";
-import {
-  completionRemainder,
-  currentToken,
-  getCompletions,
-  loadCommandHistory,
-  recordCommand,
-  saveCommandHistory,
-} from "../services/autocomplete";
+import { loadCommandHistory, recordCommand, saveCommandHistory } from "../services/autocomplete";
 import { SearchBar } from "./SearchBar";
 
 export interface TerminalViewRef {
@@ -73,42 +66,17 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
     // "is not able to close". Cleared on (re)connect.
     const [exitedCode, setExitedCode] = useState<number | null>(null);
 
-    // ---- Inline command autocomplete -------------------------------------
-    // Fish-style helper over local history + builtin commands. The shell
-    // keeps native Tab completion; we only intercept Tab while our popup
-    // has a match, otherwise the keystroke passes through untouched.
+    // ---- Command line tracking & history ---------------------------------
+    // Native Kali/Linux terminal autocompletion (ZSH autosuggestions, compinit,
+    // bash-completion) is owned by the shell over the PTY. We do not inject
+    // popup overlays over the buffer so Tab, arrow keys, and ghost text
+    // behave identically to native Kali terminals.
     const lineBufferRef = useRef("");
     const historyRef = useRef<string[]>([]);
-    const [suggestions, setSuggestions] = useState<string[]>([]);
-    const [selectedSuggestion, setSelectedSuggestion] = useState(0);
-    const suggestionsRef = useRef<string[]>([]);
-    suggestionsRef.current = suggestions;
-    const selectedRef = useRef(0);
-    selectedRef.current = selectedSuggestion;
-    const lineBufferForSuggestRef = useRef("");
-    // Whether the backend has data for this pane (avoids popup on dead pane).
-    const hasBackendRef = useRef(false);
-
-    const refreshSuggestions = (line: string) => {
-      lineBufferForSuggestRef.current = line;
-      if (!hasBackendRef.current || exitedCode !== null) {
-        setSuggestions([]);
-        return;
-      }
-      const token = currentToken(line);
-      if (!token) {
-        setSuggestions([]);
-        return;
-      }
-      const matches = getCompletions(token, historyRef.current);
-      setSuggestions(matches);
-      setSelectedSuggestion(0);
-    };
 
     const commitLineBuffer = () => {
       const line = lineBufferRef.current;
       lineBufferRef.current = "";
-      setSuggestions([]);
       if (line.trim()) {
         historyRef.current = recordCommand(historyRef.current, line);
         saveCommandHistory(historyRef.current);
@@ -124,43 +92,24 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       // Ctrl+C / Ctrl+U cancel the line.
       if (data === "\x03" || data === "\x15") {
         lineBufferRef.current = "";
-        setSuggestions([]);
         return;
       }
       // Ctrl+W deletes the last word.
       if (data === "\x17") {
         lineBufferRef.current = lineBufferRef.current.replace(/[^ \t\n]+\s*$/, "");
-        refreshSuggestions(lineBufferRef.current);
         return;
       }
       // Backspace / DEL.
       if (data === "\x7f" || data === "\b") {
         lineBufferRef.current = lineBufferRef.current.slice(0, -1);
-        refreshSuggestions(lineBufferRef.current);
         return;
       }
       // Escape sequences (arrows, alt combos): don't corrupt the buffer.
       if (data.startsWith("\x1b")) return;
-      // Other control chars: ignore for completion tracking.
+      // Other control chars: ignore for buffer tracking.
       if (/[\x00-\x1f]/.test(data)) return;
-      const next = (lineBufferRef.current + data).slice(-4096);
-      lineBufferRef.current = next;
-      refreshSuggestions(next);
+      lineBufferRef.current = (lineBufferRef.current + data).slice(-4096);
     };
-
-    const acceptSuggestion = (suggestion: string) => {
-      const token = currentToken(lineBufferForSuggestRef.current || lineBufferRef.current);
-      const remainder = completionRemainder(token, suggestion);
-      const backendId = backendPtyIdRef.current;
-      if (remainder && backendId) {
-        lineBufferRef.current = (lineBufferRef.current + remainder).slice(-4096);
-        ptyService.writeToPty(backendId, remainder).catch(() => {});
-      }
-      setSuggestions([]);
-      xtermRef.current?.focus();
-    };
-    const acceptSuggestionRef = useRef(acceptSuggestion);
-    acceptSuggestionRef.current = acceptSuggestion;
     // ----------------------------------------------------------------------
 
     // The pty-output/pty-exit listeners are registered once per pane
@@ -202,9 +151,8 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         const backendId = backendPtyIdRef.current;
         if (text && backendId) {
           // Pasted text becomes part of the current line buffer so
-          // completions stay in sync.
+          // command history stays in sync.
           lineBufferRef.current = (lineBufferRef.current + text).slice(-4096);
-          refreshSuggestions(lineBufferRef.current);
           PtyService.writeToPty(backendId, text).catch((e) => {
             console.error("Paste failed:", e);
           });
@@ -229,7 +177,6 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       // before spawning a replacement (prevents orphan PTY processes).
       const previousId = backendPtyIdRef.current;
       backendPtyIdRef.current = null;
-      hasBackendRef.current = false;
       if (previousId) {
         try {
           await PtyService.closePty(previousId);
@@ -273,7 +220,6 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         }
 
         backendPtyIdRef.current = sessionInfo.id;
-        hasBackendRef.current = true;
         onStatusRef.current?.("connected");
         if (sessionInfo.cwd) {
           onCwdResolvedRef.current?.(sessionInfo.cwd);
@@ -351,50 +297,10 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       searchAddonRef.current = searchAddon;
 
       // 2. Custom key event handler: universal copy/paste across
-      // Windows / Linux / macOS + search toggle + autocomplete popup.
+      // Windows / Linux / macOS + search toggle.
+      // Native shell autocompletion (Tab, Arrows, Ghost text) passes directly to PTY.
       // Plain Ctrl+C (no selection) always reaches the shell as SIGINT.
       term.attachCustomKeyEventHandler((event: KeyboardEvent) => {
-        // Autocomplete popup navigation (only when we have matches).
-        // Tab is intercepted ONLY here; otherwise it passes through so
-        // native shell completion keeps working.
-        const popupOpen = suggestionsRef.current.length > 0;
-        if (
-          popupOpen &&
-          event.type === "keydown" &&
-          !event.ctrlKey &&
-          !event.metaKey &&
-          !event.altKey
-        ) {
-          if (event.code === "Tab") {
-            event.preventDefault();
-            event.stopPropagation();
-            const list = suggestionsRef.current;
-            acceptSuggestionRef.current(list[selectedRef.current] ?? list[0]);
-            return false;
-          }
-          if (event.code === "ArrowDown") {
-            event.preventDefault();
-            event.stopPropagation();
-            setSelectedSuggestion((prev) =>
-              prev + 1 >= suggestionsRef.current.length ? 0 : prev + 1
-            );
-            return false;
-          }
-          if (event.code === "ArrowUp") {
-            event.preventDefault();
-            event.stopPropagation();
-            setSelectedSuggestion((prev) =>
-              prev - 1 < 0 ? suggestionsRef.current.length - 1 : prev - 1
-            );
-            return false;
-          }
-          if (event.code === "Escape") {
-            event.preventDefault();
-            event.stopPropagation();
-            setSuggestions([]);
-            return false;
-          }
-        }
         // Copy: Ctrl+Shift+C (Win/Linux), Cmd+C / Cmd+Shift+C (macOS),
         // Ctrl+Insert (Win/Linux). Plain Ctrl+C always reaches the shell as
         // SIGINT; Shift+Insert is paste on every OS, never copy.
@@ -424,7 +330,6 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
                 const backendId = backendPtyIdRef.current;
                 if (text && backendId) {
                   lineBufferRef.current = (lineBufferRef.current + text).slice(-4096);
-                  refreshSuggestions(lineBufferRef.current);
                   ptyService.writeToPty(backendId, text).catch(() => {});
                 }
               })
@@ -539,10 +444,8 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
           if (payload.id === backendPtyIdRef.current) {
             flushOutput();
             backendPtyIdRef.current = null;
-            hasBackendRef.current = false;
             const exitCode = payload.exit_code ?? 0;
             setExitedCode(exitCode);
-            setSuggestions([]);
             if (exitCode === 0) {
               term.writeln("\r\n\x1b[90m[Process completed]\x1b[0m\r\n");
             } else {
@@ -609,7 +512,6 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         if (unlistenExit) unlistenExit();
         const backendId = backendPtyIdRef.current;
         backendPtyIdRef.current = null;
-        hasBackendRef.current = false;
         if (backendId) {
           ptyService.closePty(backendId).catch(() => {
             // Already reaped; safe to ignore.
@@ -707,36 +609,6 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
           role="log"
           aria-label="Terminal output"
         />
-        {suggestions.length > 0 && exitedCode === null && (
-          <div
-            className="terminal-autocomplete"
-            role="listbox"
-            aria-label="Command suggestions. Press Tab to accept, Escape to dismiss."
-          >
-            <div className="terminal-autocomplete-hint">
-              <span>Tab to accept</span>
-              <span>↑↓ to navigate</span>
-              <span>Esc to dismiss</span>
-            </div>
-            {suggestions.map((s, idx) => (
-              <button
-                key={`${s}-${idx}`}
-                type="button"
-                role="option"
-                aria-selected={idx === selectedSuggestion}
-                className={`terminal-autocomplete-item ${idx === selectedSuggestion ? "selected" : ""}`}
-                onMouseEnter={() => setSelectedSuggestion(idx)}
-                onClick={() => acceptSuggestion(s)}
-                title={s}
-              >
-                <span className="terminal-autocomplete-text">{s}</span>
-                <kbd className="terminal-autocomplete-key">
-                  {idx === selectedSuggestion ? "Tab" : ""}
-                </kbd>
-              </button>
-            ))}
-          </div>
-        )}
         {exitedCode !== null && (
           <div
             role="status"
