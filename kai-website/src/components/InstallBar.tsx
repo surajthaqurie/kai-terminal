@@ -14,8 +14,8 @@ function installTabs(short: string): InstallTab[] {
     {
       id: 'macos',
       label: 'macOS',
-      note: 'For M1–M4 Macs on macOS 12+. Open the file, then drag Kai into Applications.',
-      code: `# macOS 12 or later · M1–M4\nopen kai_${v}_aarch64.dmg`,
+      note: 'For M1–M4 Macs on macOS 12+. Open the file, drag Kai into Applications. Unsigned build: if macOS says "damaged", run xattr -cr /Applications/Kai.app, then right-click Open.',
+      code: `# macOS 12 or later · M1–M4\nopen kai_${v}_aarch64.dmg\n\n# Only if macOS says "damaged" (unsigned build) — after dragging to Applications:\nxattr -cr /Applications/Kai.app`,
     },
     {
       id: 'linux',

@@ -9,6 +9,7 @@ const FAQ_ITEMS = [
   { q: 'Which AI tools are covered?', a: 'Claude, Cursor, Codex, Gemini, Copilot, Windsurf and Cline for config generation. The desktop app also lists locally installed CLIs without running them.' },
   { q: 'What are the limits?', a: 'Kai is currently in early preview. kai query output is capped by a token budget (default 4000). Some repos need kai refresh-index after large renames. See Known Limitations in the repo.' },
   { q: 'Which files do I download?', a: 'macOS: .dmg (M1–M4). Linux: .deb for Ubuntu/Debian or .AppImage for other distros. Windows: .exe or .msi (x64). Pick yourself — the site does not auto-decide for you.' },
+  { q: 'macOS says "kai is damaged"?', a: 'The .dmg is unsigned, so Gatekeeper blocks it — the file is not actually damaged. Eject the image, run xattr -d com.apple.quarantine on the .dmg, reopen it, drag Kai to Applications, then run xattr -cr /Applications/Kai.app and right-click Kai > Open once.' },
 ];
 
 export function Faq() {
