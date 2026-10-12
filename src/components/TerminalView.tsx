@@ -4,7 +4,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import "@xterm/xterm/css/xterm.css";
 import { ptyService, PtyService } from "../services/ptyService";
-import { isPasteKeyEvent } from "../services/shortcuts";
+import { isCopyKeyEvent, isPasteKeyEvent } from "../services/shortcuts";
 import { ShellProfile, SessionStatus, UserSettings } from "../types/terminal";
 import { SettingsService, DEFAULT_SETTINGS } from "../services/settingsService";
 import { SearchBar } from "./SearchBar";
@@ -233,14 +233,10 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       // Windows / Linux / macOS + search toggle. Plain Ctrl+C (no selection)
       // always reaches the shell as SIGINT.
       term.attachCustomKeyEventHandler((event: KeyboardEvent) => {
-        const mod = event.ctrlKey || event.metaKey;
-        // Copy: Ctrl+Shift+C (Win/Linux), Cmd+C (macOS), Ctrl+Insert
-        const isCopy =
-          (mod &&
-            event.code === "KeyC" &&
-            (event.shiftKey || event.metaKey) &&
-            term.hasSelection()) ||
-          (event.shiftKey && event.code === "Insert" && term.hasSelection());
+        // Copy: Ctrl+Shift+C (Win/Linux), Cmd+C / Cmd+Shift+C (macOS),
+        // Ctrl+Insert (Win/Linux). Plain Ctrl+C always reaches the shell as
+        // SIGINT; Shift+Insert is paste on every OS, never copy.
+        const isCopy = isCopyKeyEvent(event, term.hasSelection());
         if (isCopy) {
           if (event.type === "keydown") {
             const selection = term.getSelection();

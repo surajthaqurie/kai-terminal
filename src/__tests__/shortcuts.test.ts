@@ -6,6 +6,7 @@ import {
   findConflicts,
   validateBinding,
   isTypingTarget,
+  isCopyKeyEvent,
   isPasteKeyEvent,
   platformLabel,
 } from "../services/shortcuts";
@@ -101,5 +102,36 @@ describe("shortcut registry", () => {
     // Plain keys never paste
     expect(isPasteKeyEvent(keyEvent("KeyV", {}))).toBe(false);
     expect(isPasteKeyEvent(keyEvent("Insert", {}))).toBe(false);
+  });
+
+  it("detects terminal copy combos per OS, keeping Ctrl+C as SIGINT", () => {
+    // Windows / Linux: Ctrl+Shift+C with a selection
+    expect(isCopyKeyEvent(keyEvent("KeyC", { ctrlKey: true, shiftKey: true }), true)).toBe(true);
+    // macOS: Cmd+C and Cmd+Shift+C with a selection
+    expect(isCopyKeyEvent(keyEvent("KeyC", { metaKey: true }), true)).toBe(true);
+    expect(isCopyKeyEvent(keyEvent("KeyC", { metaKey: true, shiftKey: true }), true)).toBe(true);
+    // Windows / Linux standard: Ctrl+Insert with a selection
+    expect(isCopyKeyEvent(keyEvent("Insert", { ctrlKey: true }), true)).toBe(true);
+    // No selection → never copy (plain Ctrl+C keeps working as interrupt)
+    expect(isCopyKeyEvent(keyEvent("KeyC", { ctrlKey: true, shiftKey: true }), false)).toBe(false);
+    expect(isCopyKeyEvent(keyEvent("KeyC", { metaKey: true }), false)).toBe(false);
+    // Plain Ctrl+C is SIGINT, never copy — even with a selection
+    expect(isCopyKeyEvent(keyEvent("KeyC", { ctrlKey: true }), true)).toBe(false);
+    // Shift+Insert is paste on every OS, never copy — even with a selection
+    expect(isCopyKeyEvent(keyEvent("Insert", { shiftKey: true }), true)).toBe(false);
+    expect(isPasteKeyEvent(keyEvent("Insert", { shiftKey: true }))).toBe(true);
+    // Copy and paste sets are disjoint across all combos
+    const combos: Array<[string, Partial<KeyboardEventInit>, boolean]> = [
+      ["KeyC", { ctrlKey: true, shiftKey: true }, true],
+      ["KeyC", { metaKey: true }, true],
+      ["Insert", { ctrlKey: true }, true],
+      ["KeyV", { ctrlKey: true, shiftKey: true }, true],
+      ["KeyV", { metaKey: true }, true],
+      ["Insert", { shiftKey: true }, true],
+    ];
+    for (const [code, opts, sel] of combos) {
+      const e = keyEvent(code, opts);
+      expect(isCopyKeyEvent(e, sel) && isPasteKeyEvent(e)).toBe(false);
+    }
   });
 });

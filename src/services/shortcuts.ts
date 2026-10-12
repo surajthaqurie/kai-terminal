@@ -273,9 +273,34 @@ export function isMacPlatform(): boolean {
 }
 
 /**
+ * True when a keyboard event is a terminal copy combo AND there is a
+ * selection to copy: Ctrl+Shift+C (Win/Linux), Cmd+C / Cmd+Shift+C (macOS),
+ * or Ctrl+Insert (Win/Linux standard). Plain Ctrl+C is NOT copy — it must
+ * keep reaching the shell as SIGINT. Shift+Insert is NOT copy either — it
+ * is paste on every OS (see isPasteKeyEvent); the two sets are disjoint so
+ * Shift+Insert pastes even while text is selected.
+ */
+export function isCopyKeyEvent(
+  e: {
+    ctrlKey: boolean;
+    metaKey: boolean;
+    shiftKey: boolean;
+    code: string;
+  },
+  hasSelection: boolean
+): boolean {
+  if (!hasSelection) return false;
+  const mod = e.ctrlKey || e.metaKey;
+  return (
+    (mod && e.code === "KeyC" && (e.shiftKey || e.metaKey)) ||
+    (e.ctrlKey && !e.metaKey && e.code === "Insert")
+  );
+}
+
+/**
  * True when a keyboard event is a terminal paste combo: Ctrl+Shift+V
- * (Win/Linux), Cmd+V (macOS), or Shift+Insert. Plain Ctrl+V is NOT a
- * paste combo — it must keep reaching the shell untouched.
+ * (Win/Linux), Cmd+V (macOS), or Shift+Insert (all OSes). Plain Ctrl+V is
+ * NOT a paste combo — it must keep reaching the shell untouched.
  */
 export function isPasteKeyEvent(e: {
   ctrlKey: boolean;
