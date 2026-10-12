@@ -368,7 +368,12 @@ impl PtyManager {
         }
     }
 
-    /// Sends a Ctrl+C interrupt signal (\x03) to target PTY session.
+    /// Sends a Ctrl+C interrupt byte (\x03) to target PTY session.
+    ///
+    /// Unix: the line discipline translates ETX into SIGINT, cancelling
+    /// the foreground process. Windows ConPTY does not translate this
+    /// byte into a CTRL_C_EVENT, so blocking console apps (e.g. `ping`)
+    /// are not cancelled; the byte is still delivered non-destructively.
     pub fn interrupt_pty(&self, id: &str) -> Result<(), TerminalError> {
         self.write_to_pty(id, "\x03")
     }
