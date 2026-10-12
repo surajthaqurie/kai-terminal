@@ -416,6 +416,7 @@ mod tests {
         assert!(run(&["init"]).status.success());
         assert!(run(&["config", "user.email", "t@t.t"]).status.success());
         assert!(run(&["config", "user.name", "t"]).status.success());
+        assert!(run(&["config", "core.autocrlf", "false"]).status.success());
         std::fs::write(dir.join("f.txt"), "hello\n").unwrap();
         assert!(run(&["add", "f.txt"]).status.success());
         assert!(run(&["commit", "-m", "init"]).status.success());
@@ -539,7 +540,9 @@ mod tests {
         // 7. Discard changes on modified file
         discard_git_file(&dir, "f.txt").expect("discard f.txt");
         assert_eq!(
-            std::fs::read_to_string(base.join("f.txt")).unwrap(),
+            std::fs::read_to_string(base.join("f.txt"))
+                .unwrap()
+                .replace("\r\n", "\n"),
             "hello\n"
         );
 
