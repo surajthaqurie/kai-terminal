@@ -7,7 +7,7 @@ const FAQ_ITEMS = [
   { q: 'What does it cost? Is there tracking?', a: 'MIT, no account. No telemetry in the app. Indexes stay in ~/.kai/ on your machine. .env files, keys and binaries are skipped.' },
   { q: 'How do I start?', a: 'Install the file for your OS, open a repo, run kai code . to index it, then kai agent setup <name> for one AI tool. The Guide shows each command.' },
   { q: 'Which AI tools are covered?', a: 'Claude, Cursor, Codex, Gemini, Copilot, Windsurf and Cline for config generation. The desktop app also lists locally installed CLIs without running them.' },
-  { q: 'What are the limits?', a: 'v0.1.1 is early. kai query output is capped by a token budget (default 4000). Some repos need kai refresh-index after large renames. See Known Limitations in the repo.' },
+  { q: 'What are the limits?', a: 'Kai is currently in early preview. kai query output is capped by a token budget (default 4000). Some repos need kai refresh-index after large renames. See Known Limitations in the repo.' },
   { q: 'Which files do I download?', a: 'macOS: .dmg (M1–M4). Linux: .deb for Ubuntu/Debian or .AppImage for other distros. Windows: .exe or .msi (x64). Pick yourself — the site does not auto-decide for you.' },
 ];
 

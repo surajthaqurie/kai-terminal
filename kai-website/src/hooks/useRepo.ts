@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { FALLBACK_TAG, LATEST_RELEASE_URL, REPO_URL } from '../data/site';
+import releaseInfo from '../generated/release.json';
 
 export type ReleaseAsset = { name: string; url: string; size: number };
 export type LatestRelease = {
@@ -51,28 +52,13 @@ export function useLatestRelease(): LatestRelease {
   return {
     tag, short, assets,
     asset: (match, fallbackFile) =>
-      assets.find((a) => match(a.name))?.url ?? `${REPO_URL}/releases/download/${tag}/${fallbackFile.replace('0.1.0', short)}`,
+      assets.find((a) => match(a.name))?.url ?? `${REPO_URL}/releases/download/${tag}/${fallbackFile.includes(short) ? fallbackFile : fallbackFile.replace(/\d+\.\d+\.\d+/, short)}`,
   };
 }
 
 export type PublishedRelease = { tag: string; name: string; date: string; url: string; notes: string };
 
-export const FALLBACK_RELEASES: PublishedRelease[] = [
-  {
-    tag: 'v0.1.1',
-    name: 'Kai v0.1.1 — Clean Process Exit, Customization & Multi-Agent Hardening',
-    date: '2026-10-11T17:40:00Z',
-    url: `${REPO_URL}/releases/tag/v0.1.1`,
-    notes: 'Release v0.1.1:\n- Clean terminal process exit and auto-close for finished panes/tabs\n- Enter to restart disconnected shell sessions\n- Tab-based settings dialog (Appearance, Font & Display, Shell & Tools, Shortcuts)\n- Expanded system font selector and background opacity customization\n- AI CLI auto-detection & MCP stdio streaming hardening\n- Standardized lowercase release packages',
-  },
-  {
-    tag: 'v0.1.0',
-    name: 'Kai v0.1.0 — First release',
-    date: '2026-10-11T12:00:00Z',
-    url: `${REPO_URL}/releases/tag/v0.1.0`,
-    notes: 'First release of Kai:\n- Fast terminal for macOS, Linux and Windows\n- Smooth display, safe separate tabs\n- Help for your AI tools (Claude, Cursor, Codex, Gemini and more)\n- Private: nothing leaves your computer',
-  },
-];
+export const FALLBACK_RELEASES: PublishedRelease[] = releaseInfo.releases;
 
 export function usePublishedReleases(limit = 6): PublishedRelease[] {
   const [list, setList] = useState<PublishedRelease[]>(() => load<PublishedRelease[]>('kai-releases') ?? FALLBACK_RELEASES);

@@ -5,14 +5,14 @@ import { HeroTerminal } from '../components/HeroTerminal';
 import { REPO_URL } from '../data/site';
 import type { LatestRelease } from '../hooks/useRepo';
 
-const STATS: Array<[string, string]> = [
-  ['~30MB', 'idle, one tab open'],
-  ['v0.1.1', 'current release'],
-  ['MIT', 'license'],
-  ['3', 'installers: macOS, Linux, Windows'],
-];
-
 export function Hero({ tag, short, version, rel }: { tag: string; short: string; version: string; rel?: LatestRelease }) {
+  const stats: Array<[string, string]> = [
+    ['~30MB', 'idle, one tab open'],
+    [tag, 'current release'],
+    ['MIT', 'license'],
+    ['3', 'installers: macOS, Linux, Windows'],
+  ];
+
   const macUrl = rel?.asset((n) => n.toLowerCase().endsWith('.dmg'), `kai_${short}_aarch64.dmg`) ?? `${REPO_URL}/releases/download/${tag}/kai_${short}_aarch64.dmg`;
   const linuxDeb = rel?.asset((n) => n.toLowerCase().includes('amd64') && n.toLowerCase().endsWith('.deb'), `kai_${short}_amd64.deb`) ?? `${REPO_URL}/releases/download/${tag}/kai_${short}_amd64.deb`;
   const linuxApp = rel?.asset((n) => n.toLowerCase().includes('amd64') && n.toLowerCase().endsWith('.appimage'), `kai_${short}_amd64.AppImage`) ?? `${REPO_URL}/releases/download/${tag}/kai_${short}_amd64.AppImage`;
@@ -38,7 +38,7 @@ export function Hero({ tag, short, version, rel }: { tag: string; short: string;
         </p>
 
         <p className="t-hero-reassure t-enter" style={{ animationDelay: '190ms' }}>
-          <span>v0.1.1 is an early release. If something breaks, check the changelog or open an issue on GitHub.</span>
+          <span>{tag} is an early release. If something breaks, check the changelog or open an issue on GitHub.</span>
         </p>
 
         <div className="t-enter" style={{ animationDelay: '230ms' }}>
@@ -75,7 +75,7 @@ export function Hero({ tag, short, version, rel }: { tag: string; short: string;
         </div>
 
         <div className="t-stats t-enter" style={{ animationDelay: '400ms' }}>
-          {STATS.map(([v, l]) => (
+          {stats.map(([v, l]) => (
             <div key={l} className="t-stat"><b>{v}</b><span>{l}</span></div>
           ))}
         </div>
