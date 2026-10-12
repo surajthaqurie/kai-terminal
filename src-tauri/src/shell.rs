@@ -466,10 +466,17 @@ pub fn validate_and_resolve_cwd(requested_cwd: Option<&str>) -> Result<String, T
             } else {
                 // Non-existent path: try the parent (handles trailing
                 // filenames / not-yet-created subpaths pasted from elsewhere).
+                // Never fall back to a filesystem root: a top-level miss like
+                // "/non_existent_xyz" (parent "/") must still error instead of
+                // silently opening "/" (root has no parent, so `par.parent()`
+                // is `None` there on all OSes).
                 let parent = p.parent();
                 if let Some(par) = parent {
                     let parent_str = par.to_string_lossy().to_string();
-                    if !parent_str.is_empty() && Path::new(&parent_str).is_dir() {
+                    if !parent_str.is_empty()
+                        && par.parent().is_some()
+                        && Path::new(&parent_str).is_dir()
+                    {
                         return Ok(parent_str);
                     }
                 }
@@ -919,6 +926,19 @@ mod tests {
     }
 
     #[test]
+    fn test_validate_cwd_nested_missing_resolves_to_existing_parent() {
+        // Single-level fallback: "<existing-dir>/<missing-child>" resolves to
+        // the existing parent, but a top-level miss must never resolve to "/".
+        let dir = std::env::temp_dir();
+        let parent = dir.join("kai_nested_probe_xyz_9999");
+        let _ = fs::create_dir_all(&parent);
+        let nested = parent.join("not_yet_created_child.tmp");
+        let resolved = validate_and_resolve_cwd(Some(nested.to_str().unwrap()));
+        let _ = fs::remove_dir_all(&parent);
+        assert_eq!(resolved.unwrap(), parent.to_string_lossy().to_string());
+    }
+
+    #[test]
     fn test_custom_shell_profile_serialization() {
         let mut env_map = HashMap::new();
         env_map.insert("CUSTOM_VAR".to_string(), "VALUE".to_string());
@@ -966,13 +986,16 @@ mod tests {
     fn test_validate_cwd_file_resolves_to_parent_dir() {
         // A file path must resolve to its containing directory on every OS
         // ("proper parent path" for pasted file paths).
+        // Compare as `Path`s: `std::env::temp_dir()` may carry a trailing
+        // separator (e.g. macOS `/var/.../T/`, Windows `...\Temp\`) while
+        // `parent()` normalizes it away.
         let dir = std::env::temp_dir();
         let file = dir.join("kai_cwd_parent_probe.tmp");
         let _ = File::create(&file);
         let file_str = file.to_string_lossy().to_string();
         let resolved = validate_and_resolve_cwd(Some(&file_str));
         let _ = fs::remove_file(&file);
-        assert_eq!(resolved.unwrap(), dir.to_string_lossy().to_string());
+        assert_eq!(Path::new(&resolved.unwrap()), file.parent().unwrap());
     }
 
     #[test]
