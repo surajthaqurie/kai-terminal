@@ -6,6 +6,7 @@ import {
   findConflicts,
   validateBinding,
   isTypingTarget,
+  isPasteKeyEvent,
   platformLabel,
 } from "../services/shortcuts";
 import { DEFAULT_KEYBINDINGS } from "../services/settingsService";
@@ -81,5 +82,24 @@ describe("shortcut registry", () => {
   it("renders platform labels", () => {
     expect(platformLabel("Ctrl+Shift+T", true)).toBe("Cmd+Shift+T");
     expect(platformLabel("Ctrl+Shift+T", false)).toBe("Ctrl+Shift+T");
+  });
+
+  it("detects terminal paste combos (single-writer guard against double paste)", () => {
+    // Ctrl+Shift+V (Win/Linux)
+    expect(isPasteKeyEvent(keyEvent("KeyV", { ctrlKey: true, shiftKey: true }))).toBe(true);
+    // Cmd+V (macOS)
+    expect(isPasteKeyEvent(keyEvent("KeyV", { metaKey: true }))).toBe(true);
+    // Cmd+Shift+V also pastes (matches first clause via metaKey)
+    expect(isPasteKeyEvent(keyEvent("KeyV", { metaKey: true, shiftKey: true }))).toBe(true);
+    // Shift+Insert
+    expect(isPasteKeyEvent(keyEvent("Insert", { shiftKey: true }))).toBe(true);
+    // Plain Ctrl+V must NOT paste — it reaches the shell untouched
+    expect(isPasteKeyEvent(keyEvent("KeyV", { ctrlKey: true }))).toBe(false);
+    // Copy combos must NOT paste
+    expect(isPasteKeyEvent(keyEvent("KeyC", { ctrlKey: true, shiftKey: true }))).toBe(false);
+    expect(isPasteKeyEvent(keyEvent("KeyC", { metaKey: true }))).toBe(false);
+    // Plain keys never paste
+    expect(isPasteKeyEvent(keyEvent("KeyV", {}))).toBe(false);
+    expect(isPasteKeyEvent(keyEvent("Insert", {}))).toBe(false);
   });
 });

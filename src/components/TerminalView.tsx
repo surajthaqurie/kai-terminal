@@ -4,6 +4,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import "@xterm/xterm/css/xterm.css";
 import { ptyService, PtyService } from "../services/ptyService";
+import { isPasteKeyEvent } from "../services/shortcuts";
 import { ShellProfile, SessionStatus, UserSettings } from "../types/terminal";
 import { SettingsService, DEFAULT_SETTINGS } from "../services/settingsService";
 import { SearchBar } from "./SearchBar";
@@ -247,13 +248,18 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
           }
           return false;
         }
-        // Paste: Ctrl+Shift+V (Win/Linux), Cmd+V (macOS), Shift+Insert
-        const isPaste =
-          (mod && event.shiftKey && event.code === "KeyV") ||
-          (event.metaKey && !event.ctrlKey && event.code === "KeyV") ||
-          (event.shiftKey && event.code === "Insert");
+        // Paste: Ctrl+Shift+V (Win/Linux), Cmd+V (macOS), Shift+Insert.
+        // preventDefault/stopPropagation are load-bearing: without them the
+        // WebView ALSO performs a native paste into xterm's hidden textarea,
+        // which surfaces via onData as a second writeToPty — "paste once,
+        // appears twice". The explicit clipboard.readText below must be the
+        // single writer. Auto-repeat keydowns are swallowed the same way so
+        // a held combo cannot queue duplicate pastes.
+        const isPaste = isPasteKeyEvent(event);
         if (isPaste) {
-          if (event.type === "keydown") {
+          event.preventDefault();
+          event.stopPropagation();
+          if (event.type === "keydown" && !event.repeat) {
             navigator.clipboard
               .readText()
               .then((text) => {

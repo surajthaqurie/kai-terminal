@@ -271,3 +271,22 @@ export function isMacPlatform(): boolean {
     return false;
   }
 }
+
+/**
+ * True when a keyboard event is a terminal paste combo: Ctrl+Shift+V
+ * (Win/Linux), Cmd+V (macOS), or Shift+Insert. Plain Ctrl+V is NOT a
+ * paste combo — it must keep reaching the shell untouched.
+ */
+export function isPasteKeyEvent(e: {
+  ctrlKey: boolean;
+  metaKey: boolean;
+  shiftKey: boolean;
+  code: string;
+}): boolean {
+  const mod = e.ctrlKey || e.metaKey;
+  return (
+    (mod && e.shiftKey && e.code === "KeyV") ||
+    (e.metaKey && !e.ctrlKey && e.code === "KeyV") ||
+    (e.shiftKey && e.code === "Insert")
+  );
+}
