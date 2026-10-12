@@ -689,7 +689,10 @@ pub fn detect_installed_editors() -> Vec<EditorInfo> {
             let guesses: Vec<String> = match id {
                 "vscode" => vec!["/usr/bin/code".into(), "/snap/bin/code".into()],
                 "cursor" => vec!["/usr/bin/cursor".into()],
-                "sublime" => vec!["/usr/bin/subl".into(), "/opt/sublime_text/sublime_text".into()],
+                "sublime" => vec![
+                    "/usr/bin/subl".into(),
+                    "/opt/sublime_text/sublime_text".into(),
+                ],
                 "zed" => vec!["/usr/bin/zed".into()],
                 _ => vec![],
             };
@@ -721,8 +724,22 @@ pub fn open_in_editor(requested_editor: Option<&str>, cwd: &str) -> Result<Strin
     // Flattened alias order from `editor_candidates` — single source of
     // truth for auto-detect priority on every OS.
     let candidate_editors = [
-        "code", "cursor", "windsurf", "codium", "vscodium", "subl", "sublime_text", "zed",
-        "nvim", "vim", "vi", "atom", "idea", "fleet", "webstorm", "clion",
+        "code",
+        "cursor",
+        "windsurf",
+        "codium",
+        "vscodium",
+        "subl",
+        "sublime_text",
+        "zed",
+        "nvim",
+        "vim",
+        "vi",
+        "atom",
+        "idea",
+        "fleet",
+        "webstorm",
+        "clion",
     ];
 
     let editor_bin = if let Some(req) = requested_editor {

@@ -24,7 +24,9 @@ use git::{get_git_info, run_git_action, GitInfo};
 #[cfg(feature = "tauri")]
 use pty::{PtyCreateOptions, PtyManager, PtySessionInfo};
 #[cfg(feature = "tauri")]
-use shell::{detect_available_shells, detect_installed_editors, open_in_editor, EditorInfo, ShellProfile};
+use shell::{
+    detect_available_shells, detect_installed_editors, open_in_editor, EditorInfo, ShellProfile,
+};
 #[cfg(feature = "tauri")]
 use tauri::{AppHandle, Manager, State};
 

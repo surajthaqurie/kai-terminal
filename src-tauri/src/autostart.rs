@@ -78,12 +78,7 @@ const WINDOWS_RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\R
 #[cfg(target_os = "windows")]
 fn is_windows_autostart_enabled() -> bool {
     std::process::Command::new("reg")
-        .args([
-            "query",
-            WINDOWS_RUN_KEY,
-            "/v",
-            AUTOSTART_APP_NAME,
-        ])
+        .args(["query", WINDOWS_RUN_KEY, "/v", AUTOSTART_APP_NAME])
         .output()
         .is_ok_and(|out| out.status.success())
 }
@@ -113,13 +108,7 @@ fn set_windows_autostart(enabled: bool, exe_path: &str) -> Result<(), TerminalEr
             .status()
     } else {
         std::process::Command::new("reg")
-            .args([
-                "delete",
-                WINDOWS_RUN_KEY,
-                "/v",
-                AUTOSTART_APP_NAME,
-                "/f",
-            ])
+            .args(["delete", WINDOWS_RUN_KEY, "/v", AUTOSTART_APP_NAME, "/f"])
             .status()
     };
     match status {
@@ -177,8 +166,9 @@ fn set_linux_autostart(enabled: bool, exe_path: &str) -> Result<(), TerminalErro
     })?;
     if !enabled {
         if file.exists() {
-            std::fs::remove_file(&file)
-                .map_err(|e| TerminalError::AutostartFailed(format!("Cannot remove {}: {}", file.display(), e)))?;
+            std::fs::remove_file(&file).map_err(|e| {
+                TerminalError::AutostartFailed(format!("Cannot remove {}: {}", file.display(), e))
+            })?;
         }
         return Ok(());
     }
@@ -204,7 +194,9 @@ fn set_linux_autostart(enabled: bool, exe_path: &str) -> Result<(), TerminalErro
 
 #[cfg(target_os = "macos")]
 fn macos_autostart_file() -> Option<std::path::PathBuf> {
-    let home = std::env::var("HOME").ok().filter(|v| !v.trim().is_empty())?;
+    let home = std::env::var("HOME")
+        .ok()
+        .filter(|v| !v.trim().is_empty())?;
     Some(
         std::path::Path::new(&home)
             .join("Library")
@@ -231,12 +223,14 @@ fn xml_escape(s: &str) -> String {
 
 #[cfg(target_os = "macos")]
 fn set_macos_autostart(enabled: bool, exe_path: &str) -> Result<(), TerminalError> {
-    let file = macos_autostart_file()
-        .ok_or_else(|| TerminalError::AutostartFailed("Cannot resolve ~/Library/LaunchAgents".into()))?;
+    let file = macos_autostart_file().ok_or_else(|| {
+        TerminalError::AutostartFailed("Cannot resolve ~/Library/LaunchAgents".into())
+    })?;
     if !enabled {
         if file.exists() {
-            std::fs::remove_file(&file)
-                .map_err(|e| TerminalError::AutostartFailed(format!("Cannot remove {}: {}", file.display(), e)))?;
+            std::fs::remove_file(&file).map_err(|e| {
+                TerminalError::AutostartFailed(format!("Cannot remove {}: {}", file.display(), e))
+            })?;
         }
         return Ok(());
     }
@@ -276,10 +270,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn test_linux_desktop_roundtrip_in_temp_xdg_home() {
-        let tmp = std::env::temp_dir().join(format!(
-            "kai-autostart-test-{}",
-            std::process::id()
-        ));
+        let tmp = std::env::temp_dir().join(format!("kai-autostart-test-{}", std::process::id()));
         // SAFETY: single-threaded test process env mutation for our own lookup.
         unsafe {
             std::env::set_var("XDG_CONFIG_HOME", &tmp);
