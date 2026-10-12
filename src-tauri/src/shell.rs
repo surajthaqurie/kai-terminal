@@ -900,6 +900,136 @@ fn is_windows_script_shim(path: &str) -> bool {
     lower.ends_with(".cmd") || lower.ends_with(".bat") || lower.ends_with(".ps1")
 }
 
+/// Host system terminal configuration detected from terminal emulators or desktop environment.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SystemTerminalConfig {
+    pub font_family: String,
+    pub font_size: u16,
+    pub theme: String,
+    pub cursor_blink: bool,
+    pub cursor_style: String,
+    pub opacity: f64,
+    pub default_shell: Option<String>,
+}
+
+/// Detects host terminal settings and preferences (e.g. Kali Linux QTerminal / XFCE terminal / system font).
+pub fn detect_system_terminal_config() -> SystemTerminalConfig {
+    let mut font_family = "'Fira Code', 'FiraCode', 'DejaVu Sans Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace".to_string();
+    let font_size = 12u16;
+    let mut theme = "kali".to_string();
+    let mut cursor_blink = false;
+    let mut cursor_style = "block".to_string();
+    let mut opacity = 1.0f64;
+    let default_shell = env::var("SHELL").ok();
+
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    {
+        if let Ok(home) = env::var("HOME") {
+            // 1. Try reading QTerminal config (~/.config/qterminal.org/qterminal.ini)
+            let qterm_path = Path::new(&home).join(".config/qterminal.org/qterminal.ini");
+            if let Ok(contents) = std::fs::read_to_string(&qterm_path) {
+                for line in contents.lines() {
+                    let line = line.trim();
+                    if let Some(val) = line.strip_prefix("fontFamily=") {
+                        let trimmed = val.trim();
+                        if !trimmed.is_empty() {
+                            font_family = format!("'{}', 'Fira Code', 'FiraCode', monospace", trimmed);
+                        }
+                    } else if let Some(val) = line.strip_prefix("colorScheme=") {
+                        let trimmed = val.trim();
+                        if trimmed.eq_ignore_ascii_case("Kali-Dark") || trimmed.to_lowercase().contains("kali") {
+                            theme = "kali".to_string();
+                        } else if trimmed.to_lowercase().contains("solarized") && trimmed.to_lowercase().contains("light") {
+                            theme = "solarized-light".to_string();
+                        } else if trimmed.to_lowercase().contains("solarized") {
+                            theme = "solarized-dark".to_string();
+                        } else if trimmed.to_lowercase().contains("dracula") {
+                            theme = "dracula".to_string();
+                        } else if trimmed.to_lowercase().contains("nord") {
+                            theme = "nord".to_string();
+                        } else if trimmed.to_lowercase().contains("one") {
+                            theme = "one-dark".to_string();
+                        }
+                    } else if let Some(val) = line.strip_prefix("KeyboardCursorBlink=") {
+                        cursor_blink = val.trim().eq_ignore_ascii_case("true");
+                    } else if let Some(val) = line.strip_prefix("KeyboardCursorShape=") {
+                        cursor_style = match val.trim() {
+                            "1" => "underline".to_string(),
+                            "2" => "bar".to_string(),
+                            _ => "block".to_string(),
+                        };
+                    } else if let Some(val) = line.strip_prefix("TerminalTransparency=") {
+                        if let Ok(trans) = val.trim().parse::<f64>() {
+                            let op = 1.0 - (trans / 100.0);
+                            opacity = (op * 100.0).round() / 100.0;
+                            if opacity < 0.2 || opacity > 1.0 {
+                                opacity = 1.0;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 2. Fallback to XFCE terminal config (~/.config/xfce4/terminal/terminalrc)
+            let xfce_path = Path::new(&home).join(".config/xfce4/terminal/terminalrc");
+            if let Ok(contents) = std::fs::read_to_string(&xfce_path) {
+                for line in contents.lines() {
+                    let line = line.trim();
+                    if let Some(val) = line.strip_prefix("FontName=") {
+                        let trimmed = val.trim();
+                        if !trimmed.is_empty() {
+                            let mut parts: Vec<&str> = trimmed.split_whitespace().collect();
+                            if parts.len() > 1 && parts.last().unwrap().parse::<f64>().is_ok() {
+                                parts.pop();
+                            }
+                            let family = parts.join(" ");
+                            if !family.is_empty() {
+                                font_family = format!("'{}', 'Fira Code', monospace", family);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 3. Fallback: check desktop monospace font via fc-match if not already set
+            if !font_family.contains("FiraCode") && !font_family.contains("Fira Code") {
+                if let Ok(output) = std::process::Command::new("fc-match")
+                    .args(["monospace", "-f", "%{family}\n"])
+                    .output()
+                {
+                    let out_str = String::from_utf8_lossy(&output.stdout);
+                    let detected = out_str.trim();
+                    if !detected.is_empty() {
+                        font_family = format!("'{}', 'Fira Code', 'DejaVu Sans Mono', monospace", detected);
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        font_family = "Menlo, Monaco, 'Courier New', monospace".to_string();
+        theme = "one-dark".to_string();
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        font_family = "Consolas, 'Cascadia Code', 'Lucida Console', monospace".to_string();
+        theme = "one-dark".to_string();
+    }
+
+    SystemTerminalConfig {
+        font_family,
+        font_size,
+        theme,
+        cursor_blink,
+        cursor_style,
+        opacity,
+        default_shell,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1087,5 +1217,14 @@ mod tests {
         assert!(!is_wsl_shell_path("C:\\Windows\\System32\\cmd.exe"));
         assert!(!is_wsl_shell_path("/bin/bash"));
         assert!(!wsl_failure_hint().is_empty());
+    }
+
+    #[test]
+    fn test_detect_system_terminal_config() {
+        let config = detect_system_terminal_config();
+        assert_eq!(config.font_size, 12);
+        assert!(!config.font_family.is_empty());
+        assert!(!config.theme.is_empty());
+        assert!(config.opacity >= 0.2 && config.opacity <= 1.0);
     }
 }

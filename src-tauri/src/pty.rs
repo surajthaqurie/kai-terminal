@@ -15,6 +15,7 @@ use crate::shell::{
 pub trait TerminalEventEmitter: Send + Sync + 'static {
     fn emit_output(&self, payload: PtyOutputPayload);
     fn emit_exit(&self, payload: PtyExitPayload);
+    fn emit_cwd(&self, _payload: PtyCwdPayload) {}
 }
 
 /// Tauri implementation of TerminalEventEmitter.
@@ -33,6 +34,11 @@ impl TerminalEventEmitter for TauriEventEmitter {
     fn emit_exit(&self, payload: PtyExitPayload) {
         use tauri::Emitter;
         let _ = self.app_handle.emit("pty-exit", payload);
+    }
+
+    fn emit_cwd(&self, payload: PtyCwdPayload) {
+        use tauri::Emitter;
+        let _ = self.app_handle.emit("pty-cwd", payload);
     }
 }
 
@@ -89,6 +95,45 @@ pub struct PtyOutputPayload {
 pub struct PtyExitPayload {
     pub id: String,
     pub exit_code: Option<i32>,
+}
+
+/// Event payload emitted on PTY working directory update.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PtyCwdPayload {
+    pub id: String,
+    pub cwd: String,
+}
+
+/// Attempts to resolve the live working directory of a process by its PID.
+pub fn resolve_process_cwd(pid: u32) -> Option<String> {
+    #[cfg(target_os = "linux")]
+    {
+        let proc_path = format!("/proc/{}/cwd", pid);
+        if let Ok(target) = std::fs::read_link(&proc_path) {
+            let s = target.to_string_lossy().to_string();
+            if !s.is_empty() {
+                return Some(s);
+            }
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        use std::process::Command;
+        if let Ok(output) = Command::new("lsof")
+            .args(["-a", "-p", &pid.to_string(), "-d", "cwd", "-Fn"])
+            .output()
+        {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines() {
+                if let Some(path) = line.strip_prefix('n') {
+                    if !path.is_empty() {
+                        return Some(path.to_string());
+                    }
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Internal session handle holding native PTY master, writer, and process killer handle.
@@ -259,6 +304,9 @@ impl PtyManager {
         // 1. Dedicated background reader thread for continuous output streaming with flow control
         let id_clone = session_id.clone();
         let emitter_reader = emitter.clone();
+        let pid_reader = pid;
+        let mut last_emitted_cwd = session_info.cwd.clone();
+        let sessions_map_ref = self.sessions.clone();
 
         let reader_thread = std::thread::spawn(move || {
             let mut read_buf = [0u8; READ_BUFFER_CHUNK_BYTES];
@@ -277,6 +325,24 @@ impl PtyManager {
                                 id: id_clone.clone(),
                                 data: text,
                             });
+                        }
+
+                        // Check if child working directory changed
+                        if let Some(p) = pid_reader {
+                            if let Some(curr_cwd) = resolve_process_cwd(p) {
+                                if curr_cwd != last_emitted_cwd {
+                                    last_emitted_cwd = curr_cwd.clone();
+                                    if let Ok(mut map) = sessions_map_ref.lock() {
+                                        if let Some(handle) = map.get_mut(&id_clone) {
+                                            handle.cwd = curr_cwd.clone();
+                                        }
+                                    }
+                                    emitter_reader.emit_cwd(PtyCwdPayload {
+                                        id: id_clone.clone(),
+                                        cwd: curr_cwd,
+                                    });
+                                }
+                            }
                         }
                     }
                     Err(_) => break, // Pipe broken or master closed
@@ -472,33 +538,59 @@ impl PtyManager {
         }
     }
 
+    /// Returns live resolved working directory for a session if active.
+    pub fn get_session_cwd(&self, id: &str) -> Option<String> {
+        let mut sessions = self.sessions.lock().ok()?;
+        let session = sessions.get_mut(id)?;
+        if let Some(pid) = session.pid {
+            if let Some(curr) = resolve_process_cwd(pid) {
+                session.cwd = curr.clone();
+                return Some(curr);
+            }
+        }
+        Some(session.cwd.clone())
+    }
+
     /// Returns session metadata for a given ID.
     pub fn get_session_info(&self, id: &str) -> Option<PtySessionInfo> {
-        let sessions = self.sessions.lock().ok()?;
-        sessions.get(id).map(|s| PtySessionInfo {
-            id: s.id.clone(),
-            pid: s.pid,
-            shell_path: s.shell_path.clone(),
-            cwd: s.cwd.clone(),
-            cols: s.cols,
-            rows: s.rows,
-            status: s.status.clone(),
+        let mut sessions = self.sessions.lock().ok()?;
+        let session = sessions.get_mut(id)?;
+        if let Some(pid) = session.pid {
+            if let Some(curr) = resolve_process_cwd(pid) {
+                session.cwd = curr;
+            }
+        }
+        Some(PtySessionInfo {
+            id: session.id.clone(),
+            pid: session.pid,
+            shell_path: session.shell_path.clone(),
+            cwd: session.cwd.clone(),
+            cols: session.cols,
+            rows: session.rows,
+            status: session.status.clone(),
         })
     }
 
     /// Returns list of all active session metadata objects.
     pub fn list_sessions(&self) -> Vec<PtySessionInfo> {
-        if let Ok(sessions) = self.sessions.lock() {
+        if let Ok(mut sessions) = self.sessions.lock() {
             sessions
-                .values()
-                .map(|s| PtySessionInfo {
-                    id: s.id.clone(),
-                    pid: s.pid,
-                    shell_path: s.shell_path.clone(),
-                    cwd: s.cwd.clone(),
-                    cols: s.cols,
-                    rows: s.rows,
-                    status: s.status.clone(),
+                .values_mut()
+                .map(|s| {
+                    if let Some(pid) = s.pid {
+                        if let Some(curr) = resolve_process_cwd(pid) {
+                            s.cwd = curr;
+                        }
+                    }
+                    PtySessionInfo {
+                        id: s.id.clone(),
+                        pid: s.pid,
+                        shell_path: s.shell_path.clone(),
+                        cwd: s.cwd.clone(),
+                        cols: s.cols,
+                        rows: s.rows,
+                        status: s.status.clone(),
+                    }
                 })
                 .collect()
         } else {
@@ -1113,5 +1205,18 @@ mod tests {
         let clamped = manager.get_session_info(&info.id).unwrap();
         assert_eq!((clamped.cols, clamped.rows), (MAX_COLS, MAX_ROWS));
         manager.close_pty(&info.id).unwrap();
+    }
+
+    #[test]
+    fn test_resolve_process_cwd() {
+        let pid = std::process::id();
+        let resolved = resolve_process_cwd(pid);
+        #[cfg(target_os = "linux")]
+        {
+            assert!(resolved.is_some());
+            let cwd_str = resolved.unwrap();
+            assert!(!cwd_str.is_empty());
+            assert!(std::path::Path::new(&cwd_str).is_dir());
+        }
     }
 }

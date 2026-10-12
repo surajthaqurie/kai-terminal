@@ -1,10 +1,12 @@
 import {
   UserSettings,
   ThemeName,
+  CursorStyle,
   KeybindingsConfig,
   ProjectWorkspaceSettings,
 } from "../types/terminal";
 import { ITheme } from "@xterm/xterm";
+import { PtyService } from "./ptyService";
 
 export const DEFAULT_KEYBINDINGS: KeybindingsConfig = {
   newTab: "Ctrl+Shift+T",
@@ -22,10 +24,11 @@ export const DEFAULT_KEYBINDINGS: KeybindingsConfig = {
 
 export const DEFAULT_SETTINGS: UserSettings = {
   theme: "kali",
-  fontFamily: 'Menlo, Monaco, "Courier New", monospace',
-  fontSize: 14,
+  fontFamily:
+    "'Fira Code', 'FiraCode', 'DejaVu Sans Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace",
+  fontSize: 12,
   scrollback: 10000,
-  cursorBlink: true,
+  cursorBlink: false,
   cursorStyle: "block",
   opacity: 1.0,
   customShellPath: "",
@@ -101,7 +104,7 @@ export class SettingsService {
     } else {
       merged.fontFamily = merged.fontFamily.slice(0, 512);
     }
-    if (!Number.isFinite(merged.fontSize)) merged.fontSize = 14;
+    if (!Number.isFinite(merged.fontSize)) merged.fontSize = 12;
     merged.fontSize = Math.max(8, Math.min(36, Math.round(merged.fontSize)));
     if (!Number.isFinite(merged.scrollback)) merged.scrollback = 10000;
     merged.scrollback = Math.max(1000, Math.min(100000, Math.round(merged.scrollback)));
@@ -133,12 +136,39 @@ export class SettingsService {
         const parsed = JSON.parse(stored);
         // Version-tolerant: unknown future keys are dropped by normalize.
         void parsed.version;
+        // Migrate legacy hardcoded font and 14px default if unmodified
+        if (
+          parsed.fontFamily === 'Menlo, Monaco, "Courier New", monospace' ||
+          parsed.fontFamily === "Menlo, Monaco, 'Courier New', monospace"
+        ) {
+          parsed.fontFamily = DEFAULT_SETTINGS.fontFamily;
+        }
+        if (parsed.fontSize === 14 && !parsed._customFontSize) {
+          parsed.fontSize = 12;
+        }
         return SettingsService.normalize(parsed);
       }
     } catch {
       // Fallback on error
     }
     return { ...DEFAULT_SETTINGS };
+  }
+
+  /**
+   * Discovers and returns host system terminal preferences (e.g. Kali Linux
+   * QTerminal / XFCE terminal / system monospace font) via backend IPC.
+   */
+  static async loadSystemDefaults(): Promise<Partial<UserSettings>> {
+    const config = await PtyService.getSystemTerminalConfig();
+    if (!config) return {};
+    return {
+      fontFamily: config.font_family || DEFAULT_SETTINGS.fontFamily,
+      fontSize: 12, // Always ensure default font size is 12
+      theme: (config.theme as ThemeName) || "kali",
+      cursorBlink: config.cursor_blink ?? false,
+      cursorStyle: (config.cursor_style as CursorStyle) || "block",
+      opacity: config.opacity ?? 1.0,
+    };
   }
 
   static saveSettings(settings: UserSettings): void {

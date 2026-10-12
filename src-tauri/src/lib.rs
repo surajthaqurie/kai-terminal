@@ -212,6 +212,24 @@ fn get_session_info(state: State<'_, PtyManager>, id: String) -> Option<PtySessi
 
 #[cfg(feature = "tauri")]
 #[tauri::command]
+fn get_pty_cwd(state: State<'_, PtyManager>, id: String) -> Option<String> {
+    state.get_session_cwd(&id)
+}
+
+#[cfg(feature = "tauri")]
+#[tauri::command]
+fn get_system_terminal_config() -> shell::SystemTerminalConfig {
+    shell::detect_system_terminal_config()
+}
+
+#[cfg(feature = "tauri")]
+#[tauri::command]
+fn get_app_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
+#[cfg(feature = "tauri")]
+#[tauri::command]
 fn list_sessions(state: State<'_, PtyManager>) -> Vec<PtySessionInfo> {
     state.list_sessions()
 }
@@ -250,6 +268,9 @@ pub fn run() {
             write_to_pty,
             resize_pty,
             close_pty,
+            get_pty_cwd,
+            get_system_terminal_config,
+            get_app_version,
             get_autostart_enabled,
             set_autostart_enabled,
             get_session_info,

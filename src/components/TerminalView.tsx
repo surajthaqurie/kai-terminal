@@ -289,6 +289,12 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
 
       const onTextareaFocus = () => {
         onFocusRef.current?.();
+        const backendId = backendPtyIdRef.current;
+        if (backendId) {
+          void PtyService.getPtyCwd(backendId).then((resolved) => {
+            if (resolved) onCwdResolvedRef.current?.(resolved);
+          });
+        }
       };
       term.textarea?.addEventListener("focus", onTextareaFocus);
 
@@ -384,6 +390,16 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       }
 
       // 3. User keyboard input forwarding without altering terminal escape sequences
+      const checkLiveCwd = () => {
+        const backendId = backendPtyIdRef.current;
+        if (!backendId) return;
+        void PtyService.getPtyCwd(backendId).then((resolved) => {
+          if (resolved) {
+            onCwdResolvedRef.current?.(resolved);
+          }
+        });
+      };
+
       const inputDisposable = term.onData((data) => {
         const backendId = backendPtyIdRef.current;
         if (backendId) {
@@ -391,6 +407,12 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
           ptyService.writeToPty(backendId, data).catch(() => {
             // Backend already reaped the session; status update arrives via pty-exit.
           });
+          // When a command is submitted (e.g. cd /location), trigger CWD detection
+          if (data.includes("\r") || data.includes("\n")) {
+            setTimeout(checkLiveCwd, 100);
+            setTimeout(checkLiveCwd, 300);
+            setTimeout(checkLiveCwd, 800);
+          }
         }
         // Dead pane: input is ignored (use Close pane). No auto-restart.
       });
@@ -400,6 +422,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       // the backend PTY id so concurrent tabs stay isolated.
       let unlistenOutput: (() => void) | undefined;
       let unlistenExit: (() => void) | undefined;
+      let unlistenCwd: (() => void) | undefined;
       let pendingOutput = "";
       let rafScheduled = false;
 
@@ -464,6 +487,16 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
           unlistenExit = unlisten;
         });
 
+      ptyService
+        .onPtyCwd((payload) => {
+          if (payload.id === backendPtyIdRef.current && payload.cwd) {
+            onCwdResolvedRef.current?.(payload.cwd);
+          }
+        })
+        .then((unlisten) => {
+          unlistenCwd = unlisten;
+        });
+
       // 5. Container resize handling (debounced 150 ms so drag-resize and
       // rapid layout changes send at most one IPC resize each).
       let resizeTimer: ReturnType<typeof setTimeout> | null = null;
@@ -510,6 +543,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         if (resizeTimer) clearTimeout(resizeTimer);
         if (unlistenOutput) unlistenOutput();
         if (unlistenExit) unlistenExit();
+        if (unlistenCwd) unlistenCwd();
         const backendId = backendPtyIdRef.current;
         backendPtyIdRef.current = null;
         if (backendId) {
@@ -522,6 +556,22 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       // sessionId scopes the tab lifetime; shell/cwd changes apply on next launch.
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [sessionId]);
+
+    // Periodic live CWD synchronization for the visible pane (ensures footer updates on cd)
+    useEffect(() => {
+      if (!visible) return;
+      const timer = setInterval(() => {
+        const backendId = backendPtyIdRef.current;
+        if (backendId) {
+          void PtyService.getPtyCwd(backendId).then((resolved) => {
+            if (resolved) {
+              onCwdResolvedRef.current?.(resolved);
+            }
+          });
+        }
+      }, 1500);
+      return () => clearInterval(timer);
+    }, [visible]);
 
     // First-show launcher for tabs that mounted hidden: spawn the PTY on
     // first visibility, or re-fit an already-live session (hidden mount

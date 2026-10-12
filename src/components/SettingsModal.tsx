@@ -23,6 +23,14 @@ export type SettingsTab = "appearance" | "terminal" | "shell" | "shortcuts" | "u
 
 export const FONT_PRESETS = [
   {
+    label: "System Monospace / Kali (Default)",
+    value: DEFAULT_SETTINGS.fontFamily,
+  },
+  {
+    label: "Fira Code (Kali Linux)",
+    value: '"Fira Code", monospace',
+  },
+  {
     label: "System Monospace (OS Default)",
     value:
       'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
@@ -473,7 +481,7 @@ export const SettingsModal: FC<SettingsModalProps> = ({
                     onChange={(e) =>
                       setFormData({
                         ...formData,
-                        fontSize: Math.max(8, Math.min(36, parseInt(e.target.value) || 14)),
+                        fontSize: Math.max(8, Math.min(36, parseInt(e.target.value) || 12)),
                       })
                     }
                   />

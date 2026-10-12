@@ -91,4 +91,17 @@ describe("SettingsService", () => {
     expect(SettingsService.normalize({}).autoRestoreSession).toBe(false);
     expect(SettingsService.normalize({ autoRestoreSession: true }).autoRestoreSession).toBe(true);
   });
+
+  it("should have default fontSize of 12 and system font family", () => {
+    expect(DEFAULT_SETTINGS.fontSize).toBe(12);
+    expect(DEFAULT_SETTINGS.fontFamily).toContain("Fira Code");
+    expect(DEFAULT_SETTINGS.fontFamily).toContain("monospace");
+    const normalized = SettingsService.normalize({});
+    expect(normalized.fontSize).toBe(12);
+  });
+
+  it("should safely handle loadSystemDefaults", async () => {
+    const defaults = await SettingsService.loadSystemDefaults();
+    expect(defaults).toBeDefined();
+  });
 });

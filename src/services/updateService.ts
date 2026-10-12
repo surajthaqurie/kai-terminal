@@ -8,7 +8,7 @@
  * resolve to "no update" so the UI never blocks on this.
  */
 
-export const APP_VERSION_FALLBACK = "0.1.1";
+export const APP_VERSION_FALLBACK = "0.1.2";
 export const GITHUB_REPO = "surajthaqurie/kai-terminal";
 export const LATEST_RELEASE_API_URL = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`;
 export const RELEASES_PAGE_URL = `https://github.com/${GITHUB_REPO}/releases/latest`;
@@ -61,11 +61,18 @@ export function isNewerVersion(latest: string, current: string): boolean {
 /** Best-effort app version: Tauri runtime when available, else fallback. */
 export async function getAppVersion(): Promise<string> {
   try {
-    const { getVersion } = await import("@tauri-apps/api/app");
-    const v = await getVersion();
+    const { invoke } = await import("@tauri-apps/api/core");
+    const v = await invoke<string>("get_app_version");
     if (typeof v === "string" && v.trim()) return v.trim();
   } catch {
-    // Browser/mock or old runtime: fall through to fallback.
+    // try getVersion from app plugin
+    try {
+      const { getVersion } = await import("@tauri-apps/api/app");
+      const v = await getVersion();
+      if (typeof v === "string" && v.trim()) return v.trim();
+    } catch {
+      // Browser/mock or old runtime: fall through to fallback.
+    }
   }
   return APP_VERSION_FALLBACK;
 }

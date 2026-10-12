@@ -925,6 +925,14 @@ export const GitChangesModal: FC<GitChangesModalProps> = ({ dir, onClose, onOpen
                   ) : (
                     /* Split Mode (Side by Side) */
                     <div className="diff-split-view">
+                      <div className="diff-split-column-headers">
+                        <div className="split-header-col left-header">
+                          <span className="split-header-tag">Original (Previous)</span>
+                        </div>
+                        <div className="split-header-col right-header">
+                          <span className="split-header-tag">Modified (Working / Current)</span>
+                        </div>
+                      </div>
                       {parsedDiff.hunks.map((hunk, hIdx) => {
                         const splitRows = buildSplitRows(hunk);
                         return (

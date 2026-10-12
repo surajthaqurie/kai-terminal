@@ -2435,6 +2435,44 @@ input::-webkit-calendar-picker-indicator {
   width: 100%;
 }
 
+.diff-split-column-headers {
+  display: flex;
+  width: 100%;
+  background-color: #151827;
+  border-bottom: 1px solid #282c3f;
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  user-select: none;
+}
+
+.split-header-col {
+  flex: 1 1 50%;
+  display: flex;
+  align-items: center;
+  padding: 4px 12px;
+  border-right: 1px solid #1c2033;
+}
+
+.split-header-col:last-child {
+  border-right: none;
+}
+
+.split-header-tag {
+  font-size: 11px;
+  font-weight: 600;
+  color: #8b9bb4;
+  letter-spacing: 0.3px;
+}
+
+.split-header-col.left-header .split-header-tag {
+  color: #f38ba8;
+}
+
+.split-header-col.right-header .split-header-tag {
+  color: #a6e3a1;
+}
+
 .diff-split-hunk {
   border-bottom: 1px solid #1c2033;
 }

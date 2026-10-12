@@ -38,36 +38,63 @@ pub fn get_git_info(cwd: &str) -> GitInfo {
             error: Some("Directory does not exist".to_string()),
         };
     }
-    let branch_raw = run_git(trimmed, &["rev-parse", "--abbrev-ref", "HEAD"]);
-    let branch = match branch_raw {
-        None => {
+    let root = match run_git(trimmed, &["rev-parse", "--show-toplevel"]) {
+        Some(r) if !r.trim().is_empty() => r.trim().to_string(),
+        _ => {
             return GitInfo {
                 branch: None,
                 dirty: false,
                 ahead_behind: None,
                 repo_root: None,
                 error: Some("Not a git repository or git is missing".to_string()),
-            }
+            };
         }
-        Some(b) if b == "HEAD" => {
-            // Detached HEAD: report the short commit hash instead of a
-            // bare "HEAD" so the badge stays informative. Uses
-            // machine-readable plumbing output, not localized text.
-            match run_git(trimmed, &["rev-parse", "--short", "HEAD"]) {
-                Some(sha) => Some(format!("detached@{}", sha)),
-                None => Some("detached HEAD".to_string()),
-            }
-        }
-        Some(b) => Some(b),
     };
-    let root = run_git(trimmed, &["rev-parse", "--show-toplevel"]);
+
+    // 1. Try `branch --show-current` (works for regular branches even with 0 commits)
+    let mut branch = run_git(trimmed, &["branch", "--show-current"])
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+
+    // 2. If None, try `symbolic-ref --short HEAD`
+    if branch.is_none() {
+        branch = run_git(trimmed, &["symbolic-ref", "--short", "HEAD"])
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+    }
+
+    // 3. If None, try `rev-parse --abbrev-ref HEAD`
+    if branch.is_none() {
+        if let Some(b) = run_git(trimmed, &["rev-parse", "--abbrev-ref", "HEAD"]) {
+            let b_trimmed = b.trim();
+            if b_trimmed != "HEAD" && !b_trimmed.is_empty() {
+                branch = Some(b_trimmed.to_string());
+            }
+        }
+    }
+
+    // 4. Detached HEAD check: if branch is still None, try `rev-parse --short HEAD`
+    if branch.is_none() {
+        if let Some(sha) = run_git(trimmed, &["rev-parse", "--short", "HEAD"]) {
+            let sha_trimmed = sha.trim();
+            if !sha_trimmed.is_empty() {
+                branch = Some(format!("detached@{}", sha_trimmed));
+            }
+        }
+    }
+
+    // 5. Fallback for brand-new repository with 0 commits
+    if branch.is_none() {
+        branch = Some("main".to_string());
+    }
+
     let status = run_git(trimmed, &["status", "--porcelain"]);
     let dirty = status.map(|s| !s.trim().is_empty()).unwrap_or(false);
     GitInfo {
         branch,
         dirty,
         ahead_behind: None,
-        repo_root: root,
+        repo_root: Some(root),
         error: None,
     }
 }
@@ -473,6 +500,17 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&base);
+
+        // Fresh repo with 0 commits must still report repo_root and branch
+        let empty_base = std::env::temp_dir().join(format!("kai-git-empty-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&empty_base);
+        std::fs::create_dir_all(&empty_base).unwrap();
+        assert!(std::process::Command::new("git").current_dir(&empty_base).arg("init").output().unwrap().status.success());
+        let empty_info = get_git_info(&empty_base.to_string_lossy());
+        assert!(empty_info.error.is_none());
+        assert!(empty_info.repo_root.is_some());
+        assert!(empty_info.branch.is_some());
+        let _ = std::fs::remove_dir_all(&empty_base);
     }
 
     #[test]

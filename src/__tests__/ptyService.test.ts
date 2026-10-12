@@ -30,4 +30,16 @@ describe("PtyService (Mock Fallback)", () => {
     unlistenOutput();
     unlistenExit();
   });
+
+  it("should handle getPtyCwd, onPtyCwd, and getSystemTerminalConfig in mock mode", async () => {
+    const cwd = await PtyService.getPtyCwd("mock-session-1");
+    expect(cwd).toBeNull();
+
+    const unlistenCwd = await PtyService.onPtyCwd(() => {});
+    expect(typeof unlistenCwd).toBe("function");
+    unlistenCwd();
+
+    const sysConfig = await PtyService.getSystemTerminalConfig();
+    expect(sysConfig).toBeNull();
+  });
 });

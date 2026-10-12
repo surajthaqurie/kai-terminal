@@ -19,8 +19,10 @@ export interface IPtyService {
   writeToPty(id: string, data: string): Promise<void>;
   resizePty(id: string, cols: number, rows: number): Promise<void>;
   closePty(id: string): Promise<void>;
+  getPtyCwd(id: string): Promise<string | null>;
   onPtyOutput(callback: (payload: PtyOutputPayload) => void): Promise<UnlistenFn>;
   onPtyExit(callback: (payload: PtyExitPayload) => void): Promise<UnlistenFn>;
+  onPtyCwd(callback: (payload: { id: string; cwd: string }) => void): Promise<UnlistenFn>;
 }
 
 /**
@@ -54,12 +56,20 @@ export class PtyServiceImpl implements IPtyService {
     return PtyServiceImpl.closePty(id);
   }
 
+  async getPtyCwd(id: string): Promise<string | null> {
+    return PtyServiceImpl.getPtyCwd(id);
+  }
+
   async onPtyOutput(callback: (payload: PtyOutputPayload) => void): Promise<UnlistenFn> {
     return PtyServiceImpl.onPtyOutput(callback);
   }
 
   async onPtyExit(callback: (payload: PtyExitPayload) => void): Promise<UnlistenFn> {
     return PtyServiceImpl.onPtyExit(callback);
+  }
+
+  async onPtyCwd(callback: (payload: { id: string; cwd: string }) => void): Promise<UnlistenFn> {
+    return PtyServiceImpl.onPtyCwd(callback);
   }
 
   // --- Static interface implementation ---
@@ -128,6 +138,47 @@ export class PtyServiceImpl implements IPtyService {
     return await listen<PtyExitPayload>("pty-exit", (event) => {
       callback(event.payload);
     });
+  }
+
+  static async getPtyCwd(id: string): Promise<string | null> {
+    if (!isTauriAvailable()) {
+      return null;
+    }
+    try {
+      return await invoke<string | null>("get_pty_cwd", { id });
+    } catch {
+      return null;
+    }
+  }
+
+  static async onPtyCwd(
+    callback: (payload: { id: string; cwd: string }) => void
+  ): Promise<UnlistenFn> {
+    if (!isTauriAvailable()) {
+      return () => {};
+    }
+    return await listen<{ id: string; cwd: string }>("pty-cwd", (event) => {
+      callback(event.payload);
+    });
+  }
+
+  static async getSystemTerminalConfig(): Promise<{
+    font_family: string;
+    font_size: number;
+    theme: string;
+    cursor_blink: boolean;
+    cursor_style: string;
+    opacity: number;
+    default_shell?: string;
+  } | null> {
+    if (!isTauriAvailable()) {
+      return null;
+    }
+    try {
+      return await invoke("get_system_terminal_config");
+    } catch {
+      return null;
+    }
   }
 }
 

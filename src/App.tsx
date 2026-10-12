@@ -12,7 +12,7 @@ import { WorkspaceModal } from "./components/WorkspaceModal";
 import { GitStatusModal } from "./components/GitStatusModal";
 import { GitChangesModal } from "./components/GitChangesModal";
 import { PtyService, isTauriAvailable } from "./services/ptyService";
-import { SettingsService } from "./services/settingsService";
+import { SettingsService, DEFAULT_SETTINGS } from "./services/settingsService";
 import {
   getActiveProject,
   getGitInfoCached,
@@ -395,6 +395,30 @@ export function App() {
         // Mock/browser mode or backend unavailable: keep stored preference.
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // On startup, detect host terminal preferences (Kali Linux terminal / system font) and sync defaults
+  useEffect(() => {
+    if (!isTauriAvailable()) return;
+    void SettingsService.loadSystemDefaults().then((sysDefaults) => {
+      if (sysDefaults && Object.keys(sysDefaults).length > 0) {
+        setUserSettings((prev) => {
+          const isDefaultFont =
+            prev.fontFamily === DEFAULT_SETTINGS.fontFamily ||
+            prev.fontFamily === 'Menlo, Monaco, "Courier New", monospace';
+          const isDefaultSize = prev.fontSize === 14 || prev.fontSize === 12;
+          const next = {
+            ...prev,
+            ...(isDefaultFont && sysDefaults.fontFamily
+              ? { fontFamily: sysDefaults.fontFamily }
+              : {}),
+            ...(isDefaultSize ? { fontSize: 12 } : {}),
+            ...(prev.theme === "kali" && sysDefaults.theme ? { theme: sysDefaults.theme } : {}),
+          };
+          return next;
+        });
+      }
+    });
   }, []);
 
   // Load available shell profiles on startup
@@ -1387,7 +1411,10 @@ export function App() {
                             t.id === tab.id
                               ? {
                                   ...t,
-                                  cwd: t.panes.length === 1 ? resolved : t.cwd,
+                                  cwd:
+                                    t.activePaneId === pane.id || t.panes.length === 1
+                                      ? resolved
+                                      : t.cwd,
                                   panes: t.panes.map((p) =>
                                     p.id === pane.id ? { ...p, cwd: resolved } : p
                                   ),
@@ -1395,8 +1422,28 @@ export function App() {
                               : t
                           )
                         );
-                        setCwd(resolved);
-                        setRecentProjects(recordRecentProject(resolved));
+                        if (
+                          tab.id === activeTabId &&
+                          (tab.activePaneId === pane.id || tab.panes.length === 1)
+                        ) {
+                          setCwd(resolved);
+                          setRecentProjects(recordRecentProject(resolved));
+                          invalidateGitCache(resolved);
+                          void getGitInfoCached(resolved).then(
+                            (info) => {
+                              setGitInfoByDir((prev) => ({ ...prev, [resolved]: info }));
+                              setGitBranch(info.branch);
+                              setGitDirty(info.dirty);
+                              setGitRepoRoot(info.repo_root ?? null);
+                            },
+                            () => {
+                              setGitInfoByDir((prev) => ({ ...prev, [resolved]: null }));
+                              setGitBranch(null);
+                              setGitDirty(false);
+                              setGitRepoRoot(null);
+                            }
+                          );
+                        }
                       }
                     }}
                     onExit={(exitCode) => {
@@ -1496,6 +1543,11 @@ export function App() {
         settings={userSettings}
         onSaveSettings={handleSaveSettings}
         shells={shells}
+        appVersion={appVersion}
+        updateInfo={updateInfo}
+        isCheckingUpdates={isCheckingUpdates}
+        onCheckUpdates={() => void handleCheckUpdates(true)}
+        onViewUpdate={handleViewUpdate}
       />
 
       <WorkspaceModal
