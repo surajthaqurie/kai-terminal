@@ -205,6 +205,21 @@ jobs:
           xcrun notarytool submit "$DMG" --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
           xcrun stapler staple "$DMG"
 
+      - name: Normalize bundle artifact names to lowercase
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Enforcing lowercase bundle filenames..."
+          find src-tauri/target/release/bundle -type f | while read -r filepath; do
+            dir=$(dirname "$filepath")
+            filename=$(basename "$filepath")
+            lower_filename=$(echo "$filename" | sed -e 's/^Kai_/kai_/' -e 's/^KAI_/kai_/')
+            if [ "$filename" != "$lower_filename" ]; then
+              echo "Renaming $filename -> $lower_filename"
+              mv "$filepath" "$dir/$lower_filename"
+            fi
+          done
+
       - name: Verify bundle artifacts exist for this platform
         shell: bash
         run: |
@@ -266,7 +281,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo "Staged release files:"
+          echo "Staged release files before normalization:"
+          find release-artifacts -type f | sort
+          # Enforce lowercase prefix (kai_) across all downloaded platform artifacts
+          find release-artifacts -type f | while read -r filepath; do
+            dir=$(dirname "$filepath")
+            filename=$(basename "$filepath")
+            lower_filename=$(echo "$filename" | sed -e 's/^Kai_/kai_/' -e 's/^KAI_/kai_/')
+            if [ "$filename" != "$lower_filename" ]; then
+              echo "Renaming $filename -> $lower_filename"
+              mv "$filepath" "$dir/$lower_filename"
+            fi
+          done
+          echo "Staged release files after normalization:"
           find release-artifacts -type f | sort
           # Artifacts are downloaded with merge-multiple:true, so each platform's
           # installers land in subdirectories (deb/, appimage/, nsis/, msi/, dmg/).
@@ -279,6 +306,9 @@ jobs:
             echo "--- $label ($pattern) ---"
             local matches
             matches=$(find release-artifacts -type f -name "$pattern" | sort)
+            if [ -z "$matches" ]; then
+              matches=$(find release-artifacts -type f -iname "$pattern" | sort)
+            fi
             if [ -z "$matches" ]; then
               echo "MISSING: no $label files found"
               fail=1
@@ -307,6 +337,7 @@ jobs:
           files: |
             release-artifacts/**/*.deb
             release-artifacts/**/*.AppImage
+            release-artifacts/**/*.appimage
             release-artifacts/**/*.exe
             release-artifacts/**/*.msi
             release-artifacts/**/*.dmg
