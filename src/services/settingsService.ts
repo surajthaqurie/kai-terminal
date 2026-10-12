@@ -31,6 +31,8 @@ export const DEFAULT_SETTINGS: UserSettings = {
   opacity: 1.0,
   customShellPath: "",
   editorPath: "",
+  launchAtStartup: false,
+  autoRestoreSession: false,
   keybindings: DEFAULT_KEYBINDINGS,
 };
 
@@ -113,6 +115,8 @@ export class SettingsService {
     if (merged.defaultShellId !== undefined && typeof merged.defaultShellId !== "string") {
       merged.defaultShellId = undefined;
     }
+    merged.launchAtStartup = Boolean(merged.launchAtStartup);
+    merged.autoRestoreSession = Boolean(merged.autoRestoreSession);
     return merged;
   }
 

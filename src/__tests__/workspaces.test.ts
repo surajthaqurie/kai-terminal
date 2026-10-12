@@ -2,6 +2,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import {
   migrateLegacyLayout,
+  sanitizeTab,
   sanitizeWorkspace,
   createWorkspace,
   renameWorkspace,
@@ -71,5 +72,13 @@ describe("workspace persistence and migration", () => {
     const many = Array.from({ length: 50 }, (_, i) => ({ title: `T${i}` }));
     const ws = sanitizeWorkspace({ id: "x", name: "N", tabs: many });
     expect(ws!.tabs.length).toBeLessThanOrEqual(10);
+  });
+
+  it("keeps valid tab accent colors and drops malformed ones", () => {
+    expect(sanitizeTab({ title: "T", color: "#89b4fa" })?.color).toBe("#89b4fa");
+    expect(sanitizeTab({ title: "T", color: "#ABC" })?.color).toBe("#abc");
+    expect(sanitizeTab({ title: "T", color: "red" })?.color).toBeUndefined();
+    expect(sanitizeTab({ title: "T", color: "#12345" })?.color).toBeUndefined();
+    expect(sanitizeTab({ title: "T" })?.color).toBeUndefined();
   });
 });

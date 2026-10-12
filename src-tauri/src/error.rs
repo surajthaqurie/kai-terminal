@@ -23,6 +23,9 @@ pub enum TerminalError {
 
     #[error("Invalid working directory: {0}")]
     InvalidDirectory(String),
+
+    #[error("Autostart configuration failed: {0}")]
+    AutostartFailed(String),
 }
 
 impl Serialize for TerminalError {

@@ -558,6 +558,40 @@ export const SettingsModal: FC<SettingsModalProps> = ({
                   </p>
                 </div>
               )}
+
+              <div className="setting-field checkbox-field">
+                <label className="checkbox-label">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(formData.launchAtStartup)}
+                    onChange={(e) =>
+                      setFormData({ ...formData, launchAtStartup: e.target.checked })
+                    }
+                  />
+                  <span>Open Kai Terminal at startup</span>
+                </label>
+                <p className="muted-text">
+                  Registers launch-at-login with the OS (Windows Run key, Linux XDG Autostart, macOS
+                  LaunchAgent). Applies when you save settings.
+                </p>
+              </div>
+
+              <div className="setting-field checkbox-field">
+                <label className="checkbox-label">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(formData.autoRestoreSession)}
+                    onChange={(e) =>
+                      setFormData({ ...formData, autoRestoreSession: e.target.checked })
+                    }
+                  />
+                  <span>Restore previous session automatically</span>
+                </label>
+                <p className="muted-text">
+                  Off by default for a fast launch: Kai opens one fresh tab and offers a “Load
+                  session” button instead of spawning every previous tab at startup.
+                </p>
+              </div>
             </div>
           )}
 

@@ -76,4 +76,19 @@ describe("SettingsService", () => {
     const invalid = SettingsService.normalize({ cursorStyle: "invalid" as never });
     expect(invalid.cursorStyle).toBe("block");
   });
+
+  it("should default launchAtStartup to false and coerce truthy values", () => {
+    expect(DEFAULT_SETTINGS.launchAtStartup).toBe(false);
+    expect(SettingsService.normalize({}).launchAtStartup).toBe(false);
+    expect(SettingsService.normalize({ launchAtStartup: true }).launchAtStartup).toBe(true);
+    // Legacy stored settings without the key migrate safely.
+    const reloaded = SettingsService.normalize(JSON.parse(JSON.stringify(DEFAULT_SETTINGS)));
+    expect(reloaded.launchAtStartup).toBe(false);
+  });
+
+  it("should default autoRestoreSession to false so startup stays fast", () => {
+    expect(DEFAULT_SETTINGS.autoRestoreSession).toBe(false);
+    expect(SettingsService.normalize({}).autoRestoreSession).toBe(false);
+    expect(SettingsService.normalize({ autoRestoreSession: true }).autoRestoreSession).toBe(true);
+  });
 });

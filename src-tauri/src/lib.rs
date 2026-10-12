@@ -1,4 +1,5 @@
 pub mod ai_cli;
+pub mod autostart;
 pub mod diagnostics;
 pub mod error;
 pub mod git;
@@ -134,6 +135,18 @@ fn close_pty(state: State<'_, PtyManager>, id: String) -> Result<(), error::Term
 
 #[cfg(feature = "tauri")]
 #[tauri::command]
+fn get_autostart_enabled() -> bool {
+    autostart::is_autostart_enabled()
+}
+
+#[cfg(feature = "tauri")]
+#[tauri::command]
+fn set_autostart_enabled(enabled: bool) -> Result<(), error::TerminalError> {
+    autostart::set_autostart_enabled(enabled)
+}
+
+#[cfg(feature = "tauri")]
+#[tauri::command]
 fn get_session_info(state: State<'_, PtyManager>, id: String) -> Option<PtySessionInfo> {
     state.get_session_info(&id)
 }
@@ -170,6 +183,8 @@ pub fn run() {
             write_to_pty,
             resize_pty,
             close_pty,
+            get_autostart_enabled,
+            set_autostart_enabled,
             get_session_info,
             list_sessions,
             get_project_intelligence_cmd

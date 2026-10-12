@@ -17,6 +17,8 @@ export interface PersistedPaneV2 {
 
 export interface PersistedTabV2 {
   title: string;
+  /** Optional tab accent color (hex). Never executable content. */
+  color?: string;
   shellPath?: string;
   cwd?: string;
   splitDirection?: "none" | "horizontal" | "vertical";
@@ -54,6 +56,13 @@ function safeOptPath(v: unknown): string | undefined {
   return t;
 }
 
+function safeColor(v: unknown): string | undefined {
+  if (typeof v !== "string") return undefined;
+  const t = v.trim().toLowerCase();
+  if (/^#[0-9a-f]{3}$/.test(t) || /^#[0-9a-f]{6}$/.test(t)) return t;
+  return undefined;
+}
+
 export function sanitizeTab(raw: unknown): PersistedTabV2 | null {
   if (typeof raw !== "object" || raw === null) return null;
   const r = raw as Record<string, unknown>;
@@ -78,6 +87,7 @@ export function sanitizeTab(raw: unknown): PersistedTabV2 | null {
     sd === "horizontal" || sd === "vertical" ? sd : panes && panes.length > 1 ? "vertical" : "none";
   return {
     title: safeTitle(r.title),
+    color: safeColor(r.color),
     shellPath: safeOptPath(r.shellPath),
     cwd: safeOptPath(r.cwd),
     splitDirection,

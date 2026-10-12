@@ -22,13 +22,27 @@ interface TerminalViewProps {
   selectedShell?: ShellProfile;
   cwd?: string;
   settings?: UserSettings;
+  /**
+   * Whether this pane's tab is currently visible. Hidden tabs defer PTY
+   * spawn until first shown, so restoring 10 tabs at startup costs one PTY
+   * instead of ten (startup hang fix). Defaults to true.
+   */
+  visible?: boolean;
   onSessionStatusChange?: (status: SessionStatus, message?: string) => void;
   onExit?: (exitCode: number) => void;
 }
 
 export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
   (
-    { sessionId, selectedShell, cwd, settings = DEFAULT_SETTINGS, onSessionStatusChange, onExit },
+    {
+      sessionId,
+      selectedShell,
+      cwd,
+      settings = DEFAULT_SETTINGS,
+      visible = true,
+      onSessionStatusChange,
+      onExit,
+    },
     ref
   ) => {
     const containerRef = useRef<HTMLDivElement>(null);
@@ -42,6 +56,28 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
     const backendPtyIdRef = useRef<string | null>(null);
     const initSeqRef = useRef<number>(0);
     const [isSearchVisible, setIsSearchVisible] = useState(false);
+    // `exit` leaves the shell dead: track it so the pane always offers an
+    // explicit Restart / Close affordance instead of a terminal the user
+    // "is not able to close". Cleared on (re)connect.
+    const [exitedCode, setExitedCode] = useState<number | null>(null);
+    // The pty-output/pty-exit listeners are registered once per pane
+    // (effect deps `[sessionId]`), so they must go through refs to always
+    // call the LATEST callbacks/props. Otherwise `exit` fires a stale
+    // `onExit` closure with a stale `tabs` snapshot and the pane/tab never
+    // closes.
+    const onExitRef = useRef(onExit);
+    onExitRef.current = onExit;
+    const onStatusRef = useRef(onSessionStatusChange);
+    onStatusRef.current = onSessionStatusChange;
+    const shellRef = useRef(selectedShell);
+    shellRef.current = selectedShell;
+    const cwdRef = useRef(cwd);
+    cwdRef.current = cwd;
+    const visibleRef = useRef(visible);
+    visibleRef.current = visible;
+    // Tracks whether the initial PTY spawn has been scheduled, so tab
+    // switches don't re-spawn a live session.
+    const initialLaunchScheduledRef = useRef(false);
 
     useImperativeHandle(ref, () => ({
       clear: () => {
@@ -79,6 +115,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       const fitAddon = fitAddonRef.current;
       if (!term || !fitAddon) return;
       const mySeq = ++initSeqRef.current;
+      setExitedCode(null);
 
       // Best-effort close of the previous backend session for this tab
       // before spawning a replacement (prevents orphan PTY processes).
@@ -95,7 +132,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
 
       term.clear();
       term.writeln("\x1b[36m[Initializing PTY Session...]\x1b[0m\r\n");
-      onSessionStatusChange?.("connecting");
+      onStatusRef.current?.("connecting");
 
       try {
         fitAddon.fit();
@@ -107,9 +144,12 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
 
       try {
         const sessionInfo = await PtyService.createPty({
-          shell_path: selectedShell?.path,
-          args: selectedShell?.args,
-          cwd: cwd && cwd.trim() ? cwd.trim() : undefined,
+          shell_path: shellRef.current?.path ?? selectedShell?.path,
+          args: shellRef.current?.args ?? selectedShell?.args,
+          cwd: (() => {
+            const c = cwdRef.current ?? cwd;
+            return c && c.trim() ? c.trim() : undefined;
+          })(),
           cols,
           rows,
         });
@@ -124,15 +164,15 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         }
 
         backendPtyIdRef.current = sessionInfo.id;
-        onSessionStatusChange?.("connected");
+        onStatusRef.current?.("connected");
         term.writeln(
-          `\x1b[32m[Connected to ${selectedShell?.name || "Shell"} (PID ${sessionInfo.pid ?? "N/A"})]\x1b[0m\r\n`
+          `\x1b[32m[Connected to ${shellRef.current?.name || selectedShell?.name || "Shell"} (PID ${sessionInfo.pid ?? "N/A"})]\x1b[0m\r\n`
         );
       } catch (err: unknown) {
         if (mySeq !== initSeqRef.current) return;
         const errorMsg = err instanceof Error ? err.message : String(err);
         term.writeln(`\r\n\x1b[31m[Failed to launch shell: ${errorMsg}]\x1b[0m\r\n`);
-        onSessionStatusChange?.("error", errorMsg);
+        onStatusRef.current?.("error", errorMsg);
       }
     };
 
@@ -301,6 +341,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
             flushOutput();
             backendPtyIdRef.current = null;
             const exitCode = payload.exit_code ?? 0;
+            setExitedCode(exitCode);
             if (exitCode === 0) {
               term.writeln("\r\n\x1b[90m[Process completed — press Enter to restart]\x1b[0m\r\n");
             } else {
@@ -308,8 +349,13 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
                 `\r\n\x1b[33m[Process exited with code ${exitCode} — press Enter to restart]\x1b[0m\r\n`
               );
             }
-            onSessionStatusChange?.("disconnected");
-            onExit?.(exitCode);
+            onStatusRef.current?.("disconnected");
+            // Notify the parent on the next tick so the "press Enter"
+            // message above is flushed to the screen before the tab
+            // unmounts (auto-close). Uses the ref so the exit of a tab
+            // opened long after mount still closes the right pane.
+            const code = exitCode;
+            setTimeout(() => onExitRef.current?.(code), 0);
           }
         })
         .then((unlisten) => {
@@ -337,13 +383,25 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
 
       resizeObserver.observe(containerRef.current);
 
-      // Launch initial PTY session
-      void initPtySession();
+      // Launch initial PTY session (deferred):
+      // - Hidden tabs skip the spawn entirely; the `visible` effect below
+      //   launches on first show (startup thundering-herd fix).
+      // - Visible panes wait one paint (~50 ms) so the window renders
+      //   before the blocking-ish spawn IPC, avoiding "not responding".
+      let initialTimer: ReturnType<typeof setTimeout> | null = null;
+      if (visibleRef.current) {
+        initialLaunchScheduledRef.current = true;
+        initialTimer = setTimeout(() => {
+          initialTimer = null;
+          void initPtySession();
+        }, 50);
+      }
 
       // Clean disposal on unmount or session switch: close the BACKEND session
       // id (not the tab id) so no orphan child process survives.
       return () => {
         initSeqRef.current += 1;
+        if (initialTimer) clearTimeout(initialTimer);
         inputDisposable.dispose();
         resizeObserver.disconnect();
         if (resizeTimer) clearTimeout(resizeTimer);
@@ -361,6 +419,30 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       // sessionId scopes the tab lifetime; shell/cwd changes apply on restart.
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [sessionId]);
+
+    // First-show launcher for tabs that mounted hidden: spawn the PTY on
+    // first visibility, or re-fit an already-live session (hidden mount
+    // fit() is a no-op, so cols/rows would otherwise stay 80x24).
+    useEffect(() => {
+      if (!visible) return;
+      const term = xtermRef.current;
+      if (!term) return;
+      if (!initialLaunchScheduledRef.current && !backendPtyIdRef.current) {
+        initialLaunchScheduledRef.current = true;
+        void initPtySession();
+        return;
+      }
+      try {
+        fitAddonRef.current?.fit();
+        const backendId = backendPtyIdRef.current;
+        if (term.cols && term.rows && backendId) {
+          ptyService.resizePty(backendId, term.cols, term.rows).catch(() => {});
+        }
+      } catch {
+        // ignore hidden-tab layout errors
+      }
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [visible]);
 
     const handleSearch = (
       term: string,
@@ -405,6 +487,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
             settings.theme,
             settings.opacity ?? 1.0
           ),
+          position: "relative",
         }}
       >
         {isSearchVisible && (
@@ -421,6 +504,60 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
           role="log"
           aria-label="Terminal output"
         />
+        {exitedCode !== null && (
+          <div
+            role="status"
+            aria-label="Terminal session exited"
+            style={{
+              position: "absolute",
+              left: 8,
+              right: 8,
+              bottom: 8,
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "8px 12px",
+              borderRadius: 8,
+              background: "rgba(0,0,0,0.75)",
+              color: "#fff",
+              fontSize: 12,
+              zIndex: 5,
+            }}
+          >
+            <span style={{ flex: 1 }}>
+              Shell exited{exitedCode !== 0 ? ` (code ${exitedCode})` : ""} after `exit`. This pane
+              is dead — restart it or close it.
+            </span>
+            <button
+              type="button"
+              onClick={() => void initPtySession()}
+              style={{
+                padding: "4px 10px",
+                borderRadius: 6,
+                border: "1px solid #4ade80",
+                background: "#166534",
+                color: "#fff",
+                cursor: "pointer",
+              }}
+            >
+              Restart
+            </button>
+            <button
+              type="button"
+              onClick={() => onExitRef.current?.(exitedCode ?? 0)}
+              style={{
+                padding: "4px 10px",
+                borderRadius: 6,
+                border: "1px solid #f87171",
+                background: "#7f1d1d",
+                color: "#fff",
+                cursor: "pointer",
+              }}
+            >
+              Close pane
+            </button>
+          </div>
+        )}
       </div>
     );
   }

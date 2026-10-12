@@ -7,7 +7,7 @@ import { SettingsModal } from "./components/SettingsModal";
 import { AiCliPanel } from "./components/AiCliPanel";
 import { DiagnosticsModal } from "./components/DiagnosticsModal";
 import { WorkspaceModal } from "./components/WorkspaceModal";
-import { PtyService } from "./services/ptyService";
+import { PtyService, isTauriAvailable } from "./services/ptyService";
 import { SettingsService } from "./services/settingsService";
 import {
   getGitInfoCached,
@@ -74,6 +74,7 @@ function newTabId(): string {
 
 interface PersistedTab {
   title: string;
+  color?: string;
   shellPath?: string;
   cwd?: string;
   splitDirection?: PersistedTabV2["splitDirection"];
@@ -95,6 +96,7 @@ function loadPersistedLayout(): PersistedTab[] | null {
       .filter((t): t is PersistedTabV2 => t !== null)
       .map((t) => ({
         title: t.title,
+        color: t.color,
         shellPath: t.shellPath,
         cwd: t.cwd,
         splitDirection: t.splitDirection,
@@ -105,6 +107,22 @@ function loadPersistedLayout(): PersistedTab[] | null {
   }
 }
 
+/**
+ * Closes the whole app window (desktop). Returns true when the close was
+ * issued. Browser/mock fallback returns false so callers can recycle the
+ * tab instead of leaving a dead pane.
+ */
+async function closeAppWindow(): Promise<boolean> {
+  if (!isTauriAvailable()) return false;
+  try {
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    await getCurrentWindow().close();
+    return true;
+  } catch (err) {
+    console.error("Failed to close app window:", err);
+    return false;
+  }
+}
 function createDefaultTab(
   title: string,
   shellPath?: string,
@@ -132,6 +150,7 @@ function createDefaultTab(
   return {
     id: tabId,
     title,
+    color: persisted?.color,
     shellPath,
     cwd,
     status: "connecting",
@@ -160,28 +179,54 @@ export function App() {
   const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState<boolean>(false);
   const [isWorkspaceOpen, setIsWorkspaceOpen] = useState<boolean>(false);
 
-  // Initial tabs + active id are computed once per mount from safe persisted layout.
+  // Fast startup: always open with a single fresh tab so the window paints
+  // immediately (one PTY). A previous session, if any, is offered via an
+  // explicit "Restore session" banner instead of auto-spawning N shells —
+  // unless the user opted into auto-restore in settings.
   const initialTabsRef = useRef<TerminalTab[] | null>(null);
   if (initialTabsRef.current === null) {
-    const persisted = loadPersistedLayout();
-    initialTabsRef.current =
-      persisted && persisted.length > 0
-        ? persisted.map((t) => createDefaultTab(t.title, t.shellPath, t.cwd, t))
-        : [createDefaultTab("Terminal 1")];
+    initialTabsRef.current = [createDefaultTab("Terminal 1")];
   }
   const [tabs, setTabs] = useState<TerminalTab[]>(initialTabsRef.current);
   const [activeTabId, setActiveTabId] = useState<string>(
     initialTabsRef.current[0]?.id ?? "session-1"
   );
+  // Tabs from the previous launch, offered once via banner (never auto-run).
+  const [pendingRestore, setPendingRestore] = useState<PersistedTab[] | null>(() => {
+    try {
+      const persisted = loadPersistedLayout();
+      if (persisted && persisted.length > 0) return persisted;
+    } catch {
+      // ignore corrupt layout
+    }
+    return null;
+  });
 
   // Terminal view refs keyed by pane ID
   const terminalRefs = useRef<Record<string, TerminalViewRef | null>>({});
+
+  // Live mirrors so `exit` handling never runs on a stale `tabs` snapshot.
+  // TerminalView registers its pty-exit listener once per pane; without
+  // these refs the `onExit` closure captures the tabs array from mount time
+  // and closing a later tab/pane silently no-ops (the reported "exit does
+  // not close the terminal" bug).
+  const tabsRef = useRef(tabs);
+  tabsRef.current = tabs;
+  const activeTabIdRef = useRef(activeTabId);
+  activeTabIdRef.current = activeTabId;
+  const shellsRef = useRef(shells);
+  shellsRef.current = shells;
+  const selectedShellIdRef = useRef(selectedShellId);
+  selectedShellIdRef.current = selectedShellId;
+  const cwdRef = useRef(cwd);
+  cwdRef.current = cwd;
 
   const activeTab = tabs.find((t) => t.id === activeTabId) || tabs[0];
   const activePaneId = activeTab?.activePaneId || activeTab?.panes[0]?.id;
   const getActiveTerminal = () => terminalRefs.current[activePaneId];
 
   // Saving preferences applies a changed default shell to new sessions
+  // and syncs the launch-at-startup toggle with the OS (all platforms).
   const handleSaveSettings = useCallback(
     (next: UserSettings) => {
       if (
@@ -191,10 +236,35 @@ export function App() {
       ) {
         setSelectedShellId(next.defaultShellId);
       }
+      if (Boolean(next.launchAtStartup) !== Boolean(userSettings.launchAtStartup)) {
+        void import("./services/autostartService").then(({ setAutostartEnabled }) =>
+          setAutostartEnabled(Boolean(next.launchAtStartup)).catch((err) => {
+            console.error("Failed to apply launch-at-startup setting:", err);
+            setLastError(err instanceof Error ? err.message : String(err));
+          })
+        );
+      }
       setUserSettings(next);
     },
-    [shells, userSettings.defaultShellId]
+    [shells, userSettings.defaultShellId, userSettings.launchAtStartup]
   );
+
+  // On startup, reconcile the stored launch-at-startup preference with the
+  // real OS state (user may have toggled it in OS settings outside the app).
+  // The OS is the source of truth; the stored setting follows it.
+  useEffect(() => {
+    void import("./services/autostartService")
+      .then(({ getAutostartEnabled }) => getAutostartEnabled())
+      .then((enabled) => {
+        setUserSettings((prev) =>
+          Boolean(prev.launchAtStartup) === enabled ? prev : { ...prev, launchAtStartup: enabled }
+        );
+      })
+      .catch(() => {
+        // Mock/browser mode or backend unavailable: keep stored preference.
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Load available shell profiles on startup
   useEffect(() => {
@@ -215,11 +285,16 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Persist safe UI layout (titles + cwd + pane structure only, never history) on tab change.
+  // Persist safe UI layout (titles + color + cwd + pane structure only,
+  // never history) on tab change. Skipped while a previous session is still
+  // awaiting the user's Restore/Dismiss decision, so the banner offer is
+  // never overwritten by the fresh starter tab.
   useEffect(() => {
+    if (pendingRestore !== null) return;
     try {
       const safe: PersistedTab[] = tabs.slice(0, 10).map((t) => ({
         title: t.title,
+        color: t.color,
         shellPath: t.shellPath,
         cwd: t.cwd,
         splitDirection: t.splitDirection,
@@ -232,7 +307,62 @@ export function App() {
     } catch {
       // ignore quota errors
     }
-  }, [tabs]);
+  }, [tabs, pendingRestore]);
+
+  // Opt-in auto-restore: when enabled in settings, the previous session
+  // loads immediately without asking (previous default behavior).
+  useEffect(() => {
+    if (userSettings.autoRestoreSession && pendingRestore && pendingRestore.length > 0) {
+      const restored = pendingRestore.map((t) => createDefaultTab(t.title, t.shellPath, t.cwd, t));
+      setTabs(restored);
+      setActiveTabId(restored[0].id);
+      setPendingRestore(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userSettings.autoRestoreSession]);
+
+  const handleRestoreSession = useCallback(() => {
+    if (!pendingRestore || pendingRestore.length === 0) {
+      setPendingRestore(null);
+      return;
+    }
+    const restored = pendingRestore.map((t) => createDefaultTab(t.title, t.shellPath, t.cwd, t));
+    setTabs(restored);
+    setActiveTabId(restored[0].id);
+    setPendingRestore(null);
+  }, [pendingRestore]);
+
+  const handleDismissRestore = useCallback(() => {
+    setPendingRestore(null);
+  }, []);
+
+  const handleReorderTabs = useCallback((fromId: string, toId: string) => {
+    if (fromId === toId) return;
+    setTabs((prev) => {
+      const fromIdx = prev.findIndex((t) => t.id === fromId);
+      const toIdx = prev.findIndex((t) => t.id === toId);
+      if (fromIdx < 0 || toIdx < 0 || fromIdx === toIdx) return prev;
+      const next = [...prev];
+      const [moved] = next.splice(fromIdx, 1);
+      next.splice(toIdx, 0, moved);
+      return next;
+    });
+  }, []);
+
+  const handleMoveTab = useCallback((id: string, dir: -1 | 1) => {
+    setTabs((prev) => {
+      const idx = prev.findIndex((t) => t.id === id);
+      const swapIdx = idx + dir;
+      if (idx < 0 || swapIdx < 0 || swapIdx >= prev.length) return prev;
+      const next = [...prev];
+      [next[idx], next[swapIdx]] = [next[swapIdx], next[idx]];
+      return next;
+    });
+  }, []);
+
+  const handleSetTabColor = useCallback((id: string, color: string | undefined) => {
+    setTabs((prev) => prev.map((t) => (t.id === id ? { ...t, color } : t)));
+  }, []);
 
   // Poll git status for the active working directory: debounced on change
   // plus a controlled 30 s refresh. Git + intelligence queries run in
@@ -293,7 +423,12 @@ export function App() {
 
   const handleCloseTab = useCallback(
     (id: string) => {
-      if (tabs.length <= 1) return;
+      // Last tab: closing it quits the app on desktop (fallback: keep it
+      // in browser/mock so the window never ends up empty).
+      if (tabs.length <= 1) {
+        void closeAppWindow();
+        return;
+      }
       const newTabs = tabs.filter((t) => t.id !== id);
       setTabs(newTabs);
       if (activeTabId === id) {
@@ -337,59 +472,73 @@ export function App() {
     );
   }, [activeTabId]);
 
-  const handleSessionExit = useCallback(
-    (tabId: string, paneId: string, _exitCode: number) => {
-      // Any shell exit (`exit`, `logout`, Ctrl+D, kill) closes the pane/tab.
-      // Previous behavior only closed on exit code 0, which made `exit`
-      // appear broken whenever the shell reported a non-zero status.
-      // If the last remaining pane exits, spawn a fresh tab so the window
-      // never ends up empty/disconnected.
-      const targetTab = tabs.find((t) => t.id === tabId);
-      if (!targetTab) return;
+  const handleSessionExit = useCallback((tabId: string, paneId: string, _exitCode: number) => {
+    // Any shell exit (`exit`, `logout`, Ctrl+D, kill) closes the pane/tab.
+    // Previous behavior only closed on exit code 0, which made `exit`
+    // appear broken whenever the shell reported a non-zero status.
+    // Multi-pane: only the exited pane closes. Multi-tab: only the exited
+    // tab closes. Last pane of last tab quits the whole app on desktop
+    // (browser fallback recycles a fresh tab).
+    // NOTE: reads live refs (not the `tabs` state closure) so exits from
+    // tabs/panes created after this callback was memoized still close the
+    // correct pane. Idempotent: repeated `pty-exit` events for an already
+    // removed pane are ignored, so the Close-pane fallback button in
+    // TerminalView can safely re-fire this.
+    const liveTabs = tabsRef.current;
+    const targetTab = liveTabs.find((t) => t.id === tabId);
+    if (!targetTab) return;
+    if (targetTab.panes.some((p) => p.id === paneId) === false) return;
 
-      if (targetTab.panes.length > 1) {
-        const remainingPanes = targetTab.panes.filter((p) => p.id !== paneId);
-        const nextActivePane =
-          targetTab.activePaneId === paneId ? remainingPanes[0].id : targetTab.activePaneId;
-        setTabs((prev) =>
-          prev.map((t) =>
-            t.id === tabId
-              ? {
-                  ...t,
-                  panes: remainingPanes,
-                  activePaneId: nextActivePane,
-                  splitDirection: remainingPanes.length > 1 ? t.splitDirection : "none",
-                }
-              : t
-          )
-        );
-        return;
+    if (targetTab.panes.length > 1) {
+      const remainingPanes = targetTab.panes.filter((p) => p.id !== paneId);
+      const nextActivePane =
+        targetTab.activePaneId === paneId ? remainingPanes[0].id : targetTab.activePaneId;
+      setTabs((prev) =>
+        prev.map((t) =>
+          t.id === tabId
+            ? {
+                ...t,
+                panes: t.panes.filter((p) => p.id !== paneId),
+                activePaneId: nextActivePane,
+                splitDirection:
+                  t.panes.filter((p) => p.id !== paneId).length > 1 ? t.splitDirection : "none",
+              }
+            : t
+        )
+      );
+      return;
+    }
+
+    if (liveTabs.length > 1) {
+      const remainingTabs = liveTabs.filter((t) => t.id !== tabId);
+      setTabs(remainingTabs);
+      if (activeTabIdRef.current === tabId) {
+        const targetIdx = liveTabs.findIndex((t) => t.id === tabId);
+        const nextIdx = Math.max(0, targetIdx - 1);
+        setActiveTabId(remainingTabs[nextIdx]?.id || remainingTabs[0].id);
       }
+      return;
+    }
 
-      if (tabs.length > 1) {
-        const remainingTabs = tabs.filter((t) => t.id !== tabId);
-        setTabs(remainingTabs);
-        if (activeTabId === tabId) {
-          const targetIdx = tabs.findIndex((t) => t.id === tabId);
-          const nextIdx = Math.max(0, targetIdx - 1);
-          setActiveTabId(remainingTabs[nextIdx]?.id || remainingTabs[0].id);
-        }
-        return;
-      }
-
-      // Last pane of last tab exited: replace with a fresh session so
-      // `exit` always visibly works instead of leaving a dead prompt.
-      const selectedShell = shells.find((s) => s.id === selectedShellId);
+    // Last pane of last tab exited: quit the whole app on desktop
+    // (`exit` in the only session closes Kai, like a regular terminal).
+    // Browser/mock fallback recycles a fresh tab so the window never ends
+    // up empty/disconnected.
+    void closeAppWindow().then((closed) => {
+      if (closed) return;
+      const liveShells = shellsRef.current;
+      const liveSelectedId = selectedShellIdRef.current;
+      const liveCwd = cwdRef.current;
+      const selectedShell = liveShells.find((s) => s.id === liveSelectedId);
       const fresh = createDefaultTab(
         `${selectedShell?.name || "Terminal"} 1`,
         selectedShell?.path,
-        cwd.trim() || undefined
+        liveCwd.trim() || undefined
       );
       setTabs([fresh]);
       setActiveTabId(fresh.id);
-    },
-    [tabs, activeTabId, shells, selectedShellId, cwd]
-  );
+    });
+  }, []);
 
   const handleOpenEditor = useCallback(async () => {
     try {
@@ -437,6 +586,7 @@ export function App() {
     const restoredTabs = ws.tabs.map((t) =>
       createDefaultTab(t.title, t.shellPath, t.cwd, {
         title: t.title,
+        color: t.color,
         shellPath: t.shellPath,
         cwd: t.cwd,
         splitDirection: t.splitDirection,
@@ -769,6 +919,9 @@ export function App() {
           onCloseTab={handleCloseTab}
           onNewTab={() => handleNewTab()}
           onRenameTab={handleRenameTab}
+          onMoveTab={handleMoveTab}
+          onReorderTabs={handleReorderTabs}
+          onSetTabColor={handleSetTabColor}
         />
         <Toolbar
           shells={shells}
@@ -813,6 +966,34 @@ export function App() {
       </div>
 
       <div className="app-body">
+        {pendingRestore !== null && pendingRestore.length > 0 && (
+          <div
+            className="session-restore-banner"
+            role="status"
+            aria-label="Restore previous session"
+          >
+            <span className="session-restore-text">
+              Previous session found ({pendingRestore.length} tab
+              {pendingRestore.length === 1 ? "" : "s"}). Kai started fresh for a fast launch.
+            </span>
+            <div className="session-restore-actions">
+              <button
+                type="button"
+                className="btn btn-primary btn-small"
+                onClick={handleRestoreSession}
+              >
+                Load session
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary btn-small"
+                onClick={handleDismissRestore}
+              >
+                Start fresh
+              </button>
+            </div>
+          </div>
+        )}
         {tabs.map((tab) => (
           <div
             key={tab.id}
@@ -864,6 +1045,7 @@ export function App() {
                       selectedShell={selectedShell}
                       cwd={pane.cwd || tab.cwd || cwd}
                       settings={userSettings}
+                      visible={tab.id === activeTabId}
                       onExit={(exitCode) => {
                         handleSessionExit(tab.id, pane.id, exitCode);
                       }}

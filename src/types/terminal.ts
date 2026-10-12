@@ -103,6 +103,8 @@ export type SplitDirection = "none" | "horizontal" | "vertical";
 export interface TerminalTab {
   id: string;
   title: string;
+  /** Optional accent color (hex `#rgb`/`#rrggbb`) shown as a tab dot. */
+  color?: string;
   shellPath?: string;
   cwd?: string;
   status: SessionStatus;
@@ -170,6 +172,10 @@ export interface UserSettings {
   customShellPath?: string;
   /** Optional user-supplied code editor executable path (e.g. code, cursor). */
   editorPath?: string;
+  /** Launch Kai Terminal automatically at OS login (Windows/macOS/Linux). */
+  launchAtStartup?: boolean;
+  /** Restore the previous session's tabs automatically instead of asking. */
+  autoRestoreSession?: boolean;
   /** Customizable keyboard shortcut map. */
   keybindings: KeybindingsConfig;
 }
