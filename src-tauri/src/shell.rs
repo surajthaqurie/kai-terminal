@@ -914,16 +914,17 @@ pub struct SystemTerminalConfig {
 
 /// Detects host terminal settings and preferences (e.g. Kali Linux QTerminal / XFCE terminal / system font).
 pub fn detect_system_terminal_config() -> SystemTerminalConfig {
-    let mut font_family = "'Fira Code', 'FiraCode', 'DejaVu Sans Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace".to_string();
     let font_size = 12u16;
-    let mut theme = "kali".to_string();
-    let mut cursor_blink = false;
-    let mut cursor_style = "block".to_string();
-    let mut opacity = 1.0f64;
     let default_shell = env::var("SHELL").ok();
 
     #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
-    {
+    let (font_family, theme, cursor_blink, cursor_style, opacity) = {
+        let mut font_family = "'Fira Code', 'FiraCode', 'DejaVu Sans Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace".to_string();
+        let mut theme = "kali".to_string();
+        let mut cursor_blink = false;
+        let mut cursor_style = "block".to_string();
+        let mut opacity = 1.0f64;
+
         if let Ok(home) = env::var("HOME") {
             // 1. Try reading QTerminal config (~/.config/qterminal.org/qterminal.ini)
             let qterm_path = Path::new(&home).join(".config/qterminal.org/qterminal.ini");
@@ -1011,19 +1012,27 @@ pub fn detect_system_terminal_config() -> SystemTerminalConfig {
                 }
             }
         }
-    }
+
+        (font_family, theme, cursor_blink, cursor_style, opacity)
+    };
 
     #[cfg(target_os = "macos")]
-    {
-        font_family = "Menlo, Monaco, 'Courier New', monospace".to_string();
-        theme = "one-dark".to_string();
-    }
+    let (font_family, theme, cursor_blink, cursor_style, opacity) = (
+        "Menlo, Monaco, 'Courier New', monospace".to_string(),
+        "one-dark".to_string(),
+        false,
+        "block".to_string(),
+        1.0f64,
+    );
 
     #[cfg(target_os = "windows")]
-    {
-        font_family = "Consolas, 'Cascadia Code', 'Lucida Console', monospace".to_string();
-        theme = "one-dark".to_string();
-    }
+    let (font_family, theme, cursor_blink, cursor_style, opacity) = (
+        "Consolas, 'Cascadia Code', 'Lucida Console', monospace".to_string(),
+        "one-dark".to_string(),
+        false,
+        "block".to_string(),
+        1.0f64,
+    );
 
     SystemTerminalConfig {
         font_family,

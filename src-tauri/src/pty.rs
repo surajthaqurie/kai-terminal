@@ -105,10 +105,10 @@ pub struct PtyCwdPayload {
 }
 
 /// Attempts to resolve the live working directory of a process by its PID.
-pub fn resolve_process_cwd(pid: u32) -> Option<String> {
+pub fn resolve_process_cwd(_pid: u32) -> Option<String> {
     #[cfg(target_os = "linux")]
     {
-        let proc_path = format!("/proc/{}/cwd", pid);
+        let proc_path = format!("/proc/{}/cwd", _pid);
         if let Ok(target) = std::fs::read_link(&proc_path) {
             let s = target.to_string_lossy().to_string();
             if !s.is_empty() {
@@ -120,7 +120,7 @@ pub fn resolve_process_cwd(pid: u32) -> Option<String> {
     {
         use std::process::Command;
         if let Ok(output) = Command::new("lsof")
-            .args(["-a", "-p", &pid.to_string(), "-d", "cwd", "-Fn"])
+            .args(["-a", "-p", &_pid.to_string(), "-d", "cwd", "-Fn"])
             .output()
         {
             let stdout = String::from_utf8_lossy(&output.stdout);
@@ -1210,13 +1210,17 @@ mod tests {
     #[test]
     fn test_resolve_process_cwd() {
         let pid = std::process::id();
-        let resolved = resolve_process_cwd(pid);
         #[cfg(target_os = "linux")]
         {
+            let resolved = resolve_process_cwd(pid);
             assert!(resolved.is_some());
             let cwd_str = resolved.unwrap();
             assert!(!cwd_str.is_empty());
             assert!(std::path::Path::new(&cwd_str).is_dir());
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = resolve_process_cwd(pid);
         }
     }
 }
