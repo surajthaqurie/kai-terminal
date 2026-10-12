@@ -9,6 +9,9 @@ import { SettingsModal } from "./components/SettingsModal";
 import { AiCliPanel } from "./components/AiCliPanel";
 import { DiagnosticsModal } from "./components/DiagnosticsModal";
 import { WorkspaceModal } from "./components/WorkspaceModal";
+import { PaneHeader } from "./components/PaneHeader";
+import { GitStatusModal } from "./components/GitStatusModal";
+import { GitChangesModal } from "./components/GitChangesModal";
 import { PtyService, isTauriAvailable } from "./services/ptyService";
 import { SettingsService } from "./services/settingsService";
 import {
@@ -21,6 +24,7 @@ import {
   runGitAction,
   getInstalledEditors,
   resolveEffectiveProjectDir,
+  GitInfo,
   InstalledEditor,
 } from "./services/projectService";
 import {
@@ -73,6 +77,7 @@ import {
   FolderOpen,
   ArrowRight,
   ArrowLeft,
+  GitCompare,
 } from "lucide-react";
 import "./App.css";
 
@@ -292,9 +297,20 @@ export function App() {
   const [isLoadingEditors, setIsLoadingEditors] = useState(false);
   const [renameModalTab, setRenameModalTab] = useState<TerminalTab | null>(null);
   const [renameInputValue, setRenameInputValue] = useState("");
+  // Centered in-app git status and VS Code-style changes/diff review modal.
+  const [gitStatusModal, setGitStatusModal] = useState<{ dir: string; output: string } | null>(
+    null
+  );
+  const [gitChangesModal, setGitChangesModal] = useState<{ dir: string } | null>(null);
+  // AI providers panel is scoped to a specific pane's directory, so each
+  // split gets its own agent setup context instead of sharing one global.
+  const [aiCliDir, setAiCliDir] = useState<string>("");
   // Code Mode badge state: driven by the persisted active project
   // (`kai code <path>` sets it, `kai stop code` clears it). Polled so an
   // externally-run CLI updates the footer without a restart.
+  // Per-split semantics: a pane is in Code Mode when its own directory is
+  // the indexed project or lives inside it (see isCodeModeForDir). Splits
+  // in different repos therefore show different badges.
   const [codeModeProject, setCodeModeProject] = useState<string | null>(() => {
     try {
       return getActiveProject();
@@ -302,6 +318,10 @@ export function App() {
       return null;
     }
   });
+  // Per-pane git info: each split tracks its own repo/branch/dirty state
+  // keyed by resolved directory. The status bar shows the active pane's
+  // entry; each PaneHeader shows its own entry.
+  const [gitInfoByDir, setGitInfoByDir] = useState<Record<string, GitInfo | null>>({});
   useEffect(() => {
     const syncCodeMode = () => {
       try {
@@ -476,42 +496,75 @@ export function App() {
     setTabs((prev) => prev.map((t) => (t.id === id ? { ...t, color } : t)));
   }, []);
 
-  // Poll git status for the effective project directory (active pane ->
-  // tab -> stored cwd): debounced on change plus a controlled 30 s refresh.
+  /** Per-pane Code Mode: pane dir is the indexed project or inside it. */
+  const isCodeModeForDir = useCallback(
+    (dir: string): boolean => {
+      if (!dir || !codeModeProject) return false;
+      const norm = (s: string) => s.replace(/[/\\]+$/, "");
+      const d = norm(dir);
+      const c = norm(codeModeProject);
+      return d === c || d.startsWith(`${c}/`);
+    },
+    [codeModeProject]
+  );
+
+  /** Resolve each pane's own project dir (pane -> tab -> global). */
+  const paneDirsKey = tabs
+    .map((t) => t.panes.map((p) => resolveEffectiveProjectDir(p.cwd, t.cwd, cwd)).join("|"))
+    .join("||");
+
+  // Poll git status per distinct pane directory (each split owns its repo
+  // badge): debounced on change plus a controlled 30 s refresh. The status
+  // bar reads the active pane's entry out of the same map.
   useEffect(() => {
-    if (!effectiveProjectDir) {
+    const dirs = Array.from(
+      new Set(
+        tabs.flatMap((t) =>
+          t.panes.map((p) => resolveEffectiveProjectDir(p.cwd, t.cwd, cwdRef.current))
+        )
+      )
+    ).filter(Boolean);
+    if (dirs.length === 0) {
       setGitBranch(null);
       setGitDirty(false);
       setGitRepoRoot(null);
       return;
     }
     let cancelled = false;
-    const dir = effectiveProjectDir;
-    const fetch = () => {
+    const fetchAll = () => {
       if (typeof document !== "undefined" && document.hidden) return;
-      void getGitInfoCached(dir).then(
-        (info) => {
-          if (cancelled) return;
-          setGitBranch(info.branch);
-          setGitDirty(info.dirty);
-          setGitRepoRoot(info.repo_root ?? null);
-        },
-        () => {
-          if (cancelled) return;
-          setGitBranch(null);
-          setGitDirty(false);
-          setGitRepoRoot(null);
-        }
-      );
+      for (const dir of dirs) {
+        void getGitInfoCached(dir).then(
+          (info) => {
+            if (cancelled) return;
+            setGitInfoByDir((prev) => (prev[dir]?.branch === info.branch &&
+              prev[dir]?.dirty === info.dirty &&
+              prev[dir]?.repo_root === info.repo_root
+              ? prev
+              : { ...prev, [dir]: info }));
+            // Keep the active-pane footer in sync.
+            if (dir === resolveEffectiveProjectDir(activePane?.cwd, activeTab?.cwd, cwdRef.current)) {
+              setGitBranch(info.branch);
+              setGitDirty(info.dirty);
+              setGitRepoRoot(info.repo_root ?? null);
+            }
+          },
+          () => {
+            if (cancelled) return;
+            setGitInfoByDir((prev) => ({ ...prev, [dir]: null }));
+          }
+        );
+      }
     };
-    const timer = setTimeout(fetch, 600);
-    const interval = setInterval(fetch, 30000);
+    const timer = setTimeout(fetchAll, 600);
+    const interval = setInterval(fetchAll, 30000);
     return () => {
       cancelled = true;
       clearTimeout(timer);
       clearInterval(interval);
     };
-  }, [effectiveProjectDir]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paneDirsKey, activeTabId]);
 
   const handleNewTab = useCallback(
     (opts?: { cwd?: string }) => {
@@ -666,9 +719,9 @@ export function App() {
   }, []);
 
   const handleOpenEditor = useCallback(
-    async (editorBinary?: string) => {
+    async (editorBinary?: string, dirOverride?: string) => {
       try {
-        const dir = effectiveProjectDir || cwd.trim() || ".";
+        const dir = dirOverride || effectiveProjectDir || cwd.trim() || ".";
         // Explicit picker choice wins; otherwise fall back to Settings default.
         const configured = userSettings.editorPath?.trim() || undefined;
         await openProjectInEditor(dir, editorBinary || configured);
@@ -680,24 +733,41 @@ export function App() {
     [effectiveProjectDir, cwd, userSettings.editorPath]
   );
 
-  const handleGitActionRun = useCallback(
-    async (action: "fetch" | "pull" | "status") => {
+  const handleOpenFileInEditor = useCallback(
+    async (projectDir: string, fileRelPath?: string) => {
       try {
-        const dir = effectiveProjectDir;
+        const targetPath = fileRelPath ? `${projectDir}/${fileRelPath}` : projectDir;
+        const configured = userSettings.editorPath?.trim() || undefined;
+        await openProjectInEditor(targetPath, configured);
+      } catch (err) {
+        setLastError(err instanceof Error ? err.message : String(err));
+      }
+    },
+    [userSettings.editorPath]
+  );
+
+  const handleGitActionRun = useCallback(
+    async (action: "fetch" | "pull" | "status", dirOverride?: string) => {
+      try {
+        const dir = dirOverride || effectiveProjectDir;
         if (!dir) {
           setLastError("No project directory set. Enter a working directory first.");
           return;
         }
-        const res = await runGitAction(dir, action);
         invalidateGitCache(dir);
-        if (action === "status" && res) {
-          alert(`Git Status (${dir}):\n${res}`);
+        if (action === "status") {
+          // Centered in-app VS Code style changes review & diff modal
+          setGitChangesModal({ dir });
         } else {
-          // Trigger immediate git badge refresh
-          getGitInfoCached(dir).then((info) => {
-            setGitBranch(info.branch);
-            setGitDirty(info.dirty);
-            setGitRepoRoot(info.repo_root ?? null);
+          await runGitAction(dir, action);
+          // Trigger immediate git badge refresh (active + per-pane map)
+          void getGitInfoCached(dir).then((info) => {
+            setGitInfoByDir((prev) => ({ ...prev, [dir]: info }));
+            if (dir === effectiveProjectDir) {
+              setGitBranch(info.branch);
+              setGitDirty(info.dirty);
+              setGitRepoRoot(info.repo_root ?? null);
+            }
           });
         }
       } catch (err) {
@@ -810,6 +880,12 @@ export function App() {
       // event target is a text field AND no modifier combo matches — handled
       // implicitly by matchShortcut returning null there.
       if (e.key === "Control" || e.key === "Shift" || e.key === "Alt" || e.key === "Meta") return;
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.code === "KeyG") {
+        e.preventDefault();
+        const dir = effectiveProjectDir || cwd.trim();
+        if (dir) setGitChangesModal({ dir });
+        return;
+      }
       const action: ShortcutActionId | null = matchShortcut(e, userSettings.keybindings);
       if (!action) return;
       e.preventDefault();
@@ -1048,7 +1124,10 @@ export function App() {
       label: "Open AI CLI Providers",
       category: "AI",
       icon: <Bot size={16} />,
-      perform: () => setIsAiCliOpen(true),
+      perform: () => {
+        setAiCliDir(effectiveProjectDir);
+        setIsAiCliOpen(true);
+      },
     },
     {
       id: "diagnostics",
@@ -1056,6 +1135,21 @@ export function App() {
       category: "Help",
       icon: <Activity size={16} />,
       perform: () => setIsDiagnosticsOpen(true),
+    },
+    {
+      id: "review-changes",
+      label: "Review Changes & Diff (Source Control)",
+      category: "Git",
+      shortcut: "Ctrl+Shift+G",
+      icon: <GitCompare size={16} />,
+      perform: () => {
+        const dir = effectiveProjectDir || cwd.trim();
+        if (dir) {
+          setGitChangesModal({ dir });
+        } else {
+          setLastError("No project directory set. Enter or open a directory first.");
+        }
+      },
     },
     {
       id: "open-settings",
@@ -1156,7 +1250,10 @@ export function App() {
           onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
           onOpenSettings={() => setIsSettingsOpen(true)}
           onOpenWorkspaces={() => setIsWorkspaceOpen(true)}
-          onOpenAiCli={() => setIsAiCliOpen(true)}
+          onOpenAiCli={() => {
+            setAiCliDir(effectiveProjectDir);
+            setIsAiCliOpen(true);
+          }}
           onOpenDiagnostics={() => setIsDiagnosticsOpen(true)}
         />
       </div>
@@ -1214,17 +1311,37 @@ export function App() {
             if (node.kind === "pane") {
               const pane = paneById.get(node.paneId);
               if (!pane) return null;
+              const paneDir = resolveEffectiveProjectDir(pane.cwd, tab.cwd, cwd);
+              const paneGit = paneDir ? (gitInfoByDir[paneDir] ?? null) : null;
+              const isPaneActive = pane.id === tab.activePaneId;
+              const focusPane = () => {
+                setTabs((prev) =>
+                  prev.map((t) => (t.id === tab.id ? { ...t, activePaneId: pane.id } : t))
+                );
+              };
               return (
                 <div
                   key={pane.id}
-                  className={`pane-item ${pane.id === tab.activePaneId ? "active-pane" : ""}`}
+                  className={`pane-item ${isPaneActive ? "active-pane" : ""}`}
                   style={{ flex: "1 1 0%" }}
-                  onClick={() => {
-                    setTabs((prev) =>
-                      prev.map((t) => (t.id === tab.id ? { ...t, activePaneId: pane.id } : t))
-                    );
-                  }}
+                  onClick={focusPane}
                 >
+                  <PaneHeader
+                    paneId={pane.id}
+                    cwd={paneDir}
+                    isActive={isPaneActive}
+                    gitInfo={paneGit}
+                    showClose={tab.panes.length > 1}
+                    onFocus={focusPane}
+                    onGitStatus={() => setGitChangesModal({ dir: paneDir })}
+                    onOpenChanges={() => setGitChangesModal({ dir: paneDir })}
+                    onOpenAi={() => {
+                      setAiCliDir(paneDir);
+                      setIsAiCliOpen(true);
+                    }}
+                    onOpenEditor={() => void handleOpenEditor(undefined, paneDir)}
+                    onClosePane={handleClosePane}
+                  />
                   <TerminalView
                     ref={(el) => {
                       terminalRefs.current[pane.id] = el;
@@ -1234,6 +1351,7 @@ export function App() {
                     cwd={pane.cwd || tab.cwd || cwd}
                     settings={userSettings}
                     visible={tab.id === activeTabId}
+                    onFocus={focusPane}
                     onCwdResolved={(resolved) => {
                       if (resolved) {
                         setTabs((prev) =>
@@ -1362,12 +1480,28 @@ export function App() {
       <AiCliPanel
         isOpen={isAiCliOpen}
         onClose={() => setIsAiCliOpen(false)}
-        projectDir={effectiveProjectDir}
+        projectDir={aiCliDir || effectiveProjectDir}
         onLaunchInTerminal={(dir) => {
           handleNewTab({ cwd: dir || undefined });
           setIsAiCliOpen(false);
         }}
       />
+
+      {gitChangesModal && (
+        <GitChangesModal
+          dir={gitChangesModal.dir}
+          onClose={() => setGitChangesModal(null)}
+          onOpenEditor={(d, file) => void handleOpenFileInEditor(d, file)}
+        />
+      )}
+
+      {gitStatusModal && (
+        <GitStatusModal
+          dir={gitStatusModal.dir}
+          output={gitStatusModal.output}
+          onClose={() => setGitStatusModal(null)}
+        />
+      )}
 
       <DiagnosticsModal
         isOpen={isDiagnosticsOpen}
@@ -1434,8 +1568,8 @@ export function App() {
         isCheckingUpdates={isCheckingUpdates}
         onCheckUpdates={() => handleCheckUpdates(true)}
         onViewUpdate={handleViewUpdate}
-        onGitAction={handleGitActionRun}
-        mode={codeModeProject ? "code" : "terminal"}
+        onGitAction={(action) => void handleGitActionRun(action)}
+        mode={isCodeModeForDir(effectiveProjectDir) ? "code" : "terminal"}
       />
     </div>
   );

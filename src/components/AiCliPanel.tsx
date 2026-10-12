@@ -100,8 +100,9 @@ export const AiCliPanel: FC<AiCliPanelProps> = ({
             The terminal works with or without these tools. Everything below is detected
             automatically on this machine (binary on PATH or in well-known install locations,
             version probe, local config presence, kai wiring) and never stores credentials.
-            Launching runs the CLI as an ordinary terminal process in{" "}
-            <code>{projectDir || "the active directory"}</code>.
+            Scoped to this split&apos;s directory:{" "}
+            <code>{projectDir || "the active directory"}</code>. Launching runs the CLI as an
+            ordinary terminal process in that same directory.
           </p>
           <div className="setting-row" style={{ marginTop: "8px" }}>
             <button

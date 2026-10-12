@@ -266,12 +266,68 @@ export async function getGitInfoCached(cwd: string): Promise<GitInfo> {
   return p;
 }
 
+export interface GitFileChange {
+  path: string;
+  status: string; // "M" | "A" | "D" | "R" | "U" | "?"
+  staged: boolean;
+  old_path: string | null;
+}
+
+export interface GitChangesSummary {
+  repo_root: string;
+  branch: string | null;
+  clean: boolean;
+  working_tree: GitFileChange[];
+  staged: GitFileChange[];
+  untracked: GitFileChange[];
+  total_changes: number;
+}
+
 export async function runGitAction(
   cwd: string,
-  action: "fetch" | "pull" | "status"
+  action: "fetch" | "pull" | "status" | "diff" | "stage_all" | "unstage_all"
 ): Promise<string> {
   if (!isTauriAvailable()) {
     throw new Error("Git actions are only available inside the desktop app.");
   }
   return await invoke<string>("run_git_action_cmd", { cwd, action });
+}
+
+export async function getGitChanges(cwd: string): Promise<GitChangesSummary> {
+  if (!isTauriAvailable()) {
+    throw new Error("Git actions are only available inside the desktop app.");
+  }
+  return await invoke<GitChangesSummary>("get_git_changes_cmd", { cwd });
+}
+
+export async function getGitDiff(
+  cwd: string,
+  path?: string,
+  staged: boolean = false
+): Promise<string> {
+  if (!isTauriAvailable()) {
+    throw new Error("Git actions are only available inside the desktop app.");
+  }
+  return await invoke<string>("get_git_diff_cmd", { cwd, path: path ?? null, staged });
+}
+
+export async function stageGitFile(cwd: string, path: string): Promise<string> {
+  if (!isTauriAvailable()) {
+    throw new Error("Git actions are only available inside the desktop app.");
+  }
+  return await invoke<string>("stage_git_file_cmd", { cwd, path });
+}
+
+export async function unstageGitFile(cwd: string, path: string): Promise<string> {
+  if (!isTauriAvailable()) {
+    throw new Error("Git actions are only available inside the desktop app.");
+  }
+  return await invoke<string>("unstage_git_file_cmd", { cwd, path });
+}
+
+export async function discardGitFile(cwd: string, path: string): Promise<string> {
+  if (!isTauriAvailable()) {
+    throw new Error("Git actions are only available inside the desktop app.");
+  }
+  return await invoke<string>("discard_git_file_cmd", { cwd, path });
 }

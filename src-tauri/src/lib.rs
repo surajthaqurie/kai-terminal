@@ -20,7 +20,10 @@ use ai_cli::{
 use diagnostics::{build_diagnostics, AiCliSummary};
 
 #[cfg(feature = "tauri")]
-use git::{get_git_info, run_git_action, GitInfo};
+use git::{
+    discard_git_file, get_git_changes, get_git_diff, get_git_info, run_git_action,
+    stage_git_file, unstage_git_file, GitChangesSummary, GitInfo,
+};
 
 #[cfg(feature = "tauri")]
 use pty::{PtyCreateOptions, PtyManager, PtySessionInfo};
@@ -82,6 +85,36 @@ fn get_git_info_cmd(cwd: String) -> GitInfo {
 #[tauri::command]
 fn run_git_action_cmd(cwd: String, action: String) -> Result<String, String> {
     run_git_action(&cwd, &action)
+}
+
+#[cfg(feature = "tauri")]
+#[tauri::command]
+fn get_git_changes_cmd(cwd: String) -> Result<GitChangesSummary, String> {
+    get_git_changes(&cwd)
+}
+
+#[cfg(feature = "tauri")]
+#[tauri::command]
+fn get_git_diff_cmd(cwd: String, path: Option<String>, staged: bool) -> Result<String, String> {
+    get_git_diff(&cwd, path.as_deref(), staged)
+}
+
+#[cfg(feature = "tauri")]
+#[tauri::command]
+fn stage_git_file_cmd(cwd: String, path: String) -> Result<String, String> {
+    stage_git_file(&cwd, &path)
+}
+
+#[cfg(feature = "tauri")]
+#[tauri::command]
+fn unstage_git_file_cmd(cwd: String, path: String) -> Result<String, String> {
+    unstage_git_file(&cwd, &path)
+}
+
+#[cfg(feature = "tauri")]
+#[tauri::command]
+fn discard_git_file_cmd(cwd: String, path: String) -> Result<String, String> {
+    discard_git_file(&cwd, &path)
 }
 
 #[cfg(feature = "tauri")]
@@ -205,6 +238,11 @@ pub fn run() {
             setup_agent_mcp_cmd,
             get_git_info_cmd,
             run_git_action_cmd,
+            get_git_changes_cmd,
+            get_git_diff_cmd,
+            stage_git_file_cmd,
+            unstage_git_file_cmd,
+            discard_git_file_cmd,
             open_project_in_editor,
             detect_installed_editors_cmd,
             get_diagnostics,

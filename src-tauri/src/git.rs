@@ -72,8 +72,29 @@ pub fn get_git_info(cwd: &str) -> GitInfo {
     }
 }
 
+/// Information about an individual changed file.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GitFileChange {
+    pub path: String,
+    pub status: String,
+    pub staged: bool,
+    pub old_path: Option<String>,
+}
+
+/// Structured summary of all changes in the git repository (working tree, staged, untracked).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GitChangesSummary {
+    pub repo_root: String,
+    pub branch: Option<String>,
+    pub clean: bool,
+    pub working_tree: Vec<GitFileChange>,
+    pub staged: Vec<GitFileChange>,
+    pub untracked: Vec<GitFileChange>,
+    pub total_changes: usize,
+}
+
 /// Runs a safe, whitelisted git repository action (Phase D).
-/// Supported actions: "fetch", "pull", "status".
+/// Supported actions: "fetch", "pull", "status", "status_porcelain", "diff", "diff_working", "diff_staged", "stage_all", "unstage_all".
 /// Never uses shell string interpolation.
 pub fn run_git_action(cwd: &str, action: &str) -> Result<String, String> {
     let info = get_git_info(cwd);
@@ -81,16 +102,202 @@ pub fn run_git_action(cwd: &str, action: &str) -> Result<String, String> {
         return Err("Not a valid git repository".to_string());
     }
     let repo_dir = info.repo_root.unwrap();
-    let args: &[&str] = match action {
-        "fetch" => &["fetch", "--all", "--prune"],
-        "pull" => &["pull", "--ff-only"],
-        "status" => &["status", "--short"],
+    let (args, allow_diff_exit): (&[&str], bool) = match action {
+        "fetch" => (&["fetch", "--all", "--prune"], false),
+        "pull" => (&["pull", "--ff-only"], false),
+        "status" => (&["status", "--short"], false),
+        "status_porcelain" => (&["status", "--porcelain=v1", "-uall"], false),
+        "diff" => (&["diff", "HEAD"], true),
+        "diff_working" => (&["diff"], true),
+        "diff_staged" => (&["diff", "--cached"], true),
+        "stage_all" => (&["add", "-A"], false),
+        "unstage_all" => (&["restore", "--staged", "."], false),
         _ => return Err(format!("Unsupported git action '{}'", action)),
     };
-    run_git(&repo_dir, args).ok_or_else(|| format!("Git action '{}' failed", action))
+    run_git_bounded(&repo_dir, args, 1_000_000, allow_diff_exit)
+        .ok_or_else(|| format!("Git action '{}' failed", action))
+}
+
+fn validate_repo_rel_path<'a>(repo_root: &str, rel_path: &'a str) -> Result<&'a str, String> {
+    let trimmed = rel_path.trim().trim_matches('"').trim_matches('\'');
+    if trimmed.is_empty() || trimmed.starts_with('-') || trimmed.contains('\0') {
+        return Err("Invalid file path".to_string());
+    }
+    // Prevent directory traversal outside repo root
+    let full = Path::new(repo_root).join(trimmed);
+    let canonical_root = std::fs::canonicalize(repo_root).unwrap_or_else(|_| Path::new(repo_root).to_path_buf());
+    if let Ok(c) = std::fs::canonicalize(&full) {
+        if !c.starts_with(&canonical_root) {
+            return Err("Path escapes repository root".to_string());
+        }
+    } else if trimmed.contains("..") {
+        return Err("Invalid relative path".to_string());
+    }
+    Ok(trimmed)
+}
+
+/// Retrieves git diff for the repository or a specific file (staged or unstaged).
+pub fn get_git_diff(cwd: &str, rel_path: Option<&str>, staged: bool) -> Result<String, String> {
+    let info = get_git_info(cwd);
+    let repo_dir = info.repo_root.ok_or("Not a valid git repository")?;
+
+    if let Some(path) = rel_path {
+        let valid_path = validate_repo_rel_path(&repo_dir, path)?;
+        if staged {
+            let res = run_git_bounded(&repo_dir, &["diff", "--cached", "--", valid_path], 1_000_000, true);
+            return Ok(res.unwrap_or_default());
+        }
+        // Try normal unstaged diff
+        let res = run_git_bounded(&repo_dir, &["diff", "--", valid_path], 1_000_000, true);
+        if let Some(d) = res {
+            if !d.is_empty() {
+                return Ok(d);
+            }
+        }
+        // If empty, check if untracked by diffing with /dev/null
+        let full_path = Path::new(&repo_dir).join(valid_path);
+        if full_path.is_file() {
+            let no_index_res = run_git_bounded(&repo_dir, &["diff", "--no-index", "--", "/dev/null", valid_path], 1_000_000, true);
+            if let Some(d) = no_index_res {
+                if !d.is_empty() {
+                    return Ok(d);
+                }
+            }
+        }
+        // Fallback to diff HEAD
+        let head_res = run_git_bounded(&repo_dir, &["diff", "HEAD", "--", valid_path], 1_000_000, true);
+        Ok(head_res.unwrap_or_default())
+    } else if staged {
+        let res = run_git_bounded(&repo_dir, &["diff", "--cached"], 1_000_000, true);
+        Ok(res.unwrap_or_default())
+    } else {
+        let res = run_git_bounded(&repo_dir, &["diff"], 1_000_000, true);
+        Ok(res.unwrap_or_default())
+    }
+}
+
+/// Retrieves structured changes list (working tree, staged, untracked).
+pub fn get_git_changes(cwd: &str) -> Result<GitChangesSummary, String> {
+    let info = get_git_info(cwd);
+    let repo_dir = info.repo_root.ok_or("Not a valid git repository")?;
+    let status_out = run_git_bounded(&repo_dir, &["status", "--porcelain=v1", "-uall"], 1_000_000, false)
+        .unwrap_or_default();
+
+    let mut working_tree = Vec::new();
+    let mut staged = Vec::new();
+    let mut untracked = Vec::new();
+
+    for line in status_out.lines() {
+        let trimmed = line.trim_end();
+        if trimmed.len() < 4 {
+            continue;
+        }
+        let bytes = trimmed.as_bytes();
+        let x = bytes[0] as char;
+        let y = bytes[1] as char;
+        let raw_path = trimmed[3..].trim();
+        let (path, old_path) = if let Some(idx) = raw_path.find(" -> ") {
+            (raw_path[idx + 4..].to_string(), Some(raw_path[..idx].to_string()))
+        } else {
+            (raw_path.to_string(), None)
+        };
+
+        if x == '?' && y == '?' {
+            untracked.push(GitFileChange {
+                path,
+                status: "U".to_string(),
+                staged: false,
+                old_path: None,
+            });
+            continue;
+        }
+
+        if x != ' ' && x != '?' {
+            staged.push(GitFileChange {
+                path: path.clone(),
+                status: x.to_string(),
+                staged: true,
+                old_path: old_path.clone(),
+            });
+        }
+
+        if y != ' ' && y != '?' {
+            working_tree.push(GitFileChange {
+                path,
+                status: y.to_string(),
+                staged: false,
+                old_path,
+            });
+        }
+    }
+
+    let total = working_tree.len() + staged.len() + untracked.len();
+    Ok(GitChangesSummary {
+        repo_root: repo_dir,
+        branch: info.branch,
+        clean: total == 0,
+        working_tree,
+        staged,
+        untracked,
+        total_changes: total,
+    })
+}
+
+/// Stages a specific file in the repository.
+pub fn stage_git_file(cwd: &str, rel_path: &str) -> Result<String, String> {
+    let info = get_git_info(cwd);
+    let repo_dir = info.repo_root.ok_or("Not a valid git repository")?;
+    let valid_path = validate_repo_rel_path(&repo_dir, rel_path)?;
+    run_git_bounded(&repo_dir, &["add", "--", valid_path], 4096, false)
+        .ok_or_else(|| format!("Failed to stage '{}'", valid_path))
+}
+
+/// Unstages a specific file in the repository.
+pub fn unstage_git_file(cwd: &str, rel_path: &str) -> Result<String, String> {
+    let info = get_git_info(cwd);
+    let repo_dir = info.repo_root.ok_or("Not a valid git repository")?;
+    let valid_path = validate_repo_rel_path(&repo_dir, rel_path)?;
+    // Try restore --staged first, fallback to reset HEAD
+    if let Some(res) = run_git_bounded(&repo_dir, &["restore", "--staged", "--", valid_path], 4096, false) {
+        return Ok(res);
+    }
+    run_git_bounded(&repo_dir, &["reset", "HEAD", "--", valid_path], 4096, false)
+        .ok_or_else(|| format!("Failed to unstage '{}'", valid_path))
+}
+
+/// Discards uncommitted changes to a file (restoring tracked file or removing untracked file).
+pub fn discard_git_file(cwd: &str, rel_path: &str) -> Result<String, String> {
+    let info = get_git_info(cwd);
+    let repo_dir = info.repo_root.ok_or("Not a valid git repository")?;
+    let valid_path = validate_repo_rel_path(&repo_dir, rel_path)?;
+    let full = Path::new(&repo_dir).join(valid_path);
+
+    // If file is untracked, remove it from disk safely within repo_root
+    let status_out = run_git_bounded(&repo_dir, &["status", "--porcelain=v1", "--", valid_path], 4096, false)
+        .unwrap_or_default();
+    if status_out.starts_with("??") {
+        if full.is_file() {
+            std::fs::remove_file(&full).map_err(|e| format!("Failed to delete untracked file: {}", e))?;
+            return Ok(format!("Removed {}", valid_path));
+        } else if full.is_dir() {
+            std::fs::remove_dir_all(&full).map_err(|e| format!("Failed to delete untracked directory: {}", e))?;
+            return Ok(format!("Removed {}", valid_path));
+        }
+    }
+
+    // Tracked file: restore working copy
+    if let Some(res) = run_git_bounded(&repo_dir, &["restore", "--", valid_path], 4096, false) {
+        return Ok(res);
+    }
+    run_git_bounded(&repo_dir, &["checkout", "HEAD", "--", valid_path], 4096, false)
+        .ok_or_else(|| format!("Failed to discard changes in '{}'", valid_path))
 }
 
 fn run_git(cwd: &str, args: &[&str]) -> Option<String> {
+    run_git_bounded(cwd, args, 512, false)
+}
+
+fn run_git_bounded(cwd: &str, args: &[&str], max_chars: usize, allow_diff_exit: bool) -> Option<String> {
     let (tx, rx) = std::sync::mpsc::channel();
     let cwd_owned = cwd.to_string();
     let args_owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
@@ -102,14 +309,16 @@ fn run_git(cwd: &str, args: &[&str]) -> Option<String> {
         let _ = tx.send(out);
     });
     let output = rx.recv_timeout(Duration::from_secs(8)).ok()?.ok()?;
-    if !output.status.success() {
+    let success = output.status.success() || (allow_diff_exit && output.status.code() == Some(1));
+    if !success {
         return None;
     }
-    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if text.is_empty() {
-        None
+    let text = String::from_utf8_lossy(&output.stdout);
+    let trimmed = text.trim_end();
+    if trimmed.is_empty() {
+        Some(String::new())
     } else {
-        Some(text.chars().take(512).collect())
+        Some(trimmed.chars().take(max_chars).collect())
     }
 }
 
@@ -234,4 +443,65 @@ mod tests {
             assert!(b.len() <= 512);
         }
     }
+
+    #[test]
+    fn test_git_changes_and_diff_lifecycle() {
+        if !git_available() {
+            return;
+        }
+        let base = std::env::temp_dir().join(format!("kai-git-lifecycle-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        init_repo_with_commit(&base);
+        let dir = base.to_string_lossy().to_string();
+
+        // 1. Initially clean
+        let initial = get_git_changes(&dir).expect("get_git_changes");
+        assert!(initial.clean);
+        assert_eq!(initial.total_changes, 0);
+
+        // 2. Add an untracked file and modify existing file
+        std::fs::write(base.join("untracked.txt"), "hello untracked\n").unwrap();
+        std::fs::write(base.join("f.txt"), "modified f content\n").unwrap();
+
+        let changes = get_git_changes(&dir).expect("get_git_changes after edit");
+        assert!(!changes.clean);
+        assert_eq!(changes.total_changes, 2);
+        assert_eq!(changes.untracked.len(), 1);
+        assert_eq!(changes.working_tree.len(), 1);
+
+        // 3. Diff for modified file contains modified content
+        let diff = get_git_diff(&dir, Some("f.txt"), false).expect("get_git_diff");
+        assert!(diff.contains("modified f content"));
+
+        // 4. Diff for untracked file contains new content
+        let untracked_diff = get_git_diff(&dir, Some("untracked.txt"), false).expect("untracked diff");
+        assert!(untracked_diff.contains("hello untracked"));
+
+        // 5. Stage modified file
+        stage_git_file(&dir, "f.txt").expect("stage f.txt");
+        let staged_changes = get_git_changes(&dir).expect("changes after staging");
+        assert_eq!(staged_changes.staged.len(), 1);
+
+        // 6. Unstage file
+        unstage_git_file(&dir, "f.txt").expect("unstage f.txt");
+        let unstaged_changes = get_git_changes(&dir).expect("changes after unstaging");
+        assert_eq!(unstaged_changes.staged.len(), 0);
+        assert_eq!(unstaged_changes.working_tree.len(), 1);
+
+        // 7. Discard changes on modified file
+        discard_git_file(&dir, "f.txt").expect("discard f.txt");
+        assert_eq!(std::fs::read_to_string(base.join("f.txt")).unwrap(), "hello\n");
+
+        // 8. Discard untracked file removes it
+        discard_git_file(&dir, "untracked.txt").expect("discard untracked");
+        assert!(!base.join("untracked.txt").exists());
+
+        // 9. Clean again
+        let final_changes = get_git_changes(&dir).expect("final changes");
+        assert!(final_changes.clean);
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
 }
+

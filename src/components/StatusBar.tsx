@@ -10,6 +10,7 @@ import {
   Code,
   Terminal,
   RefreshCw,
+  GitCompare,
 } from "lucide-react";
 
 interface StatusBarProps {
@@ -144,6 +145,10 @@ export const StatusBar: FC<StatusBarProps> = ({
             {gitMenuOpen && (
               <div className="status-git-menu" role="menu" aria-label="Git actions">
                 <button type="button" role="menuitem" onClick={() => runAction("status")}>
+                  <GitCompare size={13} />
+                  <span>Review Changes (Diff)</span>
+                </button>
+                <button type="button" role="menuitem" onClick={() => runAction("status")}>
                   <ListOrdered size={13} />
                   <span>Show status</span>
                 </button>
@@ -160,6 +165,18 @@ export const StatusBar: FC<StatusBarProps> = ({
                   <span>{copied ? "Copied!" : `Copy branch name`}</span>
                 </button>
               </div>
+            )}
+            {gitDirty && (
+              <button
+                type="button"
+                className="status-changes-pill"
+                onClick={() => onGitAction("status")}
+                title="Uncommitted changes detected. Click to review changes and diffs (like VS Code)."
+                aria-label="Review uncommitted changes and diffs"
+              >
+                <GitCompare size={11} aria-hidden="true" />
+                <span>Changes ●</span>
+              </button>
             )}
           </div>
         ) : (

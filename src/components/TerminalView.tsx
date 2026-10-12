@@ -39,6 +39,7 @@ interface TerminalViewProps {
   onSessionStatusChange?: (status: SessionStatus, message?: string) => void;
   onExit?: (exitCode: number) => void;
   onCwdResolved?: (cwd: string) => void;
+  onFocus?: () => void;
 }
 
 export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
@@ -52,6 +53,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       onSessionStatusChange,
       onExit,
       onCwdResolved,
+      onFocus,
     },
     ref
   ) => {
@@ -172,6 +174,8 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
     onStatusRef.current = onSessionStatusChange;
     const onCwdResolvedRef = useRef(onCwdResolved);
     onCwdResolvedRef.current = onCwdResolved;
+    const onFocusRef = useRef(onFocus);
+    onFocusRef.current = onFocus;
     const shellRef = useRef(selectedShell);
     shellRef.current = selectedShell;
     const cwdRef = useRef(cwd);
@@ -336,6 +340,11 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       } catch {
         // ignore initial layout errors
       }
+
+      const onTextareaFocus = () => {
+        onFocusRef.current?.();
+      };
+      term.textarea?.addEventListener("focus", onTextareaFocus);
 
       xtermRef.current = term;
       fitAddonRef.current = fitAddon;
@@ -586,6 +595,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       return () => {
         initSeqRef.current += 1;
         if (initialTimer) clearTimeout(initialTimer);
+        term.textarea?.removeEventListener("focus", onTextareaFocus);
         inputDisposable.dispose();
         resizeObserver.disconnect();
         if (resizeTimer) clearTimeout(resizeTimer);
@@ -667,6 +677,8 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
     return (
       <div
         className="terminal-container"
+        onMouseDownCapture={() => onFocusRef.current?.()}
+        onClickCapture={() => onFocusRef.current?.()}
         style={{
           backgroundColor: SettingsService.getThemeBackgroundColor(
             settings.theme,

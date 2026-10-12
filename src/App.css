@@ -1525,7 +1525,7 @@ input::-webkit-calendar-picker-indicator {
 }
 
 .pane-item.active-pane {
-  outline: 1px solid #89b4fa;
+  outline: 1px solid #45475a;
   outline-offset: -1px;
 }
 
@@ -1678,4 +1678,842 @@ input::-webkit-calendar-picker-indicator {
 .shortcut-input {
   max-width: 180px;
   font-family: monospace;
+}
+
+/* Per-split pane header: compact, subtle header scoped to this split. */
+.pane-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  min-height: 24px;
+  padding: 2px 8px;
+  background-color: #11111b;
+  border-bottom: 1px solid #1e1e2e;
+  font-size: 11px;
+  color: #6c7086;
+  user-select: none;
+  cursor: pointer;
+  overflow: hidden;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.pane-header.is-active {
+  background-color: #181825;
+  border-bottom-color: #313244;
+  color: #cdd6f4;
+}
+
+.pane-active-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background-color: #313244;
+  flex: 0 0 auto;
+  transition: background-color 0.15s ease;
+}
+
+.pane-active-dot.on {
+  background-color: #a6adc8;
+}
+
+.pane-cwd {
+  font-weight: 500;
+  color: inherit;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 150px;
+}
+
+.pane-git-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background-color: #181825;
+  border: 1px solid #313244;
+  border-radius: 3px;
+  color: #a6e3a1;
+  font-size: 10px;
+  padding: 0 5px;
+  cursor: pointer;
+  max-width: 150px;
+  line-height: 1.6;
+}
+
+.pane-git-btn:hover {
+  border-color: #45475a;
+  background-color: #232738;
+}
+
+.pane-changes-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background-color: rgba(249, 226, 175, 0.08);
+  border: 1px solid rgba(249, 226, 175, 0.3);
+  border-radius: 3px;
+  color: #f9e2af;
+  font-size: 10px;
+  padding: 0 5px;
+  cursor: pointer;
+  line-height: 1.6;
+}
+
+.pane-changes-btn:hover {
+  background-color: rgba(249, 226, 175, 0.16);
+  border-color: #f9e2af;
+}
+
+.pane-git-branch {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 90px;
+}
+
+.pane-git-dot {
+  font-size: 7px;
+  color: #a6e3a1;
+}
+
+.pane-git-dot.dirty {
+  color: #f9e2af;
+}
+
+.pane-git-empty {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  color: #585b70;
+  border: 1px dashed #313244;
+  border-radius: 3px;
+  padding: 0 5px;
+  white-space: nowrap;
+}
+
+.pane-header-spacer {
+  flex: 1;
+}
+
+.pane-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  color: #6c7086;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.pane-icon-btn:hover {
+  color: #cdd6f4;
+  background-color: #313244;
+}
+
+.pane-icon-btn.danger:hover {
+  color: #f38ba8;
+  background-color: rgba(243, 139, 168, 0.15);
+}
+
+.status-changes-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background-color: rgba(249, 226, 175, 0.15);
+  border: 1px solid rgba(249, 226, 175, 0.45);
+  color: #f9e2af;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 4px;
+  padding: 1px 7px;
+  margin-left: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.status-changes-pill:hover {
+  background-color: rgba(249, 226, 175, 0.28);
+  border-color: #f9e2af;
+}
+
+/* Centered git-status dialog (replaces native alert()) */
+.git-status-modal {
+  width: 560px;
+  max-width: 92vw;
+  max-height: 84vh;
+  background-color: #0a1e3c;
+  border: 1px solid #1e3a5f;
+  border-radius: 10px;
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.65);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.git-status-dir {
+  font-family: monospace;
+  font-size: 11px;
+  word-break: break-all;
+  margin-bottom: 10px;
+}
+
+.git-status-output {
+  margin: 0;
+  padding: 12px;
+  background-color: #11111b;
+  border: 1px solid #313244;
+  border-radius: 6px;
+  color: #cdd6f4;
+  font-family: monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 46vh;
+  overflow-y: auto;
+}
+
+/* =========================================================================
+   VS Code-style Source Control & Diff Review Modal
+   ========================================================================= */
+.git-changes-backdrop {
+  padding: 16px;
+}
+
+.git-changes-modal {
+  width: 1200px;
+  max-width: 95vw;
+  height: 85vh;
+  max-height: 900px;
+  background-color: #141724;
+  border: 1px solid #282c3f;
+  border-radius: 10px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.75);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  color: #cdd6f4;
+}
+
+.git-changes-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  background-color: #11131e;
+  border-bottom: 1px solid #282c3f;
+  flex: 0 0 auto;
+}
+
+.git-changes-title-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.git-changes-title-group .title-icon {
+  color: #89b4fa;
+}
+
+.git-changes-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #cdd6f4;
+}
+
+.git-branch-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  background-color: rgba(137, 180, 250, 0.15);
+  border: 1px solid rgba(137, 180, 250, 0.35);
+  color: #89b4fa;
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+
+.git-path-badge {
+  font-family: monospace;
+  font-size: 11px;
+  color: #6c7086;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-changes-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.refresh-btn .spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.git-action-banner {
+  background-color: #1e3a5f;
+  color: #89b4fa;
+  font-size: 12px;
+  padding: 6px 16px;
+  border-bottom: 1px solid rgba(137, 180, 250, 0.3);
+  font-weight: 500;
+}
+
+.git-error-banner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background-color: rgba(243, 139, 168, 0.15);
+  border-bottom: 1px solid rgba(243, 139, 168, 0.35);
+  color: #f38ba8;
+  font-size: 12px;
+  padding: 6px 16px;
+}
+
+.git-changes-content {
+  display: flex;
+  flex: 1 1 0%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Left Sidebar (VS Code Source Control Tree) */
+.git-changes-sidebar {
+  width: 320px;
+  min-width: 250px;
+  max-width: 400px;
+  border-right: 1px solid #282c3f;
+  background-color: #11131e;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.sidebar-filter-row {
+  display: flex;
+  align-items: center;
+  padding: 8px 10px;
+  gap: 8px;
+  border-bottom: 1px solid #232738;
+}
+
+.sidebar-filter-input {
+  flex: 1;
+  background-color: #181a29;
+  border: 1px solid #31364d;
+  border-radius: 4px;
+  color: #cdd6f4;
+  font-size: 11px;
+  padding: 4px 8px;
+  outline: none;
+}
+
+.sidebar-filter-input:focus {
+  border-color: #89b4fa;
+}
+
+.total-changes-count {
+  font-size: 10px;
+  color: #8b9bb4;
+  white-space: nowrap;
+}
+
+.changes-tree-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 0;
+}
+
+.changes-section {
+  margin-bottom: 12px;
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 10px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: #8b9bb4;
+  text-transform: uppercase;
+}
+
+.section-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: transparent;
+  border: none;
+  color: #8b9bb4;
+  cursor: pointer;
+  font-size: 10px;
+  padding: 2px 5px;
+  border-radius: 3px;
+}
+
+.section-action-btn:hover {
+  background-color: #232738;
+  color: #cdd6f4;
+}
+
+.file-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.file-row {
+  display: flex;
+  align-items: center;
+  padding: 5px 10px;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 12px;
+  border-left: 2px solid transparent;
+  transition: background-color 0.1s ease;
+}
+
+.file-row:hover {
+  background-color: #1c2033;
+}
+
+.file-row.selected {
+  background-color: #202640;
+  border-left-color: #89b4fa;
+}
+
+.file-icon-wrap {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.file-status-icon.modified {
+  color: #e5c07b;
+}
+
+.file-status-icon.added {
+  color: #98c379;
+}
+
+.file-status-icon.deleted {
+  color: #e06c75;
+}
+
+.file-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+  color: #cdd6f4;
+}
+
+.file-dir {
+  font-size: 10px;
+  color: #6c7086;
+  font-weight: 400;
+}
+
+.file-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 0 4px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  font-family: monospace;
+}
+
+.file-badge.badge-modified {
+  color: #e5c07b;
+}
+
+.file-badge.badge-added,
+.file-badge.badge-untracked {
+  color: #98c379;
+}
+
+.file-badge.badge-deleted {
+  color: #e06c75;
+}
+
+.file-badge.badge-renamed {
+  color: #61afef;
+}
+
+.file-row-actions {
+  display: none;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+}
+
+.file-row:hover .file-row-actions {
+  display: flex;
+}
+
+.file-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  color: #8b9bb4;
+  cursor: pointer;
+}
+
+.file-action-btn:hover {
+  background-color: #31364d;
+  color: #cdd6f4;
+}
+
+.file-action-btn.danger:hover {
+  color: #f38ba8;
+}
+
+.changes-clean-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 20px;
+  text-align: center;
+}
+
+.changes-clean-state .clean-icon {
+  color: #a6e3a1;
+  margin-bottom: 12px;
+}
+
+.changes-clean-state h4 {
+  margin: 0 0 6px 0;
+  color: #cdd6f4;
+  font-size: 14px;
+}
+
+/* Right Diff Viewer Panel */
+.git-diff-viewer {
+  flex: 1 1 0%;
+  display: flex;
+  flex-direction: column;
+  background-color: #141724;
+  overflow: hidden;
+  position: relative;
+}
+
+.diff-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.diff-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px;
+  background-color: #171b2b;
+  border-bottom: 1px solid #282c3f;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.diff-file-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.diff-file-path {
+  font-family: monospace;
+  font-size: 12px;
+  font-weight: 600;
+  color: #cdd6f4;
+}
+
+.diff-stage-tag {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background-color: #232738;
+  color: #8b9bb4;
+}
+
+.diff-stats-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-family: monospace;
+  font-weight: 700;
+}
+
+.diff-add-stat {
+  color: #a6e3a1;
+}
+
+.diff-del-stat {
+  color: #f38ba8;
+}
+
+.diff-view-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mode-toggle-group {
+  display: inline-flex;
+  background-color: #1c2033;
+  border: 1px solid #31364d;
+  border-radius: 4px;
+  padding: 1px;
+}
+
+.mode-toggle-group .toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  border: none;
+  color: #8b9bb4;
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.mode-toggle-group .toggle-btn.active {
+  background-color: #89b4fa;
+  color: #11111b;
+  font-weight: 600;
+}
+
+.btn-discard:hover {
+  color: #f38ba8;
+  border-color: #f38ba8;
+}
+
+.discard-confirm-box {
+  background-color: #2a1520;
+  border-bottom: 1px solid #f38ba8;
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.discard-confirm-box p {
+  margin: 0;
+  font-size: 12px;
+  color: #f38ba8;
+}
+
+.discard-confirm-actions {
+  display: flex;
+  gap: 6px;
+}
+
+/* Diff Editor Content */
+.diff-editor-body {
+  flex: 1 1 0%;
+  overflow-y: auto;
+  overflow-x: auto;
+  background-color: #11131e;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  outline: none;
+}
+
+.diff-loading,
+.diff-empty-state,
+.diff-unselected-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 30px;
+  text-align: center;
+  color: #8b9bb4;
+}
+
+.diff-loading .spin {
+  animation: spin 1s linear infinite;
+  margin-bottom: 10px;
+  color: #89b4fa;
+}
+
+.diff-unselected-state .muted-icon {
+  color: #31364d;
+  margin-bottom: 12px;
+}
+
+.diff-unselected-state h4,
+.diff-empty-state h4 {
+  margin: 0 0 6px 0;
+  color: #cdd6f4;
+}
+
+/* Unified Diff Rendering */
+.diff-unified-view {
+  width: 100%;
+}
+
+.diff-hunk {
+  border-bottom: 1px solid #1c2033;
+}
+
+.hunk-header-row {
+  background-color: rgba(137, 180, 250, 0.08);
+  border-top: 1px solid rgba(137, 180, 250, 0.15);
+  border-bottom: 1px solid rgba(137, 180, 250, 0.15);
+  color: #89b4fa;
+  padding: 2px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  user-select: none;
+}
+
+.diff-line-row {
+  display: flex;
+  width: 100%;
+  min-height: 19px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.diff-line-row.diff-line-add {
+  background-color: rgba(166, 227, 161, 0.14);
+  color: #a6e3a1;
+}
+
+.diff-line-row.diff-line-delete {
+  background-color: rgba(243, 139, 168, 0.16);
+  color: #f38ba8;
+}
+
+.diff-line-row.diff-line-context {
+  color: #a6adc8;
+}
+
+.diff-line-num {
+  width: 44px;
+  min-width: 44px;
+  text-align: right;
+  padding-right: 8px;
+  color: #585b70;
+  user-select: none;
+  font-size: 11px;
+}
+
+.diff-line-add .diff-line-num {
+  color: #a6e3a1;
+}
+
+.diff-line-delete .diff-line-num {
+  color: #f38ba8;
+}
+
+.diff-line-marker {
+  width: 18px;
+  min-width: 18px;
+  text-align: center;
+  user-select: none;
+  font-weight: 700;
+}
+
+.diff-line-content {
+  flex: 1;
+  padding-right: 12px;
+}
+
+/* Split (Side-by-Side) Diff Rendering */
+.diff-split-view {
+  width: 100%;
+}
+
+.diff-split-hunk {
+  border-bottom: 1px solid #1c2033;
+}
+
+.split-rows-table {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
+.split-row {
+  display: flex;
+  width: 100%;
+  min-height: 19px;
+}
+
+.split-col {
+  flex: 1 1 50%;
+  display: flex;
+  min-width: 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+  border-right: 1px solid #1c2033;
+}
+
+.split-col:last-child {
+  border-right: none;
+}
+
+.split-col.diff-line-delete {
+  background-color: rgba(243, 139, 168, 0.16);
+  color: #f38ba8;
+}
+
+.split-col.diff-line-add {
+  background-color: rgba(166, 227, 161, 0.14);
+  color: #a6e3a1;
+}
+
+.split-col.diff-line-context {
+  color: #a6adc8;
+}
+
+.split-col.empty-col {
+  background-color: rgba(0, 0, 0, 0.2);
+}
+
+.git-changes-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  background-color: #11131e;
+  border-top: 1px solid #282c3f;
+  flex: 0 0 auto;
+  font-size: 11px;
 }
