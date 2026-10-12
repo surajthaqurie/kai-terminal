@@ -89,6 +89,7 @@ fn default_auth_status() -> String {
 enum McpKeyStyle {
     McpServers,
     McpOpencode,
+    #[allow(dead_code)]
     VscodeServers,
     TomlCodex,
 }
@@ -282,9 +283,10 @@ pub fn setup_agent_mcp(
     let home = std::path::PathBuf::from(home);
     if let Some(app_dir) = require_app_dir {
         if !home.join(app_dir).exists() {
-            return Err(format!(
+            return Err(
                 "VS Code storage not found on this machine; wire Cline manually via its MCP settings panel."
-            ));
+                    .to_string(),
+            );
         }
     }
     let file = home.join(rel);
@@ -337,11 +339,10 @@ pub fn setup_agent_mcp(
             message: "Kai entry already present.".to_string(),
         });
     }
-    if doc
+    if !doc
         .get(container_key)
         .map(|v| v.is_object())
         .unwrap_or(false)
-        == false
     {
         doc[container_key] = serde_json::json!({});
     }
@@ -1055,8 +1056,11 @@ mod tests {
         }
     }
 
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn test_missing_cli_reports_not_found_state() {
+        let _guard = ENV_LOCK.lock().unwrap();
         // Point PATH at an empty dir so nothing is found. HOME is sandboxed
         // too so the supplementary well-known-dir fallback (which ignores
         // PATH) also finds nothing on machines with user-level installs.
@@ -1136,6 +1140,7 @@ mod tests {
 
     /// Run `f` with HOME/USERPROFILE pointed at a fresh temp dir.
     fn with_temp_home(name: &str, f: impl FnOnce(std::path::PathBuf)) {
+        let _guard = ENV_LOCK.lock().unwrap();
         let dir =
             std::env::temp_dir().join(format!("kai-agent-setup-{}-{}", name, std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);

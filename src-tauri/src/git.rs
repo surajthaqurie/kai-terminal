@@ -125,7 +125,8 @@ fn validate_repo_rel_path<'a>(repo_root: &str, rel_path: &'a str) -> Result<&'a 
     }
     // Prevent directory traversal outside repo root
     let full = Path::new(repo_root).join(trimmed);
-    let canonical_root = std::fs::canonicalize(repo_root).unwrap_or_else(|_| Path::new(repo_root).to_path_buf());
+    let canonical_root =
+        std::fs::canonicalize(repo_root).unwrap_or_else(|_| Path::new(repo_root).to_path_buf());
     if let Ok(c) = std::fs::canonicalize(&full) {
         if !c.starts_with(&canonical_root) {
             return Err("Path escapes repository root".to_string());
@@ -144,7 +145,12 @@ pub fn get_git_diff(cwd: &str, rel_path: Option<&str>, staged: bool) -> Result<S
     if let Some(path) = rel_path {
         let valid_path = validate_repo_rel_path(&repo_dir, path)?;
         if staged {
-            let res = run_git_bounded(&repo_dir, &["diff", "--cached", "--", valid_path], 1_000_000, true);
+            let res = run_git_bounded(
+                &repo_dir,
+                &["diff", "--cached", "--", valid_path],
+                1_000_000,
+                true,
+            );
             return Ok(res.unwrap_or_default());
         }
         // Try normal unstaged diff
@@ -157,7 +163,12 @@ pub fn get_git_diff(cwd: &str, rel_path: Option<&str>, staged: bool) -> Result<S
         // If empty, check if untracked by diffing with /dev/null
         let full_path = Path::new(&repo_dir).join(valid_path);
         if full_path.is_file() {
-            let no_index_res = run_git_bounded(&repo_dir, &["diff", "--no-index", "--", "/dev/null", valid_path], 1_000_000, true);
+            let no_index_res = run_git_bounded(
+                &repo_dir,
+                &["diff", "--no-index", "--", "/dev/null", valid_path],
+                1_000_000,
+                true,
+            );
             if let Some(d) = no_index_res {
                 if !d.is_empty() {
                     return Ok(d);
@@ -165,7 +176,12 @@ pub fn get_git_diff(cwd: &str, rel_path: Option<&str>, staged: bool) -> Result<S
             }
         }
         // Fallback to diff HEAD
-        let head_res = run_git_bounded(&repo_dir, &["diff", "HEAD", "--", valid_path], 1_000_000, true);
+        let head_res = run_git_bounded(
+            &repo_dir,
+            &["diff", "HEAD", "--", valid_path],
+            1_000_000,
+            true,
+        );
         Ok(head_res.unwrap_or_default())
     } else if staged {
         let res = run_git_bounded(&repo_dir, &["diff", "--cached"], 1_000_000, true);
@@ -180,8 +196,13 @@ pub fn get_git_diff(cwd: &str, rel_path: Option<&str>, staged: bool) -> Result<S
 pub fn get_git_changes(cwd: &str) -> Result<GitChangesSummary, String> {
     let info = get_git_info(cwd);
     let repo_dir = info.repo_root.ok_or("Not a valid git repository")?;
-    let status_out = run_git_bounded(&repo_dir, &["status", "--porcelain=v1", "-uall"], 1_000_000, false)
-        .unwrap_or_default();
+    let status_out = run_git_bounded(
+        &repo_dir,
+        &["status", "--porcelain=v1", "-uall"],
+        1_000_000,
+        false,
+    )
+    .unwrap_or_default();
 
     let mut working_tree = Vec::new();
     let mut staged = Vec::new();
@@ -197,7 +218,10 @@ pub fn get_git_changes(cwd: &str) -> Result<GitChangesSummary, String> {
         let y = bytes[1] as char;
         let raw_path = trimmed[3..].trim();
         let (path, old_path) = if let Some(idx) = raw_path.find(" -> ") {
-            (raw_path[idx + 4..].to_string(), Some(raw_path[..idx].to_string()))
+            (
+                raw_path[idx + 4..].to_string(),
+                Some(raw_path[..idx].to_string()),
+            )
         } else {
             (raw_path.to_string(), None)
         };
@@ -258,7 +282,12 @@ pub fn unstage_git_file(cwd: &str, rel_path: &str) -> Result<String, String> {
     let repo_dir = info.repo_root.ok_or("Not a valid git repository")?;
     let valid_path = validate_repo_rel_path(&repo_dir, rel_path)?;
     // Try restore --staged first, fallback to reset HEAD
-    if let Some(res) = run_git_bounded(&repo_dir, &["restore", "--staged", "--", valid_path], 4096, false) {
+    if let Some(res) = run_git_bounded(
+        &repo_dir,
+        &["restore", "--staged", "--", valid_path],
+        4096,
+        false,
+    ) {
         return Ok(res);
     }
     run_git_bounded(&repo_dir, &["reset", "HEAD", "--", valid_path], 4096, false)
@@ -273,14 +302,21 @@ pub fn discard_git_file(cwd: &str, rel_path: &str) -> Result<String, String> {
     let full = Path::new(&repo_dir).join(valid_path);
 
     // If file is untracked, remove it from disk safely within repo_root
-    let status_out = run_git_bounded(&repo_dir, &["status", "--porcelain=v1", "--", valid_path], 4096, false)
-        .unwrap_or_default();
+    let status_out = run_git_bounded(
+        &repo_dir,
+        &["status", "--porcelain=v1", "--", valid_path],
+        4096,
+        false,
+    )
+    .unwrap_or_default();
     if status_out.starts_with("??") {
         if full.is_file() {
-            std::fs::remove_file(&full).map_err(|e| format!("Failed to delete untracked file: {}", e))?;
+            std::fs::remove_file(&full)
+                .map_err(|e| format!("Failed to delete untracked file: {}", e))?;
             return Ok(format!("Removed {}", valid_path));
         } else if full.is_dir() {
-            std::fs::remove_dir_all(&full).map_err(|e| format!("Failed to delete untracked directory: {}", e))?;
+            std::fs::remove_dir_all(&full)
+                .map_err(|e| format!("Failed to delete untracked directory: {}", e))?;
             return Ok(format!("Removed {}", valid_path));
         }
     }
@@ -289,15 +325,25 @@ pub fn discard_git_file(cwd: &str, rel_path: &str) -> Result<String, String> {
     if let Some(res) = run_git_bounded(&repo_dir, &["restore", "--", valid_path], 4096, false) {
         return Ok(res);
     }
-    run_git_bounded(&repo_dir, &["checkout", "HEAD", "--", valid_path], 4096, false)
-        .ok_or_else(|| format!("Failed to discard changes in '{}'", valid_path))
+    run_git_bounded(
+        &repo_dir,
+        &["checkout", "HEAD", "--", valid_path],
+        4096,
+        false,
+    )
+    .ok_or_else(|| format!("Failed to discard changes in '{}'", valid_path))
 }
 
 fn run_git(cwd: &str, args: &[&str]) -> Option<String> {
     run_git_bounded(cwd, args, 512, false)
 }
 
-fn run_git_bounded(cwd: &str, args: &[&str], max_chars: usize, allow_diff_exit: bool) -> Option<String> {
+fn run_git_bounded(
+    cwd: &str,
+    args: &[&str],
+    max_chars: usize,
+    allow_diff_exit: bool,
+) -> Option<String> {
     let (tx, rx) = std::sync::mpsc::channel();
     let cwd_owned = cwd.to_string();
     let args_owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
@@ -475,7 +521,8 @@ mod tests {
         assert!(diff.contains("modified f content"));
 
         // 4. Diff for untracked file contains new content
-        let untracked_diff = get_git_diff(&dir, Some("untracked.txt"), false).expect("untracked diff");
+        let untracked_diff =
+            get_git_diff(&dir, Some("untracked.txt"), false).expect("untracked diff");
         assert!(untracked_diff.contains("hello untracked"));
 
         // 5. Stage modified file
@@ -491,7 +538,10 @@ mod tests {
 
         // 7. Discard changes on modified file
         discard_git_file(&dir, "f.txt").expect("discard f.txt");
-        assert_eq!(std::fs::read_to_string(base.join("f.txt")).unwrap(), "hello\n");
+        assert_eq!(
+            std::fs::read_to_string(base.join("f.txt")).unwrap(),
+            "hello\n"
+        );
 
         // 8. Discard untracked file removes it
         discard_git_file(&dir, "untracked.txt").expect("discard untracked");
@@ -504,4 +554,3 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 }
-

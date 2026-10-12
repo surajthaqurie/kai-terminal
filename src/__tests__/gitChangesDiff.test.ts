@@ -1,9 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from "vitest";
-import {
-  parseUnifiedDiff,
-  buildSplitRows,
-} from "../components/GitChangesModal";
+import { parseUnifiedDiff, buildSplitRows } from "../components/GitChangesModal";
 
 describe("Unified Diff Parser", () => {
   it("parses standard unified diff with additions, deletions, and context", () => {
@@ -205,11 +202,21 @@ describe("Active Split Terminal and PaneHeader Component", () => {
           paneId: "pane-1",
           cwd: "/home/user/project",
           isActive: true,
-          gitInfo: { branch: "main", dirty: true, ahead_behind: null, repo_root: "/home/user/project", error: null },
+          gitInfo: {
+            branch: "main",
+            dirty: true,
+            ahead_behind: null,
+            repo_root: "/home/user/project",
+            error: null,
+          },
           showClose: true,
-          onFocus: () => { focused = true; },
+          onFocus: () => {
+            focused = true;
+          },
           onGitStatus: () => {},
-          onOpenChanges: () => { changesOpened = true; },
+          onOpenChanges: () => {
+            changesOpened = true;
+          },
           onOpenAi: () => {},
           onOpenEditor: () => {},
           onClosePane: () => {},
@@ -264,7 +271,13 @@ describe("Active Split Terminal and PaneHeader Component", () => {
           paneId: "pane-2",
           cwd: "/home/user/project",
           isActive: false,
-          gitInfo: { branch: "main", dirty: false, ahead_behind: null, repo_root: "/home/user/project", error: null },
+          gitInfo: {
+            branch: "main",
+            dirty: false,
+            ahead_behind: null,
+            repo_root: "/home/user/project",
+            error: null,
+          },
           showClose: true,
           onFocus: () => {},
           onGitStatus: () => {},
@@ -342,4 +355,3 @@ describe("StatusBar Footer with Active Split Directory, Mode and Git", () => {
     container.remove();
   });
 });
-

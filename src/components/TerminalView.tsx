@@ -358,7 +358,13 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         // Tab is intercepted ONLY here; otherwise it passes through so
         // native shell completion keeps working.
         const popupOpen = suggestionsRef.current.length > 0;
-        if (popupOpen && event.type === "keydown" && !event.ctrlKey && !event.metaKey && !event.altKey) {
+        if (
+          popupOpen &&
+          event.type === "keydown" &&
+          !event.ctrlKey &&
+          !event.metaKey &&
+          !event.altKey
+        ) {
           if (event.code === "Tab") {
             event.preventDefault();
             event.stopPropagation();
@@ -724,7 +730,9 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
                 title={s}
               >
                 <span className="terminal-autocomplete-text">{s}</span>
-                <kbd className="terminal-autocomplete-key">{idx === selectedSuggestion ? "Tab" : ""}</kbd>
+                <kbd className="terminal-autocomplete-key">
+                  {idx === selectedSuggestion ? "Tab" : ""}
+                </kbd>
               </button>
             ))}
           </div>

@@ -33,14 +33,14 @@ export const GitStatusModal: FC<GitStatusModalProps> = ({ dir, output, onClose }
       aria-modal="true"
       aria-label={`Git status for ${dir}`}
     >
-      <div
-        className="git-status-modal"
-        onClick={(e) => e.stopPropagation()}
-        role="document"
-      >
+      <div className="git-status-modal" onClick={(e) => e.stopPropagation()} role="document">
         <div className="modal-header">
           <h3>
-            <GitBranch size={15} aria-hidden="true" style={{ verticalAlign: "-2px", marginRight: 6 }} />
+            <GitBranch
+              size={15}
+              aria-hidden="true"
+              style={{ verticalAlign: "-2px", marginRight: 6 }}
+            />
             Git Status
           </h3>
           <button

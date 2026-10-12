@@ -60,10 +60,11 @@ export function splitTab(
   const at = activePaneIndex(tab);
   const panes = [...tab.panes.slice(0, at + 1), pane, ...tab.panes.slice(at + 1)];
   const layout = splitLayoutNode(
-    tab.layout ?? layoutFromFlat(
-      tab.panes.map((p) => p.id),
-      tab.splitDirection
-    ),
+    tab.layout ??
+      layoutFromFlat(
+        tab.panes.map((p) => p.id),
+        tab.splitDirection
+      ),
     tab.activePaneId,
     direction,
     id
@@ -91,7 +92,8 @@ export function closePane(tab: SplitTabState): SplitTabState {
       tab.panes.map((p) => p.id),
       tab.splitDirection
     );
-  const pruned = removePaneFromLayout(baseLayout, tab.activePaneId) ?? createPaneLayout(remaining[0].id);
+  const pruned =
+    removePaneFromLayout(baseLayout, tab.activePaneId) ?? createPaneLayout(remaining[0].id);
   return {
     panes: remaining,
     activePaneId: remaining[nextIdx].id,
@@ -211,10 +213,7 @@ export function setLayoutSplitRatio(
 }
 
 /** Find a split node by id (for drag handlers). */
-export function findLayoutSplit(
-  node: PaneLayoutNode,
-  splitId: string
-): PaneLayoutNode | null {
+export function findLayoutSplit(node: PaneLayoutNode, splitId: string): PaneLayoutNode | null {
   if (node.kind === "pane") return null;
   if (node.id === splitId) return node;
   return findLayoutSplit(node.first, splitId) ?? findLayoutSplit(node.second, splitId);

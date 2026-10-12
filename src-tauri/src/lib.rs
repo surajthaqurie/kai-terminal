@@ -21,8 +21,8 @@ use diagnostics::{build_diagnostics, AiCliSummary};
 
 #[cfg(feature = "tauri")]
 use git::{
-    discard_git_file, get_git_changes, get_git_diff, get_git_info, run_git_action,
-    stage_git_file, unstage_git_file, GitChangesSummary, GitInfo,
+    discard_git_file, get_git_changes, get_git_diff, get_git_info, run_git_action, stage_git_file,
+    unstage_git_file, GitChangesSummary, GitInfo,
 };
 
 #[cfg(feature = "tauri")]

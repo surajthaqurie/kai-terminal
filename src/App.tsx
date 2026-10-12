@@ -32,7 +32,14 @@ import {
   platformLabel,
   ShortcutActionId,
 } from "./services/shortcuts";
-import { splitTab, closePane, setLayoutSplitRatio, createPaneLayout, removePaneFromLayout, clampPaneFraction } from "./services/paneLayout";
+import {
+  splitTab,
+  closePane,
+  setLayoutSplitRatio,
+  createPaneLayout,
+  removePaneFromLayout,
+  clampPaneFraction,
+} from "./services/paneLayout";
 import {
   APP_VERSION_FALLBACK,
   UPDATE_PERIODIC_MS,
@@ -187,9 +194,9 @@ function createDefaultTab(
     if (paneIds.length <= 1) {
       fullLayout = { kind: "pane", paneId: paneIds[0] };
     } else {
-      const axis = (splitDirection === "horizontal"
-        ? "horizontal"
-        : "vertical") as PaneSplitDirection;
+      const axis = (
+        splitDirection === "horizontal" ? "horizontal" : "vertical"
+      ) as PaneSplitDirection;
       let node: PaneLayoutNode = { kind: "pane", paneId: paneIds[0] };
       for (const id of paneIds.slice(1)) {
         node = {
@@ -429,9 +436,7 @@ export function App() {
               ? t.panes.map((p) => ({ shellPath: p.shellPath, cwd: p.cwd }))
               : undefined,
           layout:
-            t.layout && t.panes.length > 1
-              ? nodeToPersistedLayout(t.layout, paneIds)
-              : undefined,
+            t.layout && t.panes.length > 1 ? nodeToPersistedLayout(t.layout, paneIds) : undefined,
         };
       });
       localStorage.setItem(LAYOUT_KEY, JSON.stringify(safe));
@@ -536,13 +541,17 @@ export function App() {
         void getGitInfoCached(dir).then(
           (info) => {
             if (cancelled) return;
-            setGitInfoByDir((prev) => (prev[dir]?.branch === info.branch &&
+            setGitInfoByDir((prev) =>
+              prev[dir]?.branch === info.branch &&
               prev[dir]?.dirty === info.dirty &&
               prev[dir]?.repo_root === info.repo_root
-              ? prev
-              : { ...prev, [dir]: info }));
+                ? prev
+                : { ...prev, [dir]: info }
+            );
             // Keep the active-pane footer in sync.
-            if (dir === resolveEffectiveProjectDir(activePane?.cwd, activeTab?.cwd, cwdRef.current)) {
+            if (
+              dir === resolveEffectiveProjectDir(activePane?.cwd, activeTab?.cwd, cwdRef.current)
+            ) {
               setGitBranch(info.branch);
               setGitDirty(info.dirty);
               setGitRepoRoot(info.repo_root ?? null);
@@ -707,13 +716,11 @@ export function App() {
           const collapsed =
             nextRemaining.length === 1
               ? createPaneLayout(nextRemaining[0].id)
-              : (removePaneFromLayout(baseLayout, paneId) ??
-                createPaneLayout(nextRemaining[0].id));
+              : (removePaneFromLayout(baseLayout, paneId) ?? createPaneLayout(nextRemaining[0].id));
           return {
             ...t,
             panes: nextRemaining,
-            activePaneId:
-              t.activePaneId === paneId ? nextRemaining[nextIdx].id : t.activePaneId,
+            activePaneId: t.activePaneId === paneId ? nextRemaining[nextIdx].id : t.activePaneId,
             splitDirection:
               nextRemaining.length > 1 ? t.splitDirection : ("none" as SplitDirection),
             layout: collapsed,
@@ -1581,17 +1588,17 @@ export function App() {
       <StatusBar
         gitBranch={
           effectiveProjectDir && gitInfoByDir[effectiveProjectDir] !== undefined
-            ? gitInfoByDir[effectiveProjectDir]?.branch ?? null
+            ? (gitInfoByDir[effectiveProjectDir]?.branch ?? null)
             : gitBranch
         }
         gitDirty={
           effectiveProjectDir && gitInfoByDir[effectiveProjectDir] !== undefined
-            ? gitInfoByDir[effectiveProjectDir]?.dirty ?? false
+            ? (gitInfoByDir[effectiveProjectDir]?.dirty ?? false)
             : gitDirty
         }
         gitRepoRoot={
           effectiveProjectDir && gitInfoByDir[effectiveProjectDir] !== undefined
-            ? gitInfoByDir[effectiveProjectDir]?.repo_root ?? null
+            ? (gitInfoByDir[effectiveProjectDir]?.repo_root ?? null)
             : gitRepoRoot
         }
         projectDir={effectiveProjectDir}

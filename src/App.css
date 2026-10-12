@@ -1732,7 +1732,9 @@ input::-webkit-calendar-picker-indicator {
   user-select: none;
   cursor: pointer;
   overflow: hidden;
-  transition: background-color 0.15s ease, color 0.15s ease;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
 }
 
 .pane-header.is-active {
@@ -2000,8 +2002,12 @@ input::-webkit-calendar-picker-indicator {
 }
 
 @keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .git-action-banner {

@@ -798,4 +798,3 @@ fn test_14_exit_command_terminates_session() {
         "Session must be removed from manager map after shell exits"
     );
 }
-

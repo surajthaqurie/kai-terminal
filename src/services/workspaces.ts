@@ -26,8 +26,7 @@ export interface PersistedSplitV2 {
 }
 
 export type PersistedLayoutV2 =
-  | { kind: "pane"; paneId?: string; paneIndex?: number }
-  | { kind: "split" } & PersistedSplitV2;
+  { kind: "pane"; paneId?: string; paneIndex?: number } | ({ kind: "split" } & PersistedSplitV2);
 
 export interface PersistedTabV2 {
   title: string;
@@ -114,9 +113,7 @@ export function sanitizeTab(raw: unknown): PersistedTabV2 | null {
 }
 
 function clampRatio(v: unknown): number {
-  return typeof v === "number" && Number.isFinite(v)
-    ? Math.min(0.8, Math.max(0.2, v))
-    : 0.5;
+  return typeof v === "number" && Number.isFinite(v) ? Math.min(0.8, Math.max(0.2, v)) : 0.5;
 }
 
 function safeSplitId(v: unknown): string | undefined {
@@ -190,10 +187,7 @@ export function persistedLayoutToNode(
 }
 
 /** Convert a live tree into a persistable tree (pane ids -> indexes). */
-export function nodeToPersistedLayout(
-  node: PaneLayoutNode,
-  paneIds: string[]
-): PersistedLayoutV2 {
+export function nodeToPersistedLayout(node: PaneLayoutNode, paneIds: string[]): PersistedLayoutV2 {
   if (node.kind === "pane") {
     const idx = Math.max(0, paneIds.indexOf(node.paneId));
     return { kind: "pane", paneIndex: idx };

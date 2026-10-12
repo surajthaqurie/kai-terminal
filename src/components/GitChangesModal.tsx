@@ -210,7 +210,12 @@ function splitPath(fullPath: string): { fileName: string; dirPath: string } {
 function getStatusBadge(status: string, staged: boolean) {
   const s = status.toUpperCase();
   if (s === "M") {
-    return { label: "M", title: staged ? "Staged Modified" : "Modified", color: "#e5c07b", className: "badge-modified" };
+    return {
+      label: "M",
+      title: staged ? "Staged Modified" : "Modified",
+      color: "#e5c07b",
+      className: "badge-modified",
+    };
   }
   if (s === "A") {
     return { label: "A", title: "Added", color: "#98c379", className: "badge-added" };
@@ -227,7 +232,8 @@ function getStatusBadge(status: string, staged: boolean) {
 function getFileIcon(status: string) {
   const s = status.toUpperCase();
   if (s === "D") return <FileX size={14} className="file-status-icon deleted" />;
-  if (s === "A" || s === "U" || s === "?") return <FilePlus size={14} className="file-status-icon added" />;
+  if (s === "A" || s === "U" || s === "?")
+    return <FilePlus size={14} className="file-status-icon added" />;
   return <FileCode size={14} className="file-status-icon modified" />;
 }
 
@@ -265,7 +271,9 @@ export const GitChangesModal: FC<GitChangesModalProps> = ({ dir, onClose, onOpen
         } else {
           // Check if selected file still exists in changes
           const all = [...res.staged, ...res.working_tree, ...res.untracked];
-          const exists = all.find((f) => f.path === selectedFile.path && f.staged === selectedFile.staged);
+          const exists = all.find(
+            (f) => f.path === selectedFile.path && f.staged === selectedFile.staged
+          );
           if (exists) {
             setSelectedFile(exists);
           } else {
@@ -413,11 +421,7 @@ export const GitChangesModal: FC<GitChangesModalProps> = ({ dir, onClose, onOpen
       aria-modal="true"
       aria-label={`Source Control and Diff Viewer for ${dir}`}
     >
-      <div
-        className="git-changes-modal"
-        onClick={(e) => e.stopPropagation()}
-        role="document"
-      >
+      <div className="git-changes-modal" onClick={(e) => e.stopPropagation()} role="document">
         {/* Header */}
         <div className="git-changes-header">
           <div className="git-changes-title-group">
@@ -490,9 +494,7 @@ export const GitChangesModal: FC<GitChangesModalProps> = ({ dir, onClose, onOpen
               {summary && summary.staged.length > 0 && (
                 <div className="changes-section">
                   <div className="section-header">
-                    <span className="section-title">
-                      Staged Changes ({summary.staged.length})
-                    </span>
+                    <span className="section-title">Staged Changes ({summary.staged.length})</span>
                     <button
                       type="button"
                       className="section-action-btn"
@@ -524,10 +526,7 @@ export const GitChangesModal: FC<GitChangesModalProps> = ({ dir, onClose, onOpen
                             {fileName}
                             {dirPath && <span className="file-dir"> {dirPath}</span>}
                           </span>
-                          <span
-                            className={`file-badge ${badge.className}`}
-                            title={badge.title}
-                          >
+                          <span className={`file-badge ${badge.className}`} title={badge.title}>
                             {badge.label}
                           </span>
                           <div className="file-row-actions">
@@ -569,9 +568,7 @@ export const GitChangesModal: FC<GitChangesModalProps> = ({ dir, onClose, onOpen
               {summary && summary.working_tree.length > 0 && (
                 <div className="changes-section">
                   <div className="section-header">
-                    <span className="section-title">
-                      Changes ({summary.working_tree.length})
-                    </span>
+                    <span className="section-title">Changes ({summary.working_tree.length})</span>
                     <button
                       type="button"
                       className="section-action-btn"
@@ -603,10 +600,7 @@ export const GitChangesModal: FC<GitChangesModalProps> = ({ dir, onClose, onOpen
                             {fileName}
                             {dirPath && <span className="file-dir"> {dirPath}</span>}
                           </span>
-                          <span
-                            className={`file-badge ${badge.className}`}
-                            title={badge.title}
-                          >
+                          <span className={`file-badge ${badge.className}`} title={badge.title}>
                             {badge.label}
                           </span>
                           <div className="file-row-actions">
@@ -684,10 +678,7 @@ export const GitChangesModal: FC<GitChangesModalProps> = ({ dir, onClose, onOpen
                             {fileName}
                             {dirPath && <span className="file-dir"> {dirPath}</span>}
                           </span>
-                          <span
-                            className={`file-badge ${badge.className}`}
-                            title={badge.title}
-                          >
+                          <span className={`file-badge ${badge.className}`} title={badge.title}>
                             {badge.label}
                           </span>
                           <div className="file-row-actions">
@@ -743,8 +734,8 @@ export const GitChangesModal: FC<GitChangesModalProps> = ({ dir, onClose, onOpen
                   <CheckCircle2 size={36} className="clean-icon" />
                   <h4>Working Tree Clean</h4>
                   <p className="muted-text">
-                    No uncommitted changes detected. Any manual edits or changes made by AI
-                    agents will automatically appear here.
+                    No uncommitted changes detected. Any manual edits or changes made by AI agents
+                    will automatically appear here.
                   </p>
                 </div>
               )}

@@ -121,7 +121,8 @@ export class SettingsService {
     }
     merged.launchAtStartup = Boolean(merged.launchAtStartup);
     merged.autoRestoreSession = Boolean(merged.autoRestoreSession);
-    merged.autoCheckUpdates = merged.autoCheckUpdates === undefined ? true : Boolean(merged.autoCheckUpdates);
+    merged.autoCheckUpdates =
+      merged.autoCheckUpdates === undefined ? true : Boolean(merged.autoCheckUpdates);
     return merged;
   }
 
