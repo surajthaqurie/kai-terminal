@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.3
+
+### Patch Changes
+
+- Reorder footer status bar items to display active path first, followed by code mode, then git status and actions.
+
 ## 0.1.2
 
 ### Patch Changes
