@@ -475,67 +475,82 @@ pub struct CustomAiCliConfig {
 /// Each entry maps a stable id to the binary name(s) probed on `PATH`.
 /// No binary is ever bundled with the terminal installer; this list only
 /// describes what the user may independently have installed.
-fn ai_cli_catalog() -> Vec<(&'static str, &'static str, Vec<&'static str>, &'static str)> {
+///
+/// The trailing flag marks GUI/IDE-backed agents (Cursor, Windsurf, Cline)
+/// whose shims open a desktop app: spawning them with `--version` can hang
+/// or pop windows, so detection stops at "binary found" and reports the
+/// version as unknown instead of a scary probe-failed diagnostic.
+fn ai_cli_catalog() -> Vec<(&'static str, &'static str, Vec<&'static str>, &'static str, bool)> {
     vec![
         (
             "codex",
             "Codex CLI",
             vec!["codex"],
             "Install via npm: npm install -g @openai/codex — docs: https://github.com/openai/codex",
+            false,
         ),
         (
             "claude",
             "Claude Code",
             vec!["claude", "claude-code"],
             "Install via npm: npm install -g @anthropic-ai/claude-code — docs: https://docs.anthropic.com/en/docs/claude-code",
+            false,
         ),
         (
             "gemini",
             "Gemini CLI",
             vec!["gemini", "gemini-cli"],
             "Install via npm: npm install -g @google/gemini-cli — docs: https://github.com/google-gemini/gemini-cli",
+            false,
         ),
         (
             "opencode",
             "opencode",
             vec!["opencode", "opencode-ai", "opencode2"],
             "Install via npm: npm install -g opencode-ai — docs: https://opencode.ai/docs",
+            false,
         ),
         (
             "copilot",
             "Muse CLI",
             vec!["copilot", "gh-copilot", "github-copilot"],
             "Install via npm: npm install -g @github/copilot — docs: https://docs.github.com/en/copilot",
+            false,
         ),
         (
             "aider",
             "Aider",
             vec!["aider", "aider-chat"],
             "Install via pip: pip install aider-chat — docs: https://aider.chat/docs/install.html",
+            false,
         ),
         (
             "cursor",
             "Cursor",
             vec!["cursor", "cursor-cli", "cursor-agent"],
             "Install Cursor from https://cursor.com — MCP docs: https://docs.cursor.com/mcp",
+            true,
         ),
         (
             "windsurf",
             "Windsurf",
             vec!["windsurf"],
             "Install Windsurf from https://windsurf.com — MCP docs: https://docs.windsurf.com",
+            true,
         ),
         (
             "cline",
             "Cline",
             vec!["cline"],
             "Install the Cline VS Code extension — docs: https://docs.cline.bot/mcp",
+            true,
         ),
         (
             "agy",
             "Agy",
             vec!["agy"],
             "Agy AI agent CLI (`agy` on PATH). See your Agy vendor docs for install steps.",
+            false,
         ),
     ]
 }
@@ -568,22 +583,46 @@ pub fn detect_ai_clis() -> Vec<AiCliStatus> {
 /// Returns full diagnostics including a bounded `--version` probe per CLI.
 ///
 /// Probes run in parallel (one thread per CLI) so wall-clock time is bounded
-/// by a single 8 s probe, not the sum. Never panics; a missing binary, auth
-/// failure, timeout, or unparsable output is reported in `diagnostic` with
-/// `version: None`.
+/// by a single 5 s probe, not the sum. Results are cached for 60 s so
+/// reopening the AI panel / Diagnostics does not re-spawn 10 processes
+/// every time (the "every panel open is slow" report). Never panics; a
+/// missing binary, auth failure, timeout, or unparsable output is reported
+/// in `diagnostic` with `version: None`.
 pub fn detect_ai_cli_details() -> Vec<AiCliDetails> {
+    // Tests sandbox PATH/HOME per-case: caching would poison them.
+    if cfg!(test) {
+        return detect_ai_cli_details_uncached();
+    }
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<Option<(std::time::Instant, Vec<AiCliDetails>)>>> =
+        std::sync::OnceLock::new();
+    let lock = CACHE.get_or_init(|| std::sync::Mutex::new(None));
+    if let Ok(guard) = lock.lock() {
+        if let Some((at, cached)) = guard.as_ref() {
+            if at.elapsed() < std::time::Duration::from_secs(60) {
+                return cached.clone();
+            }
+        }
+    }
+    let fresh = detect_ai_cli_details_uncached();
+    if let Ok(mut guard) = lock.lock() {
+        *guard = Some((std::time::Instant::now(), fresh.clone()));
+    }
+    fresh
+}
+
+fn detect_ai_cli_details_uncached() -> Vec<AiCliDetails> {
     std::thread::scope(|s| {
         let catalog = ai_cli_catalog();
         // Small (&'static str) fallback metadata kept aside so a panicking
         // probe thread still yields a well-formed unavailable entry.
         let fallback_meta: Vec<(&'static str, &'static str, &'static str)> = catalog
             .iter()
-            .map(|(id, name, _, guidance)| (*id, *name, *guidance))
+            .map(|(id, name, _, guidance, _)| (*id, *name, *guidance))
             .collect();
         let handles: Vec<_> = catalog
             .into_iter()
-            .map(|(id, name, binaries, guidance)| {
-                s.spawn(move || details_for_entry(id, name, binaries, guidance))
+            .map(|(id, name, binaries, guidance, skip_probe)| {
+                s.spawn(move || details_for_entry(id, name, binaries, guidance, skip_probe))
             })
             .collect();
         handles
@@ -716,6 +755,7 @@ fn details_for_entry(
     name: &'static str,
     binaries: Vec<&'static str>,
     guidance: &'static str,
+    skip_probe: bool,
 ) -> AiCliDetails {
     let mut found: Option<String> = None;
     for bin in binaries {
@@ -740,6 +780,26 @@ fn details_for_entry(
         Some(path) => {
             let auth_status = check_local_auth_presence(id);
             let kai_wired = is_kai_wired(id);
+            // GUI/IDE-backed agents (Cursor, Windsurf, Cline): their shims
+            // launch a desktop app, so `--version` can hang or pop windows.
+            // Report "found" without probing instead of a probe-failed scare.
+            if skip_probe {
+                return AiCliDetails {
+                    id: id.to_string(),
+                    name: name.to_string(),
+                    available: true,
+                    path: Some(path),
+                    version: None,
+                    install_guidance: guidance.to_string(),
+                    diagnostic: format!(
+                        "Installed (version check skipped for GUI apps). Local auth configuration: {} — open it to verify it works.",
+                        auth_status
+                    ),
+                    state: AiCliDiagnosticState::Unknown,
+                    auth_status,
+                    kai_wired,
+                };
+            }
             match probe_version(&path) {
                 Some(v) => AiCliDetails {
                     id: id.to_string(),
@@ -780,7 +840,7 @@ fn details_for_entry(
 /// invalid. Never stores credentials or modifies third-party auth files.
 pub fn check_custom_ai_cli_path(id: &str, custom_path: &str) -> Result<AiCliDetails, String> {
     let catalog = ai_cli_catalog();
-    let (name, guidance) = if let Some(entry) = catalog.iter().find(|(cid, _, _, _)| *cid == id) {
+    let (name, guidance) = if let Some(entry) = catalog.iter().find(|(cid, _, _, _, _)| *cid == id) {
         (entry.1.to_string(), entry.3.to_string())
     } else if id.starts_with("custom:") || id.starts_with("user-") {
         (
@@ -834,7 +894,15 @@ pub fn check_custom_ai_cli_path(id: &str, custom_path: &str) -> Result<AiCliDeta
 }
 
 /// Bounded `<binary> --version` probe executed directly (no shell).
-/// Timeout: 8 seconds. Output truncated to 512 chars / first line.
+/// Timeout: 5 seconds (was 8 s — panels felt stuck). Output truncated to
+/// 512 chars / first line.
+///
+/// Windows shell shims (`.cmd`/`.bat` from npm, e.g. `opencode.cmd`, and
+/// `.ps1`) cannot run via `CreateProcess` directly, so they are launched
+/// through their interpreter (`cmd /c` / `powershell`) with
+/// `CREATE_NO_WINDOW` — same ghost-window treatment as every other helper.
+/// Direct spawn is tried first for real binaries; on failure the
+/// interpreter fallback gets one chance before degrading to `None`.
 ///
 /// Safety: spawns the child directly (no shell interpolation) and polls
 /// `try_wait`; on timeout the child is killed and reaped so no probe
@@ -843,13 +911,34 @@ pub fn check_custom_ai_cli_path(id: &str, custom_path: &str) -> Result<AiCliDeta
 fn probe_version(binary_path: &str) -> Option<String> {
     use std::process::Stdio;
     use std::time::Instant;
-    let mut child = Command::new(binary_path)
-        .arg("--version")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .ok()?;
-    let deadline = Instant::now() + Duration::from_secs(8);
+    let build_child = |via_shell_fallback: bool| -> Option<std::process::Child> {
+        let mut c = build_probe_command(binary_path, via_shell_fallback);
+        c.stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .stdin(Stdio::null());
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            c.creation_flags(0x08000000);
+        }
+        c.spawn().ok()
+    };
+    // Direct spawn first (real binaries everywhere, shims on Unix). When
+    // that fails on Windows, retry once through the shim's interpreter.
+    let mut child = match build_child(false) {
+        Some(c) => c,
+        None => {
+            #[cfg(target_os = "windows")]
+            {
+                build_child(true)?
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                return None;
+            }
+        }
+    };
+    let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         match child.try_wait() {
             Ok(Some(_)) => break,
@@ -881,14 +970,84 @@ fn probe_version(binary_path: &str) -> Option<String> {
     Some(first_line.chars().take(512).collect())
 }
 
-/// Local `PATH` lookup. No shell is spawned; each directory entry is checked
-/// for existence (and the executable bit on Unix).
+/// Build the `--version` probe command for an agent binary.
+///
+/// On Windows, `.cmd`/`.bat` shims (what npm actually installs for
+/// `opencode`, `claude`, …) cannot run via `CreateProcess` directly, so
+/// they go through `cmd /c` (`.ps1` through `powershell`); real binaries
+/// always spawn directly. The `via_shell_fallback` flag forces the
+/// interpreter route for direct-spawn failures of unknown shim types.
+fn build_probe_command(binary_path: &str, via_shell_fallback: bool) -> Command {
+    #[cfg(target_os = "windows")]
+    {
+        let lower = binary_path.to_lowercase();
+        let is_cmd_shim = lower.ends_with(".cmd") || lower.ends_with(".bat");
+        let is_ps_shim = lower.ends_with(".ps1");
+        if is_ps_shim || (via_shell_fallback && !is_cmd_shim) {
+            // PowerShell single-quote escaping: double any embedded quote.
+            let quoted = binary_path.replace('\'', "''");
+            let mut c = Command::new("powershell");
+            c.args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                &format!("& '{}' --version", quoted),
+            ]);
+            return c;
+        }
+        if is_cmd_shim || via_shell_fallback {
+            let mut c = Command::new("cmd");
+            c.args(["/c", binary_path, "--version"]);
+            return c;
+        }
+    }
+    let _ = via_shell_fallback;
+    let mut c = Command::new(binary_path);
+    c.arg("--version");
+    c
+}
+
+/// Local `PATH` lookup entry point. No shell is spawned; each directory
+/// entry is checked for existence (and the executable bit on Unix).
 ///
 /// Desktop GUI launches typically inherit a minimal `PATH` that misses
 /// user-level installers (nvm shims, `~/.local/bin`, `~/.opencode/bin`,
 /// `~/.cargo/bin`, ...), so after the live `PATH` is searched a bounded set
-/// of well-known install locations is probed as well. Still purely local
-/// file stats — no execution, no network.
+/// of well-known install locations is probed as well (see
+/// `supplementary_search_dirs`). Still purely local file stats — no
+/// execution, no network.
+///
+/// Probe one directory for `cmd`, honouring Windows `PATHEXT`.
+///
+/// npm/nvm shims install as `tool` (POSIX shell script, NOT runnable via
+/// `CreateProcess`) + `tool.cmd` + `tool.ps1`. The old code returned the
+/// extensionless shell script, so `--version` probes failed with a scary
+/// "probe failed" diagnostic (the `C:\nvm4w\nodejs\opencode` report).
+/// Now the runnable shim wins; extensionless files only count when they
+/// are real executables (MZ header check).
+fn probe_dir_for_cmd(dir: &Path, cmd: &str) -> Option<String> {
+    let candidate = dir.join(cmd);
+    if candidate.exists() && is_usable_executable(&candidate) {
+        return Some(candidate.to_string_lossy().to_string());
+    }
+    #[cfg(target_os = "windows")]
+    {
+        // If the caller already named an extension (e.g. `code.cmd`),
+        // the exact match above settled it — never append a second one.
+        let lower_cmd = cmd.to_lowercase();
+        for ext in pathext_extensions() {
+            if lower_cmd.ends_with(&ext) {
+                continue;
+            }
+            let with_ext = dir.join(format!("{}{}", cmd, ext));
+            if with_ext.exists() && is_usable_executable(&with_ext) {
+                return Some(with_ext.to_string_lossy().to_string());
+            }
+        }
+    }
+    None
+}
+
 fn find_on_path(cmd: &str) -> Option<String> {
     if cmd.contains('/') || cmd.contains('\\') {
         let p = Path::new(cmd);
@@ -902,33 +1061,51 @@ fn find_on_path(cmd: &str) -> Option<String> {
         if dir.as_os_str().is_empty() {
             continue;
         }
-        let candidate = dir.join(cmd);
-        if candidate.exists() && is_usable_executable(&candidate) {
-            return Some(candidate.to_string_lossy().to_string());
-        }
-        #[cfg(target_os = "windows")]
-        {
-            let with_exe = dir.join(format!("{}.exe", cmd));
-            if with_exe.exists() {
-                return Some(with_exe.to_string_lossy().to_string());
-            }
+        if let Some(found) = probe_dir_for_cmd(&dir, cmd) {
+            return Some(found);
         }
     }
     // Fallback: well-known per-user install locations absent from GUI PATH.
     for dir in supplementary_search_dirs() {
-        let candidate = dir.join(cmd);
-        if candidate.exists() && is_usable_executable(&candidate) {
-            return Some(candidate.to_string_lossy().to_string());
-        }
-        #[cfg(target_os = "windows")]
-        {
-            let with_exe = dir.join(format!("{}.exe", cmd));
-            if with_exe.exists() {
-                return Some(with_exe.to_string_lossy().to_string());
-            }
+        if let Some(found) = probe_dir_for_cmd(&dir, cmd) {
+            return Some(found);
         }
     }
     None
+}
+
+/// Lowercase `.ext` entries from `PATHEXT` (`.COM;.EXE;.BAT;.CMD`, …),
+/// each guaranteed to start with a dot.
+#[cfg(target_os = "windows")]
+fn pathext_extensions() -> Vec<String> {
+    let raw =
+        env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD;.VBS;.PS1".to_string());
+    raw.split(';')
+        .map(|e| e.trim().to_lowercase())
+        .filter(|e| !e.is_empty())
+        .map(|e| {
+            if e.starts_with('.') {
+                e
+            } else {
+                format!(".{}", e)
+            }
+        })
+        .collect()
+}
+
+/// True when the file starts with the DOS `MZ` executable header.
+/// Used to tell real extensionless binaries apart from npm's extensionless
+/// POSIX shell-script shims (which `CreateProcess` cannot run).
+#[cfg(target_os = "windows")]
+fn has_mz_header(path: &Path) -> bool {
+    use std::io::Read;
+    match std::fs::File::open(path).and_then(|mut f| {
+        let mut magic = [0u8; 2];
+        f.read_exact(&mut magic).map(|_| magic)
+    }) {
+        Ok(magic) => magic == [0x4D, 0x5A],
+        Err(_) => false,
+    }
 }
 
 /// Well-known install locations probed when the live `PATH` misses.
@@ -982,7 +1159,19 @@ fn is_usable_executable(path: &Path) -> bool {
 
 #[cfg(target_os = "windows")]
 fn is_usable_executable(path: &Path) -> bool {
-    path.is_file()
+    if !path.is_file() {
+        return false;
+    }
+    match path.extension().and_then(|e| e.to_str()) {
+        // Runnable only when the extension is on PATHEXT (`.exe`, `.cmd`,
+        // …). npm also drops extensionless POSIX shell scripts next to the
+        // real shims — those must NOT match (see `probe_dir_for_cmd`).
+        Some(ext) => {
+            let dot_ext = format!(".{}", ext.to_lowercase());
+            pathext_extensions().iter().any(|e| e == &dot_ext)
+        }
+        None => has_mz_header(path),
+    }
 }
 
 #[cfg(test)]
@@ -1299,5 +1488,57 @@ mod tests {
             let err = setup_agent_mcp("cline", test_launcher(), ".", false).unwrap_err();
             assert!(err.contains("manually"));
         });
+    }
+
+    #[test]
+    fn test_gui_agents_skip_version_probe() {
+        let catalog = ai_cli_catalog();
+        let flag = |id: &str| {
+            catalog
+                .iter()
+                .find(|(cid, _, _, _, _)| *cid == id)
+                .map(|e| e.4)
+        };
+        // GUI/IDE shims (Cursor, Windsurf, Cline) must not be `--version`
+        // probed: spawning them can hang or pop desktop windows.
+        assert_eq!(flag("cursor"), Some(true));
+        assert_eq!(flag("windsurf"), Some(true));
+        assert_eq!(flag("cline"), Some(true));
+        // Real CLIs still get version probed.
+        assert_eq!(flag("claude"), Some(false));
+        assert_eq!(flag("opencode"), Some(false));
+        assert_eq!(flag("codex"), Some(false));
+        assert_eq!(flag("gemini"), Some(false));
+    }
+
+    /// Windows-only: an npm-style dir holding both an extensionless POSIX
+    /// shell script (`tool`) and a runnable shim (`tool.cmd`) must resolve
+    /// to the shim — the old code returned the shell script and every
+    /// `--version` probe failed (the `C:\nvm4w\nodejs\opencode` report).
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_find_on_path_prefers_cmd_shim_over_shell_script() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let dir = std::env::temp_dir().join(format!("kai-pathext-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("kaifaketool"), "#!/bin/sh\necho hi\n").unwrap();
+        std::fs::write(dir.join("kaifaketool.cmd"), "@echo off\r\necho hi\r\n").unwrap();
+        let old_path = std::env::var("PATH").unwrap_or_default();
+        std::env::set_var(
+            "PATH",
+            format!("{};{}", dir.to_string_lossy(), old_path),
+        );
+        let found = find_on_path("kaifaketool");
+        std::env::set_var("PATH", old_path);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            found
+                .as_deref()
+                .map(|p| p.to_lowercase().ends_with(".cmd"))
+                .unwrap_or(false),
+            "expected the .cmd shim, got {:?}",
+            found
+        );
     }
 }

@@ -414,32 +414,69 @@ export function App() {
   // keyed by resolved directory. The status bar shows the active pane's
   // entry; each PaneHeader shows its own entry.
   const [gitInfoByDir, setGitInfoByDir] = useState<Record<string, GitInfo | null>>({});
-  useEffect(() => {
-    let cancelled = false;
-    const syncCodeMode = () => {
-      // Skip background polls: when the window is behind other apps the
-      // 2 s cadence keeps IPC + backend file reads awake and competes with
-      // the foreground app (part of the "Windows slow while Kai is in
-      // background" report). Foreground `focus` listener below still syncs
-      // immediately on return.
-      if (typeof document !== "undefined" && document.hidden) return;
-      // Authoritative async state (backend file + launch env, then explicit
-      // localStorage). Never resolves recent history to code.
-      void getActiveProjectState().then((s) => {
-        if (!cancelled) setCodeModeProject(s.mode === "code" ? s.path : null);
-      });
-    };
-    syncCodeMode();
-    // No background interval: polling every 2 s kept IPC + backend file
-    // reads awake while Kai sat behind other apps. The focus listener above
-    // re-syncs immediately on return, which is the only transition that
-    // matters (external `kai code` / `kai stop code` runs while focused).
-    window.addEventListener("focus", syncCodeMode);
-    return () => {
-      cancelled = true;
-      window.removeEventListener("focus", syncCodeMode);
-    };
+  // Code Mode re-sync: cheap file-read IPC (no spawns), safe to call from
+  // focus, visibility, footer-refresh, and every submitted command line.
+  // The command hook is what picks up `kai code .` / `kai stop code` typed
+  // into Kai's OWN tab — no focus change happens then, so focus polling
+  // alone leaves the badge stale. Still skips while hidden so background
+  // polls never compete with the foreground app.
+  const syncCodeModeState = useCallback(() => {
+    if (typeof document !== "undefined" && document.hidden) return;
+    // Authoritative async state (backend file + launch env, then explicit
+    // localStorage). Never resolves recent history to code.
+    void getActiveProjectState().then((s) => {
+      setCodeModeProject(s.mode === "code" ? s.path : null);
+    });
   }, []);
+  useEffect(() => {
+    syncCodeModeState();
+    // No background interval: polling every 2 s kept IPC + backend file
+    // reads awake while Kai sat behind other apps. Focus + visibility +
+    // per-command hooks cover every transition that matters (external
+    // `kai code` runs, minimize/restore, in-tab CLI runs).
+    const onVisible = () => {
+      if (!document.hidden) syncCodeModeState();
+    };
+    window.addEventListener("focus", syncCodeModeState);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("focus", syncCodeModeState);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [syncCodeModeState]);
+  /** Fired by TerminalView on every submitted line (Enter) in any pane. */
+  const handleCommandSubmitted = useCallback(() => {
+    syncCodeModeState();
+  }, [syncCodeModeState]);
+  const [isRefreshingGit, setIsRefreshingGit] = useState(false);
+  /** Footer refresh button: re-probe git for the active pane + re-sync Code Mode. */
+  const handleRefreshGit = useCallback(() => {
+    // Read live refs (not state closures) so the refresh always targets the
+    // currently active pane, even right after tab/split switches.
+    const liveTabs = tabsRef.current;
+    const tab = liveTabs.find((t) => t.id === activeTabIdRef.current) || liveTabs[0];
+    const pane = tab?.panes.find((p) => p.id === tab.activePaneId) || tab?.panes[0];
+    const dir = resolveEffectiveProjectDir(pane?.cwd, tab?.cwd, cwdRef.current);
+    syncCodeModeState();
+    if (!dir) return;
+    if (isRefreshingGit) return;
+    setIsRefreshingGit(true);
+    invalidateGitCache(dir);
+    void getGitInfoCached(dir).then(
+      (info) => {
+        setGitInfoByDir((prev) => ({ ...prev, [dir]: info }));
+        setGitBranch(info.branch);
+        setGitDirty(info.dirty);
+        setGitRepoRoot(info.repo_root ?? null);
+      },
+      () => {
+        setGitInfoByDir((prev) => ({ ...prev, [dir]: null }));
+        setGitBranch(null);
+        setGitDirty(false);
+        setGitRepoRoot(null);
+      }
+    ).finally(() => setIsRefreshingGit(false));
+  }, [syncCodeModeState, isRefreshingGit]);
   const refreshInstalledEditors = useCallback(() => {
     setIsLoadingEditors(true);
     void getInstalledEditors()
@@ -485,21 +522,78 @@ export function App() {
   useEffect(() => {
     if (!isSettingsOpen) return;
     let cancelled = false;
-    void import("./services/autostartService")
-      .then(({ getAutostartEnabled }) => getAutostartEnabled())
-      .then((enabled) => {
-        if (cancelled) return;
-        setUserSettings((prev) =>
-          Boolean(prev.launchAtStartup) === enabled ? prev : { ...prev, launchAtStartup: enabled }
-        );
-      })
-      .catch(() => {
-        // Mock/browser mode or backend unavailable: keep stored preference.
-      });
+    // Deferred past first paint: the modal renders instantly, then the
+    // `reg.exe query` IPC reconciles in the background (Settings-open
+    // stall fix). Backend no longer flashes a console for this either.
+    const timer = setTimeout(() => {
+      void import("./services/autostartService")
+        .then(({ getAutostartEnabled }) => getAutostartEnabled())
+        .then((enabled) => {
+          if (cancelled) return;
+          setUserSettings((prev) =>
+            Boolean(prev.launchAtStartup) === enabled ? prev : { ...prev, launchAtStartup: enabled }
+          );
+        })
+        .catch(() => {
+          // Mock/browser mode or backend unavailable: keep stored preference.
+        });
+    }, 250);
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
   }, [isSettingsOpen]);
+
+  // Idle prefetch of on-demand panels: first open of Settings / palette /
+  // AI providers paid a chunk-parse jank on Windows WebView2. Warm them
+  // once after first paint so opens feel instant. Never blocks startup.
+  // Starts early (requestIdleCallback or 800 ms) and also on first pointer
+  // activity, so opening Settings before the timer still hits a warm chunk
+  // instead of a blank Suspense fallback.
+  useEffect(() => {
+    let cancelled = false;
+    let idleHandle: number | null = null;
+    const prefetch = () => {
+      if (cancelled) return;
+      void import("./components/CommandPalette").catch(() => {});
+      void import("./components/SettingsModal").catch(() => {});
+      // Heavier panels a tick later so prefetch never contends with PTY.
+      setTimeout(() => {
+        if (cancelled) return;
+        void import("./components/AiCliPanel").catch(() => {});
+        void import("./components/DiagnosticsModal").catch(() => {});
+        void import("./components/WorkspaceModal").catch(() => {});
+      }, 800);
+    };
+    const prefetchOnce = () => {
+      prefetch();
+      window.removeEventListener("pointerdown", prefetchOnce);
+      window.removeEventListener("keydown", prefetchOnce);
+    };
+    window.addEventListener("pointerdown", prefetchOnce);
+    window.addEventListener("keydown", prefetchOnce);
+    if (typeof window.requestIdleCallback === "function") {
+      idleHandle = window.requestIdleCallback(prefetchOnce, { timeout: 1500 });
+    } else {
+      idleHandle = window.setTimeout(prefetchOnce, 800) as unknown as number;
+    }
+    return () => {
+      cancelled = true;
+      window.removeEventListener("pointerdown", prefetchOnce);
+      window.removeEventListener("keydown", prefetchOnce);
+      if (idleHandle !== null) {
+        if (typeof window.cancelIdleCallback === "function") {
+          try {
+            window.cancelIdleCallback(idleHandle);
+          } catch {
+            clearTimeout(idleHandle);
+          }
+        } else {
+          clearTimeout(idleHandle);
+        }
+      }
+    };
+  }, []);
 
   // On startup, detect host terminal preferences (Kali Linux terminal / system font) and sync defaults
   useEffect(() => {
@@ -1741,6 +1835,7 @@ export function App() {
                     visible={tab.id === activeTabId}
                     resetKey={pane.resetKey ?? 0}
                     onFocus={focusPane}
+                    onCommandSubmitted={handleCommandSubmitted}
                     onCwdResolved={(resolved) => {
                       if (resolved) {
                         // No-op probes (cwd unchanged) skip the whole cascade:
@@ -1904,7 +1999,17 @@ export function App() {
         })}
       </div>
 
-      <Suspense fallback={null}>
+      <Suspense
+        fallback={
+          isSettingsOpen || isCommandPaletteOpen || isAiCliOpen || isDiagnosticsOpen || isWorkspaceOpen ? (
+            <div className="modal-backdrop" aria-label="Loading panel" role="status">
+              <div className="command-palette-modal" style={{ padding: 16 }}>
+                <span className="muted-text">Loading…</span>
+              </div>
+            </div>
+          ) : null
+        }
+      >
         <CommandPalette
           isOpen={isCommandPaletteOpen}
           onClose={() => setIsCommandPaletteOpen(false)}
@@ -2036,6 +2141,8 @@ export function App() {
         onCheckUpdates={() => handleCheckUpdates(true)}
         onViewUpdate={handleViewUpdate}
         onGitAction={(action) => void handleGitActionRun(action)}
+        onRefreshGit={handleRefreshGit}
+        isRefreshingGit={isRefreshingGit}
         mode={isCodeModeForDir(effectiveProjectDir) ? "code" : "terminal"}
       />
     </div>

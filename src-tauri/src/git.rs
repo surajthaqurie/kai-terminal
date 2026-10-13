@@ -375,10 +375,14 @@ fn run_git_bounded(
     let cwd_owned = cwd.to_string();
     let args_owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
     std::thread::spawn(move || {
-        let out = Command::new("git")
-            .current_dir(&cwd_owned)
-            .args(&args_owned)
-            .output();
+        let mut c = Command::new("git");
+        c.current_dir(&cwd_owned).args(&args_owned);
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            c.creation_flags(0x08000000);
+        }
+        let out = c.output();
         let _ = tx.send(out);
     });
     let output = rx.recv_timeout(Duration::from_secs(8)).ok()?.ok()?;

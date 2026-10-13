@@ -129,21 +129,64 @@ export function saveUserCustomClis(clis: CustomAiCliConfig[]): void {
   }
 }
 
+/** Frontend mirror of the backend 60 s probe cache: repeat panel opens
+ *  serve instantly instead of re-paying up to 10 `--version` probes. */
+const DETAILS_CACHE_TTL_MS = 60_000;
+let detailsCache: { at: number; data: AiCliDetails[] } | null = null;
+let detailsInflight: Promise<AiCliDetails[]> | null = null;
+
+async function fetchAiCliDetailsBase(): Promise<AiCliDetails[]> {
+  if (!isTauriAvailable()) {
+    return detailsFallback();
+  }
+  try {
+    const details = await invoke<AiCliDetails[]>("get_ai_cli_details");
+    return Array.isArray(details) ? details : detailsFallback();
+  } catch {
+    return detailsFallback();
+  }
+}
+
 export async function getAiCliDetails(): Promise<AiCliDetails[]> {
   const customClis = loadUserCustomClis();
-  let baseDetails: AiCliDetails[] = [];
-  if (!isTauriAvailable()) {
-    baseDetails = detailsFallback();
-  } else {
-    try {
-      const details = await invoke<AiCliDetails[]>("get_ai_cli_details");
-      baseDetails = Array.isArray(details) ? details : detailsFallback();
-    } catch {
-      baseDetails = detailsFallback();
+  // Stale-while-revalidate: serve the last probe result instantly while a
+  // background refresh updates the cache for the next open.
+  const now = Date.now();
+  if (detailsCache && now - detailsCache.at < DETAILS_CACHE_TTL_MS) {
+    if (!detailsInflight) {
+      detailsInflight = fetchAiCliDetailsBase()
+        .then((fresh) => {
+          detailsCache = { at: Date.now(), data: fresh };
+          return fresh;
+        })
+        .finally(() => {
+          detailsInflight = null;
+        });
     }
+    const validatedCustom = await validateCustomClis(customClis);
+    return [...detailsCache.data, ...validatedCustom];
+  }
+  if (detailsInflight) {
+    const baseDetails = await detailsInflight;
+    const validatedCustom = await validateCustomClis(customClis);
+    return [...baseDetails, ...validatedCustom];
+  }
+  detailsInflight = fetchAiCliDetailsBase();
+  let baseDetails: AiCliDetails[] = [];
+  try {
+    baseDetails = await detailsInflight;
+    detailsCache = { at: Date.now(), data: baseDetails };
+  } finally {
+    detailsInflight = null;
   }
 
   // Append user-configured custom AI CLIs verified via IPC if Tauri is available
+  const validatedCustom = await validateCustomClis(customClis);
+
+  return [...baseDetails, ...validatedCustom];
+}
+
+async function validateCustomClis(customClis: CustomAiCliConfig[]): Promise<AiCliDetails[]> {
   const validatedCustom: AiCliDetails[] = [];
   for (const c of customClis) {
     if (isTauriAvailable()) {
@@ -178,7 +221,7 @@ export async function getAiCliDetails(): Promise<AiCliDetails[]> {
     }
   }
 
-  return [...baseDetails, ...validatedCustom];
+  return validatedCustom;
 }
 
 export async function checkCustomAiCliPath(id: string, customPath: string): Promise<AiCliDetails> {

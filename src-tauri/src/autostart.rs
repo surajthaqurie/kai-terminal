@@ -76,10 +76,17 @@ fn set_autostart_enabled_with_exe(enabled: bool, exe_path: &str) -> Result<(), T
 const WINDOWS_RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
 
 #[cfg(target_os = "windows")]
+fn hide_console(cmd: &mut std::process::Command) {
+    use std::os::windows::process::CommandExt;
+    cmd.creation_flags(0x08000000);
+}
+
+#[cfg(target_os = "windows")]
 fn is_windows_autostart_enabled() -> bool {
-    std::process::Command::new("reg")
-        .args(["query", WINDOWS_RUN_KEY, "/v", AUTOSTART_APP_NAME])
-        .output()
+    let mut c = std::process::Command::new("reg");
+    c.args(["query", WINDOWS_RUN_KEY, "/v", AUTOSTART_APP_NAME]);
+    hide_console(&mut c);
+    c.output()
         .is_ok_and(|out| out.status.success())
 }
 
@@ -93,23 +100,25 @@ fn set_windows_autostart(enabled: bool, exe_path: &str) -> Result<(), TerminalEr
     // Quote the path so `C:\Program Files\...` survives the Run key.
     let value = format!("\"{}\"", exe_path.trim_matches('"'));
     let status = if enabled {
-        std::process::Command::new("reg")
-            .args([
-                "add",
-                WINDOWS_RUN_KEY,
-                "/v",
-                AUTOSTART_APP_NAME,
-                "/t",
-                "REG_SZ",
-                "/d",
-                &value,
-                "/f",
-            ])
-            .status()
+        let mut c = std::process::Command::new("reg");
+        c.args([
+            "add",
+            WINDOWS_RUN_KEY,
+            "/v",
+            AUTOSTART_APP_NAME,
+            "/t",
+            "REG_SZ",
+            "/d",
+            &value,
+            "/f",
+        ]);
+        hide_console(&mut c);
+        c.status()
     } else {
-        std::process::Command::new("reg")
-            .args(["delete", WINDOWS_RUN_KEY, "/v", AUTOSTART_APP_NAME, "/f"])
-            .status()
+        let mut c = std::process::Command::new("reg");
+        c.args(["delete", WINDOWS_RUN_KEY, "/v", AUTOSTART_APP_NAME, "/f"]);
+        hide_console(&mut c);
+        c.status()
     };
     match status {
         Ok(s) if s.success() => Ok(()),

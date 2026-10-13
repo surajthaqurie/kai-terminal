@@ -1187,6 +1187,30 @@ select.modal-input {
   overflow: hidden;
 }
 
+/* Nested split container: the JSX renders
+ * `.pane-split pane-split-<direction>` but these rules were missing, so the
+ * container fell back to `display: block` — the inline flex ratios on
+ * `.pane-leaf` were ignored, percentage heights had no definite ancestor,
+ * and every split collapsed to ~0 px (single-pane tabs were unaffected).
+ * Axis convention (mirrors the drag math in App.tsx): a "vertical" split
+ * lays panes side-by-side (row), a "horizontal" split stacks them (column).
+ */
+.pane-split {
+  display: flex;
+  flex: 1 1 0%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.pane-split-vertical {
+  flex-direction: row;
+}
+
+.pane-split-horizontal {
+  flex-direction: column;
+}
+
 .pane-item {
   display: flex;
   flex-direction: column;
@@ -1213,18 +1237,23 @@ select.modal-input {
   transition: background-color var(--transition-fast);
 }
 
-.pane-divider-horizontal {
+/* Divider naming follows the SPLIT direction (not the bar orientation):
+ * a "vertical" split lays panes side-by-side, so its divider is a vertical
+ * bar (col-resize); a "horizontal" split stacks panes, so its divider is a
+ * horizontal bar (row-resize). These were swapped, which also broke the
+ * drag axis affordance. */
+.pane-divider-vertical {
   cursor: col-resize;
   width: 1px;
 }
 
-.pane-divider-vertical {
+.pane-divider-horizontal {
   cursor: row-resize;
   height: 1px;
 }
 
 /* Invisible generous hit area for effortless grabbing */
-.pane-divider-horizontal::after {
+.pane-divider-vertical::after {
   content: "";
   position: absolute;
   top: 0;
@@ -1234,7 +1263,7 @@ select.modal-input {
   z-index: 11;
 }
 
-.pane-divider-vertical::after {
+.pane-divider-horizontal::after {
   content: "";
   position: absolute;
   left: 0;

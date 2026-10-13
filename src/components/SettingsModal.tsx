@@ -148,7 +148,7 @@ export const SettingsModal: FC<SettingsModalProps> = ({
   settings,
   onSaveSettings,
   shells,
-  appVersion = "0.1.2",
+  appVersion = "0.1.3",
   updateInfo = null,
   isCheckingUpdates = false,
   onCheckUpdates,

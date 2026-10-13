@@ -10,13 +10,16 @@ interface DiagnosticsModalProps {
 
 export const DiagnosticsModal: FC<DiagnosticsModalProps> = ({ isOpen, onClose, lastError }) => {
   const [report, setReport] = useState<DiagnosticsReport | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
+      setIsLoading(true);
       getDiagnostics()
         .then(setReport)
-        .catch(() => setReport(null));
+        .catch(() => setReport(null))
+        .finally(() => setIsLoading(false));
     }
   }, [isOpen]);
 
@@ -82,16 +85,22 @@ export const DiagnosticsModal: FC<DiagnosticsModalProps> = ({ isOpen, onClose, l
           )}
           <div className="setting-field">
             <label>Safe diagnostic export (no terminal content or secrets)</label>
-            <pre
-              className="muted-text diagnostics-output"
-              style={{
-                whiteSpace: "pre-wrap",
-                maxHeight: "240px",
-                overflowY: "auto",
-              }}
-            >
-              {exportText}
-            </pre>
+            {isLoading && !report ? (
+              <p className="muted-text" role="status">
+                Collecting diagnostics…
+              </p>
+            ) : (
+              <pre
+                className="muted-text diagnostics-output"
+                style={{
+                  whiteSpace: "pre-wrap",
+                  maxHeight: "240px",
+                  overflowY: "auto",
+                }}
+              >
+                {exportText}
+              </pre>
+            )}
           </div>
           <p className="muted-text">
             Shells run with your OS user permissions (no sandbox). If a shell is missing, pick

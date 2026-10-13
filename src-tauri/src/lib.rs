@@ -250,6 +250,11 @@ fn list_sessions(state: State<'_, PtyManager>) -> Vec<PtySessionInfo> {
 pub fn run() {
     let pty_manager = PtyManager::new();
 
+    // Warm the Windows build-number cache off the UI thread so the first
+    // PTY spawn never blocks on `reg`/`cmd` probes (startup stall fix).
+    #[cfg(target_os = "windows")]
+    crate::shell::warm_host_pty_cache();
+
     tauri::Builder::default()
         .manage(pty_manager)
         .on_window_event(|window, event| {

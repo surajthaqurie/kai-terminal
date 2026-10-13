@@ -8,7 +8,7 @@
  * resolve to "no update" so the UI never blocks on this.
  */
 
-export const APP_VERSION_FALLBACK = "0.1.2";
+export const APP_VERSION_FALLBACK = "0.1.3";
 export const GITHUB_REPO = "surajthaqurie/kai-terminal";
 export const LATEST_RELEASE_API_URL = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`;
 export const RELEASES_PAGE_URL = `https://github.com/${GITHUB_REPO}/releases/latest`;

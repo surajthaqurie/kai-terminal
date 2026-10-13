@@ -428,7 +428,7 @@ dependencies = [
 
 [[package]]
 name = "cross-platform-terminal-backend"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "portable-pty",
  "serde",

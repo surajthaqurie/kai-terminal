@@ -332,17 +332,51 @@ pub fn check_windows_build_supported(build: u32) -> Result<(), TerminalError> {
 /// instead of a cryptic ConPTY failure. Caching matters: every PTY spawn
 /// previously ran `cmd /c ver` synchronously, adding seconds to session open.
 /// On Unix/macOS this is a no-op (native `openpty` is always present).
+/// Applies `CREATE_NO_WINDOW` on Windows so helper spawns (`reg`,
+/// `cmd`, editors) never flash a `conhost.exe` window behind the main
+/// window and never steal focus. No-op on other OSes.
+#[cfg(target_os = "windows")]
+fn hide_console(cmd: &mut std::process::Command) {
+    use std::os::windows::process::CommandExt;
+    // 0x08000000 == CREATE_NO_WINDOW: spawn without a visible console.
+    cmd.creation_flags(0x08000000);
+}
+
+/// Warms the cached Windows build number off the hot path (background
+/// thread, runs once per process). Called at app startup so the first
+/// `create_pty` below never pays `reg` + `cmd /c ver` synchronously.
+#[cfg(target_os = "windows")]
+pub fn warm_host_pty_cache() {
+    static WARM_ONCE: std::sync::Once = std::sync::Once::new();
+    WARM_ONCE.call_once(|| {
+        std::thread::spawn(|| {
+            let build = current_windows_build();
+            let _ = BUILD_CACHE.set(build);
+        });
+    });
+}
+
+#[cfg(target_os = "windows")]
+static BUILD_CACHE: OnceLock<Option<u32>> = OnceLock::new();
+
 pub fn check_host_pty_support() -> Result<(), TerminalError> {
     #[cfg(target_os = "windows")]
     {
-        static BUILD_CACHE: OnceLock<Option<u32>> = OnceLock::new();
-        let build = *BUILD_CACHE.get_or_init(current_windows_build);
-        match build {
-            Some(b) => check_windows_build_supported(b),
-            None => Err(TerminalError::PtyCreationFailed(
-                "Unable to determine Windows version: Kai requires Windows 10 version 1809 (build 17763) or later / Windows 11 with ConPTY and the WebView2 runtime. Update Windows and reinstall if this persists.".to_string(),
-            )),
+        // Fast path: cache already warmed (startup thread or prior spawn).
+        if let Some(cached) = BUILD_CACHE.get() {
+            return match *cached {
+                Some(b) => check_windows_build_supported(b),
+                None => Err(TerminalError::PtyCreationFailed(
+                    "Unable to determine Windows version: Kai requires Windows 10 version 1809 (build 17763) or later / Windows 11 with ConPTY and the WebView2 runtime. Update Windows and reinstall if this persists.".to_string(),
+                )),
+            };
         }
+        // First spawn before the background warm finishes: do NOT block the
+        // PTY creation on up-to-10 s of `reg`/`cmd` probes (the "stuck on
+        // loading" report). Kick the background probe and let ConPTY itself
+        // surface any real failure; the next spawn uses the cached result.
+        warm_host_pty_cache();
+        Ok(())
     }
     #[cfg(not(target_os = "windows"))]
     {
@@ -359,13 +393,14 @@ fn run_bounded_windows(cmd: &str, args: &[&str], timeout_secs: u64) -> Option<St
     use std::io::Read;
     use std::process::{Command, Stdio};
     use std::time::{Duration, Instant};
-    let mut child = Command::new(cmd)
+    let mut command = Command::new(cmd);
+    command
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .ok()?;
+        .stderr(Stdio::null());
+    hide_console(&mut command);
+    let mut child = command.spawn().ok()?;
     // Take the pipe up front so no output is lost after reaping.
     let mut piped = child.stdout.take();
     let deadline = Instant::now() + Duration::from_secs(timeout_secs);
@@ -947,9 +982,11 @@ pub fn open_in_editor(requested_editor: Option<&str>, cwd: &str) -> Result<Strin
         };
 
         if let Some(exe_path) = exe_candidate {
-            std::process::Command::new(exe_path)
-                .arg(&valid_cwd)
-                .spawn()
+            let mut c = std::process::Command::new(exe_path);
+            c.arg(&valid_cwd);
+            #[cfg(target_os = "windows")]
+            hide_console(&mut c);
+            c.spawn()
                 .map_err(|e| {
                     TerminalError::IoError(format!(
                         "Failed to launch editor '{}': {}",
@@ -960,9 +997,11 @@ pub fn open_in_editor(requested_editor: Option<&str>, cwd: &str) -> Result<Strin
         }
 
         if is_windows_script_shim(&editor_bin) {
-            std::process::Command::new("cmd")
-                .args(["/c", &editor_bin, &valid_cwd])
-                .spawn()
+            let mut c = std::process::Command::new("cmd");
+            c.args(["/c", &editor_bin, &valid_cwd]);
+            #[cfg(target_os = "windows")]
+            hide_console(&mut c);
+            c.spawn()
                 .map_err(|e| {
                     TerminalError::IoError(format!(
                         "Failed to launch editor '{}': {}",
@@ -987,12 +1026,16 @@ pub fn open_in_editor(requested_editor: Option<&str>, cwd: &str) -> Result<Strin
             return Ok(editor_bin);
         }
     }
-    std::process::Command::new(&editor_bin)
-        .arg(&valid_cwd)
-        .spawn()
-        .map_err(|e| {
-            TerminalError::IoError(format!("Failed to launch editor '{}': {}", editor_bin, e))
-        })?;
+    // Generic spawn path: hide the console host on Windows so launching a
+    // console-subsystem editor never flashes a ghost conhost window behind
+    // the main window (same CREATE_NO_WINDOW treatment as the branches above).
+    let mut editor_cmd = std::process::Command::new(&editor_bin);
+    editor_cmd.arg(&valid_cwd);
+    #[cfg(target_os = "windows")]
+    hide_console(&mut editor_cmd);
+    editor_cmd.spawn().map_err(|e| {
+        TerminalError::IoError(format!("Failed to launch editor '{}': {}", editor_bin, e))
+    })?;
 
     Ok(editor_bin)
 }

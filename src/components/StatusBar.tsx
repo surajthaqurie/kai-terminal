@@ -27,6 +27,9 @@ interface StatusBarProps {
   onViewUpdate: () => void;
   onGitAction: (action: "fetch" | "pull" | "status") => void;
   mode?: string;
+  /** Re-probe git for the active pane + re-sync Code Mode (footer refresh button). */
+  onRefreshGit?: () => void;
+  isRefreshingGit?: boolean;
   /** @deprecated Kept for backwards compat. Code Mode is now entered/cleared
    * via the CLI (`kai code <path>` / `kai stop code`), so the badge is
    * display-only and this callback is unused. */
@@ -50,6 +53,8 @@ export const StatusBar: FC<StatusBarProps> = ({
   onViewUpdate,
   onGitAction,
   mode = "terminal",
+  onRefreshGit,
+  isRefreshingGit = false,
 }) => {
   const [gitMenuOpen, setGitMenuOpen] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -179,6 +184,22 @@ export const StatusBar: FC<StatusBarProps> = ({
                 <span>Changes ●</span>
               </button>
             )}
+            {onRefreshGit && (
+              <button
+                type="button"
+                className="status-check-btn"
+                onClick={onRefreshGit}
+                disabled={isRefreshingGit}
+                title={isRefreshingGit ? "Refreshing git status…" : "Refresh git status"}
+                aria-label={isRefreshingGit ? "Refreshing git status" : "Refresh git status"}
+              >
+                <RefreshCw
+                  size={12}
+                  aria-hidden="true"
+                  className={isRefreshingGit ? "spin" : ""}
+                />
+              </button>
+            )}
           </div>
         ) : (
           <span
@@ -191,6 +212,23 @@ export const StatusBar: FC<StatusBarProps> = ({
           >
             <GitBranch size={13} aria-hidden="true" />
             <span>{projectDir ? "No git repo" : "No project open"}</span>
+            {onRefreshGit && projectDir && (
+              <button
+                type="button"
+                className="status-check-btn"
+                onClick={onRefreshGit}
+                disabled={isRefreshingGit}
+                title={isRefreshingGit ? "Refreshing git status…" : "Refresh git status"}
+                aria-label={isRefreshingGit ? "Refreshing git status" : "Refresh git status"}
+                style={{ marginLeft: 4 }}
+              >
+                <RefreshCw
+                  size={12}
+                  aria-hidden="true"
+                  className={isRefreshingGit ? "spin" : ""}
+                />
+              </button>
+            )}
           </span>
         )}
         {projectDir && (

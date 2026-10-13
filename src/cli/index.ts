@@ -397,6 +397,9 @@ export async function runCli(argv: string[]): Promise<number> {
               const child = spawn(appBinary, [meta.canonicalPath], {
                 detached: true,
                 stdio: "ignore",
+                // Windows: never flash a ghost conhost window when
+                // launching the desktop app from the CLI.
+                windowsHide: true,
                 env: {
                   ...process.env,
                   KAI_ACTIVE_PROJECT: meta.canonicalPath,
@@ -875,8 +878,10 @@ export async function runCli(argv: string[]): Promise<number> {
               console.log(`[kai] ${dynamicResult.message} (dry-run, nothing written)`);
           } else {
             console.log(`[kai] ${dynamicResult.message}`);
-            if (dynamicResult.backupPath)
+            if (dynamicResult.backupPath) {
               console.log(`[kai] Previous config backed up to: ${dynamicResult.backupPath}`);
+              console.log(`[kai] The backup is kept intentionally — delete it after verifying the new config works.`);
+            }
             if (!dynamicResult.skipped)
               console.log(`[kai] Restart ${rawTarget} so it picks up the kai MCP server.`);
           }
@@ -914,6 +919,7 @@ export async function runCli(argv: string[]): Promise<number> {
       console.log(`[kai] ${result.message}`);
       if (result.backupPath) {
         console.log(`[kai] Previous config backed up to: ${result.backupPath}`);
+        console.log(`[kai] The backup is kept intentionally — delete it after verifying the new config works.`);
       }
       console.log(`[kai] Restart ${result.name} so it picks up the kai MCP server.`);
       return 0;

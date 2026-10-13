@@ -58,6 +58,16 @@ interface TerminalViewProps {
   onExit?: (exitCode: number) => void;
   onCwdResolved?: (cwd: string) => void;
   onFocus?: () => void;
+  /**
+   * Fires whenever the user submits a command line (Enter) in this pane,
+   * BEFORE the shell runs it. Used by the app shell to re-sync cheap
+   * external state that can change out from under the UI — e.g. `kai code
+   * .` / `kai stop code` run inside Kai's own tab write the state file but
+   * produce no window-focus event, so focus-only polling never notices.
+   * Handlers must stay cheap (no spawns): the cwd/git probes keep their
+   * own stricter gating below.
+   */
+  onCommandSubmitted?: () => void;
 }
 
 export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
@@ -73,6 +83,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       onExit,
       onCwdResolved,
       onFocus,
+      onCommandSubmitted,
     },
     ref
   ) => {
@@ -149,6 +160,8 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
     onStatusRef.current = onSessionStatusChange;
     const onCwdResolvedRef = useRef(onCwdResolved);
     onCwdResolvedRef.current = onCwdResolved;
+    const onCommandSubmittedRef = useRef(onCommandSubmitted);
+    onCommandSubmittedRef.current = onCommandSubmitted;
     const onFocusRef = useRef(onFocus);
     onFocusRef.current = onFocus;
     const shellRef = useRef(selectedShell);
@@ -479,6 +492,14 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
           });
           if (submitted && lineLikelyChangesCwd(submitted)) {
             setTimeout(checkLiveCwd, 250);
+          }
+          // Notify the app shell about EVERY submitted line (cheap: the
+          // handler only re-reads the active-project state file). This is
+          // what picks up `kai code .` / `kai stop code` typed into Kai's
+          // own tab — no focus change happens then, so focus polling alone
+          // would leave the Code Mode badge stale.
+          if (submitted) {
+            onCommandSubmittedRef.current?.();
           }
         }
         // Dead pane: input is ignored (use Close pane). No auto-restart.
