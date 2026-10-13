@@ -67,7 +67,10 @@ export function getProjectLockPath(projectId: string): string {
 }
 
 /**
- * Atomic file writer using temporary file and atomic rename
+ * Atomic file writer using temporary file and atomic rename.
+ * Retries the rename on Windows transient locks (EPERM/EBUSY/EACCES from
+ * AV scanners or lingering handles) so the same code passes on
+ * Linux, macOS, and Windows.
  */
 export function atomicWriteJson(targetPath: string, data: unknown): void {
   const dir = path.dirname(targetPath);
@@ -78,7 +81,30 @@ export function atomicWriteJson(targetPath: string, data: unknown): void {
   const tmpPath = `${targetPath}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
   const serialized = JSON.stringify(data, null, 2);
   fs.writeFileSync(tmpPath, serialized, { mode: 0o600, encoding: "utf-8" });
-  fs.renameSync(tmpPath, targetPath);
+  const attempts = process.platform === "win32" ? 8 : 1;
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      fs.renameSync(tmpPath, targetPath);
+      return;
+    } catch (err: unknown) {
+      lastError = err;
+      const code = (err as NodeJS.ErrnoException)?.code;
+      const retryable = code === "EPERM" || code === "EBUSY" || code === "EACCES";
+      if (!retryable || attempt === attempts - 1) break;
+      try {
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+      } catch {
+        // Atomics.wait unavailable; fall through to immediate retry.
+      }
+    }
+  }
+  try {
+    fs.rmSync(tmpPath, { force: true });
+  } catch {
+    // Ignore cleanup failure; surface the original rename error below.
+  }
+  throw lastError;
 }
 
 /**

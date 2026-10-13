@@ -986,7 +986,32 @@ function backupFile(filePath: string): string | null {
 function atomicWriteFile(filePath: string, content: string): void {
   const tmpPath = `${filePath}.kai.tmp.${process.pid}`;
   fs.writeFileSync(tmpPath, content, { mode: 0o600, encoding: "utf-8" });
-  fs.renameSync(tmpPath, filePath);
+  // Retry on Windows transient locks (AV scanners, lingering handles) so
+  // agent setup behaves identically on Linux, macOS, and Windows.
+  const attempts = process.platform === "win32" ? 8 : 1;
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      fs.renameSync(tmpPath, filePath);
+      return;
+    } catch (err: unknown) {
+      lastError = err;
+      const code = (err as NodeJS.ErrnoException)?.code;
+      const retryable = code === "EPERM" || code === "EBUSY" || code === "EACCES";
+      if (!retryable || attempt === attempts - 1) break;
+      try {
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+      } catch {
+        // Atomics.wait unavailable; fall through to immediate retry.
+      }
+    }
+  }
+  try {
+    fs.rmSync(tmpPath, { force: true });
+  } catch {
+    // Ignore cleanup failure; surface the original rename error below.
+  }
+  throw lastError;
 }
 
 /**

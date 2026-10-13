@@ -206,10 +206,15 @@ describe("autoSetupDetectedAgents (system-driven wiring)", () => {
       }
     }
     const oldPath = process.env.PATH || process.env.Path || "";
-    const newPath = `${binDir}${path.delimiter}${oldPath}`;
-    process.env.PATH = newPath;
-    if (process.env.Path !== undefined) {
-      process.env.Path = newPath;
+    const hadUpperPath = process.env.Path !== undefined;
+    const oldUpperPath = process.env.Path;
+    // Isolate PATH to the fake bin dir so the test is hermetic on every OS:
+    // runners (or dev machines) may have real agents like `claude`/`gemini`
+    // installed, which would otherwise be detected and break the
+    // skipped/wrote assertions.
+    process.env.PATH = binDir;
+    if (hadUpperPath) {
+      process.env.Path = binDir;
     }
     try {
       const results = autoSetupDetectedAgents(KAI_BIN, { homeDir: home });
@@ -223,8 +228,8 @@ describe("autoSetupDetectedAgents (system-driven wiring)", () => {
       expect(isAgentWired("aider", { homeDir: home })).toBe(true);
     } finally {
       process.env.PATH = oldPath;
-      if (process.env.Path !== undefined) {
-        process.env.Path = oldPath;
+      if (hadUpperPath) {
+        process.env.Path = oldUpperPath;
       }
     }
   });

@@ -192,7 +192,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       const cols = term.cols || 80;
       const rows = term.rows || 24;
 
-    try {
+      try {
         const effShell = overrideShell ?? shellRef.current ?? selectedShell;
         if (overrideShell) {
           shellRef.current = overrideShell;
