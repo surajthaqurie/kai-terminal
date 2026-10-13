@@ -1,3 +1,4 @@
+pub mod active_project;
 pub mod ai_cli;
 pub mod autostart;
 pub mod diagnostics;
@@ -121,6 +122,17 @@ fn discard_git_file_cmd(cwd: String, path: String) -> Result<String, String> {
 #[tauri::command]
 fn get_project_intelligence_cmd(cwd: String) -> intelligence::ProjectIntelligenceSummary {
     intelligence::get_project_intelligence(&cwd)
+}
+
+/// Single source of truth for Code Mode: `kai code <path>` sets it,
+/// `kai stop code` clears it. Never defaults to code, never falls back
+/// to recent history. Works in dev and release builds (release WebViews
+/// use a different localStorage file, so the CLI's state file + launch
+/// env are authoritative — not a SQLite localStorage hack).
+#[cfg(feature = "tauri")]
+#[tauri::command]
+fn get_active_project_cmd() -> active_project::ActiveProject {
+    active_project::get_active_project()
 }
 
 #[cfg(feature = "tauri")]
@@ -275,7 +287,8 @@ pub fn run() {
             set_autostart_enabled,
             get_session_info,
             list_sessions,
-            get_project_intelligence_cmd
+            get_project_intelligence_cmd,
+            get_active_project_cmd
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

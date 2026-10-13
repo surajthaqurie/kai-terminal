@@ -230,6 +230,12 @@ impl PtyManager {
         if let Some(ref args) = options.args {
             validate_spawn_args(args)?;
             cmd.args(args);
+        } else if is_powershell_shell(&shell_path) {
+            // Fast-path default: skip the banner even when the frontend
+            // passes no args (older persisted tabs, custom launchers).
+            // Profile scripts still run; this only removes the logo print
+            // that floods ConPTY on slow first launches.
+            cmd.arg("-NoLogo");
         }
         cmd.cwd(&cwd);
         // Ensure standard terminal capabilities so shells (zsh, bash, fish) and tools
@@ -603,6 +609,16 @@ impl Drop for PtyManager {
     fn drop(&mut self) {
         self.close_all();
     }
+}
+
+/// True for Windows PowerShell / PowerShell Core binaries (case-insensitive,
+/// any directory, with or without `.exe`). Used to inject `-NoLogo` so a
+/// slow .NET/profile first launch doesn't present as "Not Responding".
+fn is_powershell_shell(shell_path: &str) -> bool {
+    let lower = shell_path.to_lowercase();
+    let file = lower.rsplit(['/', '\\']).next().unwrap_or(&lower);
+    let base = file.strip_suffix(".exe").unwrap_or(file);
+    base == "powershell" || base == "pwsh"
 }
 
 /// Validates IPC-supplied spawn args without shell-string interpolation.

@@ -82,16 +82,19 @@ export function loadRecentProjects(): string[] {
   }
 }
 
-/** Get the currently selected active project, falling back to most recent project. */
+/** Get the currently selected active project.
+ *
+ * Code Mode is ONLY entered via `kai code <path>` (which writes the explicit
+ * `kai_active_project` key / `active_project.json` state file) and cleared
+ * via `kai stop code`. Opening recent folders or new tabs must NEVER
+ * activate Code Mode — so there is intentionally NO fallback to recent
+ * history here. Returns null in plain terminal mode.
+ */
 export function getActiveProject(): string | null {
   try {
     const active = localStorage.getItem(ACTIVE_PROJECT_KEY);
     if (active && active.trim()) {
       return active.trim();
-    }
-    const recent = loadRecentProjects();
-    if (recent.length > 0 && recent[0].trim()) {
-      return recent[0].trim();
     }
   } catch {
     // ignore
@@ -112,12 +115,13 @@ export function setActiveProject(dir: string, mode: string = "code"): void {
   }
 }
 
-/** Get active mode ("code" by default, or "terminal"). */
+/** Get active mode ("terminal" by default — Code Mode requires `kai code`). */
 export function getActiveMode(): string {
   try {
-    return localStorage.getItem(ACTIVE_MODE_KEY) || "code";
+    const m = localStorage.getItem(ACTIVE_MODE_KEY);
+    return m === "code" ? "code" : "terminal";
   } catch {
-    return "code";
+    return "terminal";
   }
 }
 
@@ -142,6 +146,78 @@ export function clearActiveProject(): void {
   } catch {
     // ignore
   }
+}
+
+export interface ActiveProjectState {
+  path: string | null;
+  mode: string;
+}
+
+/**
+ * Authoritative Code Mode state. Prefers the backend (`active_project.json`
+ * state file + `KAI_ACTIVE_PROJECT`/`KAI_MODE` launch env, written by
+ * `kai code`), which works in dev AND release builds. Falls back to the
+ * explicit localStorage keys (no recent-history fallback). Never defaults
+ * to code: anything unrecognized resolves to plain terminal mode.
+ */
+export async function getActiveProjectState(): Promise<ActiveProjectState> {
+  if (isTauriAvailable()) {
+    try {
+      const s = await invoke<{ path: string | null; mode: string }>("get_active_project_cmd");
+      const rawPath = typeof s?.path === "string" ? s.path.trim() : "";
+      const mode = s?.mode === "code" && rawPath ? "code" : "terminal";
+      const path = mode === "code" ? rawPath : null;
+      // Mirror into localStorage so focus-polling and tests see the same
+      // explicit state even if the backend becomes briefly unavailable.
+      try {
+        if (path) {
+          localStorage.setItem(ACTIVE_PROJECT_KEY, path);
+          localStorage.setItem(ACTIVE_MODE_KEY, "code");
+        } else {
+          localStorage.removeItem(ACTIVE_PROJECT_KEY);
+          localStorage.setItem(ACTIVE_MODE_KEY, "terminal");
+        }
+      } catch {
+        // ignore quota / private mode
+      }
+      return { path, mode };
+    } catch {
+      // fall through to localStorage snapshot below
+    }
+  }
+  try {
+    const p = localStorage.getItem(ACTIVE_PROJECT_KEY);
+    const m = localStorage.getItem(ACTIVE_MODE_KEY);
+    const rawPath = p && p.trim() ? p.trim() : null;
+    if (m === "code" && rawPath) return { path: rawPath, mode: "code" };
+  } catch {
+    // ignore
+  }
+  return { path: null, mode: "terminal" };
+}
+
+function normalizeCodeModePath(p: string): string {
+  // Unify separators, strip trailing slashes, drop Win32 verbatim prefix.
+  let s = p.trim().replace(/\\/g, "/");
+  s = s.replace(/^\/\/\?\/UNC\//i, "//");
+  s = s.replace(/^\/\/\?\//, "");
+  s = s.replace(/\/+$/, "");
+  // Windows paths (C:/...) compare case-insensitively; POSIX stays exact.
+  if (/^[a-zA-Z]:\//.test(s)) s = s.toLowerCase();
+  return s;
+}
+
+/**
+ * True when `dir` is the active Code Mode project or lives inside it.
+ * Returns false when there is no active project (plain terminal mode).
+ * A bare prefix match is NOT enough: `/repo-demo` is not inside `/repo`.
+ */
+export function isCodeModeActiveForDir(dir: string, activePath: string | null): boolean {
+  if (!dir || !activePath) return false;
+  const d = normalizeCodeModePath(dir);
+  const c = normalizeCodeModePath(activePath);
+  if (!d || !c) return false;
+  return d === c || d.startsWith(`${c}/`);
 }
 
 /** Records a working directory as recently used. Never replays history automatically. */

@@ -11,8 +11,12 @@ import {
   runGitAction,
   getActiveProject,
   setActiveProject,
+  clearActiveProject,
   getActiveMode,
   setActiveMode,
+  getActiveProjectState,
+  isCodeModeActiveForDir,
+  recordRecentProject,
 } from "../services/projectService";
 
 describe("Project Workspace Settings", () => {
@@ -90,7 +94,7 @@ describe("Active Project and Code Mode Persistence", () => {
 
   it("stores and retrieves active project and code mode", () => {
     expect(getActiveProject()).toBeNull();
-    expect(getActiveMode()).toBe("code");
+    expect(getActiveMode()).toBe("terminal");
 
     setActiveProject("/home/kali/Documents/project", "code");
     expect(getActiveProject()).toBe("/home/kali/Documents/project");
@@ -98,5 +102,37 @@ describe("Active Project and Code Mode Persistence", () => {
 
     setActiveMode("terminal");
     expect(getActiveMode()).toBe("terminal");
+  });
+
+  it("never activates Code Mode from recent history alone", async () => {
+    recordRecentProject("/home/kali/Documents/project");
+    // Recent folders must NOT light up the Code Mode badge: only an
+    // explicit `kai code <path>` does.
+    expect(getActiveProject()).toBeNull();
+    expect(getActiveMode()).toBe("terminal");
+    await expect(getActiveProjectState()).resolves.toEqual({
+      path: null,
+      mode: "terminal",
+    });
+  });
+
+  it("clears Code Mode like `kai stop code`", async () => {
+    setActiveProject("/home/kali/Documents/project", "code");
+    expect(getActiveProject()).toBe("/home/kali/Documents/project");
+    clearActiveProject();
+    expect(getActiveProject()).toBeNull();
+    await expect(getActiveProjectState()).resolves.toEqual({
+      path: null,
+      mode: "terminal",
+    });
+  });
+
+  it("matches project dir and children only (no bare-prefix leaks)", () => {
+    expect(isCodeModeActiveForDir("/repo/app", "/repo/app")).toBe(true);
+    expect(isCodeModeActiveForDir("/repo/app/src", "/repo/app")).toBe(true);
+    expect(isCodeModeActiveForDir("/repo/app-other", "/repo/app")).toBe(false);
+    expect(isCodeModeActiveForDir("C:\\Repo\\App\\src", "c:/repo/app")).toBe(true);
+    expect(isCodeModeActiveForDir("/repo/app", null)).toBe(false);
+    expect(isCodeModeActiveForDir("", "/repo/app")).toBe(false);
   });
 });

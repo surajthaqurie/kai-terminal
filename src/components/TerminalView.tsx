@@ -61,6 +61,12 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
     const backendPtyIdRef = useRef<string | null>(null);
     const initSeqRef = useRef<number>(0);
     const [isSearchVisible, setIsSearchVisible] = useState(false);
+    // Startup watchdog: PowerShell/.NET JIT + heavy profiles can stall
+    // ConPTY for seconds on Windows and the OS flags the window as
+    // "Not Responding". After 4 s without a session we show an inline
+    // escape hatch (Retry / Switch to Command Prompt) instead of a dead tab.
+    const [launchSlow, setLaunchSlow] = useState(false);
+    const [launchError, setLaunchError] = useState<string | null>(null);
 
     // ---- Command line tracking & history ---------------------------------
     // Native Kali/Linux terminal autocompletion (ZSH autosuggestions, compinit,
@@ -162,11 +168,13 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       },
     }));
 
-    const initPtySession = async () => {
+    const initPtySession = async (overrideShell?: ShellProfile) => {
       const term = xtermRef.current;
       const fitAddon = fitAddonRef.current;
       if (!term || !fitAddon) return;
       const mySeq = ++initSeqRef.current;
+      setLaunchSlow(false);
+      setLaunchError(null);
 
       // Best-effort close of the previous backend session for this tab
       // before spawning a replacement (prevents orphan PTY processes).
@@ -192,10 +200,23 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       const cols = term.cols || 80;
       const rows = term.rows || 24;
 
+      // Watchdog: if the backend hasn't answered in 4 s the shell is
+      // wedged (usually a PowerShell profile). Surface the overlay so the
+      // user can bail out instead of force-killing the whole PC.
+      const slowTimer = setTimeout(() => {
+        if (mySeq === initSeqRef.current && !backendPtyIdRef.current) {
+          setLaunchSlow(true);
+        }
+      }, 4000);
+
       try {
+        const effShell = overrideShell ?? shellRef.current ?? selectedShell;
+        if (overrideShell) {
+          shellRef.current = overrideShell;
+        }
         const sessionInfo = await PtyService.createPty({
-          shell_path: shellRef.current?.path ?? selectedShell?.path,
-          args: shellRef.current?.args ?? selectedShell?.args,
+          shell_path: effShell?.path ?? selectedShell?.path,
+          args: effShell?.args ?? selectedShell?.args,
           cwd: (() => {
             const c = cwdRef.current ?? cwd;
             return c && c.trim() ? c.trim() : undefined;
@@ -203,6 +224,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
           cols,
           rows,
         });
+        clearTimeout(slowTimer);
         if (mySeq !== initSeqRef.current) {
           // A newer init superseded this attempt; reap the orphan.
           try {
@@ -215,15 +237,50 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
 
         backendPtyIdRef.current = sessionInfo.id;
         onStatusRef.current?.("connected");
+        setLaunchSlow(false);
+        setLaunchError(null);
         if (sessionInfo.cwd) {
           onCwdResolvedRef.current?.(sessionInfo.cwd);
         }
       } catch (err: unknown) {
+        clearTimeout(slowTimer);
         if (mySeq !== initSeqRef.current) return;
         const errorMsg = err instanceof Error ? err.message : String(err);
         term.writeln(`\r\n\x1b[31m[Failed to launch shell: ${errorMsg}]\x1b[0m\r\n`);
+        term.writeln(`\x1b[33m[Tip: try Retry, or Switch to Command Prompt below.]\x1b[0m\r\n`);
+        setLaunchSlow(false);
+        setLaunchError(errorMsg);
         onStatusRef.current?.("error", errorMsg);
       }
+    };
+
+    const handleRetryLaunch = () => {
+      void initPtySession();
+    };
+
+    const handleFallbackToCmd = async () => {
+      // Prefer cmd.exe: instant start, no .NET JIT, no profile scripts.
+      try {
+        const shells = await PtyService.getAvailableShells();
+        const cmd =
+          shells.find((s) => s.id === "cmd") ?? shells.find((s) => /cmd\.exe$/i.test(s.path));
+        if (cmd) {
+          void initPtySession(cmd);
+          return;
+        }
+      } catch {
+        // fall through to direct path guess
+      }
+      const sysRoot =
+        typeof process !== "undefined" && process.env?.SystemRoot
+          ? process.env.SystemRoot
+          : "C:\\Windows";
+      void initPtySession({
+        id: "cmd",
+        name: "Command Prompt",
+        path: `${sysRoot}\\System32\\cmd.exe`,
+        is_default: true,
+      });
     };
 
     // React to settings changes dynamically
@@ -502,7 +559,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       // Launch initial PTY session (deferred):
       // - Hidden tabs skip the spawn entirely; the `visible` effect below
       //   launches on first show (startup thundering-herd fix).
-      // - Visible panes wait one paint (~50 ms) so the window renders
+      // - Visible panes wait one paint (~60 ms) so the window renders
       //   before the blocking-ish spawn IPC, avoiding "not responding".
       let initialTimer: ReturnType<typeof setTimeout> | null = null;
       if (visibleRef.current) {
@@ -510,7 +567,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         initialTimer = setTimeout(() => {
           initialTimer = null;
           void initPtySession();
-        }, 0);
+        }, 60);
       }
 
       // Clean disposal on unmount or session switch: close the BACKEND session
@@ -640,6 +697,50 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
           role="log"
           aria-label="Terminal output"
         />
+        {(launchSlow || launchError) && (
+          <div
+            className="terminal-launch-overlay"
+            role="status"
+            aria-label={launchError ? "Shell failed to launch" : "Shell is slow to launch"}
+            style={{
+              position: "absolute",
+              left: 12,
+              right: 12,
+              bottom: 12,
+              padding: "10px 12px",
+              borderRadius: 8,
+              background: "rgba(10, 20, 40, 0.92)",
+              border: "1px solid rgba(0, 168, 232, 0.45)",
+              color: "#e8eef7",
+              fontSize: 12,
+              display: "flex",
+              gap: 8,
+              alignItems: "center",
+              flexWrap: "wrap",
+              zIndex: 5,
+            }}
+          >
+            <span style={{ flex: "1 1 220px" }}>
+              {launchError
+                ? `Shell failed to start: ${launchError}`
+                : "Shell is taking longer than usual (often a PowerShell profile). You can wait, retry, or switch to Command Prompt."}
+            </span>
+            <button
+              type="button"
+              className="btn btn-secondary btn-small"
+              onClick={handleRetryLaunch}
+            >
+              Retry
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary btn-small"
+              onClick={handleFallbackToCmd}
+            >
+              Use Command Prompt
+            </button>
+          </div>
+        )}
       </div>
     );
   }

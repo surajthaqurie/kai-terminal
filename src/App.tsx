@@ -15,8 +15,10 @@ import { PtyService, isTauriAvailable } from "./services/ptyService";
 import { SettingsService, DEFAULT_SETTINGS } from "./services/settingsService";
 import {
   getActiveProject,
+  getActiveProjectState,
   getGitInfoCached,
   invalidateGitCache,
+  isCodeModeActiveForDir,
   loadRecentProjects,
   recordRecentProject,
   openProjectInEditor,
@@ -311,12 +313,14 @@ export function App() {
   // AI providers panel is scoped to a specific pane's directory, so each
   // split gets its own agent setup context instead of sharing one global.
   const [aiCliDir, setAiCliDir] = useState<string>("");
-  // Code Mode badge state: driven by the persisted active project
-  // (`kai code <path>` sets it, `kai stop code` clears it). Polled so an
-  // externally-run CLI updates the footer without a restart.
+  // Code Mode badge state: driven ONLY by the persisted active project
+  // (`kai code <path>` sets it, `kai stop code` clears it). The backend
+  // reads `~/.kai/active_project.json` + launch env, so dev and release
+  // builds agree. Recent folders / new tabs never activate Code Mode.
+  // Polled so an externally-run CLI updates the footer without a restart.
   // Per-split semantics: a pane is in Code Mode when its own directory is
-  // the indexed project or lives inside it (see isCodeModeForDir). Splits
-  // in different repos therefore show different badges.
+  // the indexed project or lives inside it (see isCodeModeActiveForDir).
+  // Splits in different repos therefore show different badges.
   const [codeModeProject, setCodeModeProject] = useState<string | null>(() => {
     try {
       return getActiveProject();
@@ -329,17 +333,19 @@ export function App() {
   // entry; each PaneHeader shows its own entry.
   const [gitInfoByDir, setGitInfoByDir] = useState<Record<string, GitInfo | null>>({});
   useEffect(() => {
+    let cancelled = false;
     const syncCodeMode = () => {
-      try {
-        setCodeModeProject(getActiveProject());
-      } catch {
-        // ignore storage errors
-      }
+      // Authoritative async state (backend file + launch env, then explicit
+      // localStorage). Never resolves recent history to code.
+      void getActiveProjectState().then((s) => {
+        if (!cancelled) setCodeModeProject(s.mode === "code" ? s.path : null);
+      });
     };
     syncCodeMode();
     window.addEventListener("focus", syncCodeMode);
     const id = setInterval(syncCodeMode, 2000);
     return () => {
+      cancelled = true;
       window.removeEventListener("focus", syncCodeMode);
       clearInterval(id);
     };
@@ -540,13 +546,7 @@ export function App() {
 
   /** Per-pane Code Mode: pane dir is the indexed project or inside it. */
   const isCodeModeForDir = useCallback(
-    (dir: string): boolean => {
-      if (!dir || !codeModeProject) return false;
-      const norm = (s: string) => s.replace(/[/\\]+$/, "");
-      const d = norm(dir);
-      const c = norm(codeModeProject);
-      return d === c || d.startsWith(`${c}/`);
-    },
+    (dir: string): boolean => isCodeModeActiveForDir(dir, codeModeProject),
     [codeModeProject]
   );
 
@@ -894,12 +894,14 @@ export function App() {
   // the user triggered the check manually.
   useEffect(() => {
     void getAppVersion().then((v) => setAppVersion(v));
-    // Defer network auto-check so first launch never stutters or delays terminal startup
+    // Defer network auto-check well past terminal startup so a slow DNS /
+    // offline hang never contends with the first PTY spawn on Windows
+    // (a classic "Not Responding on launch" trigger).
     const initialCheckTimer = setTimeout(() => {
       if (shouldAutoCheck()) {
         void handleCheckUpdates(false);
       }
-    }, 1500);
+    }, 8000);
     const interval = setInterval(() => {
       void handleCheckUpdates(false);
     }, UPDATE_PERIODIC_MS);

@@ -45,7 +45,10 @@ pub fn detect_available_shells() -> Vec<ShellProfile> {
                     id: "pwsh".into(),
                     name: "PowerShell Core".into(),
                     path: cand,
-                    args: None,
+                    // -NoLogo skips the banner print (faster paint, less
+                    // PTY flood). Profile still loads; use -NoProfile only
+                    // for diagnostics, never as the default.
+                    args: Some(vec!["-NoLogo".to_string()]),
                     env: None,
                     is_default: !default_set,
                     is_wsl: false,
@@ -69,7 +72,9 @@ pub fn detect_available_shells() -> Vec<ShellProfile> {
                 id: "powershell".into(),
                 name: "Windows PowerShell".into(),
                 path: win_pwsh,
-                args: None,
+                // -NoLogo skips the banner print (faster paint, less PTY
+                // flood on slow disks where .NET JIT already stalls).
+                args: Some(vec!["-NoLogo".to_string()]),
                 env: None,
                 is_default: is_def,
                 is_wsl: false,

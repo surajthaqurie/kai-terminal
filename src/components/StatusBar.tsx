@@ -49,7 +49,7 @@ export const StatusBar: FC<StatusBarProps> = ({
   onCheckUpdates,
   onViewUpdate,
   onGitAction,
-  mode = "code",
+  mode = "terminal",
 }) => {
   const [gitMenuOpen, setGitMenuOpen] = useState(false);
   const [copied, setCopied] = useState(false);
