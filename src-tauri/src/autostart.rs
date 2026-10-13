@@ -264,12 +264,14 @@ mod tests {
 
     #[test]
     fn test_autostart_entry_points_do_not_panic() {
+        let _env = crate::test_support::lock_test_env();
         // Read-only probe must never panic on any OS.
         let _ = is_autostart_enabled();
     }
 
     #[test]
     fn test_set_autostart_rejects_nul_path() {
+        let _env = crate::test_support::lock_test_env();
         let err = set_autostart_enabled_with_exe(true, "bad\0path")
             .expect_err("NUL path must be rejected");
         assert!(err.to_string().contains("NUL"));
@@ -278,8 +280,11 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn test_linux_desktop_roundtrip_in_temp_xdg_home() {
+        let _env = crate::test_support::lock_test_env();
         let tmp = std::env::temp_dir().join(format!("kai-autostart-test-{}", std::process::id()));
-        // SAFETY: single-threaded test process env mutation for our own lookup.
+        let old_xdg = std::env::var("XDG_CONFIG_HOME").ok();
+        // SAFETY: process env mutation, serialized by the shared test lock
+        // and restored below (never `remove_var` a pre-existing value).
         unsafe {
             std::env::set_var("XDG_CONFIG_HOME", &tmp);
         }
@@ -295,14 +300,20 @@ mod tests {
         assert!(!file.exists(), "desktop file must be gone after disable");
         assert!(!is_autostart_enabled());
         let _ = std::fs::remove_dir_all(&tmp);
-        unsafe {
-            std::env::remove_var("XDG_CONFIG_HOME");
+        match old_xdg {
+            Some(v) => unsafe {
+                std::env::set_var("XDG_CONFIG_HOME", v);
+            },
+            None => unsafe {
+                std::env::remove_var("XDG_CONFIG_HOME");
+            },
         }
     }
 
     #[cfg(target_os = "linux")]
     #[test]
     fn test_linux_desktop_contents_shape() {
+        let _env = crate::test_support::lock_test_env();
         let body = linux_desktop_contents("/opt/kai/kai");
         assert!(body.starts_with("[Desktop Entry]\n"));
         assert!(body.contains("X-GNOME-Autostart-enabled=true"));
@@ -311,6 +322,7 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn test_macos_plist_contents_shape() {
+        let _env = crate::test_support::lock_test_env();
         let body = macos_plist_contents("/Applications/Kai.app/Contents/MacOS/kai");
         assert!(body.contains("<key>RunAtLoad</key>"));
         assert!(body.contains("<true/>"));
@@ -320,6 +332,7 @@ mod tests {
     #[cfg(target_os = "windows")]
     #[test]
     fn test_windows_run_key_shape() {
+        let _env = crate::test_support::lock_test_env();
         assert!(WINDOWS_RUN_KEY.contains("CurrentVersion\\Run"));
         assert_eq!(AUTOSTART_APP_NAME, "KaiTerminal");
     }

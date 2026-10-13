@@ -635,6 +635,7 @@ mod tests {
 
     #[test]
     fn test_invalid_dir_returns_error_not_panic() {
+        let _env = crate::test_support::lock_test_env();
         let info = get_git_info("/non_existent_dir_xyz_9999");
         assert!(info.branch.is_none());
         assert!(info.error.is_some());
@@ -642,6 +643,7 @@ mod tests {
 
     #[test]
     fn test_tmp_dir_is_not_repo_or_returns_gracefully() {
+        let _env = crate::test_support::lock_test_env();
         let dir = std::env::temp_dir().to_string_lossy().to_string();
         let info = get_git_info(&dir);
         // Must not panic; either error or valid branch.
@@ -650,6 +652,7 @@ mod tests {
 
     #[test]
     fn test_run_git_action_validation() {
+        let _env = crate::test_support::lock_test_env();
         assert!(run_git_action("/non_existent_dir_xyz", "status").is_err());
         let current = std::env::current_dir()
             .unwrap()
@@ -685,6 +688,7 @@ mod tests {
 
     #[test]
     fn test_branch_dirty_and_detached_head() {
+        let _env = crate::test_support::lock_test_env();
         if !git_available() {
             return;
         }
@@ -755,6 +759,7 @@ mod tests {
 
     #[test]
     fn test_large_repo_status_is_bounded() {
+        let _env = crate::test_support::lock_test_env();
         if !git_available() {
             return;
         }
@@ -771,6 +776,7 @@ mod tests {
 
     #[test]
     fn test_git_changes_and_diff_lifecycle() {
+        let _env = crate::test_support::lock_test_env();
         if !git_available() {
             return;
         }
@@ -837,6 +843,7 @@ mod tests {
 
     #[test]
     fn test_validate_repo_rel_path_traversal_attacks() {
+        let _env = crate::test_support::lock_test_env();
         let temp_dir = std::env::temp_dir().join(format!("kai_git_sec_{}", uuid::Uuid::new_v4()));
         let _ = std::fs::create_dir_all(&temp_dir);
         let repo_root = temp_dir.to_string_lossy().to_string();
@@ -873,6 +880,7 @@ mod tests {
 
     #[test]
     fn test_unborn_branch_reports_repo_and_branch() {
+        let _env = crate::test_support::lock_test_env();
         if !git_available() {
             return;
         }
@@ -900,6 +908,7 @@ mod tests {
 
     #[test]
     fn test_worktree_nested_and_unusual_paths() {
+        let _env = crate::test_support::lock_test_env();
         if !git_available() {
             return;
         }
@@ -986,6 +995,7 @@ mod tests {
 
     #[test]
     fn test_large_repo_changes_stay_bounded() {
+        let _env = crate::test_support::lock_test_env();
         if !git_available() {
             return;
         }
@@ -1008,6 +1018,7 @@ mod tests {
 
     #[test]
     fn test_symlink_escape_rejected_by_git_validation() {
+        let _env = crate::test_support::lock_test_env();
         let temp_dir = std::env::temp_dir().join(format!("kai_git_sym_{}", uuid::Uuid::new_v4()));
         let repo_dir = temp_dir.join("repo");
         let outside_dir = temp_dir.join("outside");

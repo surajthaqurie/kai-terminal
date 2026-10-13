@@ -1079,6 +1079,7 @@ mod tests {
 
     #[test]
     fn test_pty_manager_session_lookup_and_close() {
+        let _env = crate::test_support::lock_test_env();
         let manager = PtyManager::new();
         assert!(manager.list_sessions().is_empty());
         assert!(manager.get_session_info("non-existent-id").is_none());
@@ -1089,6 +1090,7 @@ mod tests {
 
     #[test]
     fn test_spawn_args_and_env_validation() {
+        let _env = crate::test_support::lock_test_env();
         // Too many args rejected without spawning.
         let many: Vec<String> = (0..100).map(|i| format!("a{}", i)).collect();
         assert!(validate_spawn_args(&many).is_err());
@@ -1130,6 +1132,7 @@ mod tests {
 
     #[test]
     fn test_pty_manager_create_write_resize_and_close() {
+        let _env = crate::test_support::lock_test_env();
         let manager = PtyManager::new();
         let logs = Arc::new(Mutex::new(Vec::new()));
         let exited = Arc::new(AtomicBool::new(false));
@@ -1205,6 +1208,7 @@ mod tests {
 
     #[test]
     fn test_pty_shell_variable_persistence_across_writes() {
+        let _env = crate::test_support::lock_test_env();
         let manager = PtyManager::new();
         let logs = Arc::new(Mutex::new(Vec::new()));
         let exited = Arc::new(AtomicBool::new(false));
@@ -1277,6 +1281,7 @@ mod tests {
 
     #[test]
     fn test_real_pty_ai_cli_integration() {
+        let _env = crate::test_support::lock_test_env();
         let agy_path = "/home/kali/.local/bin/agy";
         if !std::path::Path::new(agy_path).exists() {
             return; // Skip if agy CLI binary is not present on environment
@@ -1388,6 +1393,7 @@ mod tests {
 
     #[test]
     fn test_split_valid_utf8_buffers_partial_sequences() {
+        let _env = crate::test_support::lock_test_env();
         // ASCII fast path drains the buffer without copying leftovers.
         let mut buf = b"hello".to_vec();
         assert_eq!(split_valid_utf8(&mut buf), "hello");
@@ -1418,6 +1424,7 @@ mod tests {
 
     #[test]
     fn test_write_chunked_preserves_exact_bytes() {
+        let _env = crate::test_support::lock_test_env();
         struct VecWriter(Vec<u8>);
         impl Write for VecWriter {
             fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
@@ -1446,6 +1453,7 @@ mod tests {
 
     #[test]
     fn test_oversized_input_rejected_not_truncated() {
+        let _env = crate::test_support::lock_test_env();
         let manager = PtyManager::new();
         let emitter = Arc::new(NoopEventEmitter);
         let info = manager
@@ -1471,6 +1479,7 @@ mod tests {
 
     #[test]
     fn test_large_multiline_unicode_paste_delivered() {
+        let _env = crate::test_support::lock_test_env();
         let manager = PtyManager::new();
         let logs = Arc::new(Mutex::new(Vec::new()));
         let exited = Arc::new(AtomicBool::new(false));
@@ -1532,6 +1541,7 @@ mod tests {
 
     #[test]
     fn test_resize_clamps_zero_and_oversize() {
+        let _env = crate::test_support::lock_test_env();
         let manager = PtyManager::new();
         let emitter = Arc::new(NoopEventEmitter);
         let info = manager
@@ -1560,6 +1570,7 @@ mod tests {
 
     #[test]
     fn test_is_cmd_shell() {
+        let _env = crate::test_support::lock_test_env();
         assert!(is_cmd_shell("C:\\Windows\\System32\\cmd.exe"));
         assert!(is_cmd_shell("cmd"));
         assert!(is_cmd_shell("CMD.EXE"));
@@ -1569,6 +1580,7 @@ mod tests {
 
     #[test]
     fn test_powershell_args_take_command() {
+        let _env = crate::test_support::lock_test_env();
         assert!(!powershell_args_take_command(&["-NoLogo".to_string()]));
         assert!(!powershell_args_take_command(&[]));
         assert!(powershell_args_take_command(&[
@@ -1584,6 +1596,7 @@ mod tests {
 
     #[test]
     fn test_powershell_hook_wraps_prompt_and_reports_osc99() {
+        let _env = crate::test_support::lock_test_env();
         let hook = powershell_cwd_hook_script();
         assert!(hook.contains("global:prompt"), "hook must define prompt");
         assert!(hook.contains("]9;9;"), "hook must emit OSC 9;9");
@@ -1599,6 +1612,7 @@ mod tests {
 
     #[test]
     fn test_cmd_prompt_reports_osc99() {
+        let _env = crate::test_support::lock_test_env();
         let def = cmd_cwd_prompt_value(None);
         assert!(def.starts_with("$e]9;9;$P$e\\"), "got: {def}");
         assert!(def.ends_with("$P$G"));
@@ -1613,6 +1627,7 @@ mod tests {
 
     #[test]
     fn test_extract_osc99_bel_and_st() {
+        let _env = crate::test_support::lock_test_env();
         let bel = b"\x1b]9;9;C:\\Users\\kai\x07";
         assert_eq!(extract_osc_cwds(bel), vec!["C:\\Users\\kai"]);
         let st = b"\x1b]9;9;D:\\repo\x1b\\";
@@ -1624,6 +1639,7 @@ mod tests {
 
     #[test]
     fn test_extract_osc7_file_url() {
+        let _env = crate::test_support::lock_test_env();
         // Unix path with percent-encoding.
         let seq = b"\x1b]7;file://host/home/kai/my%20proj\x07";
         assert_eq!(extract_osc_cwds(seq), vec!["/home/kai/my proj"]);
@@ -1637,6 +1653,7 @@ mod tests {
 
     #[test]
     fn test_extract_osc_split_across_chunks() {
+        let _env = crate::test_support::lock_test_env();
         // A sequence split across 4 KB reads yields nothing until complete;
         // the caller's retained tail + remainder then parses (mirrors the
         // reader thread's scan_buf behavior).
@@ -1650,6 +1667,7 @@ mod tests {
 
     #[test]
     fn test_resolve_process_cwd() {
+        let _env = crate::test_support::lock_test_env();
         let pid = std::process::id();
         #[cfg(target_os = "linux")]
         {

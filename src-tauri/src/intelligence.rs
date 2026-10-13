@@ -152,6 +152,7 @@ mod tests {
 
     #[test]
     fn test_unindexed_directory_returns_unindexed_status() {
+        let _env = crate::test_support::lock_test_env();
         let summary = get_project_intelligence("/non/existent/path/xyz123");
         assert_eq!(summary.status, "unindexed");
         assert_eq!(summary.file_count, 0);
@@ -160,6 +161,7 @@ mod tests {
 
     #[test]
     fn test_reads_existing_project_meta_and_tokens() {
+        let _env = crate::test_support::lock_test_env();
         let temp_path =
             std::env::temp_dir().join(format!("kai_test_intel_{}", uuid::Uuid::new_v4()));
         let _ = fs::create_dir_all(&temp_path);
@@ -207,6 +209,7 @@ mod tests {
 
     #[test]
     fn test_verbatim_prefix_mismatch_still_matches() {
+        let _env = crate::test_support::lock_test_env();
         // Rust canonicalize() returns `\\?\C:\...` verbatim paths on Windows
         // while Node's realpathSync() (which writes meta.json) returns `C:\...`.
         // Normalization must bridge the two forms.
@@ -226,6 +229,7 @@ mod tests {
 
     #[test]
     fn test_candidate_homes_include_xdg_data_home() {
+        let _env = crate::test_support::lock_test_env();
         let temp_path = std::env::temp_dir().join(format!("kai_test_xdg_{}", uuid::Uuid::new_v4()));
         let xdg_dir = temp_path.join("xdg_share");
         let kai_xdg = xdg_dir.join("kai");
@@ -249,9 +253,13 @@ mod tests {
         .to_string();
         fs::write(proj_dir.join("meta.json"), meta_json).unwrap();
 
+        let old_xdg = std::env::var("XDG_DATA_HOME").ok();
         std::env::set_var("XDG_DATA_HOME", &xdg_dir);
         let summary = get_project_intelligence(target_repo.to_str().unwrap());
-        std::env::remove_var("XDG_DATA_HOME");
+        match old_xdg {
+            Some(v) => std::env::set_var("XDG_DATA_HOME", v),
+            None => std::env::remove_var("XDG_DATA_HOME"),
+        }
 
         assert_eq!(summary.status, "ready");
         assert_eq!(summary.file_count, 10);

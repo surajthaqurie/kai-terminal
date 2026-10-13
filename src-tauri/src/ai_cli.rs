@@ -1212,11 +1212,9 @@ fn is_usable_executable(path: &Path) -> bool {
 mod tests {
     use super::*;
 
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
     #[test]
     fn test_detect_returns_all_catalogued_clis() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _env = crate::test_support::lock_test_env();
         let statuses = detect_ai_clis();
         let ids: Vec<&str> = statuses.iter().map(|s| s.id.as_str()).collect();
         assert!(ids.contains(&"codex"));
@@ -1234,7 +1232,7 @@ mod tests {
 
     #[test]
     fn test_missing_cli_is_reported_unavailable_not_error() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _env = crate::test_support::lock_test_env();
         // Detection must never fail; absence is a normal state.
         let statuses = detect_ai_clis();
         for s in &statuses {
@@ -1248,6 +1246,7 @@ mod tests {
 
     #[test]
     fn test_status_serialization_roundtrip() {
+        let _env = crate::test_support::lock_test_env();
         let status = AiCliStatus {
             id: "codex".into(),
             name: "Codex CLI".into(),
@@ -1262,7 +1261,7 @@ mod tests {
 
     #[test]
     fn test_details_always_return_guidance() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _env = crate::test_support::lock_test_env();
         let details = detect_ai_cli_details();
         assert_eq!(details.len(), 10);
         for d in &details {
@@ -1276,6 +1275,7 @@ mod tests {
 
     #[test]
     fn test_custom_path_rejects_missing_and_unknown_id() {
+        let _env = crate::test_support::lock_test_env();
         assert!(check_custom_ai_cli_path("codex", "/non_existent_xyz_12345").is_err());
         assert!(check_custom_ai_cli_path("unknown-id", "/bin/sh").is_err());
         assert!(check_custom_ai_cli_path("codex", "").is_err());
@@ -1283,6 +1283,7 @@ mod tests {
 
     #[test]
     fn test_custom_path_accepts_real_executable() {
+        let _env = crate::test_support::lock_test_env();
         // /bin/sh exists on Unix CI; Windows CI uses cmd path fallback.
         #[cfg(not(target_os = "windows"))]
         {
@@ -1294,7 +1295,7 @@ mod tests {
 
     #[test]
     fn test_missing_cli_reports_not_found_state() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _env = crate::test_support::lock_test_env();
         // Point PATH at an empty dir so nothing is found. HOME is sandboxed
         // too so the supplementary well-known-dir fallback (which ignores
         // PATH) also finds nothing on machines with user-level installs.
@@ -1331,13 +1332,14 @@ mod tests {
 
     #[test]
     fn test_check_local_config_presence() {
+        let _env = crate::test_support::lock_test_env();
         let status = check_local_config_presence("claude");
         assert!(status == "config_present" || status == "config_missing" || status == "unknown");
     }
 
     #[test]
     fn test_version_success_does_not_imply_auth() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _env = crate::test_support::lock_test_env();
         // /bin/sh --version fails, but any binary that prints a version must
         // still report auth unknown, never ready/authenticated.
         let details = detect_ai_cli_details();
@@ -1356,6 +1358,7 @@ mod tests {
 
     #[test]
     fn test_probe_timeout_returns_quickly_for_missing_binary() {
+        let _env = crate::test_support::lock_test_env();
         let start = std::time::Instant::now();
         assert!(probe_version("/non_existent_xyz_12345_binary").is_none());
         assert!(start.elapsed() < std::time::Duration::from_secs(8));
@@ -1363,6 +1366,7 @@ mod tests {
 
     #[test]
     fn test_malformed_version_never_implies_auth() {
+        let _env = crate::test_support::lock_test_env();
         // A binary printing garbage on --version still yields a version
         // string (informational only) with auth unknown — never ready.
         #[cfg(not(target_os = "windows"))]
@@ -1391,6 +1395,7 @@ mod tests {
 
     #[test]
     fn test_hanging_binary_probe_times_out_and_reaps() {
+        let _env = crate::test_support::lock_test_env();
         // A binary that ignores --version must not linger past the bound.
         #[cfg(not(target_os = "windows"))]
         {
@@ -1414,6 +1419,7 @@ mod tests {
 
     #[test]
     fn test_custom_path_rejects_directories_and_non_executables() {
+        let _env = crate::test_support::lock_test_env();
         let dir = std::env::temp_dir().join(format!("kai-ai-custom-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -1433,6 +1439,7 @@ mod tests {
 
     #[test]
     fn test_unsupported_version_state_is_reserved_and_serializes() {
+        let _env = crate::test_support::lock_test_env();
         // No minimum versions are documented today, so passive probing must
         // never emit unsupported_version; the variant exists and round-trips
         // for future use.
@@ -1449,7 +1456,7 @@ mod tests {
 
     #[test]
     fn test_config_presence_never_claims_valid_credentials() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _env = crate::test_support::lock_test_env();
         let details = detect_ai_cli_details();
         for d in &details {
             // auth_status is file-existence only; diagnostics must say so.
@@ -1471,6 +1478,7 @@ mod tests {
 
     #[test]
     fn test_state_serializes_to_snake_case_and_defaults_unknown() {
+        let _env = crate::test_support::lock_test_env();
         let json = serde_json::to_string(&AiCliDiagnosticState::VersionDetected).unwrap();
         assert_eq!(json, "\"version_detected\"");
         // Old payloads without state/auth_status must still deserialize.
@@ -1483,7 +1491,6 @@ mod tests {
 
     /// Run `f` with HOME/USERPROFILE pointed at a fresh temp dir.
     fn with_temp_home(name: &str, f: impl FnOnce(std::path::PathBuf)) {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let dir =
             std::env::temp_dir().join(format!("kai-agent-setup-{}-{}", name, std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -1514,6 +1521,7 @@ mod tests {
 
     #[test]
     fn test_setup_rejects_unknown_and_project_scoped_ids() {
+        let _env = crate::test_support::lock_test_env();
         let launcher = test_launcher();
         assert!(setup_agent_mcp("no-such-agent", launcher.clone(), ".", false).is_err());
         assert!(setup_agent_mcp("custom:mine", launcher.clone(), ".", false).is_err());
@@ -1523,6 +1531,7 @@ mod tests {
 
     #[test]
     fn test_setup_validates_launcher() {
+        let _env = crate::test_support::lock_test_env();
         assert!(setup_agent_mcp("aider", vec![], ".", false).is_err());
         assert!(setup_agent_mcp(
             "aider",
@@ -1542,6 +1551,7 @@ mod tests {
 
     #[test]
     fn test_setup_writes_merges_and_reports_wired_aider() {
+        let _env = crate::test_support::lock_test_env();
         with_temp_home("aider", |home| {
             assert!(!is_kai_wired("aider"));
             let res = setup_agent_mcp("aider", test_launcher(), ".", false).expect("setup");
@@ -1566,6 +1576,7 @@ mod tests {
 
     #[test]
     fn test_setup_preserves_unrelated_servers() {
+        let _env = crate::test_support::lock_test_env();
         with_temp_home("merge", |home| {
             let dir = home.join(".config/aider");
             std::fs::create_dir_all(&dir).unwrap();
@@ -1586,6 +1597,7 @@ mod tests {
 
     #[test]
     fn test_setup_refuses_to_rewrite_invalid_json() {
+        let _env = crate::test_support::lock_test_env();
         with_temp_home("invalid", |home| {
             let dir = home.join(".config/aider");
             std::fs::create_dir_all(&dir).unwrap();
@@ -1602,6 +1614,7 @@ mod tests {
 
     #[test]
     fn test_setup_opencode_uses_mcp_key_style() {
+        let _env = crate::test_support::lock_test_env();
         with_temp_home("opencode", |_| {
             let res = setup_agent_mcp("opencode", test_launcher(), ".", false).expect("setup");
             assert!(res.wrote);
@@ -1615,6 +1628,7 @@ mod tests {
 
     #[test]
     fn test_setup_codex_toml_append_is_idempotent() {
+        let _env = crate::test_support::lock_test_env();
         with_temp_home("codex", |home| {
             let res = setup_agent_mcp("codex", test_launcher(), ".", false).expect("setup");
             assert!(res.wrote);
@@ -1628,6 +1642,7 @@ mod tests {
 
     #[test]
     fn test_setup_cline_declines_without_vscode_storage() {
+        let _env = crate::test_support::lock_test_env();
         with_temp_home("cline", |_| {
             // Fresh temp HOME has no VS Code storage dir: must decline, not
             // fabricate foreign app directories.
@@ -1638,6 +1653,7 @@ mod tests {
 
     #[test]
     fn test_gui_agents_skip_version_probe() {
+        let _env = crate::test_support::lock_test_env();
         let catalog = ai_cli_catalog();
         let flag = |id: &str| {
             catalog
@@ -1664,7 +1680,7 @@ mod tests {
     #[cfg(target_os = "windows")]
     #[test]
     fn test_find_on_path_prefers_cmd_shim_over_shell_script() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _env = crate::test_support::lock_test_env();
         let dir = std::env::temp_dir().join(format!("kai-pathext-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();

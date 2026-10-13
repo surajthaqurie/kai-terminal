@@ -145,9 +145,6 @@ pub fn get_active_project() -> ActiveProject {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn clear_env() {
         std::env::remove_var("KAI_ACTIVE_PROJECT");
@@ -167,18 +164,23 @@ mod tests {
         userprofile: Option<String>,
     }
 
-    fn isolate_home(tmp: &std::path::Path) -> EnvSnapshot {
-        let snap = EnvSnapshot {
+    fn snapshot_env() -> EnvSnapshot {
+        EnvSnapshot {
             kai_home: std::env::var("KAI_HOME").ok(),
             xdg: std::env::var("XDG_DATA_HOME").ok(),
             home: std::env::var("HOME").ok(),
             userprofile: std::env::var("USERPROFILE").ok(),
-        };
+        }
+    }
+
+    /// Pin ALL home-locating vars at `tmp` for the test body. Callers must
+    /// snapshot FIRST (a real `KAI_HOME` on the machine would otherwise be
+    /// destroyed by `clear_env` before it is captured).
+    fn isolate_home(tmp: &std::path::Path) {
         std::env::set_var("KAI_HOME", tmp);
         std::env::set_var("XDG_DATA_HOME", tmp.join("xdg-nowhere"));
         std::env::set_var("HOME", tmp);
         std::env::set_var("USERPROFILE", tmp);
-        snap
     }
 
     fn restore_env(snap: EnvSnapshot) {
@@ -198,11 +200,12 @@ mod tests {
 
     #[test]
     fn test_no_state_returns_terminal_not_code() {
-        let _g = ENV_LOCK.lock().unwrap();
-        clear_env();
+        let _env = crate::test_support::lock_test_env();
         let tmp = std::env::temp_dir().join(format!("kai-ap-none-{}", std::process::id()));
         let _ = fs::create_dir_all(&tmp);
-        let _snap = isolate_home(&tmp);
+        let _snap = snapshot_env();
+        clear_env();
+        isolate_home(&tmp);
         let s = get_active_project();
         assert_eq!(s.path, None);
         assert_eq!(s.mode, "terminal");
@@ -212,11 +215,12 @@ mod tests {
 
     #[test]
     fn test_code_file_activates_code_mode() {
-        let _g = ENV_LOCK.lock().unwrap();
-        clear_env();
+        let _env = crate::test_support::lock_test_env();
         let tmp = std::env::temp_dir().join(format!("kai-ap-code-{}", std::process::id()));
         let _ = fs::create_dir_all(&tmp);
-        let _snap = isolate_home(&tmp);
+        let _snap = snapshot_env();
+        clear_env();
+        isolate_home(&tmp);
         fs::write(
             tmp.join("active_project.json"),
             r#"{"id":"abc","name":"demo","path":"C:\\repo\\demo","mode":"code"}"#,
@@ -231,11 +235,12 @@ mod tests {
 
     #[test]
     fn test_non_code_mode_file_stays_terminal() {
-        let _g = ENV_LOCK.lock().unwrap();
-        clear_env();
+        let _env = crate::test_support::lock_test_env();
         let tmp = std::env::temp_dir().join(format!("kai-ap-term-{}", std::process::id()));
         let _ = fs::create_dir_all(&tmp);
-        let _snap = isolate_home(&tmp);
+        let _snap = snapshot_env();
+        clear_env();
+        isolate_home(&tmp);
         fs::write(
             tmp.join("active_project.json"),
             r#"{"path":"C:\\repo\\demo","mode":"terminal"}"#,
@@ -250,11 +255,12 @@ mod tests {
 
     #[test]
     fn test_env_vars_take_precedence_for_release_launches() {
-        let _g = ENV_LOCK.lock().unwrap();
-        clear_env();
+        let _env = crate::test_support::lock_test_env();
         let tmp = std::env::temp_dir().join(format!("kai-ap-env-{}", std::process::id()));
         let _ = fs::create_dir_all(&tmp);
-        let _snap = isolate_home(&tmp);
+        let _snap = snapshot_env();
+        clear_env();
+        isolate_home(&tmp);
         std::env::set_var("KAI_ACTIVE_PROJECT", "D:\\work\\app");
         std::env::set_var("KAI_MODE", "code");
         let s = get_active_project();
@@ -266,21 +272,16 @@ mod tests {
 
     #[test]
     fn test_xdg_fallback_activates_when_kai_home_unset() {
+        let _env = crate::test_support::lock_test_env();
         // Regression: CLI honours XDG_DATA_HOME but the backend did not, so
         // `kai code .` on such systems wrote state the app never read.
-        let _g = ENV_LOCK.lock().unwrap();
-        clear_env();
-        // KAI_HOME must be ABSENT here so the XDG candidate is exercised.
-        std::env::remove_var("KAI_HOME");
         let tmp = std::env::temp_dir().join(format!("kai-ap-xdg-{}", std::process::id()));
         let _ = fs::remove_dir_all(&tmp);
         let _ = fs::create_dir_all(&tmp);
-        let snap = EnvSnapshot {
-            kai_home: None,
-            xdg: std::env::var("XDG_DATA_HOME").ok(),
-            home: std::env::var("HOME").ok(),
-            userprofile: std::env::var("USERPROFILE").ok(),
-        };
+        let snap = snapshot_env();
+        clear_env();
+        // KAI_HOME must be ABSENT here so the XDG candidate is exercised
+        // (clear_env above already removed it).
         let xdg_kai = tmp.join("xdg-home").join("kai");
         let _ = fs::create_dir_all(&xdg_kai);
         std::env::set_var("XDG_DATA_HOME", tmp.join("xdg-home"));
@@ -301,14 +302,15 @@ mod tests {
 
     #[test]
     fn test_state_path_is_canonicalized_for_comparison() {
+        let _env = crate::test_support::lock_test_env();
         // A valid-but-unclean path (`/./` segment) must come back
         // canonicalized so it textually matches shell-reported cwds.
-        let _g = ENV_LOCK.lock().unwrap();
-        clear_env();
         let tmp = std::env::temp_dir().join(format!("kai-ap-canon-{}", std::process::id()));
         let _ = fs::remove_dir_all(&tmp);
         let _ = fs::create_dir_all(&tmp);
-        let _snap = isolate_home(&tmp);
+        let _snap = snapshot_env();
+        clear_env();
+        isolate_home(&tmp);
         let messy = format!("{}/./", tmp.to_string_lossy());
         fs::write(
             tmp.join("active_project.json"),

@@ -9,6 +9,30 @@ pub mod intelligence;
 pub mod pty;
 pub mod shell;
 
+#[cfg(test)]
+pub(crate) mod test_support {
+    //! Process-wide serialization for tests that read or mutate process
+    //! environment (`PATH`/`HOME`/`USERPROFILE`/`XDG_*`/`KAI_*`/`SHELL`/…)
+    //! or spawn subprocesses (which inherit that environment).
+    //!
+    //! Rust runs `#[test]` fns in threads of ONE process with SHARED env.
+    //! A test that points `PATH`/`HOME` at a temp dir breaks every
+    //! concurrent test that spawns `git`/`sh`/probes or resolves the home
+    //! dir (observed as `ENOENT` flakes in the pty/git suites under load).
+    //!
+    //! Convention (deadlock safety — `std::Mutex` is NOT reentrant):
+    //! ONLY `#[test]` fns acquire this lock, as their FIRST statement;
+    //! helpers and production code NEVER lock. Waiting time stays OUTSIDE
+    //! measured bounds: start any `Instant` AFTER acquiring the guard.
+    use std::sync::{Mutex, MutexGuard};
+
+    static TEST_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    pub(crate) fn lock_test_env() -> MutexGuard<'static, ()> {
+        TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
 #[cfg(feature = "tauri")]
 use std::sync::Arc;
 

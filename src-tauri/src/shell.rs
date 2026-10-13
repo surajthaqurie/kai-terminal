@@ -1179,6 +1179,7 @@ mod tests {
 
     #[test]
     fn test_detect_available_shells() {
+        let _env = crate::test_support::lock_test_env();
         let shells = detect_available_shells();
         assert!(!shells.is_empty(), "Should detect at least one shell");
         assert!(
@@ -1189,6 +1190,7 @@ mod tests {
 
     #[test]
     fn test_shell_detection_cache_is_stable() {
+        let _env = crate::test_support::lock_test_env();
         // Repeated spawns must not re-walk PATH/the filesystem every time.
         let first = detect_available_shells();
         let second = detect_available_shells();
@@ -1199,12 +1201,14 @@ mod tests {
 
     #[test]
     fn test_validate_and_resolve_shell_default() {
+        let _env = crate::test_support::lock_test_env();
         let shell = validate_and_resolve_shell(None);
         assert!(shell.is_ok());
     }
 
     #[test]
     fn test_validate_and_resolve_shell_invalid_message() {
+        let _env = crate::test_support::lock_test_env();
         let res = validate_and_resolve_shell(Some("/non_existent_binary_xyz_123"));
         assert!(res.is_err());
         match res {
@@ -1217,6 +1221,7 @@ mod tests {
 
     #[test]
     fn test_validate_rejects_nul_and_oversize() {
+        let _env = crate::test_support::lock_test_env();
         assert!(validate_and_resolve_shell(Some("bad\0path")).is_err());
         assert!(validate_and_resolve_cwd(Some("bad\0dir")).is_err());
         assert!(validate_and_resolve_shell(Some(&"x".repeat(5000))).is_err());
@@ -1224,6 +1229,7 @@ mod tests {
 
     #[test]
     fn test_validate_and_resolve_shell_with_spaces_in_path() {
+        let _env = crate::test_support::lock_test_env();
         let temp_dir = std::env::temp_dir().join("terminal space test dir");
         let _ = fs::create_dir_all(&temp_dir);
 
@@ -1257,6 +1263,7 @@ mod tests {
 
     #[test]
     fn test_validate_and_resolve_cwd_valid_and_invalid() {
+        let _env = crate::test_support::lock_test_env();
         let temp_dir = std::env::temp_dir();
         let valid_res = validate_and_resolve_cwd(Some(temp_dir.to_str().unwrap()));
         assert!(valid_res.is_ok());
@@ -1273,6 +1280,7 @@ mod tests {
 
     #[test]
     fn test_validate_cwd_nested_missing_resolves_to_existing_parent() {
+        let _env = crate::test_support::lock_test_env();
         // Single-level fallback: "<existing-dir>/<missing-child>" resolves to
         // the existing parent, but a top-level miss must never resolve to "/".
         let dir = std::env::temp_dir();
@@ -1286,6 +1294,7 @@ mod tests {
 
     #[test]
     fn test_custom_shell_profile_serialization() {
+        let _env = crate::test_support::lock_test_env();
         let mut env_map = HashMap::new();
         env_map.insert("CUSTOM_VAR".to_string(), "VALUE".to_string());
 
@@ -1306,6 +1315,7 @@ mod tests {
 
     #[test]
     fn test_open_in_editor_validation() {
+        let _env = crate::test_support::lock_test_env();
         assert!(open_in_editor(Some("/non_existent_editor_xyz_99"), "/tmp").is_err());
         assert!(open_in_editor(Some("invalid\0editor"), "/tmp").is_err());
         assert!(open_in_editor(Some(""), "/tmp").is_err());
@@ -1313,6 +1323,7 @@ mod tests {
 
     #[test]
     fn test_detect_installed_editors_never_fails_and_dedups() {
+        let _env = crate::test_support::lock_test_env();
         // Must not panic on any OS — returns empty vec when nothing found.
         let editors = detect_installed_editors();
         let paths: Vec<String> = editors.iter().map(|e| e.path.clone()).collect();
@@ -1330,6 +1341,7 @@ mod tests {
 
     #[test]
     fn test_validate_cwd_file_resolves_to_parent_dir() {
+        let _env = crate::test_support::lock_test_env();
         // A file path must resolve to its containing directory on every OS
         // ("proper parent path" for pasted file paths).
         // Compare as `Path`s: `std::env::temp_dir()` may carry a trailing
@@ -1346,6 +1358,7 @@ mod tests {
 
     #[test]
     fn test_windows_build_gate_accepts_supported_builds() {
+        let _env = crate::test_support::lock_test_env();
         assert!(check_windows_build_supported(17763).is_ok());
         assert!(check_windows_build_supported(18362).is_ok());
         assert!(check_windows_build_supported(22631).is_ok());
@@ -1353,6 +1366,7 @@ mod tests {
 
     #[test]
     fn test_windows_build_gate_rejects_legacy_builds_with_actionable_error() {
+        let _env = crate::test_support::lock_test_env();
         for legacy in [10240u32, 14393, 15063, 16299, 17134] {
             let err = check_windows_build_supported(legacy).expect_err("legacy must fail");
             let msg = err.to_string();
@@ -1363,6 +1377,7 @@ mod tests {
 
     #[test]
     fn test_wsl_shell_path_detection() {
+        let _env = crate::test_support::lock_test_env();
         assert!(is_wsl_shell_path("wsl.exe"));
         assert!(is_wsl_shell_path("C:\\Windows\\System32\\wsl.exe"));
         // Forward-slash form (same binary, different separator style).
@@ -1378,6 +1393,7 @@ mod tests {
 
     #[test]
     fn test_detect_system_terminal_config() {
+        let _env = crate::test_support::lock_test_env();
         let config = detect_system_terminal_config();
         assert_eq!(config.font_size, 12);
         assert!(!config.font_family.is_empty());
