@@ -568,7 +568,7 @@ fn ai_cli_catalog() -> Vec<(
 pub fn detect_ai_clis() -> Vec<AiCliStatus> {
     ai_cli_catalog()
         .into_iter()
-        .map(|(id, name, binaries, _)| {
+        .map(|(id, name, binaries, _, _)| {
             let mut found: Option<String> = None;
             for bin in binaries {
                 if let Some(p) = find_on_path(bin) {
