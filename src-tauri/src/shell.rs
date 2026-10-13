@@ -678,7 +678,23 @@ fn which_editor_alias(aliases: &[&str]) -> Option<String> {
 /// Detects installed code editors without spawning shells: PATH lookup plus
 /// well-known install locations per OS. Never fails — returns an empty vec
 /// when nothing is found so the frontend can show "No editors found".
+///
+/// Result is cached per process: every scan walks PATH plus well-known
+/// `Program Files` / `LOCALAPPDATA` locations and `canonicalize()`s each hit.
+/// On Windows (Defender/AV + spinning disks) that costs hundreds of ms, and
+/// the frontend used to pay it during startup *and* on every reopen of the
+/// picker. Restart the app to pick up a newly installed editor. Use
+/// `detect_installed_editors_uncached` to force a rescan (tests).
 pub fn detect_installed_editors() -> Vec<EditorInfo> {
+    static EDITORS_CACHE: OnceLock<Vec<EditorInfo>> = OnceLock::new();
+    EDITORS_CACHE
+        .get_or_init(detect_installed_editors_uncached)
+        .clone()
+}
+
+/// Uncached filesystem scan for installed editors (see
+/// `detect_installed_editors` for why callers should prefer the cache).
+pub fn detect_installed_editors_uncached() -> Vec<EditorInfo> {
     let mut out: Vec<EditorInfo> = Vec::new();
     let mut seen_paths: Vec<String> = Vec::new();
     // Dedup key: canonicalized path. Case-insensitive only on

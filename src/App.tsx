@@ -62,6 +62,7 @@ import {
   nodeToPersistedLayout,
   persistedLayoutToNode,
 } from "./services/workspaces";
+import { runCacheJanitor } from "./services/cacheJanitor";
 import {
   ShellProfile,
   TerminalTab,
@@ -325,26 +326,40 @@ export function App() {
   const activePaneId = activeTab?.activePaneId || activeTab?.panes[0]?.id;
   const activePane = activeTab?.panes.find((p) => p.id === activePaneId);
   const getActiveTerminal = () => terminalRefs.current[activePaneId];
-  /** Re-fit the active pane after the OS window is restored/refocused. */
-  const refitActiveTerminal = useCallback(() => {
+  /**
+   * Re-fit every pane in the active tab after the OS window is
+   * restored/refocused.
+   *
+   * Cross-OS blank-on-reopen fix: when another app is active (or the window
+   * is minimized), the WebView lays out xterm viewports at 0x0. The old code
+   * re-fit only the active pane in one pass, so splits stayed blank and a
+   * single synchronous fit missed the intermediate sizes that window-restore
+   * animations deliver on Windows (WebView2), Linux compositors (WebKitGTK),
+   * and macOS Spaces (WKWebView). Refit all live panes of the active tab
+   * (every split is visible at once) across three passes.
+   */
+  const refitVisibleTerminals = useCallback(() => {
     const liveTabs = tabsRef.current;
     const tabId = activeTabIdRef.current;
     const tab = liveTabs.find((t) => t.id === tabId) || liveTabs[0];
-    const paneId = tab?.activePaneId || tab?.panes[0]?.id;
-    const view = paneId ? terminalRefs.current[paneId] : undefined;
-    try {
-      view?.refit();
-    } catch {
-      // Ignore refit errors during layout transitions.
-    }
-    // Second pass after window animations settle (intermediate sizes).
-    setTimeout(() => {
-      try {
-        view?.refit();
-      } catch {
-        // Ignore refit errors during layout transitions.
+    if (!tab) return;
+    const views = tab.panes
+      .map((p) => terminalRefs.current[p.id])
+      .filter((v): v is TerminalViewRef => v !== null && v !== undefined);
+    if (views.length === 0) return;
+    const pass = () => {
+      for (const view of views) {
+        try {
+          view.refit();
+        } catch {
+          // Ignore refit errors during layout transitions.
+        }
       }
-    }, 150);
+    };
+    pass();
+    // Second + third passes after window animations settle (intermediate sizes).
+    setTimeout(pass, 150);
+    setTimeout(pass, 500);
   }, []);
   /** Effective project dir: active pane -> tab -> global toolbar input. */
   const effectiveProjectDir = resolveEffectiveProjectDir(activePane?.cwd, activeTab?.cwd, cwd);
@@ -383,6 +398,12 @@ export function App() {
   useEffect(() => {
     let cancelled = false;
     const syncCodeMode = () => {
+      // Skip background polls: when the window is behind other apps the
+      // 2 s cadence keeps IPC + backend file reads awake and competes with
+      // the foreground app (part of the "Windows slow while Kai is in
+      // background" report). Foreground `focus` listener below still syncs
+      // immediately on return.
+      if (typeof document !== "undefined" && document.hidden) return;
       // Authoritative async state (backend file + launch env, then explicit
       // localStorage). Never resolves recent history to code.
       void getActiveProjectState().then((s) => {
@@ -405,12 +426,37 @@ export function App() {
       .catch(() => setInstalledEditors([]))
       .finally(() => setIsLoadingEditors(false));
   }, []);
-  // Detect installed IDEs after initial paint so startup remains instant
+  // Detect installed IDEs well after first paint so the heavy PATH +
+  // Program Files scan (now backend-cached) never contends with the first
+  // PTY spawn on Windows. Skipped while hidden; editors also refresh
+  // on-demand when the Settings/picker opens.
   useEffect(() => {
-    const timer = setTimeout(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const idle =
+      typeof (window as unknown as { requestIdleCallback?: unknown }).requestIdleCallback ===
+      "function"
+        ? (window as unknown as {
+            requestIdleCallback: (cb: () => void, opts?: { timeout: number }) => number;
+            cancelIdleCallback: (id: number) => void;
+          })
+        : null;
+    let idleId: number | null = null;
+    const run = () => {
+      if (typeof document !== "undefined" && document.hidden) {
+        timer = setTimeout(run, 3000);
+        return;
+      }
       refreshInstalledEditors();
-    }, 150);
-    return () => clearTimeout(timer);
+    };
+    if (idle) {
+      idleId = idle.requestIdleCallback(run, { timeout: 5000 });
+    } else {
+      timer = setTimeout(run, 3000);
+    }
+    return () => {
+      if (timer) clearTimeout(timer);
+      if (idle && idleId !== null) idle.cancelIdleCallback(idleId);
+    };
   }, [refreshInstalledEditors]);
 
   // Saving preferences applies a changed default shell to new sessions
@@ -440,17 +486,24 @@ export function App() {
   // On startup, reconcile the stored launch-at-startup preference with the
   // real OS state (user may have toggled it in OS settings outside the app).
   // The OS is the source of truth; the stored setting follows it.
+  // Deferred past first paint: on Windows this spawns `reg.exe query`, and
+  // running a child process during the first PTY spawn is a classic
+  // "Not Responding on launch" trigger.
   useEffect(() => {
-    void import("./services/autostartService")
-      .then(({ getAutostartEnabled }) => getAutostartEnabled())
-      .then((enabled) => {
-        setUserSettings((prev) =>
-          Boolean(prev.launchAtStartup) === enabled ? prev : { ...prev, launchAtStartup: enabled }
-        );
-      })
-      .catch(() => {
-        // Mock/browser mode or backend unavailable: keep stored preference.
-      });
+    const timer = setTimeout(() => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      void import("./services/autostartService")
+        .then(({ getAutostartEnabled }) => getAutostartEnabled())
+        .then((enabled) => {
+          setUserSettings((prev) =>
+            Boolean(prev.launchAtStartup) === enabled ? prev : { ...prev, launchAtStartup: enabled }
+          );
+        })
+        .catch(() => {
+          // Mock/browser mode or backend unavailable: keep stored preference.
+        });
+    }, 3000);
+    return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1040,7 +1093,17 @@ export function App() {
   // every few hours while the window stays open. Failures are silent unless
   // the user triggered the check manually.
   useEffect(() => {
-    void getAppVersion().then((v) => setAppVersion(v));
+    void getAppVersion().then((v) => {
+      setAppVersion(v);
+      // Install/update cache sweep: remove stale keys from older builds
+      // while preserving settings, sessions, and config (allowlist inside).
+      // Version-gated so it runs once per update, never on every launch.
+      try {
+        runCacheJanitor(v);
+      } catch {
+        // Storage failures must never block startup.
+      }
+    });
     // Defer network auto-check well past terminal startup so a slow DNS /
     // offline hang never contends with the first PTY spawn on Windows
     // (a classic "Not Responding on launch" trigger).
@@ -1075,17 +1138,18 @@ export function App() {
     setUpdateBannerVisible(false);
   }, []);
 
-  // Blank-on-reopen fix (all OSes): minimizing then restoring the OS window
-  // (or hiding/showing the WebView) can leave the xterm viewport laid out
-  // at 0x0 so the terminal paints blank until the next tab switch. Re-fit
-  // the active pane on every visibility / focus / restore signal so the
-  // window always repaints with real cols/rows.
+  // Blank-on-reopen fix (Windows, Linux, macOS): another app taking focus
+  // (or minimizing then restoring the OS window, or hiding/showing the
+  // WebView) can leave xterm viewports laid out at 0x0 so panes paint blank
+  // until the next tab switch. Re-fit every live pane of the active tab on
+  // every visibility / focus / restore signal so the window always repaints
+  // with real cols/rows on all three OSes.
   useEffect(() => {
     const onVisibility = () => {
-      if (!document.hidden) refitActiveTerminal();
+      if (!document.hidden) refitVisibleTerminals();
     };
     document.addEventListener("visibilitychange", onVisibility);
-    window.addEventListener("focus", refitActiveTerminal);
+    window.addEventListener("focus", refitVisibleTerminals);
     let cancelled = false;
     const unlistens: Array<() => void> = [];
     void import("@tauri-apps/api/window")
@@ -1095,13 +1159,13 @@ export function App() {
           const win = getCurrentWindow();
           void win
             .onResized(() => {
-              refitActiveTerminal();
+              refitVisibleTerminals();
             })
             .then((u) => unlistens.push(u))
             .catch(() => {});
           void win
             .onFocusChanged((e) => {
-              if (e.payload) refitActiveTerminal();
+              if (e.payload) refitVisibleTerminals();
             })
             .then((u) => unlistens.push(u))
             .catch(() => {});
@@ -1115,7 +1179,7 @@ export function App() {
     return () => {
       cancelled = true;
       document.removeEventListener("visibilitychange", onVisibility);
-      window.removeEventListener("focus", refitActiveTerminal);
+      window.removeEventListener("focus", refitVisibleTerminals);
       for (const u of unlistens) {
         try {
           u();
@@ -1124,7 +1188,7 @@ export function App() {
         }
       }
     };
-  }, [refitActiveTerminal]);
+  }, [refitVisibleTerminals]);
 
   const handleToggleSearch = useCallback(() => {
     getActiveTerminal()?.toggleSearch();
