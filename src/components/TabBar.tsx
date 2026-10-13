@@ -219,16 +219,16 @@ export const TabBar: FC<TabBarProps> = ({
             </div>
           );
         })}
+        <button
+          type="button"
+          className="tab-add-btn"
+          onClick={onNewTab}
+          title="New Tab (Ctrl+T / Cmd+T — works on Windows, Linux and macOS)"
+          aria-label="New terminal tab"
+        >
+          <Plus size={16} />
+        </button>
       </div>
-      <button
-        type="button"
-        className="tab-add-btn"
-        onClick={onNewTab}
-        title="New Tab (Ctrl+T / Cmd+T — works on Windows, Linux and macOS)"
-        aria-label="New terminal tab"
-      >
-        <Plus size={16} />
-      </button>
 
       {menu && menuTab && (
         <div

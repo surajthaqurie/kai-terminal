@@ -27,8 +27,9 @@ import {
   detectInstalledAgentsSync,
   listAgentIds,
 } from "../core/agents";
+import packageJson from "../../package.json";
 
-export const KAI_VERSION = "0.1.0";
+export const KAI_VERSION: string = packageJson.version ?? "0.1.0";
 
 /**
  * Persist active project info and sync SQLite localStorage for WebKitGTK/Tauri

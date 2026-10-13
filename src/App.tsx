@@ -1527,7 +1527,6 @@ export function App() {
           shells={shells}
           selectedShellId={selectedShellId}
           onSelectShell={setSelectedShellId}
-          onNewTab={() => handleNewTab()}
           onSplitHorizontal={() => handleSplitPane("horizontal")}
           onSplitVertical={() => handleSplitPane("vertical")}
           canClosePane={(activeTab?.panes.length ?? 0) > 1}
@@ -1928,7 +1927,6 @@ export function App() {
         onCheckUpdates={() => handleCheckUpdates(true)}
         onViewUpdate={handleViewUpdate}
         onGitAction={(action) => void handleGitActionRun(action)}
-        onNewTab={() => handleNewTab()}
         mode={isCodeModeForDir(effectiveProjectDir) ? "code" : "terminal"}
       />
     </div>

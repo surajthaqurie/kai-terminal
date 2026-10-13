@@ -14,7 +14,6 @@ import {
   Code,
   ChevronDown,
   X,
-  Plus,
 } from "lucide-react";
 import { InstalledEditor } from "../services/projectService";
 
@@ -22,7 +21,6 @@ interface ToolbarProps {
   shells: ShellProfile[];
   selectedShellId: string;
   onSelectShell: (shellId: string) => void;
-  onNewTab?: () => void;
   onSplitHorizontal?: () => void;
   onSplitVertical?: () => void;
   canClosePane?: boolean;
@@ -52,15 +50,14 @@ interface ToolbarProps {
  * - Code Mode badge (display-only; `kai code` / `kai stop code`): bottom status bar footer.
  * - Clear screen: `clear` command / command palette.
  *
- * New tabs CAN be opened from here, the tab bar "+", and the bottom status
- * bar — all three call the same handler, on every OS (Windows / Linux /
- * macOS), via button or Ctrl+T / Cmd+T.
+ * New tabs are opened from the tab bar "+" — the single source for
+ * creating tabs, on every OS (Windows / Linux / macOS),
+ * via button or Ctrl+T / Cmd+T.
  */
 export const Toolbar: FC<ToolbarProps> = ({
   shells,
   selectedShellId,
   onSelectShell,
-  onNewTab,
   onSplitHorizontal,
   onSplitVertical,
   canClosePane = false,
@@ -123,18 +120,6 @@ export const Toolbar: FC<ToolbarProps> = ({
             </option>
           ))}
         </select>
-        {onNewTab && (
-          <button
-            type="button"
-            className="btn btn-primary btn-small toolbar-newtab-btn"
-            onClick={onNewTab}
-            title="New Tab (Ctrl+T / Cmd+T — works on Windows, Linux and macOS)"
-            aria-label="New terminal tab"
-          >
-            <Plus size={14} aria-hidden="true" />
-            <span>New Tab</span>
-          </button>
-        )}
       </div>
 
       <div className="toolbar-group">

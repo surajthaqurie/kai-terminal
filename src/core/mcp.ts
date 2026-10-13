@@ -9,6 +9,7 @@ import { retrieveContext } from "./retrieval";
 import { recordMetric } from "./telemetry";
 import { detectInstalledLspServers } from "./lspBridge";
 import type { TaskCategory } from "./types";
+import packageJson from "../../package.json";
 
 export interface McpRequest {
   jsonrpc: "2.0";
@@ -162,7 +163,7 @@ export async function handleMcpMessage(
           },
           serverInfo: {
             name: "kai-mcp-server",
-            version: "0.1.0",
+            version: packageJson.version ?? "0.1.0",
           },
         },
       };

@@ -176,8 +176,13 @@ function ensurePathWindows(dir) {
     const out = runPowerShell(ps, 20000);
     if (out == null) {
       console.log("[kai setup] PowerShell did not respond (timed out).");
-      console.log("[kai setup] Add to PATH manually (one-time), then open a NEW terminal:");
-      console.log(`  setx PATH "%PATH%;${dir}"`);
+      console.log("[kai setup] Add to PATH manually (one-time), then open a NEW terminal.");
+      console.log("[kai setup] NOTE: do NOT use `setx PATH \"%PATH%;...\"` — setx silently");
+      console.log("[kai setup] truncates values over 1024 chars and can corrupt your PATH.");
+      console.log("[kai setup] Run this in PowerShell instead:");
+      console.log(
+        `[kai setup]   powershell -NoProfile -Command "[Environment]::SetEnvironmentVariable('Path', ([Environment]::GetEnvironmentVariable('Path','User').TrimEnd(';') + ';${dir}'), 'User')"`
+      );
       return true;
     }
     if (out.includes("CHANGED")) {
@@ -188,8 +193,11 @@ function ensurePathWindows(dir) {
     }
     return true;
   } catch {
-    console.log("[kai setup] Could not update PATH automatically. Run once:");
-    console.log(`  setx PATH "%PATH%;${dir}"`);
+    console.log("[kai setup] Could not update PATH automatically. Run once in PowerShell:");
+    console.log(
+      `  powershell -NoProfile -Command "[Environment]::SetEnvironmentVariable('Path', ([Environment]::GetEnvironmentVariable('Path','User').TrimEnd(';') + ';${dir}'), 'User')"`
+    );
+    console.log("[kai setup] (Avoid `setx PATH \"%PATH%;...\"` — setx truncates over 1024 chars.)");
     return true;
   }
 }
