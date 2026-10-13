@@ -51,4 +51,19 @@ describe("shell fast-launch args", () => {
     expect(withSkipProfileArgs(cmd, true)).toBe(cmd);
     expect(withSkipProfileArgs(undefined, true)).toBeUndefined();
   });
+
+  it("leaves WSL profiles untouched (never PowerShell-classified)", () => {
+    // Guards the WSL launch path on every OS: PowerShell-only flags must
+    // never be injected into wsl.exe argv.
+    expect(isPowerShellPath("C:\\Windows\\System32\\wsl.exe")).toBe(false);
+    expect(isPowerShellPath("wsl.exe")).toBe(false);
+    const wsl: ShellProfile = {
+      id: "wsl",
+      name: "WSL (Linux)",
+      path: "C:\\Windows\\System32\\wsl.exe",
+      is_default: false,
+      is_wsl: true,
+    };
+    expect(withSkipProfileArgs(wsl, true)).toBe(wsl);
+  });
 });

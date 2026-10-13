@@ -1365,9 +1365,14 @@ mod tests {
     fn test_wsl_shell_path_detection() {
         assert!(is_wsl_shell_path("wsl.exe"));
         assert!(is_wsl_shell_path("C:\\Windows\\System32\\wsl.exe"));
+        // Forward-slash form (same binary, different separator style).
+        assert!(is_wsl_shell_path("C:/Windows/System32/wsl.exe"));
         assert!(is_wsl_shell_path("WSL"));
         assert!(!is_wsl_shell_path("C:\\Windows\\System32\\cmd.exe"));
         assert!(!is_wsl_shell_path("/bin/bash"));
+        // Exact file-name match only: wslhost/lxss siblings must not match.
+        assert!(!is_wsl_shell_path("C:\\Windows\\System32\\wslhost.exe"));
+        assert!(!is_wsl_shell_path("wslconfig.exe"));
         assert!(!wsl_failure_hint().is_empty());
     }
 
