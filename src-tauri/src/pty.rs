@@ -834,10 +834,8 @@ fn parse_osc7_data(data: &[u8]) -> Option<String> {
     }
     let without_scheme = s.strip_prefix("file://")?;
     // Split host from path at the first `/`.
-    let path_part = match without_scheme.find('/') {
-        Some(idx) => &without_scheme[idx..],
-        None => return None,
-    };
+    let idx = without_scheme.find('/')?;
+    let path_part = &without_scheme[idx..];
     if path_part.is_empty() {
         return None;
     }
