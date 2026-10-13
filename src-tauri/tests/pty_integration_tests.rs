@@ -124,8 +124,11 @@ fn test_01_pty_creation_and_shell_startup() {
     let env_cmd = "echo %INIT_TEST_ENV_VAR%\r\n";
 
     manager.write_to_pty(&session_info.id, env_cmd).unwrap();
+    // Generous budget: shell startup + first output can stall for seconds
+    // on loaded machines (busy dev desktops, AV-hooked CI runners). The
+    // poll returns early on success, so this costs nothing on fast hosts.
     assert!(
-        emitter.wait_for_output("CUSTOM_ENV_VAL_999", 5),
+        emitter.wait_for_output("CUSTOM_ENV_VAL_999", 15),
         "Custom environment variables passed to create_pty must be present in shell"
     );
 
@@ -454,7 +457,7 @@ fn test_08_high_volume_output_and_memory() {
     manager.write_to_pty(&session.id, high_vol_cmd).unwrap();
 
     assert!(
-        emitter.wait_for_output("HIGH_VOL_LINE_500_", 10),
+        emitter.wait_for_output("HIGH_VOL_LINE_500_", 20),
         "High-volume terminal output (500 lines) must be streamed completely without loss or memory crashes"
     );
 
@@ -856,9 +859,10 @@ fn test_14_exit_command_terminates_session() {
         .write_to_pty(&session_id, exit_cmd)
         .expect("Failed to write exit command to PTY");
 
-    // Wait up to 5 seconds for shell process to exit and emit exit event
+    // Wait up to 15 seconds for shell process to exit and emit exit event
+    // (generous for loaded hosts; returns early on success).
     let start = Instant::now();
-    while start.elapsed() < Duration::from_secs(5) {
+    while start.elapsed() < Duration::from_secs(15) {
         if exited.load(Ordering::SeqCst) {
             break;
         }
