@@ -221,6 +221,7 @@ export const TabBar: FC<TabBarProps> = ({
         })}
       </div>
       <button
+        type="button"
         className="tab-add-btn"
         onClick={onNewTab}
         title="New Tab (Ctrl+T / Cmd+T — works on Windows, Linux and macOS)"

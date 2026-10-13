@@ -91,6 +91,12 @@ export interface TerminalPane {
   status: SessionStatus;
   errorMessage?: string;
   parentId?: string;
+  /**
+   * Spawn generation counter. Bumped to force the pane's TerminalView to
+   * re-spawn its backend PTY without changing the pane id (so the split
+   * layout tree, which references panes by id, stays intact).
+   */
+  resetKey?: number;
 }
 
 /**

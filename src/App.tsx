@@ -276,6 +276,32 @@ export function App() {
     return null;
   });
 
+  // Crash-loop / instant-death guards (all OSes, release included): a
+  // shell binary that is missing, not runnable, or exits instantly must
+  // never freeze the window in spawn churn, nor silently quit the app a
+  // fraction of a second after launch. Rapid exits park the tab in `error`
+  // with an actionable banner (Retry / Settings) instead of closing,
+  // recycling, or quitting. Timestamps age out, so a healthy shell that
+  // stays up never trips the detector.
+  const exitTimesRef = useRef<number[]>([]);
+  const tabBornRef = useRef<Record<string, number>>({});
+  const [loopFault, setLoopFault] = useState<{
+    tabId: string;
+    paneId: string;
+    message: string;
+  } | null>(null);
+
+  // Birth record for every tab (initial, restored, workspace, new) so the
+  // last-session exit path can tell "user typed exit" apart from "the
+  // shell died 500 ms after launch with a broken binary".
+  useEffect(() => {
+    const born = tabBornRef.current;
+    const now = Date.now();
+    for (const t of tabs) {
+      if (!(t.id in born)) born[t.id] = now;
+    }
+  }, [tabs]);
+
   // Terminal view refs keyed by pane ID
   const terminalRefs = useRef<Record<string, TerminalViewRef | null>>({});
 
@@ -677,13 +703,23 @@ export function App() {
       if (dir) {
         setRecentProjects(recordRecentProject(dir));
       }
-      const selectedShell = shells.find((s) => s.id === selectedShellId);
-      const title = `${selectedShell?.name || "Terminal"} ${tabs.length + 1}`;
-      const newTab = createDefaultTab(title, selectedShell?.path, dir);
+      // Effective shell: custom path override wins (same resolution as the
+      // `selectedShell` below), so a configured custom binary is actually
+      // used for new tabs instead of silently falling back to the stored
+      // profile path (the "binary not runnable" mismatch).
+      const base = shells.find((s) => s.id === selectedShellId);
+      const custom = userSettings.customShellPath?.trim();
+      const effName = custom ? `${base?.name ?? "Custom Shell"} (custom)` : base?.name;
+      const effPath = custom || base?.path;
+      // Number from live tabs (not a stale closure) so spam-clicking the
+      // top "+" like PowerShell never yields duplicate "Terminal N" titles.
+      const n = tabsRef.current.length + 1;
+      const title = `${effName || "Terminal"} ${n}`;
+      const newTab = createDefaultTab(title, effPath, dir);
       setTabs((prev) => [...prev, newTab]);
       setActiveTabId(newTab.id);
     },
-    [shells, selectedShellId, tabs.length, cwd]
+    [shells, selectedShellId, userSettings.customShellPath, cwd]
   );
 
   const handleCloseTab = useCallback(
@@ -710,10 +746,12 @@ export function App() {
   const handleSplitPane = useCallback(
     (direction: SplitDirection) => {
       if (direction !== "horizontal" && direction !== "vertical") return;
+      const base = shells.find((s) => s.id === selectedShellId);
+      const custom = userSettings.customShellPath?.trim();
+      const effPath = custom || base?.path;
       setTabs((prev) =>
         prev.map((tab) => {
           if (tab.id !== activeTabId) return tab;
-          const selectedShell = shells.find((s) => s.id === selectedShellId);
           // Split ONLY the active pane: inherit the active pane's cwd
           // (proper parent path chain: active pane -> tab -> toolbar).
           const fromPane = tab.panes.find((p) => p.id === tab.activePaneId);
@@ -722,7 +760,7 @@ export function App() {
             undefined;
           const next = splitTab(tab, tab.id, direction, (id) => ({
             id,
-            shellPath: selectedShell?.path,
+            shellPath: effPath,
             cwd: inheritCwd,
             status: "connecting",
             parentId: fromPane?.id,
@@ -731,7 +769,7 @@ export function App() {
         })
       );
     },
-    [activeTabId, shells, selectedShellId, cwd]
+    [activeTabId, shells, selectedShellId, userSettings.customShellPath, cwd]
   );
 
   const handleClosePane = useCallback(() => {
@@ -760,6 +798,47 @@ export function App() {
     const targetTab = liveTabs.find((t) => t.id === tabId);
     if (!targetTab) return;
     if (targetTab.panes.some((p) => p.id === paneId) === false) return;
+
+    // Release-freeze guard (Windows / Linux / macOS): a broken shell
+    // binary (missing, not runnable, instantly crashing) fires `pty-exit`
+    // immediately after every spawn. Without this, the app churns through
+    // close/recycle/quit in a tight loop and the window looks frozen
+    // ("trying to reopen"). 3+ deaths inside 10 s parks the tab in `error`
+    // with an actionable banner instead — on every OS.
+    const now = Date.now();
+    const recent = exitTimesRef.current.filter((t) => now - t < 10_000);
+    recent.push(now);
+    exitTimesRef.current = recent;
+
+    const parkAsFault = (message: string) => {
+      exitTimesRef.current = [];
+      setLastError(message);
+      setLoopFault({ tabId, paneId, message });
+      setTabs((prev) =>
+        prev.map((t) =>
+          t.id === tabId
+            ? {
+                ...t,
+                status: "error" as const,
+                errorMessage: message,
+                panes: t.panes.map((p) =>
+                  p.id === paneId
+                    ? { ...p, status: "error" as const, errorMessage: message }
+                    : p
+                ),
+              }
+            : t
+        )
+      );
+    };
+
+    if (recent.length >= 3) {
+      parkAsFault(
+        "Shell keeps exiting immediately (3 times in 10 s). The configured shell binary is " +
+          "likely missing or not runnable. Pick another shell in Settings, then press Retry."
+      );
+      return;
+    }
 
     if (targetTab.panes.length > 1) {
       const at = targetTab.panes.findIndex((p) => p.id === paneId);
@@ -805,6 +884,19 @@ export function App() {
     // (`exit` in the only session closes Kai, like a regular terminal).
     // Browser/mock fallback recycles a fresh tab so the window never ends
     // up empty/disconnected.
+    // Instant-death exception (all OSes): when the session died within 4 s
+    // of the tab's creation the shell never actually ran (broken binary or
+    // bad cwd) — quitting here would make a release launch vanish with no
+    // explanation. Keep the window open with the fault banner instead.
+    const bornAt = tabBornRef.current[tabId] ?? 0;
+    if (bornAt > 0 && now - bornAt < 4000) {
+      parkAsFault(
+        "Shell exited right after opening — it likely failed to start (bad shell binary or " +
+          "working directory). The window was kept open so you can fix it: pick another shell " +
+          "in Settings, then press Retry."
+      );
+      return;
+    }
     void closeAppWindow().then((closed) => {
       if (closed) return;
       const liveShells = shellsRef.current;
@@ -820,6 +912,41 @@ export function App() {
       setActiveTabId(fresh.id);
     });
   }, []);
+
+  // Retry after a crash-loop / instant-death fault: re-spawn the same pane
+  // in place (resetKey bump keeps the pane id, so split layouts survive).
+  // Birth + exit clocks restart so a second instant death parks again
+  // instead of quitting or churning.
+  const handleRetryLoopPane = () => {
+    if (!loopFault) return;
+    const { tabId, paneId } = loopFault;
+    tabBornRef.current[tabId] = Date.now();
+    exitTimesRef.current = [];
+    setLastError(null);
+    setLoopFault(null);
+    setTabs((prev) =>
+      prev.map((t) =>
+        t.id === tabId
+          ? {
+              ...t,
+              status: "connecting" as const,
+              errorMessage: undefined,
+              activePaneId: paneId,
+              panes: t.panes.map((p) =>
+                p.id === paneId
+                  ? {
+                      ...p,
+                      status: "connecting" as const,
+                      errorMessage: undefined,
+                      resetKey: (p.resetKey ?? 0) + 1,
+                    }
+                  : p
+              ),
+            }
+          : t
+      )
+    );
+  };
 
   const handleOpenEditor = useCallback(
     async (editorBinary?: string, dirOverride?: string) => {
@@ -1478,6 +1605,39 @@ export function App() {
             </div>
           </div>
         )}
+        {loopFault && (
+          <div
+            className="session-restore-banner"
+            role="alert"
+            aria-label="Shell keeps exiting"
+            style={{ borderColor: "#f38ba8" }}
+          >
+            <span className="session-restore-text">{loopFault.message}</span>
+            <div className="session-restore-actions">
+              <button
+                type="button"
+                className="btn btn-primary btn-small"
+                onClick={handleRetryLoopPane}
+              >
+                Retry
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary btn-small"
+                onClick={() => setIsSettingsOpen(true)}
+              >
+                Open Settings
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary btn-small"
+                onClick={() => setLoopFault(null)}
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        )}
         {tabs.map((tab) => {
           const paneById = new Map(tab.panes.map((p) => [p.id, p]));
           const layout: PaneLayoutNode = tab.layout ?? {
@@ -1511,6 +1671,7 @@ export function App() {
                     cwd={pane.cwd || tab.cwd || cwd}
                     settings={userSettings}
                     visible={tab.id === activeTabId}
+                    resetKey={pane.resetKey ?? 0}
                     onFocus={focusPane}
                     onCwdResolved={(resolved) => {
                       if (resolved) {

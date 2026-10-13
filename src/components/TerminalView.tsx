@@ -37,6 +37,12 @@ interface TerminalViewProps {
    * instead of ten (startup hang fix). Defaults to true.
    */
   visible?: boolean;
+  /**
+   * Spawn generation: when incremented, the pane re-spawns its backend PTY
+   * (used by the crash-loop Retry banner). Changing this never remounts
+   * the xterm instance or the pane id, so split layouts survive retries.
+   */
+  resetKey?: number;
   onSessionStatusChange?: (status: SessionStatus, message?: string) => void;
   onExit?: (exitCode: number) => void;
   onCwdResolved?: (cwd: string) => void;
@@ -51,6 +57,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       cwd,
       settings = DEFAULT_SETTINGS,
       visible = true,
+      resetKey = 0,
       onSessionStatusChange,
       onExit,
       onCwdResolved,
@@ -69,6 +76,10 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
     const backendPtyIdRef = useRef<string | null>(null);
     const initSeqRef = useRef<number>(0);
     const [isSearchVisible, setIsSearchVisible] = useState(false);
+    // Last PTY spawn failure for this pane. When set, an in-pane overlay
+    // offers Retry (re-spawn) so a bad shell binary / cwd never leaves the
+    // user staring at a dead pane with "use the + button" as the only fix.
+    const [launchError, setLaunchError] = useState<string | null>(null);
 
     // ---- Command line tracking & history ---------------------------------
     // Native Kali/Linux terminal autocompletion (ZSH autosuggestions, compinit,
@@ -240,6 +251,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         }
 
         backendPtyIdRef.current = sessionInfo.id;
+        setLaunchError(null);
         onStatusRef.current?.("connected");
         if (sessionInfo.cwd) {
           onCwdResolvedRef.current?.(sessionInfo.cwd);
@@ -247,6 +259,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       } catch (err: unknown) {
         if (mySeq !== initSeqRef.current) return;
         const errorMsg = err instanceof Error ? err.message : String(err);
+        setLaunchError(errorMsg);
         term.writeln(`\r\n\x1b[31m[Failed to launch shell: ${errorMsg}]\x1b[0m\r\n`);
         term.writeln(
           `\x1b[33m[Tip: if this persists, check your PowerShell profile or pick Command Prompt as the default shell in Settings.]\x1b[0m\r\n`
@@ -254,6 +267,24 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         onStatusRef.current?.("error", errorMsg);
       }
     };
+
+    // Latest spawn closure (props change after mount: shell picker, cwd).
+    // The resetKey effect below must re-spawn with CURRENT props, not the
+    // ones captured on mount while the shell list was still loading.
+    const initPtyRef = useRef<() => Promise<void>>(async () => {});
+    initPtyRef.current = () => initPtySession();
+
+    // Crash-loop Retry (all OSes): re-spawn the backend PTY in place when
+    // the parent bumps `resetKey`. No-op on mount (key 0) so the initial
+    // launch timer stays the single spawner — never a double spawn.
+    const resetKeySeenRef = useRef(resetKey);
+    useEffect(() => {
+      if (resetKey === 0 || resetKey === resetKeySeenRef.current) return;
+      resetKeySeenRef.current = resetKey;
+      setLaunchError(null);
+      void initPtyRef.current();
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [resetKey]);
 
     // React to settings changes dynamically
     useEffect(() => {
@@ -718,6 +749,42 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
           role="log"
           aria-label="Terminal output"
         />
+        {launchError && (
+          <div
+            className="terminal-launch-error"
+            role="alert"
+            aria-label="Terminal failed to start"
+            style={{
+              position: "absolute",
+              inset: "auto 12px 12px 12px",
+              padding: "10px 12px",
+              borderRadius: 8,
+              background: "rgba(20, 8, 8, 0.92)",
+              border: "1px solid #f38ba8",
+              color: "#f5e0e8",
+              fontSize: 12,
+              display: "flex",
+              gap: 10,
+              alignItems: "center",
+              justifyContent: "space-between",
+            }}
+          >
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+              Shell failed to start: {launchError} — check Settings → Shell or pick another
+              profile, then retry.
+            </span>
+            <button
+              type="button"
+              className="btn btn-primary btn-small"
+              onClick={() => {
+                setLaunchError(null);
+                void initPtySession();
+              }}
+            >
+              Retry
+            </button>
+          </div>
+        )}
       </div>
     );
   }
