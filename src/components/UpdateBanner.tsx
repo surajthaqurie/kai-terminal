@@ -6,6 +6,7 @@ interface UpdateBannerProps {
   latestVersion: string;
   releaseUrl: string;
   releaseName?: string | null;
+  releaseAuthor?: string | null;
   onViewRelease: () => void;
   onDismiss: () => void;
   onLater: () => void;
@@ -19,6 +20,7 @@ export const UpdateBanner: FC<UpdateBannerProps> = ({
   currentVersion,
   latestVersion,
   releaseName,
+  releaseAuthor,
   onViewRelease,
   onDismiss,
   onLater,
@@ -37,7 +39,10 @@ export const UpdateBanner: FC<UpdateBannerProps> = ({
         {releaseName && releaseName !== `v${latestVersion}` && (
           <span className="update-banner-release"> — {releaseName}</span>
         )}
-        <span className="update-banner-hint"> A newer version of Kai Terminal is ready.</span>
+        <span className="update-banner-hint">
+          {" "}
+          A newer version of Kai Terminal is ready{releaseAuthor ? ` by ${releaseAuthor}` : ""}.
+        </span>
       </span>
       <div className="update-banner-actions">
         <button type="button" className="btn btn-primary btn-small" onClick={onViewRelease}>

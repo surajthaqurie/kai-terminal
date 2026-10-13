@@ -49,6 +49,23 @@ describe("checkForUpdates", () => {
     expect(res.error).toBeNull();
   });
 
+  it("reports the release author, falling back to the repo owner", async () => {
+    const withAuthor = (async () =>
+      new Response(JSON.stringify({ tag_name: "v9.9.9", author: { login: "surajthaqurie" } }), {
+        status: 200,
+      })) as unknown as typeof fetch;
+    expect((await checkForUpdates("0.1.1", { fetchFn: withAuthor })).releaseAuthor).toBe(
+      "surajthaqurie"
+    );
+    const withoutAuthor = (async () =>
+      new Response(JSON.stringify({ tag_name: "v9.9.9" }), {
+        status: 200,
+      })) as unknown as typeof fetch;
+    expect((await checkForUpdates("0.1.1", { fetchFn: withoutAuthor })).releaseAuthor).toBe(
+      "surajthaqurie"
+    );
+  });
+
   it("reports no update when same version", async () => {
     const fetchFn = (async () =>
       new Response(JSON.stringify({ tag_name: "v0.1.1" }), {

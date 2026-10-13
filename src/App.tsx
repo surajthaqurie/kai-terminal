@@ -1734,6 +1734,7 @@ export function App() {
             updateInfo.releaseUrl ?? "https://github.com/surajthaqurie/kai-terminal/releases/latest"
           }
           releaseName={updateInfo.releaseName}
+          releaseAuthor={updateInfo.releaseAuthor}
           onViewRelease={handleViewUpdate}
           onDismiss={handleDismissUpdate}
           onLater={handleLaterUpdate}

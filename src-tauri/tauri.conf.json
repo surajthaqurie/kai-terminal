@@ -29,6 +29,8 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "publisher": "surajthaqurie",
+    "copyright": "Copyright © 2026 surajthaqurie",
     "category": "DeveloperTool",
     "shortDescription": "A modern cross-platform terminal for Windows, Linux, and macOS.",
     "longDescription": "Fast lightweight terminal emulator with optional local AI CLI detection. Works with or without Codex CLI, Claude Code, or Gemini CLI installed. Third-party AI CLI executables are not bundled.",

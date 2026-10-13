@@ -726,6 +726,9 @@ export const SettingsModal: FC<SettingsModalProps> = ({
                   {updateInfo?.latestVersion && (
                     <span className="muted-text">Latest: v{updateInfo.latestVersion}</span>
                   )}
+                  {updateInfo?.releaseAuthor && (
+                    <span className="muted-text">by {updateInfo.releaseAuthor}</span>
+                  )}
                 </div>
                 {updateInfo?.updateAvailable && updateInfo.latestVersion ? (
                   <p className="update-available-text" role="status">

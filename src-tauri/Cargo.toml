@@ -2,7 +2,7 @@
 name = "cross-platform-terminal-backend"
 version = "0.1.3"
 description = "Cross-Platform Kai Rust Backend"
-authors = ["Kai Team"]
+authors = ["surajthaqurie"]
 license = "MIT"
 edition = "2021"
 

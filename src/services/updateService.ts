@@ -10,6 +10,8 @@
 
 export const APP_VERSION_FALLBACK = "0.1.3";
 export const GITHUB_REPO = "surajthaqurie/kai-terminal";
+/** Repo owner shown as the release author fallback ("by surajthaqurie"). */
+export const GITHUB_OWNER = GITHUB_REPO.split("/")[0] || "surajthaqurie";
 export const LATEST_RELEASE_API_URL = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`;
 export const RELEASES_PAGE_URL = `https://github.com/${GITHUB_REPO}/releases/latest`;
 
@@ -24,6 +26,7 @@ export interface UpdateCheckResult {
   updateAvailable: boolean;
   releaseUrl: string | null;
   releaseName: string | null;
+  releaseAuthor: string | null;
   publishedAt: string | null;
   /** Set when the check itself failed (offline, rate limit, no releases). */
   error: string | null;
@@ -82,6 +85,7 @@ interface GithubRelease {
   name?: string;
   html_url?: string;
   published_at?: string;
+  author?: { login?: string };
 }
 
 async function fetchWithTimeout(url: string, timeoutMs: number): Promise<Response> {
@@ -112,6 +116,7 @@ export async function checkForUpdates(
     updateAvailable: false,
     releaseUrl: RELEASES_PAGE_URL,
     releaseName: null,
+    releaseAuthor: GITHUB_OWNER,
     publishedAt: null,
     error: null,
     checkedAt,
@@ -138,6 +143,10 @@ export async function checkForUpdates(
     if (!tag) return { ...base, error: "Release tag missing" };
     const latest = normalizeVersion(tag);
     const updateAvailable = isNewerVersion(tag, currentVersion);
+    const authorLogin =
+      data.author && typeof data.author.login === "string" && data.author.login.trim()
+        ? data.author.login.trim()
+        : GITHUB_OWNER;
     return {
       ...base,
       latestVersion: latest,
@@ -145,6 +154,7 @@ export async function checkForUpdates(
       releaseUrl:
         typeof data.html_url === "string" && data.html_url ? data.html_url : RELEASES_PAGE_URL,
       releaseName: typeof data.name === "string" ? data.name : tag,
+      releaseAuthor: authorLogin,
       publishedAt: typeof data.published_at === "string" ? data.published_at : null,
     };
   } catch (err) {
