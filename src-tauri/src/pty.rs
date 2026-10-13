@@ -743,7 +743,10 @@ fn powershell_cwd_hook_script() -> String {
 /// conflict, so cwd tracking stays best-effort there.
 fn powershell_args_take_command(args: &[String]) -> bool {
     args.iter().any(|a| {
-        let t = a.trim_start_matches('-').trim_start_matches('/').to_lowercase();
+        let t = a
+            .trim_start_matches('-')
+            .trim_start_matches('/')
+            .to_lowercase();
         matches!(
             t.as_str(),
             "command" | "c" | "encodedcommand" | "e" | "enc" | "file" | "f"
