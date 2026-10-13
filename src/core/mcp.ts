@@ -2,8 +2,8 @@ import readline from "readline";
 import { Transform } from "stream";
 import fs from "fs";
 import path from "path";
-import { registerProject, loadProjectIndex, resolveCanonicalPath } from "./registry";
-import { indexProject } from "./indexer";
+import { registerProject, loadProjectIndex, resolveCanonicalPath, isWithinProjectBoundary } from "./registry";
+import { indexProject, isSensitiveFile } from "./indexer";
 import { assembleContext } from "./contextAssembler";
 import { retrieveContext } from "./retrieval";
 import { recordMetric } from "./telemetry";
@@ -145,7 +145,8 @@ export const MCP_TOOLS = [
  */
 export async function handleMcpMessage(
   message: unknown,
-  defaultProjectRoot: string = process.cwd()
+  defaultProjectRoot: string = process.cwd(),
+  cancelledRequests?: Set<string | number>
 ): Promise<McpResponse | null> {
   if (typeof message !== "object" || message === null || Array.isArray(message)) {
     return {
@@ -156,6 +157,20 @@ export async function handleMcpMessage(
   }
 
   const req = message as Record<string, unknown>;
+
+  if (
+    req.id !== undefined &&
+    typeof req.id !== "string" &&
+    typeof req.id !== "number" &&
+    req.id !== null
+  ) {
+    return {
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: -32600, message: "Invalid Request: id must be a string, number, or null" },
+    };
+  }
+
   const reqId =
     typeof req.id === "string" || typeof req.id === "number" || req.id === null ? req.id : null;
 
@@ -175,11 +190,57 @@ export async function handleMcpMessage(
     };
   }
 
-  const method = req.method;
+  const method = req.method.trim();
+
+  // Handle cancellation notifications
+  if (method === "notifications/cancelled" || method === "$/cancelRequest") {
+    if (
+      cancelledRequests &&
+      typeof req.params === "object" &&
+      req.params !== null &&
+      !Array.isArray(req.params)
+    ) {
+      const p = req.params as Record<string, unknown>;
+      const targetId = p.requestId ?? p.id;
+      if (typeof targetId === "string" || typeof targetId === "number") {
+        cancelledRequests.add(targetId);
+      }
+    }
+    return null;
+  }
+
+  // Handle other notifications - no response required
+  if (
+    method === "notifications/initialized" ||
+    method.startsWith("notifications/") ||
+    method.startsWith("$/")
+  ) {
+    return null;
+  }
+
+  // Check if this request was cancelled
+  if (reqId !== null && cancelledRequests && cancelledRequests.has(reqId)) {
+    cancelledRequests.delete(reqId);
+    return {
+      jsonrpc: "2.0",
+      id: reqId,
+      error: { code: -32800, message: "Request cancelled by client" },
+    };
+  }
 
   try {
     // 1. Initialize
     if (method === "initialize") {
+      if (
+        req.params !== undefined &&
+        (typeof req.params !== "object" || req.params === null || Array.isArray(req.params))
+      ) {
+        return {
+          jsonrpc: "2.0",
+          id: reqId,
+          error: { code: -32602, message: "Invalid params: params must be an object" },
+        };
+      }
       return {
         jsonrpc: "2.0",
         id: reqId,
@@ -196,24 +257,8 @@ export async function handleMcpMessage(
       };
     }
 
-    // 2. Notifications (e.g. notifications/initialized) - no response required
-    if (method === "notifications/initialized" || method.startsWith("notifications/")) {
-      return null;
-    }
-
-    // 3. List tools
+    // 2. List tools
     if (method === "tools/list") {
-      return {
-        jsonrpc: "2.0",
-        id: reqId,
-        result: {
-          tools: MCP_TOOLS,
-        },
-      };
-    }
-
-    // 4. Call tool
-    if (method === "tools/call") {
       if (
         req.params !== undefined &&
         (typeof req.params !== "object" || req.params === null || Array.isArray(req.params))
@@ -224,24 +269,58 @@ export async function handleMcpMessage(
           error: { code: -32602, message: "Invalid params: params must be an object" },
         };
       }
-      const params = (req.params || {}) as {
-        name?: string;
-        arguments?: Record<string, unknown>;
+      return {
+        jsonrpc: "2.0",
+        id: reqId,
+        result: {
+          tools: MCP_TOOLS,
+        },
       };
-      const toolName = params.name;
-      const args = (
-        typeof params.arguments === "object" &&
-        params.arguments !== null &&
-        !Array.isArray(params.arguments)
-          ? params.arguments
-          : {}
-      ) as Record<string, unknown>;
+    }
+
+    // 3. Call tool
+    if (method === "tools/call") {
+      if (
+        req.params === undefined ||
+        typeof req.params !== "object" ||
+        req.params === null ||
+        Array.isArray(req.params)
+      ) {
+        return {
+          jsonrpc: "2.0",
+          id: reqId,
+          error: { code: -32602, message: "Invalid params: params must be an object" },
+        };
+      }
+      const params = req.params as Record<string, unknown>;
+      if (typeof params.name !== "string" || !params.name.trim()) {
+        return {
+          jsonrpc: "2.0",
+          id: reqId,
+          error: { code: -32602, message: "Invalid params: name is required and must be a string" },
+        };
+      }
+      const toolName = params.name.trim();
+
+      if (
+        params.arguments !== undefined &&
+        (typeof params.arguments !== "object" ||
+          params.arguments === null ||
+          Array.isArray(params.arguments))
+      ) {
+        return {
+          jsonrpc: "2.0",
+          id: reqId,
+          error: { code: -32602, message: "Invalid params: arguments must be an object" },
+        };
+      }
+      const args = (params.arguments || {}) as Record<string, unknown>;
 
       // Reject unknown tools before touching storage: registration and
       // auto-indexing run a full synchronous scan, which must not be
       // triggerable by a misspelled or malicious tool name.
       const KNOWN_TOOLS = new Set(MCP_TOOLS.map((t) => t.name));
-      if (toolName !== undefined && !KNOWN_TOOLS.has(toolName)) {
+      if (!KNOWN_TOOLS.has(toolName)) {
         return {
           jsonrpc: "2.0",
           id: reqId,
@@ -249,18 +328,24 @@ export async function handleMcpMessage(
         };
       }
 
-      if (
-        typeof args.projectPath === "string" &&
-        (args.projectPath.includes("\0") || args.projectPath.length > 4096)
-      ) {
-        return {
-          jsonrpc: "2.0",
-          id: reqId,
-          error: {
-            code: -32602,
-            message: "Invalid project path: contains null bytes or exceeds maximum length",
-          },
-        };
+      if (args.projectPath !== undefined) {
+        if (typeof args.projectPath !== "string") {
+          return {
+            jsonrpc: "2.0",
+            id: reqId,
+            error: { code: -32602, message: "Invalid project path: must be a string" },
+          };
+        }
+        if (args.projectPath.includes("\0") || args.projectPath.length > 4096) {
+          return {
+            jsonrpc: "2.0",
+            id: reqId,
+            error: {
+              code: -32602,
+              message: "Invalid project path: contains null bytes or exceeds maximum length",
+            },
+          };
+        }
       }
 
       const canonicalDefault = resolveCanonicalPath(defaultProjectRoot);
@@ -269,10 +354,7 @@ export async function handleMcpMessage(
       const canonicalRoot = resolveCanonicalPath(projectTarget);
 
       // Security check: Confine tool execution to the authorized server workspace boundary
-      if (
-        canonicalRoot !== canonicalDefault &&
-        !canonicalRoot.startsWith(canonicalDefault + path.sep)
-      ) {
+      if (!isWithinProjectBoundary(canonicalRoot, canonicalDefault)) {
         return {
           jsonrpc: "2.0",
           id: reqId,
@@ -353,15 +435,24 @@ export async function handleMcpMessage(
       }
 
       if (toolName === "kai_search_code") {
-        const query = String(args.query || "").slice(0, 2000);
-        if (!query.trim()) {
+        if (typeof args.query !== "string" || !args.query.trim()) {
           return {
             jsonrpc: "2.0",
             id: reqId,
-            error: { code: -32602, message: "query parameter is required" },
+            error: { code: -32602, message: "query parameter is required and must be a non-empty string" },
           };
         }
-        const limit = typeof args.limit === "number" ? Math.min(Math.max(1, args.limit), 20) : 6;
+        if (args.limit !== undefined) {
+          if (typeof args.limit !== "number" || !Number.isFinite(args.limit) || args.limit <= 0) {
+            return {
+              jsonrpc: "2.0",
+              id: reqId,
+              error: { code: -32602, message: "limit parameter must be a positive number" },
+            };
+          }
+        }
+        const query = args.query.trim().slice(0, 2000);
+        const limit = typeof args.limit === "number" ? Math.min(Math.max(1, Math.floor(args.limit)), 20) : 6;
         const retrieved = retrieveContext(index, query, { fileBudget: limit, tokenBudget: 4000 });
 
         recordMetric({
@@ -402,16 +493,14 @@ export async function handleMcpMessage(
       }
 
       if (toolName === "kai_find_symbol") {
-        const name = String(args.name || "")
-          .trim()
-          .slice(0, 256);
-        if (!name) {
+        if (typeof args.name !== "string" || !args.name.trim()) {
           return {
             jsonrpc: "2.0",
             id: reqId,
-            error: { code: -32602, message: "name parameter is required" },
+            error: { code: -32602, message: "name parameter is required and must be a non-empty string" },
           };
         }
+        const name = args.name.trim().slice(0, 256);
         if (name.includes("\0") || /[./\\]/.test(name)) {
           return {
             jsonrpc: "2.0",
@@ -448,9 +537,14 @@ export async function handleMcpMessage(
       }
 
       if (toolName === "kai_get_dependencies") {
-        const rawRel = String(args.filePath || "")
-          .trim()
-          .slice(0, 1024);
+        if (typeof args.filePath !== "string" || !args.filePath.trim()) {
+          return {
+            jsonrpc: "2.0",
+            id: reqId,
+            error: { code: -32602, message: "filePath parameter is required and must be a non-empty string" },
+          };
+        }
+        const rawRel = args.filePath.trim().slice(0, 1024);
         // Normalize Windows separators so `src\a.ts` resolves like `src/a.ts`.
         const targetRel = rawRel.replace(/\\/g, "/");
         const isWindowsAbsolute = /^[a-zA-Z]:\//.test(targetRel) || targetRel.startsWith("//");
@@ -469,6 +563,40 @@ export async function handleMcpMessage(
             error: { code: -32602, message: `Invalid filePath` },
           };
         }
+
+        // Never expose sensitive files (credentials, private keys, environment files)
+        if (
+          isSensitiveFile(targetRel) ||
+          isSensitiveFile(rawRel) ||
+          isSensitiveFile(path.basename(targetRel))
+        ) {
+          return {
+            jsonrpc: "2.0",
+            id: reqId,
+            error: { code: -32602, message: `Access denied: sensitive or excluded file: ${targetRel}` },
+          };
+        }
+
+        // Confine file path to the authorized canonical project boundary
+        const fullFilePath = path.join(canonicalRoot, targetRel);
+        let canonicalFile: string;
+        try {
+          canonicalFile = resolveCanonicalPath(fullFilePath);
+        } catch {
+          return {
+            jsonrpc: "2.0",
+            id: reqId,
+            error: { code: -32602, message: `File not found in index: ${targetRel}` },
+          };
+        }
+        if (!isWithinProjectBoundary(canonicalFile, canonicalRoot)) {
+          return {
+            jsonrpc: "2.0",
+            id: reqId,
+            error: { code: -32602, message: `File path escapes project boundary: ${targetRel}` },
+          };
+        }
+
         const file =
           (Object.prototype.hasOwnProperty.call(index.files, targetRel)
             ? index.files[targetRel]
@@ -507,16 +635,14 @@ export async function handleMcpMessage(
       }
 
       if (toolName === "kai_get_context") {
-        const task = String(args.task || "")
-          .trim()
-          .slice(0, 4000);
-        if (!task) {
+        if (typeof args.task !== "string" || !args.task.trim()) {
           return {
             jsonrpc: "2.0",
             id: reqId,
-            error: { code: -32602, message: "task parameter is required" },
+            error: { code: -32602, message: "task parameter is required and must be a non-empty string" },
           };
         }
+        const task = args.task.trim().slice(0, 4000);
         const rawBudget = typeof args.tokenBudget === "number" ? args.tokenBudget : 4000;
         const tokenBudget = Math.min(
           Math.max(Number.isFinite(rawBudget) ? Math.floor(rawBudget) : 4000, 200),
@@ -568,6 +694,13 @@ export async function handleMcpMessage(
       }
 
       if (toolName === "kai_refresh_index") {
+        if (args.forceRebuild !== undefined && typeof args.forceRebuild !== "boolean") {
+          return {
+            jsonrpc: "2.0",
+            id: reqId,
+            error: { code: -32602, message: "forceRebuild must be a boolean" },
+          };
+        }
         const forceRebuild = Boolean(args.forceRebuild);
         const refreshedIndex = await indexProject(meta, { forceRebuild });
 
@@ -729,6 +862,19 @@ export class BoundedLineTransform extends Transform {
 }
 
 /**
+ * Safely write data to a writable stream without throwing on closed/broken streams.
+ */
+export function safeWrite(stream: NodeJS.WritableStream, data: string): boolean {
+  try {
+    const s = stream as unknown as { writable?: boolean; destroyed?: boolean; write: (d: string) => boolean };
+    if (s.writable === false || s.destroyed === true) return false;
+    return stream.write(data);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Run the stdio JSON-RPC server loop
  */
 export async function startMcpServer(
@@ -736,8 +882,37 @@ export async function startMcpServer(
   inputStream: NodeJS.ReadableStream = process.stdin,
   outputStream: NodeJS.WritableStream = process.stdout
 ): Promise<void> {
+  let canonicalRoot: string;
+  try {
+    canonicalRoot = resolveCanonicalPath(projectRoot);
+    const rootStat = fs.statSync(canonicalRoot);
+    if (!rootStat.isDirectory()) {
+      process.stderr.write(`[kai-mcp] Error: project root "${projectRoot}" is not a directory.\n`);
+      return;
+    }
+  } catch (err: unknown) {
+    process.stderr.write(
+      `[kai-mcp] Error: cannot access project root "${projectRoot}": ${err instanceof Error ? err.message : String(err)}\n`
+    );
+    return;
+  }
+
   // Protocol on stdout ONLY. Diagnostic messages on stderr.
-  process.stderr.write(`[kai-mcp] Starting MCP stdio server for root: ${projectRoot}\n`);
+  process.stderr.write(`[kai-mcp] Starting MCP stdio server for root: ${canonicalRoot}\n`);
+
+  let isTerminated = false;
+  const sessionCancelledRequests = new Set<string | number>();
+
+  const onStreamError = (err: NodeJS.ErrnoException) => {
+    if (err && (err.code === "EPIPE" || err.code === "ERR_STREAM_DESTROYED")) {
+      isTerminated = true;
+      return;
+    }
+    process.stderr.write(`[kai-mcp] Stream diagnostic: ${err?.message || String(err)}\n`);
+  };
+
+  outputStream.on("error", onStreamError);
+  inputStream.on("error", onStreamError);
 
   const boundedStream = new BoundedLineTransform(MAX_MCP_LINE_BYTES, () => {
     const errResponse: McpResponse = {
@@ -745,8 +920,9 @@ export async function startMcpServer(
       id: null,
       error: { code: -32600, message: "Request line exceeds maximum allowed size (10 MB)" },
     };
-    outputStream.write(JSON.stringify(errResponse) + "\n");
+    safeWrite(outputStream, JSON.stringify(errResponse) + "\n");
   });
+  boundedStream.on("error", onStreamError);
 
   (inputStream as NodeJS.ReadStream).pipe(boundedStream);
 
@@ -755,28 +931,45 @@ export async function startMcpServer(
     terminal: false,
   });
 
-  for await (const line of rl) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
+  try {
+    for await (const line of rl) {
+      if (isTerminated) {
+        break;
+      }
 
-    let parsed: McpRequest;
-    try {
-      parsed = JSON.parse(trimmed);
-    } catch {
-      const errResponse: McpResponse = {
-        jsonrpc: "2.0",
-        id: null,
-        error: { code: -32700, message: "Parse error" },
-      };
-      outputStream.write(JSON.stringify(errResponse) + "\n");
-      continue;
-    }
+      const trimmed = line.trim();
+      if (!trimmed) continue;
 
-    const response = await handleMcpMessage(parsed, projectRoot);
-    if (response) {
-      outputStream.write(JSON.stringify(response) + "\n");
+      let parsed: McpRequest;
+      try {
+        parsed = JSON.parse(trimmed);
+      } catch {
+        const errResponse: McpResponse = {
+          jsonrpc: "2.0",
+          id: null,
+          error: { code: -32700, message: "Parse error" },
+        };
+        safeWrite(outputStream, JSON.stringify(errResponse) + "\n");
+        continue;
+      }
+
+      const response = await handleMcpMessage(parsed, canonicalRoot, sessionCancelledRequests);
+      if (response && !isTerminated) {
+        const wrote = safeWrite(outputStream, JSON.stringify(response) + "\n");
+        if (!wrote && (outputStream as unknown as { writable?: boolean })?.writable === false) {
+          break;
+        }
+      }
     }
+  } catch (err: unknown) {
+    const errCode = (err as NodeJS.ErrnoException)?.code;
+    if (errCode !== "EPIPE" && errCode !== "ERR_STREAM_DESTROYED") {
+      process.stderr.write(
+        `[kai-mcp] Server loop diagnostic: ${err instanceof Error ? err.message : String(err)}\n`
+      );
+    }
+  } finally {
+    rl.close();
+    process.stderr.write("[kai-mcp] Server closed.\n");
   }
-
-  process.stderr.write("[kai-mcp] Server closed.\n");
 }

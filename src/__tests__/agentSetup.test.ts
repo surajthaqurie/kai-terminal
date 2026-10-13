@@ -234,3 +234,82 @@ describe("autoSetupDetectedAgents (system-driven wiring)", () => {
     }
   });
 });
+
+describe("Harden Phase: Path escaping, spaces, Unicode, quotes & dynamic agent validation", () => {
+  it("safely generates agent config with paths containing spaces, Unicode, quotes, and Windows separators", () => {
+    const home = makeTempHome();
+
+    // 1. Path with spaces and Unicode
+    const unicodePath = "/home/josé/개발 프로젝트/kai.js";
+    const resAider = applyAgentSetup("aider", unicodePath, { homeDir: home });
+    expect(resAider.wrote).toBe(true);
+    const docAider = JSON.parse(fs.readFileSync(resAider.path, "utf-8"));
+    expect(docAider.mcpServers.kai.args[0]).toBe(unicodePath);
+
+    // 2. Windows-style path with backslashes and spaces
+    const winPath = "C:\\Program Files\\Kai Terminal\\bin\\kai.js";
+    const resOpencode = applyAgentSetup("opencode", winPath, { homeDir: home, force: true });
+    expect(resOpencode.wrote).toBe(true);
+    const docOpencode = JSON.parse(fs.readFileSync(resOpencode.path, "utf-8"));
+    expect(docOpencode.mcp.kai.command[1]).toBe(winPath);
+
+    // 3. Path with quotes and special characters in Codex TOML
+    const quotedPath = 'C:\\tools\\kai"special"\\kai.js';
+    const resCodex = applyAgentSetup("codex", quotedPath, { homeDir: home, force: true });
+    expect(resCodex.wrote).toBe(true);
+    const rawCodex = fs.readFileSync(resCodex.path, "utf-8");
+    expect(rawCodex).toContain("[mcp_servers.kai]");
+    // Args in TOML is serialized validly with escaping
+    expect(rawCodex).toContain(JSON.stringify(quotedPath));
+  });
+
+  it("rejects kaiBin and projectArg containing null bytes or newlines", () => {
+    const home = makeTempHome();
+
+    // Null byte injection attempt
+    const nullBinRes = applyAgentSetup("aider", "/bin/kai\0malicious", { homeDir: home });
+    expect(nullBinRes.skipped).toBe(true);
+    expect(nullBinRes.message).toContain("kai binary path is invalid");
+
+    // Newline injection attempt
+    const newlineBinRes = applyAgentSetup("aider", "/bin/kai\nmalicious", { homeDir: home });
+    expect(newlineBinRes.skipped).toBe(true);
+    expect(newlineBinRes.message).toContain("kai binary path is invalid");
+
+    const crBinRes = applyAgentSetup("aider", "/bin/kai\rmalicious", { homeDir: home });
+    expect(crBinRes.skipped).toBe(true);
+    expect(crBinRes.message).toContain("kai binary path is invalid");
+  });
+
+  it("buildDynamicAgentSetup validates agentId and rejects path traversal or special chars", async () => {
+    const { buildDynamicAgentSetup } = await import("../core/agents");
+    const home = makeTempHome();
+
+    // Traversal attempts
+    const traversal1 = buildDynamicAgentSetup("../../evil", "/bin/evil", KAI_BIN, { homeDir: home });
+    expect(traversal1.skipped).toBe(true);
+    expect(traversal1.wrote).toBe(false);
+    expect(traversal1.message).toContain("Invalid agent id");
+
+    const traversal2 = buildDynamicAgentSetup("..\\evil", "/bin/evil", KAI_BIN, { homeDir: home });
+    expect(traversal2.skipped).toBe(true);
+
+    const injection = buildDynamicAgentSetup("agent; rm -rf", "/bin/agent", KAI_BIN, { homeDir: home });
+    expect(injection.skipped).toBe(true);
+
+    // Valid agentId works
+    const valid = buildDynamicAgentSetup("my-custom_agent.v1", "/bin/agent", KAI_BIN, { homeDir: home });
+    expect(valid.skipped).toBe(false);
+    expect(valid.wrote).toBe(true);
+  });
+
+  it("verifies all registered agent definitions build valid, non-empty setup snippets", () => {
+    for (const def of AGENT_REGISTRY) {
+      const snippet = def.buildSetup(KAI_BIN);
+      expect(snippet).toBeTruthy();
+      expect(snippet.length).toBeGreaterThan(20);
+      expect(snippet).toContain(KAI_BIN);
+    }
+  });
+});
+

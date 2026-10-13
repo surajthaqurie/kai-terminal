@@ -520,6 +520,28 @@ export function buildDynamicAgentSetup(
   kaiBin: string,
   opts: AgentSetupOptions = {}
 ): DynamicAgentSetupResult {
+  if (!/^[a-zA-Z0-9_.-]{1,64}$/.test(agentId)) {
+    return {
+      wrote: false,
+      skipped: true,
+      created: false,
+      alreadyConfigured: false,
+      message: `Invalid agent id "${agentId}". Must contain only alphanumeric characters, underscores, dots, or hyphens (max 64 chars).`,
+      backupPath: null,
+      snippet: "",
+    };
+  }
+  if (!kaiBin || kaiBin.length > 4096 || /[\0\r\n]/.test(kaiBin)) {
+    return {
+      wrote: false,
+      skipped: true,
+      created: false,
+      alreadyConfigured: false,
+      message: "Refusing to write: kai binary path is invalid.",
+      backupPath: null,
+      snippet: "",
+    };
+  }
   const home = opts.homeDir || os.homedir();
   const force = opts.force === true;
   const dryRun = opts.dryRun === true;
@@ -527,9 +549,16 @@ export function buildDynamicAgentSetup(
   // Resolve config file path (XDG on Linux/macOS, APPDATA on Windows)
   let configDir: string;
   if (process.platform === "win32") {
-    configDir = path.join(process.env.APPDATA || path.join(home, "AppData", "Roaming"), agentId);
+    configDir = path.join(
+      opts.homeDir
+        ? path.join(opts.homeDir, "AppData", "Roaming")
+        : process.env.APPDATA || path.join(home, "AppData", "Roaming"),
+      agentId
+    );
   } else {
-    const xdgConfig = process.env.XDG_CONFIG_HOME || path.join(home, ".config");
+    const xdgConfig = opts.homeDir
+      ? path.join(opts.homeDir, ".config")
+      : process.env.XDG_CONFIG_HOME || path.join(home, ".config");
     configDir = path.join(xdgConfig, agentId);
   }
   const filePath = path.join(configDir, "mcp.json");
@@ -916,7 +945,8 @@ function applyCodexTomlSetup(
   kaiBin: string,
   projectArg: string,
   force: boolean,
-  dryRun: boolean
+  dryRun: boolean,
+  note: string = ""
 ): Omit<AgentSetupResult, "id" | "name" | "path" | "scope"> {
   let existing = "";
   let fileExists = false;
@@ -935,7 +965,7 @@ function applyCodexTomlSetup(
       alreadyConfigured: true,
       skipped: false,
       backupPath: null,
-      message: `Kai entry already present in ${filePath}.`,
+      message: `Kai entry already present in ${filePath}.${note}`,
     };
   }
   if (dryRun) {
@@ -945,7 +975,7 @@ function applyCodexTomlSetup(
       alreadyConfigured: false,
       skipped: false,
       backupPath: null,
-      message: `Would ${fileExists ? "append kai section to" : "create"} ${filePath}.`,
+      message: `Would ${fileExists ? "append kai section to" : "create"} ${filePath}.${note}`,
     };
   }
   ensureParentDir(filePath);
@@ -963,7 +993,7 @@ function applyCodexTomlSetup(
     alreadyConfigured: false,
     skipped: false,
     backupPath,
-    message: `Wrote kai MCP section to ${filePath}.`,
+    message: `Wrote kai MCP section to ${filePath}.${note}`,
   };
 }
 
@@ -1061,7 +1091,7 @@ export function applyAgentSetup(
       message: `Unknown agent "${agent}". Run 'kai agent list' for targets.`,
     };
   }
-  if (!kaiBin || kaiBin.length > 4096 || kaiBin.includes("\0")) {
+  if (!kaiBin || kaiBin.length > 4096 || /[\0\r\n]/.test(kaiBin)) {
     return {
       id: def.id,
       name: def.name,
@@ -1073,6 +1103,21 @@ export function applyAgentSetup(
       skipped: true,
       backupPath: null,
       message: "Refusing to write: kai binary path is invalid.",
+    };
+  }
+  const projectArg = def.projectArg || ".";
+  if (projectArg.length > 4096 || /[\0\r\n]/.test(projectArg)) {
+    return {
+      id: def.id,
+      name: def.name,
+      path: "",
+      scope: "none",
+      wrote: false,
+      created: false,
+      alreadyConfigured: false,
+      skipped: true,
+      backupPath: null,
+      message: "Refusing to write: project argument is invalid.",
     };
   }
   const resolved = resolveAgentConfigPath(def, opts);
@@ -1091,12 +1136,23 @@ export function applyAgentSetup(
     };
   }
   const { path: filePath, target } = resolved;
-  const projectArg = def.projectArg || ".";
   const dryRun = opts.dryRun === true;
   const force = opts.force === true;
 
+  let binaryFound = false;
+  for (const bin of def.binaries) {
+    if (findBinaryOnPath(bin)) {
+      binaryFound = true;
+      break;
+    }
+  }
+  const missingNote =
+    !binaryFound && def.kind === "cli"
+      ? ` (Note: '${def.name}' binary was not detected on PATH. ${def.installGuidance})`
+      : "";
+
   if (target.keyStyle === "toml-codex") {
-    const r = applyCodexTomlSetup(filePath, kaiBin, projectArg, force, dryRun);
+    const r = applyCodexTomlSetup(filePath, kaiBin, projectArg, force, dryRun, missingNote);
     return { id: def.id, name: def.name, path: filePath, scope: target.scope, ...r };
   }
 
@@ -1127,7 +1183,7 @@ export function applyAgentSetup(
       alreadyConfigured: true,
       skipped: false,
       backupPath: null,
-      message: `Kai entry already present in ${filePath}.`,
+      message: `Kai entry already present in ${filePath}.${missingNote}`,
     };
   }
   if (dryRun) {
@@ -1141,7 +1197,7 @@ export function applyAgentSetup(
       alreadyConfigured: false,
       skipped: false,
       backupPath: null,
-      message: `Would ${exists ? "merge kai entry into" : "create"} ${filePath}.`,
+      message: `Would ${exists ? "merge kai entry into" : "create"} ${filePath}.${missingNote}`,
     };
   }
   ensureParentDir(filePath);
@@ -1157,7 +1213,7 @@ export function applyAgentSetup(
     alreadyConfigured: false,
     skipped: false,
     backupPath,
-    message: `${!exists ? "Created" : "Updated"} ${filePath} with kai MCP entry.`,
+    message: `${!exists ? "Created" : "Updated"} ${filePath} with kai MCP entry.${missingNote}`,
   };
 }
 

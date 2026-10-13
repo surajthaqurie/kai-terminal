@@ -218,7 +218,7 @@ fn validate_launcher(launcher: &[String]) -> Result<(), String> {
         return Err("Launcher must hold 1-8 command parts.".to_string());
     }
     for part in launcher {
-        if part.is_empty() || part.len() > 4096 || part.contains('\0') {
+        if part.is_empty() || part.len() > 4096 || part.contains('\0') || part.contains('\r') || part.contains('\n') {
             return Err("Launcher contains an invalid command part.".to_string());
         }
     }
@@ -283,7 +283,7 @@ pub fn setup_agent_mcp(
         }
     })?;
     validate_launcher(&launcher)?;
-    if project_arg.len() > 1024 || project_arg.contains('\0') {
+    if project_arg.len() > 1024 || project_arg.contains('\0') || project_arg.contains('\r') || project_arg.contains('\n') {
         return Err("Invalid project argument.".to_string());
     }
     let home = env::var("HOME")
@@ -442,7 +442,7 @@ fn setup_codex_toml(
         None
     };
     let content = match existing {
-        Some(raw) if raw.ends_with('\n') => format!("\n{}", section),
+        Some(raw) if raw.ends_with('\n') => format!("{}\n{}", raw, section),
         Some(raw) => format!("{}\n\n{}", raw, section),
         None => section,
     };

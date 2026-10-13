@@ -453,4 +453,260 @@ describe("Phase 9 & 10: Security, Sanitization & Concurrency Safeguards", () => 
       expect(projects.some((p) => p.id === meta2.id)).toBe(false);
     });
   });
+
+  describe("Harden Phase: Stdio Round-Trip, Cancellation, Broken Pipes & Boundary Enforcement", () => {
+    it("rejects invalid id types (boolean, array, object) with -32600", async () => {
+      const boolId = await handleMcpMessage({
+        jsonrpc: "2.0",
+        id: true as any,
+        method: "initialize",
+      });
+      expect(boolId?.error?.code).toBe(-32600);
+      expect(boolId?.error?.message).toContain("id must be a string, number, or null");
+
+      const arrId = await handleMcpMessage({
+        jsonrpc: "2.0",
+        id: [1, 2] as any,
+        method: "initialize",
+      });
+      expect(arrId?.error?.code).toBe(-32600);
+      expect(arrId?.error?.message).toContain("id must be a string, number, or null");
+
+      const objId = await handleMcpMessage({
+        jsonrpc: "2.0",
+        id: { bad: 1 } as any,
+        method: "initialize",
+      });
+      expect(objId?.error?.code).toBe(-32600);
+      expect(objId?.error?.message).toContain("id must be a string, number, or null");
+    });
+
+    it("rejects tools/call when name is missing or empty with -32602", async () => {
+      const noName = await handleMcpMessage({
+        jsonrpc: "2.0",
+        id: 10,
+        method: "tools/call",
+        params: {},
+      });
+      expect(noName?.error?.code).toBe(-32602);
+      expect(noName?.error?.message).toContain("name is required");
+
+      const emptyName = await handleMcpMessage({
+        jsonrpc: "2.0",
+        id: 11,
+        method: "tools/call",
+        params: { name: "   " },
+      });
+      expect(emptyName?.error?.code).toBe(-32602);
+      expect(emptyName?.error?.message).toContain("name is required");
+
+      const badArguments = await handleMcpMessage({
+        jsonrpc: "2.0",
+        id: 12,
+        method: "tools/call",
+        params: { name: "kai_search_code", arguments: "not-an-object" as any },
+      });
+      expect(badArguments?.error?.code).toBe(-32602);
+      expect(badArguments?.error?.message).toContain("arguments must be an object");
+    });
+
+    it("strictly blocks access to sensitive files via kai_get_dependencies", async () => {
+      const projDir = path.join(tmpDir, "sensitive-proj");
+      fs.mkdirSync(projDir, { recursive: true });
+      fs.writeFileSync(path.join(projDir, ".env"), "SECRET_API_KEY=12345");
+      fs.writeFileSync(path.join(projDir, "id_rsa"), "MOCK_PRIVATE_KEY");
+      fs.writeFileSync(path.join(projDir, "credentials.json"), '{"token":"xyz"}');
+
+      for (const sensitive of [".env", "id_rsa", "credentials.json"]) {
+        const res = await handleMcpMessage(
+          {
+            jsonrpc: "2.0",
+            id: 20,
+            method: "tools/call",
+            params: {
+              name: "kai_get_dependencies",
+              arguments: { filePath: sensitive },
+            },
+          },
+          projDir
+        );
+        expect(res?.error).toBeDefined();
+        expect(res?.error?.code).toBe(-32602);
+        expect(res?.error?.message).toContain("sensitive or excluded file");
+      }
+    });
+
+    it("handles cancellation notifications ($/cancelRequest & notifications/cancelled)", async () => {
+      const cancelledSet = new Set<string | number>();
+
+      // Client sends cancellation notification
+      const cancelNotif = await handleMcpMessage(
+        {
+          jsonrpc: "2.0",
+          method: "notifications/cancelled",
+          params: { requestId: 999 },
+        },
+        tmpDir,
+        cancelledSet
+      );
+      expect(cancelNotif).toBeNull();
+      expect(cancelledSet.has(999)).toBe(true);
+
+      // Subsequent processing of request 999 yields -32800 cancelled
+      const res = await handleMcpMessage(
+        {
+          jsonrpc: "2.0",
+          id: 999,
+          method: "tools/call",
+          params: { name: "kai_project_info" },
+        },
+        tmpDir,
+        cancelledSet
+      );
+      expect(res?.error?.code).toBe(-32800);
+      expect(res?.error?.message).toContain("Request cancelled by client");
+      expect(cancelledSet.has(999)).toBe(false);
+
+      // Also supports $/cancelRequest format
+      const lspCancel = await handleMcpMessage(
+        {
+          jsonrpc: "2.0",
+          method: "$/cancelRequest",
+          params: { id: "req-abc" },
+        },
+        tmpDir,
+        cancelledSet
+      );
+      expect(lspCancel).toBeNull();
+      expect(cancelledSet.has("req-abc")).toBe(true);
+
+      const resAbc = await handleMcpMessage(
+        {
+          jsonrpc: "2.0",
+          id: "req-abc",
+          method: "tools/call",
+          params: { name: "kai_project_info" },
+        },
+        tmpDir,
+        cancelledSet
+      );
+      expect(resAbc?.error?.code).toBe(-32800);
+    });
+
+    it("handles repeated requests idempotently and cleanly", async () => {
+      const projDir = path.join(tmpDir, "repeated-proj");
+      fs.mkdirSync(projDir, { recursive: true });
+      fs.writeFileSync(path.join(projDir, "a.ts"), "export const val = 42;");
+
+      for (let i = 0; i < 3; i++) {
+        const res = await handleMcpMessage(
+          {
+            jsonrpc: "2.0",
+            id: 42,
+            method: "tools/call",
+            params: { name: "kai_find_symbol", arguments: { name: "val" } },
+          },
+          projDir
+        );
+        expect(res?.id).toBe(42);
+        expect(res?.error).toBeUndefined();
+        const content = (res?.result as { content: Array<{ text: string }> }).content[0].text;
+        expect(content).toContain("val");
+      }
+    });
+
+    it("guarantees read-only behavior: MCP tools never mutate indexed files or run code", async () => {
+      const projDir = path.join(tmpDir, "readonly-proj");
+      fs.mkdirSync(projDir, { recursive: true });
+      const testFile = path.join(projDir, "code.ts");
+      const originalContent = "export function compute() { return 100; }\n";
+      fs.writeFileSync(testFile, originalContent);
+
+      const statBefore = fs.statSync(testFile);
+
+      // Execute all query tools
+      await handleMcpMessage({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "kai_project_info" } }, projDir);
+      await handleMcpMessage({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "kai_search_code", arguments: { query: "compute" } } }, projDir);
+      await handleMcpMessage({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "kai_find_symbol", arguments: { name: "compute" } } }, projDir);
+      await handleMcpMessage({ jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "kai_get_dependencies", arguments: { filePath: "code.ts" } } }, projDir);
+      await handleMcpMessage({ jsonrpc: "2.0", id: 5, method: "tools/call", params: { name: "kai_get_context", arguments: { task: "compute logic" } } }, projDir);
+      await handleMcpMessage({ jsonrpc: "2.0", id: 6, method: "tools/call", params: { name: "kai_refresh_index" } }, projDir);
+      await handleMcpMessage({ jsonrpc: "2.0", id: 7, method: "tools/call", params: { name: "kai_get_lsp_status" } }, projDir);
+
+      const statAfter = fs.statSync(testFile);
+      expect(fs.readFileSync(testFile, "utf-8")).toBe(originalContent);
+      expect(statAfter.mtimeMs).toBe(statBefore.mtimeMs);
+    });
+
+    it("verifies stdout purity: protocol responses only on stdout, diagnostics on stderr", async () => {
+      const projDir = path.join(tmpDir, "purity-proj");
+      fs.mkdirSync(projDir, { recursive: true });
+
+      const { PassThrough } = await import("stream");
+      const inputStream = new PassThrough();
+      const outputStream = new PassThrough();
+
+      const stdoutChunks: string[] = [];
+      outputStream.on("data", (chunk: Buffer) => {
+        stdoutChunks.push(chunk.toString("utf-8"));
+      });
+
+      const serverPromise = startMcpServer(projDir, inputStream, outputStream);
+
+      inputStream.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize" }) + "\n");
+      inputStream.write(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list" }) + "\n");
+
+      await new Promise((r) => setTimeout(r, 60));
+      inputStream.end();
+      await serverPromise;
+
+      const fullStdout = stdoutChunks.join("");
+      const lines = fullStdout.split("\n").filter((l) => l.trim().length > 0);
+
+      // Every line on stdout MUST be valid JSON-RPC
+      for (const line of lines) {
+        const parsed = JSON.parse(line);
+        expect(parsed.jsonrpc).toBe("2.0");
+        expect(parsed.id).toBeDefined();
+      }
+    });
+
+    it("recovers gracefully from broken pipes without uncaught exceptions", async () => {
+      const projDir = path.join(tmpDir, "broken-pipe-proj");
+      fs.mkdirSync(projDir, { recursive: true });
+
+      const { PassThrough } = await import("stream");
+      const inputStream = new PassThrough();
+      const outputStream = new PassThrough();
+
+      const serverPromise = startMcpServer(projDir, inputStream, outputStream);
+
+      // Simulate client closing pipe (EPIPE)
+      outputStream.emit("error", Object.assign(new Error("write EPIPE"), { code: "EPIPE" }));
+
+      // Write another request after broken pipe
+      inputStream.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize" }) + "\n");
+
+      await new Promise((r) => setTimeout(r, 60));
+      inputStream.end();
+
+      // Server should resolve cleanly without crashing or hanging
+      await expect(serverPromise).resolves.toBeUndefined();
+    });
+
+    it("rejects startMcpServer startup when project root is non-existent or a file", async () => {
+      const { PassThrough } = await import("stream");
+      const nonExistentPath = path.join(tmpDir, "does-not-exist");
+
+      const inStream = new PassThrough();
+      const outStream = new PassThrough();
+
+      await expect(
+        startMcpServer(nonExistentPath, inStream, outStream)
+      ).resolves.toBeUndefined();
+
+      inStream.end();
+    });
+  });
 });
+
