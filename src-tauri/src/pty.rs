@@ -1130,7 +1130,8 @@ mod tests {
     }
 
     #[test]
-    fn test_write_chunked_preserves_exact_bytes() {        struct VecWriter(Vec<u8>);
+    fn test_write_chunked_preserves_exact_bytes() {
+        struct VecWriter(Vec<u8>);
         impl Write for VecWriter {
             fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
                 // Simulate partial writes: accept at most 7 bytes per call.
