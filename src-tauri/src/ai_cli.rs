@@ -121,6 +121,11 @@ fn agent_mcp_target(id: &str) -> Option<(&'static str, McpKeyStyle, Option<&'sta
             None,
         )),
         "aider" => Some((".config/aider/mcp.json", McpKeyStyle::McpServers, None)),
+        "agy" => Some((
+            ".gemini/antigravity-cli/settings.json",
+            McpKeyStyle::McpServers,
+            None,
+        )),
         _ => None,
     }
 }
@@ -693,7 +698,10 @@ fn check_local_auth_presence(id: &str) -> String {
             }
         }
         "agy" => {
-            if home.join(".config").join("agy").exists() || home.join(".agy").exists() {
+            if home.join(".gemini").join("antigravity-cli").exists()
+                || home.join(".config").join("agy").exists()
+                || home.join(".agy").exists()
+            {
                 "configured".to_string()
             } else {
                 "not_configured".to_string()

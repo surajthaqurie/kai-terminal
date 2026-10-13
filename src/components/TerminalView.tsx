@@ -61,10 +61,6 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
     const backendPtyIdRef = useRef<string | null>(null);
     const initSeqRef = useRef<number>(0);
     const [isSearchVisible, setIsSearchVisible] = useState(false);
-    // `exit` leaves the shell dead: track it so the pane always offers an
-    // explicit Close affordance instead of a terminal the user
-    // "is not able to close". Cleared on (re)connect.
-    const [exitedCode, setExitedCode] = useState<number | null>(null);
 
     // ---- Command line tracking & history ---------------------------------
     // Native Kali/Linux terminal autocompletion (ZSH autosuggestions, compinit,
@@ -171,7 +167,6 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       const fitAddon = fitAddonRef.current;
       if (!term || !fitAddon) return;
       const mySeq = ++initSeqRef.current;
-      setExitedCode(null);
 
       // Best-effort close of the previous backend session for this tab
       // before spawning a replacement (prevents orphan PTY processes).
@@ -187,7 +182,6 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       if (mySeq !== initSeqRef.current) return;
 
       term.clear();
-      term.writeln("\x1b[36m[Initializing PTY Session...]\x1b[0m\r\n");
       onStatusRef.current?.("connecting");
 
       try {
@@ -224,9 +218,6 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         if (sessionInfo.cwd) {
           onCwdResolvedRef.current?.(sessionInfo.cwd);
         }
-        term.writeln(
-          `\x1b[32m[Connected to ${shellRef.current?.name || selectedShell?.name || "Shell"} (PID ${sessionInfo.pid ?? "N/A"})]\x1b[0m\r\n`
-        );
       } catch (err: unknown) {
         if (mySeq !== initSeqRef.current) return;
         const errorMsg = err instanceof Error ? err.message : String(err);
@@ -468,19 +459,9 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
             flushOutput();
             backendPtyIdRef.current = null;
             const exitCode = payload.exit_code ?? 0;
-            setExitedCode(exitCode);
-            if (exitCode === 0) {
-              term.writeln("\r\n\x1b[90m[Process completed]\x1b[0m\r\n");
-            } else {
-              term.writeln(`\r\n\x1b[33m[Process exited with code ${exitCode}]\x1b[0m\r\n`);
-            }
             onStatusRef.current?.("disconnected");
-            // Notify the parent on the next tick so the message above is
-            // flushed to the screen before the tab unmounts (auto-close).
-            // Uses the ref so the exit of a tab opened long after mount
-            // still closes the right pane.
-            const code = exitCode;
-            setTimeout(() => onExitRef.current?.(code), 0);
+            // Immediately close the pane or tab cleanly like a native terminal
+            onExitRef.current?.(exitCode);
           }
         })
         .then((unlisten) => {
@@ -529,7 +510,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         initialTimer = setTimeout(() => {
           initialTimer = null;
           void initPtySession();
-        }, 50);
+        }, 0);
       }
 
       // Clean disposal on unmount or session switch: close the BACKEND session
@@ -659,46 +640,6 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
           role="log"
           aria-label="Terminal output"
         />
-        {exitedCode !== null && (
-          <div
-            role="status"
-            aria-label="Terminal session exited"
-            style={{
-              position: "absolute",
-              left: 8,
-              right: 8,
-              bottom: 8,
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              padding: "8px 12px",
-              borderRadius: 8,
-              background: "rgba(0,0,0,0.75)",
-              color: "#fff",
-              fontSize: 12,
-              zIndex: 5,
-            }}
-          >
-            <span style={{ flex: 1 }}>
-              Shell exited{exitedCode !== 0 ? ` (code ${exitedCode})` : ""} after `exit`. This pane
-              is dead — close it.
-            </span>
-            <button
-              type="button"
-              onClick={() => onExitRef.current?.(exitedCode ?? 0)}
-              style={{
-                padding: "4px 10px",
-                borderRadius: 6,
-                border: "1px solid #f87171",
-                background: "#7f1d1d",
-                color: "#fff",
-                cursor: "pointer",
-              }}
-            >
-              Close pane
-            </button>
-          </div>
-        )}
       </div>
     );
   }

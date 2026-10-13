@@ -96,16 +96,6 @@ export const StatusBar: FC<StatusBarProps> = ({
   return (
     <footer className="status-bar" role="status" aria-label="Application status bar">
       <div className="status-left">
-        {projectDir && (
-          <span
-            className="status-dir"
-            title={projectDir}
-            aria-label={`Current directory: ${projectDir}`}
-          >
-            <Folder size={12} aria-hidden="true" />
-            <span className="status-dir-text">{projectDir}</span>
-          </span>
-        )}
         {mode === "code" ? (
           <span
             className="status-mode-pill"
@@ -201,6 +191,16 @@ export const StatusBar: FC<StatusBarProps> = ({
           >
             <GitBranch size={13} aria-hidden="true" />
             <span>{projectDir ? "No git repo" : "No project open"}</span>
+          </span>
+        )}
+        {projectDir && (
+          <span
+            className="status-dir"
+            title={projectDir}
+            aria-label={`Current directory: ${projectDir}`}
+          >
+            <Folder size={12} aria-hidden="true" />
+            <span className="status-dir-text">{projectDir}</span>
           </span>
         )}
       </div>

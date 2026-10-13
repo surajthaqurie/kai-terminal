@@ -345,11 +345,11 @@ describe("StatusBar Footer with Active Split Directory, Mode and Git", () => {
     const dirText = container.querySelector(".status-dir-text");
     expect(dirText?.textContent).toBe("/home/user/workspace/kai");
 
-    // 5. Order is strictly path -> code mode -> git
+    // 5. Order is strictly mode pill -> git -> path
     const statusLeftChildren = Array.from(container.querySelector(".status-left")?.children || []);
-    expect(statusLeftChildren[0]?.classList.contains("status-dir")).toBe(true);
-    expect(statusLeftChildren[1]?.classList.contains("status-mode-pill")).toBe(true);
-    expect(statusLeftChildren[2]?.classList.contains("status-git-wrap")).toBe(true);
+    expect(statusLeftChildren[0]?.classList.contains("status-mode-pill")).toBe(true);
+    expect(statusLeftChildren[1]?.classList.contains("status-git-wrap")).toBe(true);
+    expect(statusLeftChildren[2]?.classList.contains("status-dir")).toBe(true);
 
     root.unmount();
     container.remove();

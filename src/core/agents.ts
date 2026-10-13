@@ -392,6 +392,44 @@ Confirm the "kai" MCP tools are listed at session start.
 `;
     },
   },
+  {
+    id: "agy",
+    name: "Antigravity (agy)",
+    kind: "cli",
+    binaries: ["agy"],
+    aliases: ["antigravity"],
+    configFile: "~/.gemini/antigravity-cli/settings.json",
+    configPaths: [".gemini/antigravity-cli", ".gemini/antigravity-cli/settings.json"],
+    installGuidance:
+      "Install Antigravity CLI — docs: https://antigravity.dev or via your vendor's install steps.",
+    targets: [
+      {
+        scope: "global",
+        relPath: ".gemini/antigravity-cli/settings.json",
+        keyStyle: "mcpServers",
+      },
+    ],
+    buildSetup: (kaiBin: string) => {
+      const quotedBin = JSON.stringify(kaiBin);
+      return `
+Verified Antigravity (agy) MCP Configuration:
+Add to ~/.gemini/antigravity-cli/settings.json:
+
+{
+  "mcpServers": {
+    "kai": {
+      "command": "node",
+      "args": [${quotedBin}, "mcp", "."]
+    }
+  }
+}
+
+Verification:
+Run: agy
+In chat: "Use kai_project_info to inspect the codebase."
+`;
+    },
+  },
 ];
 
 /** Ordered ids, e.g. for help output and `SUPPORTED_AGENTS` compat. */
@@ -416,6 +454,174 @@ export function buildAgentSetup(agent: string, kaiBin: string): string | null {
   const def = getAgentDefinition(agent);
   if (!def) return null;
   return def.buildSetup(kaiBin);
+}
+
+// ---------------------------------------------------------------------------
+// Dynamic agent setup (for agents not in AGENT_REGISTRY)
+// ---------------------------------------------------------------------------
+
+/**
+ * Probe PATH for a binary with the given name.
+ * Returns the full resolved path or null when not found.
+ * Uses the same logic as findBinaryOnPath (defined below) but is exported
+ * for use in the CLI's dynamic fallback path.
+ */
+export function findDynamicAgentBinary(agentId: string): string | null {
+  // Guard against injection — only allow safe binary names.
+  if (!/^[a-zA-Z0-9_.-]{1,64}$/.test(agentId)) return null;
+  const envPath = process.env.PATH || process.env.Path || "";
+  const isWindows = process.platform === "win32";
+  const exts = isWindows
+    ? [
+        ...(process.env.PATHEXT || ".EXE;.CMD;.BAT;.COM")
+          .split(";")
+          .filter(Boolean)
+          .map((e) => (e.startsWith(".") ? e.toLowerCase() : `.${e.toLowerCase()}`)),
+        "",
+      ]
+    : [""];
+  for (const dir of envPath.split(path.delimiter)) {
+    if (!dir) continue;
+    for (const ext of exts) {
+      const name =
+        isWindows && ext && agentId.toLowerCase().endsWith(ext) ? agentId : agentId + ext;
+      const candidate = path.join(dir, name);
+      try {
+        if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;
+      } catch {
+        // ignore
+      }
+    }
+  }
+  return null;
+}
+
+export interface DynamicAgentSetupResult {
+  wrote: boolean;
+  skipped: boolean;
+  created: boolean;
+  alreadyConfigured: boolean;
+  message: string;
+  backupPath: string | null;
+  snippet: string;
+}
+
+/**
+ * Build and optionally write a kai MCP entry for an agent that is NOT in
+ * the registry. The config is stored at the XDG-style path:
+ *   Linux/macOS : ~/.config/<agent>/mcp.json
+ *   Windows     : %APPDATA%\<agent>\mcp.json
+ *
+ * The entry follows the standard mcpServers format used by most agents.
+ */
+export function buildDynamicAgentSetup(
+  agentId: string,
+  _agentBinPath: string,
+  kaiBin: string,
+  opts: AgentSetupOptions = {}
+): DynamicAgentSetupResult {
+  const home = opts.homeDir || os.homedir();
+  const force = opts.force === true;
+  const dryRun = opts.dryRun === true;
+
+  // Resolve config file path (XDG on Linux/macOS, APPDATA on Windows)
+  let configDir: string;
+  if (process.platform === "win32") {
+    configDir = path.join(process.env.APPDATA || path.join(home, "AppData", "Roaming"), agentId);
+  } else {
+    const xdgConfig = process.env.XDG_CONFIG_HOME || path.join(home, ".config");
+    configDir = path.join(xdgConfig, agentId);
+  }
+  const filePath = path.join(configDir, "mcp.json");
+
+  const quotedBin = JSON.stringify(kaiBin);
+  const snippet = `
+Verified ${agentId} MCP Configuration (auto-generated):
+Add to ${filePath}:
+
+{
+  "mcpServers": {
+    "kai": {
+      "command": "node",
+      "args": [${quotedBin}, "mcp", "."]
+    }
+  }
+}
+
+Verification:
+Run: ${agentId}
+In chat: "Use kai_project_info to inspect the codebase."
+`;
+
+  const { exists, data, parseError } = readJsonConfig(filePath);
+  if (parseError) {
+    return {
+      wrote: false,
+      skipped: true,
+      created: false,
+      alreadyConfigured: false,
+      message: `${filePath}: ${parseError}`,
+      backupPath: null,
+      snippet,
+    };
+  }
+  const { alreadyConfigured } = mergeKaiMcpEntry(data, "mcpServers", kaiBin, ".", force);
+  if (alreadyConfigured) {
+    return {
+      wrote: false,
+      skipped: false,
+      created: false,
+      alreadyConfigured: true,
+      message: `Kai entry already present in ${filePath}.`,
+      backupPath: null,
+      snippet,
+    };
+  }
+  if (dryRun) {
+    return {
+      wrote: false,
+      skipped: false,
+      created: !exists,
+      alreadyConfigured: false,
+      message: `Would ${exists ? "merge kai entry into" : "create"} ${filePath}.`,
+      backupPath: null,
+      snippet,
+    };
+  }
+  try {
+    fs.mkdirSync(configDir, { recursive: true, mode: 0o700 });
+    const backupPath = exists ? (() => {
+      try {
+        const bp = `${filePath}.kai.bak`;
+        fs.copyFileSync(filePath, bp);
+        return bp;
+      } catch {
+        return null;
+      }
+    })() : null;
+    const tmpPath = `${filePath}.kai.tmp.${process.pid}`;
+    fs.writeFileSync(tmpPath, `${JSON.stringify(data, null, 2)}\n`, { mode: 0o600, encoding: "utf-8" });
+    fs.renameSync(tmpPath, filePath);
+    return {
+      wrote: true,
+      skipped: false,
+      created: !exists,
+      alreadyConfigured: false,
+      message: `${!exists ? "Created" : "Updated"} ${filePath} with kai MCP entry.`,
+      backupPath,
+      snippet,
+    };
+  } catch (err: unknown) {
+    return {
+      wrote: false,
+      skipped: true,
+      created: false,
+      alreadyConfigured: false,
+      message: `Failed to write ${filePath}: ${err instanceof Error ? err.message : String(err)}`,
+      backupPath: null,
+      snippet,
+    };
+  }
 }
 
 // ---------------------------------------------------------------------------

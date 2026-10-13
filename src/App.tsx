@@ -351,9 +351,12 @@ export function App() {
       .catch(() => setInstalledEditors([]))
       .finally(() => setIsLoadingEditors(false));
   }, []);
-  // Detect installed IDEs once on startup (desktop only; no-op in browser).
+  // Detect installed IDEs after initial paint so startup remains instant
   useEffect(() => {
-    refreshInstalledEditors();
+    const timer = setTimeout(() => {
+      refreshInstalledEditors();
+    }, 150);
+    return () => clearTimeout(timer);
   }, [refreshInstalledEditors]);
 
   // Saving preferences applies a changed default shell to new sessions
@@ -880,13 +883,19 @@ export function App() {
   // the user triggered the check manually.
   useEffect(() => {
     void getAppVersion().then((v) => setAppVersion(v));
-    if (shouldAutoCheck()) {
-      void handleCheckUpdates(false);
-    }
+    // Defer network auto-check so first launch never stutters or delays terminal startup
+    const initialCheckTimer = setTimeout(() => {
+      if (shouldAutoCheck()) {
+        void handleCheckUpdates(false);
+      }
+    }, 1500);
     const interval = setInterval(() => {
       void handleCheckUpdates(false);
     }, UPDATE_PERIODIC_MS);
-    return () => clearInterval(interval);
+    return () => {
+      clearTimeout(initialCheckTimer);
+      clearInterval(interval);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

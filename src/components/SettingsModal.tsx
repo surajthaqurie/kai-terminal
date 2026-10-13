@@ -148,7 +148,7 @@ export const SettingsModal: FC<SettingsModalProps> = ({
   settings,
   onSaveSettings,
   shells,
-  appVersion = "",
+  appVersion = "0.1.2",
   updateInfo = null,
   isCheckingUpdates = false,
   onCheckUpdates,
@@ -703,7 +703,7 @@ export const SettingsModal: FC<SettingsModalProps> = ({
                 <label>Application Version</label>
                 <div className="update-version-row">
                   <span className="status-version" title={`Kai Terminal v${appVersion}`}>
-                    v{appVersion || "unknown"}
+                    v{appVersion}
                   </span>
                   {updateInfo?.latestVersion && (
                     <span className="muted-text">Latest: v{updateInfo.latestVersion}</span>
