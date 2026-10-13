@@ -427,8 +427,8 @@ impl PtyManager {
                             }
                         }
                         if scan_buf.len() > 8192 {
-                            let drop = scan_buf.len() - 8192;
-                            scan_buf.drain(..drop);
+                            let excess = scan_buf.len() - 8192;
+                            scan_buf.drain(..excess);
                         }
 
                         // Check if child working directory changed (throttled —
@@ -743,10 +743,7 @@ fn powershell_cwd_hook_script() -> String {
 /// conflict, so cwd tracking stays best-effort there.
 fn powershell_args_take_command(args: &[String]) -> bool {
     args.iter().any(|a| {
-        let t = a
-            .trim_start_matches('-')
-            .trim_start_matches('/')
-            .to_lowercase();
+        let t = a.trim_start_matches('-').trim_start_matches('/').to_lowercase();
         matches!(
             t.as_str(),
             "command" | "c" | "encodedcommand" | "e" | "enc" | "file" | "f"
@@ -1578,7 +1575,9 @@ mod tests {
             "-Command".to_string(),
         ]));
         assert!(powershell_args_take_command(&["-c".to_string()]));
-        assert!(powershell_args_take_command(&["-EncodedCommand".to_string()]));
+        assert!(powershell_args_take_command(&[
+            "-EncodedCommand".to_string()
+        ]));
         assert!(powershell_args_take_command(&["-File".to_string()]));
     }
 
@@ -1587,8 +1586,14 @@ mod tests {
         let hook = powershell_cwd_hook_script();
         assert!(hook.contains("global:prompt"), "hook must define prompt");
         assert!(hook.contains("]9;9;"), "hook must emit OSC 9;9");
-        assert!(hook.contains("-NoNewline"), "hook must not pollute prompt line");
-        assert!(hook.contains("$__kai_o"), "hook must preserve existing prompt");
+        assert!(
+            hook.contains("-NoNewline"),
+            "hook must not pollute prompt line"
+        );
+        assert!(
+            hook.contains("$__kai_o"),
+            "hook must preserve existing prompt"
+        );
     }
 
     #[test]
