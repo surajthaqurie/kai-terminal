@@ -5,6 +5,10 @@ import {
   closePane,
   setActivePane,
   clampPaneFraction,
+  computePaneRects,
+  computeSplitDividers,
+  resolveTabLayout,
+  createPaneLayout,
   MAX_PANES_PER_TAB,
   SplitTabState,
 } from "../services/paneLayout";
@@ -100,5 +104,145 @@ describe("pane layout model", () => {
     const closed = closePane(tab);
     expect(closed.panes.map((p) => p.id)).toEqual(["t-p1", "t-p3"]);
     expect(closed.activePaneId).toBe("t-p3");
+  });
+});
+
+describe("flat-grid geometry (no-remount splits)", () => {
+  const approx = (v: number) => expect(v).toBeCloseTo(0, 10);
+
+  it("renders a single pane full-bleed with no dividers", () => {
+    const rects = computePaneRects(createPaneLayout("p1"));
+    expect(rects).toEqual([{ paneId: "p1", x: 0, y: 0, w: 1, h: 1 }]);
+    expect(computeSplitDividers(createPaneLayout("p1"))).toEqual([]);
+  });
+
+  it("tiles vertical splits side-by-side with the divider on the seam", () => {
+    let tab: SplitTabState = {
+      panes: [pane("t-p1")],
+      activePaneId: "t-p1",
+      splitDirection: "none" as const,
+    };
+    tab = splitTab(tab, "t", "vertical", (id) => pane(id));
+    const layout = tab.layout!;
+    const rects = computePaneRects(layout);
+    expect(rects).toHaveLength(2);
+    // First keeps its identity and left half; new pane takes the right half.
+    expect(rects[0].paneId).toBe("t-p1");
+    expect(rects[0]).toMatchObject({ x: 0, y: 0, h: 1 });
+    expect(rects[0].w).toBeCloseTo(0.5, 10);
+    expect(rects[1]).toMatchObject({ y: 0, h: 1 });
+    expect(rects[1].x).toBeCloseTo(0.5, 10);
+    expect(rects[1].w).toBeCloseTo(0.5, 10);
+    // Halves tile exactly: no gap, no overlap.
+    approx(rects[0].w + rects[1].w - 1);
+    const divs = computeSplitDividers(layout);
+    expect(divs).toHaveLength(1);
+    expect(divs[0].direction).toBe("vertical");
+    expect(divs[0].ratio).toBeCloseTo(0.5, 10);
+    expect(divs[0].parent).toMatchObject({ x: 0, y: 0, w: 1, h: 1 });
+  });
+
+  it("tiles horizontal splits top/bottom", () => {
+    let tab: SplitTabState = {
+      panes: [pane("t-p1")],
+      activePaneId: "t-p1",
+      splitDirection: "none" as const,
+    };
+    tab = splitTab(tab, "t", "horizontal", (id) => pane(id));
+    const rects = computePaneRects(tab.layout!);
+    expect(rects[0]).toMatchObject({ x: 0, y: 0, w: 1 });
+    expect(rects[0].h).toBeCloseTo(0.5, 10);
+    expect(rects[1].y).toBeCloseTo(0.5, 10);
+    const divs = computeSplitDividers(tab.layout!);
+    expect(divs).toHaveLength(1);
+    expect(divs[0].direction).toBe("horizontal");
+  });
+
+  it("keeps nested splits tiling the full area with dividers on seams", () => {
+    let tab: SplitTabState = {
+      panes: [pane("a")],
+      activePaneId: "a",
+      splitDirection: "none" as const,
+    };
+    tab = splitTab(tab, "t", "vertical", (id) => pane(id)); // a | b
+    tab = { ...tab, activePaneId: tab.panes[1].id };
+    tab = splitTab(tab, "t", "horizontal", (id) => pane(id)); // a | (b / c)
+    const rects = computePaneRects(tab.layout!);
+    expect(rects).toHaveLength(3);
+    // Full-area tiling: union area is exactly 1.
+    const area = rects.reduce((s, r) => s + r.w * r.h, 0);
+    expect(area).toBeCloseTo(1, 10);
+    // Pairwise non-overlap (positive-area intersection check).
+    for (let i = 0; i < rects.length; i++) {
+      for (let j = i + 1; j < rects.length; j++) {
+        const A = rects[i];
+        const B = rects[j];
+        const ix = Math.min(A.x + A.w, B.x + B.w) - Math.max(A.x, B.x);
+        const iy = Math.min(A.y + A.h, B.y + B.h) - Math.max(A.y, B.y);
+        expect(Math.min(ix, iy)).toBeLessThanOrEqual(0);
+      }
+    }
+    const divs = computeSplitDividers(tab.layout!);
+    expect(divs).toHaveLength(2);
+    // The nested divider lives inside the right half (parent x = 0.5).
+    const nested = divs.find((d) => d.direction === "horizontal")!;
+    expect(nested.parent.x).toBeCloseTo(0.5, 10);
+    expect(nested.parent.w).toBeCloseTo(0.5, 10);
+  });
+
+  it("clamps out-of-range ratios in geometry", () => {
+    const rects = computePaneRects({
+      kind: "split",
+      id: "s",
+      direction: "vertical",
+      ratio: 0.01,
+      first: { kind: "pane", paneId: "a" },
+      second: { kind: "pane", paneId: "b" },
+    });
+    expect(rects[0].w).toBeCloseTo(0.2, 10);
+    expect(rects[1].w).toBeCloseTo(0.8, 10);
+  });
+
+  it("resolveTabLayout passes valid trees through and repairs the rest", () => {
+    let tab: SplitTabState = {
+      panes: [pane("a")],
+      activePaneId: "a",
+      splitDirection: "none" as const,
+    };
+    tab = splitTab(tab, "t", "vertical", (id) => pane(id));
+    // Valid tree: identical object back (stable divider ids across renders).
+    expect(resolveTabLayout(["a", tab.panes[1].id], tab.layout, "vertical")).toBe(tab.layout);
+    // Stale ids (restored session): fallback covers exactly the live panes.
+    const repaired = resolveTabLayout(["a", "b"], undefined, "vertical");
+    expect(
+      computePaneRects(repaired)
+        .map((r) => r.paneId)
+        .sort()
+    ).toEqual(["a", "b"]);
+    // Ghost ids are dropped, missing panes are added — every live pane renders once.
+    const ghost = resolveTabLayout(["a", "c"], tab.layout, "vertical");
+    expect(
+      computePaneRects(ghost)
+        .map((r) => r.paneId)
+        .sort()
+    ).toEqual(["a", "c"]);
+    // Single pane always fills the area.
+    expect(computePaneRects(resolveTabLayout(["solo"], undefined, "none"))).toEqual([
+      { paneId: "solo", x: 0, y: 0, w: 1, h: 1 },
+    ]);
+  });
+
+  it("split/close preserve surviving pane ids (renderer keys stay stable)", () => {
+    let tab: SplitTabState = {
+      panes: [pane("a")],
+      activePaneId: "a",
+      splitDirection: "none" as const,
+    };
+    tab = splitTab(tab, "t", "vertical", (id) => pane(id));
+    const b = tab.panes[1].id;
+    // Closing the new pane restores the original single-pane tree for "a".
+    const closed = closePane({ ...tab, activePaneId: b });
+    expect(closed.panes.map((p) => p.id)).toEqual(["a"]);
+    expect(computePaneRects(closed.layout!).map((r) => r.paneId)).toEqual(["a"]);
   });
 });

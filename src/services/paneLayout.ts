@@ -218,3 +218,115 @@ export function findLayoutSplit(node: PaneLayoutNode, splitId: string): PaneLayo
   if (node.id === splitId) return node;
   return findLayoutSplit(node.first, splitId) ?? findLayoutSplit(node.second, splitId);
 }
+
+// ---------------------------------------------------------------------------
+// Flat-grid geometry: DOM-stable rendering without remounts
+// ---------------------------------------------------------------------------
+
+/**
+ * Fractional rectangle (0..1 of the tab's pane area) for one pane.
+ */
+export interface PaneRect {
+  paneId: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/**
+ * Geometry for one split divider: its stable id, axis, clamped ratio, and
+ * the fractional rectangle of the split it divides (used to position the
+ * divider and to convert pointer drags into ratios).
+ */
+export interface SplitDividerGeometry {
+  splitId: string;
+  direction: PaneSplitDirection;
+  ratio: number;
+  parent: PaneRect;
+}
+
+/**
+ * Computes every leaf's rectangle from a layout tree.
+ *
+ * This is what lets the renderer keep a FLAT list of absolutely-positioned
+ * pane elements with stable `key={pane.id}`: the tree drives geometry only,
+ * never DOM nesting. Splitting/closing/resizing therefore never reparents a
+ * live pane, so React never unmounts its TerminalView — previously the
+ * nested flexbox tree moved the old pane under a new split element on every
+ * split, disposing its xterm, closing its backend PTY, and respawning a
+ * fresh shell ("opening a split refreshes the older terminal").
+ */
+export function computePaneRects(node: PaneLayoutNode): PaneRect[] {
+  const out: PaneRect[] = [];
+  const walk = (n: PaneLayoutNode, x: number, y: number, w: number, h: number): void => {
+    if (n.kind === "pane") {
+      out.push({ paneId: n.paneId, x, y, w, h });
+      return;
+    }
+    const ratio = clampPaneFraction(n.ratio);
+    if (n.direction === "vertical") {
+      // Side-by-side: first takes the left `ratio` share.
+      const wFirst = w * ratio;
+      walk(n.first, x, y, wFirst, h);
+      walk(n.second, x + wFirst, y, w - wFirst, h);
+    } else {
+      // Stacked: first takes the top `ratio` share.
+      const hFirst = h * ratio;
+      walk(n.first, x, y, w, hFirst);
+      walk(n.second, x, y + hFirst, w, h - hFirst);
+    }
+  };
+  walk(node, 0, 0, 1, 1);
+  return out;
+}
+
+/**
+ * Computes every split divider's geometry from a layout tree (same traversal
+ * as `computePaneRects`, so dividers always sit exactly on pane seams).
+ */
+export function computeSplitDividers(node: PaneLayoutNode): SplitDividerGeometry[] {
+  const out: SplitDividerGeometry[] = [];
+  const walk = (n: PaneLayoutNode, x: number, y: number, w: number, h: number): void => {
+    if (n.kind === "pane") return;
+    const ratio = clampPaneFraction(n.ratio);
+    out.push({ splitId: n.id, direction: n.direction, ratio, parent: { paneId: "", x, y, w, h } });
+    if (n.direction === "vertical") {
+      const wFirst = w * ratio;
+      walk(n.first, x, y, wFirst, h);
+      walk(n.second, x + wFirst, y, w - wFirst, h);
+    } else {
+      const hFirst = h * ratio;
+      walk(n.first, x, y, w, hFirst);
+      walk(n.second, x, y + hFirst, w, h - hFirst);
+    }
+  };
+  walk(node, 0, 0, 1, 1);
+  return out;
+}
+
+/**
+ * Resolves the renderable layout tree for a tab's CURRENT panes.
+ *
+ * The stored tree can reference stale ids (restored sessions, corrupt
+ * persistence, races between split/close updates). When it does not cover
+ * exactly the live pane ids, fall back to an even tiling so every live pane
+ * renders exactly once and no ghost pane renders at all. The fallback is
+ * geometry-only: it never mutates tab state, so a transient mismatch cannot
+ * destroy live sessions.
+ */
+export function resolveTabLayout(
+  paneIds: string[],
+  layout: PaneLayoutNode | undefined,
+  splitDirection: SplitDirection
+): PaneLayoutNode {
+  if (paneIds.length === 0) return { kind: "pane", paneId: "" };
+  if (layout) {
+    const ids = collectLayoutPaneIds(layout);
+    if (ids.length === paneIds.length && ids.every((id) => paneIds.includes(id))) {
+      return layout;
+    }
+  }
+  if (paneIds.length === 1) return createPaneLayout(paneIds[0]);
+  return layoutFromFlat(paneIds, splitDirection === "none" ? "vertical" : splitDirection);
+}

@@ -59,6 +59,9 @@ import {
   createPaneLayout,
   removePaneFromLayout,
   clampPaneFraction,
+  computePaneRects,
+  computeSplitDividers,
+  resolveTabLayout,
 } from "./services/paneLayout";
 import {
   APP_VERSION_FALLBACK,
@@ -324,6 +327,10 @@ export function App() {
 
   // Terminal view refs keyed by pane ID
   const terminalRefs = useRef<Record<string, TerminalViewRef | null>>({});
+  // Tab pane-area elements keyed by tab ID: divider drags measure the live
+  // container rect and scale it by the split's parent fraction (flat-grid
+  // rendering has no per-split DOM element to measure anymore).
+  const tabContainerRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   // Live mirrors so `exit` handling never runs on a stale `tabs` snapshot.
   // TerminalView registers its pty-exit listener once per pane; without
@@ -1631,9 +1638,13 @@ export function App() {
   // nested layout tree, so every divider drags along its own axis.
   // Each pane keeps its own TerminalView + ResizeObserver, so dragging
   // resizes the correct backend PTY with real cols/rows (backend clamps).
-  const dragRef = useRef<{ tabId: string; splitId: string; start: number; base: number } | null>(
-    null
-  );
+  const dragRef = useRef<{
+    tabId: string;
+    splitId: string;
+    start: number;
+    base: number;
+    size: number;
+  } | null>(null);
 
   const handleSplitResize = useCallback((tabId: string, splitId: string, ratio: number) => {
     setTabs((prev) =>
@@ -1650,21 +1661,18 @@ export function App() {
     splitId: string,
     direction: PaneSplitDirection,
     clientPos: number,
-    containerEl: HTMLElement | null,
+    parentSizePx: number,
     baseRatio: number
   ) => {
-    dragRef.current = { tabId, splitId, start: clientPos, base: baseRatio };
+    dragRef.current = { tabId, splitId, start: clientPos, base: baseRatio, size: parentSizePx };
     const move = (ev: PointerEvent) => {
       const drag = dragRef.current;
       if (!drag || drag.tabId !== tabId || drag.splitId !== splitId) return;
-      const rect = containerEl?.getBoundingClientRect();
-      if (!rect) return;
+      if (drag.size <= 0) return;
       // Vertical split = side-by-side (row axis -> width/clientX).
       // Horizontal split = stacked (column axis -> height/clientY).
       const vertical = direction === "vertical";
-      const size = vertical ? rect.width : rect.height;
-      if (size <= 0) return;
-      const delta = ((vertical ? ev.clientX : ev.clientY) - drag.start) / size;
+      const delta = ((vertical ? ev.clientX : ev.clientY) - drag.start) / drag.size;
       handleSplitResize(tabId, splitId, clampPaneFraction(drag.base + delta));
     };
     const up = () => {
@@ -1804,105 +1812,75 @@ export function App() {
           </div>
         )}
         {tabs.map((tab) => {
-          const paneById = new Map(tab.panes.map((p) => [p.id, p]));
-          const layout: PaneLayoutNode = tab.layout ?? {
-            kind: "pane",
-            paneId: tab.panes[0]?.id ?? tab.activePaneId,
-          };
-          const renderNode = (node: PaneLayoutNode): React.ReactNode => {
-            if (node.kind === "pane") {
-              const pane = paneById.get(node.paneId);
-              if (!pane) return null;
-              const isPaneActive = pane.id === tab.activePaneId;
-              const focusPane = () => {
-                setTabs((prev) =>
-                  prev.map((t) => (t.id === tab.id ? { ...t, activePaneId: pane.id } : t))
-                );
-              };
-              return (
-                <div
-                  key={pane.id}
-                  className={`pane-item ${isPaneActive ? "active-pane" : ""}`}
-                  style={{ flex: "1 1 0%" }}
-                  onClick={focusPane}
-                  onPointerDown={focusPane}
-                >
-                  <TerminalView
-                    ref={(el) => {
-                      terminalRefs.current[pane.id] = el;
-                    }}
-                    sessionId={pane.id}
-                    selectedShell={selectedShell}
-                    cwd={pane.cwd || tab.cwd || cwd}
-                    settings={userSettings}
-                    visible={tab.id === activeTabId}
-                    resetKey={pane.resetKey ?? 0}
-                    onFocus={focusPane}
-                    onCommandSubmitted={handleCommandSubmitted}
-                    onCwdResolved={(resolved) => {
-                      if (resolved) {
-                        // No-op probes (cwd unchanged) skip the whole cascade:
-                        // previously every probe rewrote tab state, touched
-                        // localStorage, invalidated the git cache, and spawned
-                        // `git` — per Enter, ×3. Unchanged dirs refresh the
-                        // badge from cache only (no spawn unless the TTL
-                        // expired), so `git commit` still updates the badge.
-                        const live = tabsRef.current.find((t) => t.id === tab.id);
-                        const livePane = live?.panes.find((p) => p.id === pane.id);
-                        if ((livePane?.cwd || live?.cwd || cwdRef.current) === resolved) {
-                          if (
-                            activeTabIdRef.current === tab.id &&
-                            (live?.activePaneId === pane.id || (live?.panes.length ?? 0) <= 1)
-                          ) {
-                            void getGitInfoCached(resolved).then(
-                              (info) => {
-                                setGitInfoByDir((prev) =>
-                                  prev[resolved]?.branch === info.branch &&
-                                  prev[resolved]?.dirty === info.dirty &&
-                                  prev[resolved]?.repo_root === info.repo_root
-                                    ? prev
-                                    : { ...prev, [resolved]: info }
-                                );
-                                setGitBranch(info.branch);
-                                setGitDirty(info.dirty);
-                                setGitRepoRoot(info.repo_root ?? null);
-                              },
-                              () => {
-                                setGitInfoByDir((prev) => ({ ...prev, [resolved]: null }));
-                                setGitBranch(null);
-                                setGitDirty(false);
-                                setGitRepoRoot(null);
-                              }
-                            );
-                          }
-                          return;
-                        }
-                        setTabs((prev) =>
-                          prev.map((t) =>
-                            t.id === tab.id
-                              ? {
-                                  ...t,
-                                  cwd:
-                                    t.activePaneId === pane.id || t.panes.length === 1
-                                      ? resolved
-                                      : t.cwd,
-                                  panes: t.panes.map((p) =>
-                                    p.id === pane.id ? { ...p, cwd: resolved } : p
-                                  ),
-                                }
-                              : t
-                          )
-                        );
+          // Flat-grid rendering (no-remount splits): the layout tree drives
+          // GEOMETRY ONLY. Every live pane renders exactly once as a direct,
+          // absolutely-positioned child with a stable key, so splitting,
+          // closing, or dragging never reparents a live TerminalView. (The
+          // previous nested flexbox tree moved the surviving pane under a
+          // brand-new split element on every split, unmounting its xterm,
+          // closing its backend PTY, and spawning a fresh shell — "opening a
+          // split refreshes the older terminal".)
+          const paneIds = tab.panes.map((p) => p.id);
+          const layout = resolveTabLayout(paneIds, tab.layout, tab.splitDirection);
+          const rectByPaneId = new Map(computePaneRects(layout).map((r) => [r.paneId, r]));
+          const dividers = computeSplitDividers(layout);
+          const renderPane = (pane: TerminalPane): React.ReactNode => {
+            const rect = rectByPaneId.get(pane.id) ?? { x: 0, y: 0, w: 1, h: 1 };
+            const isPaneActive = pane.id === tab.activePaneId;
+            const focusPane = () => {
+              setTabs((prev) =>
+                prev.map((t) => (t.id === tab.id ? { ...t, activePaneId: pane.id } : t))
+              );
+            };
+            return (
+              <div
+                key={pane.id}
+                className={`pane-item pane-grid-pane ${isPaneActive ? "active-pane" : ""}`}
+                style={{
+                  left: `${rect.x * 100}%`,
+                  top: `${rect.y * 100}%`,
+                  width: `${rect.w * 100}%`,
+                  height: `${rect.h * 100}%`,
+                }}
+                onClick={focusPane}
+                onPointerDown={focusPane}
+              >
+                <TerminalView
+                  ref={(el) => {
+                    terminalRefs.current[pane.id] = el;
+                  }}
+                  sessionId={pane.id}
+                  selectedShell={selectedShell}
+                  cwd={pane.cwd || tab.cwd || cwd}
+                  settings={userSettings}
+                  visible={tab.id === activeTabId}
+                  resetKey={pane.resetKey ?? 0}
+                  onFocus={focusPane}
+                  onCommandSubmitted={handleCommandSubmitted}
+                  onCwdResolved={(resolved) => {
+                    if (resolved) {
+                      // No-op probes (cwd unchanged) skip the whole cascade:
+                      // previously every probe rewrote tab state, touched
+                      // localStorage, invalidated the git cache, and spawned
+                      // `git` — per Enter, ×3. Unchanged dirs refresh the
+                      // badge from cache only (no spawn unless the TTL
+                      // expired), so `git commit` still updates the badge.
+                      const live = tabsRef.current.find((t) => t.id === tab.id);
+                      const livePane = live?.panes.find((p) => p.id === pane.id);
+                      if ((livePane?.cwd || live?.cwd || cwdRef.current) === resolved) {
                         if (
-                          tab.id === activeTabId &&
-                          (tab.activePaneId === pane.id || tab.panes.length === 1)
+                          activeTabIdRef.current === tab.id &&
+                          (live?.activePaneId === pane.id || (live?.panes.length ?? 0) <= 1)
                         ) {
-                          setCwd(resolved);
-                          setRecentProjects(recordRecentProject(resolved));
-                          invalidateGitCache(resolved);
                           void getGitInfoCached(resolved).then(
                             (info) => {
-                              setGitInfoByDir((prev) => ({ ...prev, [resolved]: info }));
+                              setGitInfoByDir((prev) =>
+                                prev[resolved]?.branch === info.branch &&
+                                prev[resolved]?.dirty === info.dirty &&
+                                prev[resolved]?.repo_root === info.repo_root
+                                  ? prev
+                                  : { ...prev, [resolved]: info }
+                              );
                               setGitBranch(info.branch);
                               setGitDirty(info.dirty);
                               setGitRepoRoot(info.repo_root ?? null);
@@ -1915,76 +1893,69 @@ export function App() {
                             }
                           );
                         }
+                        return;
                       }
-                    }}
-                    onExit={(exitCode) => {
-                      handleSessionExit(tab.id, pane.id, exitCode);
-                    }}
-                    onSessionStatusChange={(status, message) => {
-                      if (status === "error" && message) setLastError(message);
                       setTabs((prev) =>
                         prev.map((t) =>
                           t.id === tab.id
                             ? {
                                 ...t,
-                                status,
-                                errorMessage: message,
+                                cwd:
+                                  t.activePaneId === pane.id || t.panes.length === 1
+                                    ? resolved
+                                    : t.cwd,
                                 panes: t.panes.map((p) =>
-                                  p.id === pane.id ? { ...p, status, errorMessage: message } : p
+                                  p.id === pane.id ? { ...p, cwd: resolved } : p
                                 ),
                               }
                             : t
                         )
                       );
-                    }}
-                  />
-                </div>
-              );
-            }
-            // Each split owns its axis: vertical = side-by-side (width),
-            // horizontal = stacked (height). Mixed directions nest.
-            // NOTE: flex-basis 0 with proportional grow (NOT percentage basis)
-            // so gap (2px) + divider (6px) never push the row past 100% and
-            // create an outer scrollbar next to the divider. Only the xterm
-            // viewport scrolls.
-            const ratio = clampPaneFraction(node.ratio);
-            return (
-              <div
-                key={node.id}
-                className={`pane-split pane-split-${node.direction}`}
-                data-split-id={node.id}
-              >
-                <div
-                  className="pane-leaf"
-                  style={{ flexGrow: ratio, flexShrink: 1, flexBasis: "0%" }}
-                >
-                  {renderNode(node.first)}
-                </div>
-                <div
-                  className={`pane-divider pane-divider-${node.direction}`}
-                  role="separator"
-                  aria-orientation={node.direction === "vertical" ? "vertical" : "horizontal"}
-                  aria-label={`Resize ${node.direction} split`}
-                  onPointerDown={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    const container = (e.currentTarget.parentElement as HTMLElement) ?? null;
-                    beginSplitDrag(
-                      tab.id,
-                      node.id,
-                      node.direction,
-                      node.direction === "vertical" ? e.clientX : e.clientY,
-                      container,
-                      ratio
+                      if (
+                        tab.id === activeTabId &&
+                        (tab.activePaneId === pane.id || tab.panes.length === 1)
+                      ) {
+                        setCwd(resolved);
+                        setRecentProjects(recordRecentProject(resolved));
+                        invalidateGitCache(resolved);
+                        void getGitInfoCached(resolved).then(
+                          (info) => {
+                            setGitInfoByDir((prev) => ({ ...prev, [resolved]: info }));
+                            setGitBranch(info.branch);
+                            setGitDirty(info.dirty);
+                            setGitRepoRoot(info.repo_root ?? null);
+                          },
+                          () => {
+                            setGitInfoByDir((prev) => ({ ...prev, [resolved]: null }));
+                            setGitBranch(null);
+                            setGitDirty(false);
+                            setGitRepoRoot(null);
+                          }
+                        );
+                      }
+                    }
+                  }}
+                  onExit={(exitCode) => {
+                    handleSessionExit(tab.id, pane.id, exitCode);
+                  }}
+                  onSessionStatusChange={(status, message) => {
+                    if (status === "error" && message) setLastError(message);
+                    setTabs((prev) =>
+                      prev.map((t) =>
+                        t.id === tab.id
+                          ? {
+                              ...t,
+                              status,
+                              errorMessage: message,
+                              panes: t.panes.map((p) =>
+                                p.id === pane.id ? { ...p, status, errorMessage: message } : p
+                              ),
+                            }
+                          : t
+                      )
                     );
                   }}
                 />
-                <div
-                  className="pane-leaf"
-                  style={{ flexGrow: 1 - ratio, flexShrink: 1, flexBasis: "0%" }}
-                >
-                  {renderNode(node.second)}
-                </div>
               </div>
             );
           };
@@ -1994,8 +1965,67 @@ export function App() {
               className="tab-content"
               style={{ display: tab.id === activeTabId ? "block" : "none" }}
             >
-              <div className="pane-container-none" data-pane-container={tab.id}>
-                {renderNode(layout)}
+              {/* Flat grid: panes AND dividers are direct children with stable
+                keys, so no live terminal ever remounts (see note above).
+                Dividers overlay the exact pane seams (1px visual bar, generous
+                ::after hit area); drag math is unchanged (pointer delta over
+                the split's parent size). Only the xterm viewport scrolls. */}
+              <div
+                className="pane-container-none pane-grid"
+                data-pane-container={tab.id}
+                ref={(el) => {
+                  tabContainerRefs.current[tab.id] = el;
+                }}
+              >
+                {tab.panes.map((pane) => renderPane(pane))}
+                {dividers.map((d) => {
+                  const vertical = d.direction === "vertical";
+                  const seam = vertical
+                    ? d.parent.x + d.parent.w * d.ratio
+                    : d.parent.y + d.parent.h * d.ratio;
+                  return (
+                    <div
+                      key={d.splitId}
+                      data-split-id={d.splitId}
+                      className={`pane-divider pane-divider-abs pane-divider-${d.direction}`}
+                      role="separator"
+                      aria-orientation={vertical ? "vertical" : "horizontal"}
+                      aria-label={`Resize ${d.direction} split`}
+                      style={
+                        vertical
+                          ? {
+                              left: `${seam * 100}%`,
+                              top: `${d.parent.y * 100}%`,
+                              height: `${d.parent.h * 100}%`,
+                            }
+                          : {
+                              top: `${seam * 100}%`,
+                              left: `${d.parent.x * 100}%`,
+                              width: `${d.parent.w * 100}%`,
+                            }
+                      }
+                      onPointerDown={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        const container = tabContainerRefs.current[tab.id] ?? null;
+                        const rect = container?.getBoundingClientRect() ?? null;
+                        const parentSizePx = rect
+                          ? vertical
+                            ? rect.width * d.parent.w
+                            : rect.height * d.parent.h
+                          : 0;
+                        beginSplitDrag(
+                          tab.id,
+                          d.splitId,
+                          d.direction,
+                          vertical ? e.clientX : e.clientY,
+                          parentSizePx,
+                          d.ratio
+                        );
+                      }}
+                    />
+                  );
+                })}
               </div>
             </div>
           );

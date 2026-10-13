@@ -1279,6 +1279,29 @@ select.modal-input {
   box-shadow: 0 0 6px var(--accent-glow);
 }
 
+/* Flat-grid rendering (no-remount splits): panes and dividers are direct,
+ * absolutely-positioned children of the tab container with stable React keys,
+ * so splitting/closing/dragging never reparents a live xterm. Higher
+ * specificity than `.pane-item`/`.pane-divider` (which keep border, cursor,
+ * and hit-area styling) guarantees the override wins regardless of order.
+ * Divider lanes overlay the exact pane seams: the 1px visual bar is centered
+ * on the seam via translate, while the generous ::after hit area is kept. */
+.pane-grid {
+  position: relative;
+}
+.pane-grid .pane-grid-pane {
+  position: absolute;
+}
+.pane-grid .pane-divider-abs {
+  position: absolute;
+}
+.pane-grid .pane-divider-abs.pane-divider-vertical {
+  transform: translateX(-50%);
+}
+.pane-grid .pane-divider-abs.pane-divider-horizontal {
+  transform: translateY(-50%);
+}
+
 /* Per-split Pane Header */
 .pane-header {
   display: flex;
