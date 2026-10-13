@@ -480,7 +480,13 @@ pub struct CustomAiCliConfig {
 /// whose shims open a desktop app: spawning them with `--version` can hang
 /// or pop windows, so detection stops at "binary found" and reports the
 /// version as unknown instead of a scary probe-failed diagnostic.
-fn ai_cli_catalog() -> Vec<(&'static str, &'static str, Vec<&'static str>, &'static str, bool)> {
+fn ai_cli_catalog() -> Vec<(
+    &'static str,
+    &'static str,
+    Vec<&'static str>,
+    &'static str,
+    bool,
+)> {
     vec![
         (
             "codex",
@@ -593,8 +599,9 @@ pub fn detect_ai_cli_details() -> Vec<AiCliDetails> {
     if cfg!(test) {
         return detect_ai_cli_details_uncached();
     }
-    static CACHE: std::sync::OnceLock<std::sync::Mutex<Option<(std::time::Instant, Vec<AiCliDetails>)>>> =
-        std::sync::OnceLock::new();
+    static CACHE: std::sync::OnceLock<
+        std::sync::Mutex<Option<(std::time::Instant, Vec<AiCliDetails>)>>,
+    > = std::sync::OnceLock::new();
     let lock = CACHE.get_or_init(|| std::sync::Mutex::new(None));
     if let Ok(guard) = lock.lock() {
         if let Some((at, cached)) = guard.as_ref() {
@@ -840,7 +847,8 @@ fn details_for_entry(
 /// invalid. Never stores credentials or modifies third-party auth files.
 pub fn check_custom_ai_cli_path(id: &str, custom_path: &str) -> Result<AiCliDetails, String> {
     let catalog = ai_cli_catalog();
-    let (name, guidance) = if let Some(entry) = catalog.iter().find(|(cid, _, _, _, _)| *cid == id) {
+    let (name, guidance) = if let Some(entry) = catalog.iter().find(|(cid, _, _, _, _)| *cid == id)
+    {
         (entry.1.to_string(), entry.3.to_string())
     } else if id.starts_with("custom:") || id.starts_with("user-") {
         (
@@ -1078,8 +1086,7 @@ fn find_on_path(cmd: &str) -> Option<String> {
 /// each guaranteed to start with a dot.
 #[cfg(target_os = "windows")]
 fn pathext_extensions() -> Vec<String> {
-    let raw =
-        env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD;.VBS;.PS1".to_string());
+    let raw = env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD;.VBS;.PS1".to_string());
     raw.split(';')
         .map(|e| e.trim().to_lowercase())
         .filter(|e| !e.is_empty())
@@ -1525,10 +1532,7 @@ mod tests {
         std::fs::write(dir.join("kaifaketool"), "#!/bin/sh\necho hi\n").unwrap();
         std::fs::write(dir.join("kaifaketool.cmd"), "@echo off\r\necho hi\r\n").unwrap();
         let old_path = std::env::var("PATH").unwrap_or_default();
-        std::env::set_var(
-            "PATH",
-            format!("{};{}", dir.to_string_lossy(), old_path),
-        );
+        std::env::set_var("PATH", format!("{};{}", dir.to_string_lossy(), old_path));
         let found = find_on_path("kaifaketool");
         std::env::set_var("PATH", old_path);
         let _ = std::fs::remove_dir_all(&dir);

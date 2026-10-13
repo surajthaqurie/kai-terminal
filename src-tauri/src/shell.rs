@@ -986,13 +986,9 @@ pub fn open_in_editor(requested_editor: Option<&str>, cwd: &str) -> Result<Strin
             c.arg(&valid_cwd);
             #[cfg(target_os = "windows")]
             hide_console(&mut c);
-            c.spawn()
-                .map_err(|e| {
-                    TerminalError::IoError(format!(
-                        "Failed to launch editor '{}': {}",
-                        editor_bin, e
-                    ))
-                })?;
+            c.spawn().map_err(|e| {
+                TerminalError::IoError(format!("Failed to launch editor '{}': {}", editor_bin, e))
+            })?;
             return Ok(editor_bin);
         }
 
@@ -1001,13 +997,9 @@ pub fn open_in_editor(requested_editor: Option<&str>, cwd: &str) -> Result<Strin
             c.args(["/c", &editor_bin, &valid_cwd]);
             #[cfg(target_os = "windows")]
             hide_console(&mut c);
-            c.spawn()
-                .map_err(|e| {
-                    TerminalError::IoError(format!(
-                        "Failed to launch editor '{}': {}",
-                        editor_bin, e
-                    ))
-                })?;
+            c.spawn().map_err(|e| {
+                TerminalError::IoError(format!("Failed to launch editor '{}': {}", editor_bin, e))
+            })?;
             return Ok(editor_bin);
         }
     }

@@ -86,8 +86,7 @@ fn is_windows_autostart_enabled() -> bool {
     let mut c = std::process::Command::new("reg");
     c.args(["query", WINDOWS_RUN_KEY, "/v", AUTOSTART_APP_NAME]);
     hide_console(&mut c);
-    c.output()
-        .is_ok_and(|out| out.status.success())
+    c.output().is_ok_and(|out| out.status.success())
 }
 
 #[cfg(target_os = "windows")]
