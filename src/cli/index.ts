@@ -880,7 +880,9 @@ export async function runCli(argv: string[]): Promise<number> {
             console.log(`[kai] ${dynamicResult.message}`);
             if (dynamicResult.backupPath) {
               console.log(`[kai] Previous config backed up to: ${dynamicResult.backupPath}`);
-              console.log(`[kai] The backup is kept intentionally — delete it after verifying the new config works.`);
+              console.log(
+                `[kai] The backup is kept intentionally — delete it after verifying the new config works.`
+              );
             }
             if (!dynamicResult.skipped)
               console.log(`[kai] Restart ${rawTarget} so it picks up the kai MCP server.`);
@@ -919,7 +921,9 @@ export async function runCli(argv: string[]): Promise<number> {
       console.log(`[kai] ${result.message}`);
       if (result.backupPath) {
         console.log(`[kai] Previous config backed up to: ${result.backupPath}`);
-        console.log(`[kai] The backup is kept intentionally — delete it after verifying the new config works.`);
+        console.log(
+          `[kai] The backup is kept intentionally — delete it after verifying the new config works.`
+        );
       }
       console.log(`[kai] Restart ${result.name} so it picks up the kai MCP server.`);
       return 0;

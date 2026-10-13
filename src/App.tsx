@@ -462,20 +462,22 @@ export function App() {
     if (isRefreshingGit) return;
     setIsRefreshingGit(true);
     invalidateGitCache(dir);
-    void getGitInfoCached(dir).then(
-      (info) => {
-        setGitInfoByDir((prev) => ({ ...prev, [dir]: info }));
-        setGitBranch(info.branch);
-        setGitDirty(info.dirty);
-        setGitRepoRoot(info.repo_root ?? null);
-      },
-      () => {
-        setGitInfoByDir((prev) => ({ ...prev, [dir]: null }));
-        setGitBranch(null);
-        setGitDirty(false);
-        setGitRepoRoot(null);
-      }
-    ).finally(() => setIsRefreshingGit(false));
+    void getGitInfoCached(dir)
+      .then(
+        (info) => {
+          setGitInfoByDir((prev) => ({ ...prev, [dir]: info }));
+          setGitBranch(info.branch);
+          setGitDirty(info.dirty);
+          setGitRepoRoot(info.repo_root ?? null);
+        },
+        () => {
+          setGitInfoByDir((prev) => ({ ...prev, [dir]: null }));
+          setGitBranch(null);
+          setGitDirty(false);
+          setGitRepoRoot(null);
+        }
+      )
+      .finally(() => setIsRefreshingGit(false));
   }, [syncCodeModeState, isRefreshingGit]);
   const refreshInstalledEditors = useCallback(() => {
     setIsLoadingEditors(true);
@@ -2001,7 +2003,11 @@ export function App() {
 
       <Suspense
         fallback={
-          isSettingsOpen || isCommandPaletteOpen || isAiCliOpen || isDiagnosticsOpen || isWorkspaceOpen ? (
+          isSettingsOpen ||
+          isCommandPaletteOpen ||
+          isAiCliOpen ||
+          isDiagnosticsOpen ||
+          isWorkspaceOpen ? (
             <div className="modal-backdrop" aria-label="Loading panel" role="status">
               <div className="command-palette-modal" style={{ padding: 16 }}>
                 <span className="muted-text">Loading…</span>

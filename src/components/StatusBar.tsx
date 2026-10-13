@@ -193,11 +193,7 @@ export const StatusBar: FC<StatusBarProps> = ({
                 title={isRefreshingGit ? "Refreshing git status…" : "Refresh git status"}
                 aria-label={isRefreshingGit ? "Refreshing git status" : "Refresh git status"}
               >
-                <RefreshCw
-                  size={12}
-                  aria-hidden="true"
-                  className={isRefreshingGit ? "spin" : ""}
-                />
+                <RefreshCw size={12} aria-hidden="true" className={isRefreshingGit ? "spin" : ""} />
               </button>
             )}
           </div>
@@ -222,11 +218,7 @@ export const StatusBar: FC<StatusBarProps> = ({
                 aria-label={isRefreshingGit ? "Refreshing git status" : "Refresh git status"}
                 style={{ marginLeft: 4 }}
               >
-                <RefreshCw
-                  size={12}
-                  aria-hidden="true"
-                  className={isRefreshingGit ? "spin" : ""}
-                />
+                <RefreshCw size={12} aria-hidden="true" className={isRefreshingGit ? "spin" : ""} />
               </button>
             )}
           </span>
