@@ -160,14 +160,25 @@ export function findKaiAppBinary(): string | null {
     ...(process.platform === "darwin"
       ? [
           "/Applications/Kai Terminal.app/Contents/MacOS/cross-platform-terminal-backend",
-          path.join(home, "Applications/Kai Terminal.app/Contents/MacOS/cross-platform-terminal-backend"),
+          path.join(
+            home,
+            "Applications/Kai Terminal.app/Contents/MacOS/cross-platform-terminal-backend"
+          ),
         ]
       : []),
     // Windows
     ...(process.platform === "win32"
       ? [
-          path.join(process.env.LOCALAPPDATA || "", "KaiTerminal", "cross-platform-terminal-backend.exe"),
-          path.join(process.env.PROGRAMFILES || "", "KaiTerminal", "cross-platform-terminal-backend.exe"),
+          path.join(
+            process.env.LOCALAPPDATA || "",
+            "KaiTerminal",
+            "cross-platform-terminal-backend.exe"
+          ),
+          path.join(
+            process.env.PROGRAMFILES || "",
+            "KaiTerminal",
+            "cross-platform-terminal-backend.exe"
+          ),
         ]
       : []),
     // Dev builds
@@ -846,7 +857,8 @@ export async function runCli(argv: string[]): Promise<number> {
         // Unknown agent — try to resolve it dynamically from PATH before giving up.
         // If a binary with that name exists, synthesise a custom mcpServers entry on
         // the fly and write it to ~/.config/<agent>/mcp.json (XDG-style).
-        const { findDynamicAgentBinary, buildDynamicAgentSetup } = await import("../core/agents.js");
+        const { findDynamicAgentBinary, buildDynamicAgentSetup } =
+          await import("../core/agents.js");
         const dynamicBin = findDynamicAgentBinary(rawTarget);
         if (dynamicBin) {
           console.log(`[kai] Auto-detected "${rawTarget}" at ${dynamicBin}.`);

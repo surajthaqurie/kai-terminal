@@ -590,17 +590,22 @@ In chat: "Use kai_project_info to inspect the codebase."
   }
   try {
     fs.mkdirSync(configDir, { recursive: true, mode: 0o700 });
-    const backupPath = exists ? (() => {
-      try {
-        const bp = `${filePath}.kai.bak`;
-        fs.copyFileSync(filePath, bp);
-        return bp;
-      } catch {
-        return null;
-      }
-    })() : null;
+    const backupPath = exists
+      ? (() => {
+          try {
+            const bp = `${filePath}.kai.bak`;
+            fs.copyFileSync(filePath, bp);
+            return bp;
+          } catch {
+            return null;
+          }
+        })()
+      : null;
     const tmpPath = `${filePath}.kai.tmp.${process.pid}`;
-    fs.writeFileSync(tmpPath, `${JSON.stringify(data, null, 2)}\n`, { mode: 0o600, encoding: "utf-8" });
+    fs.writeFileSync(tmpPath, `${JSON.stringify(data, null, 2)}\n`, {
+      mode: 0o600,
+      encoding: "utf-8",
+    });
     fs.renameSync(tmpPath, filePath);
     return {
       wrote: true,
