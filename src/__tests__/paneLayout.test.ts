@@ -3,6 +3,7 @@ import { describe, it, expect } from "vitest";
 import {
   splitTab,
   closePane,
+  removePaneById,
   setActivePane,
   clampPaneFraction,
   computePaneRects,
@@ -244,5 +245,84 @@ describe("flat-grid geometry (no-remount splits)", () => {
     const closed = closePane({ ...tab, activePaneId: b });
     expect(closed.panes.map((p) => p.id)).toEqual(["a"]);
     expect(computePaneRects(closed.layout!).map((r) => r.paneId)).toEqual(["a"]);
+  });
+});
+
+describe("removePaneById (shared exit/close path)", () => {
+  function threePane(): SplitTabState {
+    // a | (b / c): mixed-direction tree over three live panes.
+    let tab: SplitTabState = {
+      panes: [pane("a")],
+      activePaneId: "a",
+      splitDirection: "none" as const,
+    };
+    tab = splitTab(tab, "t", "vertical", (id) => pane(id));
+    const b = tab.panes[1].id;
+    tab = { ...tab, activePaneId: b };
+    tab = splitTab(tab, "t", "horizontal", (id) => pane(id));
+    return tab;
+  }
+
+  it("exiting one pane preserves survivor ids/objects (no neighbor refresh)", () => {
+    const tab = threePane();
+    const before = new Map(tab.panes.map((p) => [p.id, p]));
+    const exiting = tab.panes[2].id;
+    const next = removePaneById(tab, exiting);
+    // Survivors keep identity: the renderer's stable keys keep them mounted.
+    expect(next.panes.map((p) => p.id).sort()).toEqual(
+      [...before.keys()].filter((id) => id !== exiting).sort()
+    );
+    for (const p of next.panes) {
+      expect(p).toBe(before.get(p.id));
+    }
+    // Layout prunes to exactly the survivors.
+    const ids = computePaneRects(next.layout!)
+      .map((r) => r.paneId)
+      .sort();
+    expect(ids).toEqual(next.panes.map((p) => p.id).sort());
+    // Full-area tiling is preserved after the collapse.
+    const area = computePaneRects(next.layout!).reduce((s, r) => s + r.w * r.h, 0);
+    expect(area).toBeCloseTo(1, 10);
+  });
+
+  it("moves focus to the neighbor only when the focused pane exits", () => {
+    const tab = threePane();
+    const focused = tab.activePaneId;
+    const afterFocusedExit = removePaneById(tab, focused);
+    expect(afterFocusedExit.activePaneId).not.toBe(focused);
+    expect(afterFocusedExit.panes.some((p) => p.id === afterFocusedExit.activePaneId)).toBe(true);
+    // Removing a background pane never steals focus.
+    const background = tab.panes.find((p) => p.id !== focused)!.id;
+    expect(removePaneById(tab, background).activePaneId).toBe(focused);
+  });
+
+  it("collapses the last two panes to a single full-bleed layout", () => {
+    let tab: SplitTabState = {
+      panes: [pane("a")],
+      activePaneId: "a",
+      splitDirection: "none" as const,
+    };
+    tab = splitTab(tab, "t", "vertical", (id) => pane(id));
+    const next = removePaneById(tab, tab.panes[1].id);
+    expect(next.panes.map((p) => p.id)).toEqual(["a"]);
+    expect(next.splitDirection).toBe("none");
+    expect(computePaneRects(next.layout!)).toEqual([{ paneId: "a", x: 0, y: 0, w: 1, h: 1 }]);
+    expect(computeSplitDividers(next.layout!)).toEqual([]);
+  });
+
+  it("is a no-op for unknown ids and sole panes", () => {
+    const tab = threePane();
+    expect(removePaneById(tab, "nope")).toBe(tab);
+    const solo: SplitTabState = {
+      panes: [pane("a")],
+      activePaneId: "a",
+      splitDirection: "none" as const,
+    };
+    expect(removePaneById(solo, "a")).toBe(solo);
+  });
+
+  it("closePane behaves identically to removing the active pane", () => {
+    const tab = threePane();
+    expect(closePane(tab)).toEqual(removePaneById(tab, tab.activePaneId));
   });
 });

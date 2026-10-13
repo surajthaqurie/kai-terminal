@@ -78,13 +78,22 @@ export function splitTab(
 }
 
 /**
- * Closes ONLY the active pane. Focus moves to the nearest surviving
- * neighbor (the pane that took its position), not blindly to the last.
+ * Removes ANY pane by id (exit path, close button, teardown).
+ *
+ * Survivor guarantees (the flat-grid renderer depends on these to keep live
+ * terminals mounted on every OS — no refresh of the remaining splits):
+ * - surviving pane objects are preserved by reference with unchanged ids,
+ * - the layout tree is pruned to exactly the survivors (stale trees fall
+ *   back to an even tiling via the same rule as `resolveTabLayout`),
+ * - focus moves to the nearest surviving neighbor only when the removed
+ *   pane had focus; otherwise the active pane is untouched.
+ * Unknown id (or a sole pane) -> tab unchanged.
  */
-export function closePane(tab: SplitTabState): SplitTabState {
+export function removePaneById(tab: SplitTabState, paneId: string): SplitTabState {
   if (tab.panes.length <= 1) return tab;
-  const at = activePaneIndex(tab);
-  const remaining = tab.panes.filter((p) => p.id !== tab.activePaneId);
+  const at = tab.panes.findIndex((p) => p.id === paneId);
+  if (at < 0) return tab;
+  const remaining = tab.panes.filter((p) => p.id !== paneId);
   const nextIdx = Math.min(at, remaining.length - 1);
   const baseLayout =
     tab.layout ??
@@ -92,14 +101,22 @@ export function closePane(tab: SplitTabState): SplitTabState {
       tab.panes.map((p) => p.id),
       tab.splitDirection
     );
-  const pruned =
-    removePaneFromLayout(baseLayout, tab.activePaneId) ?? createPaneLayout(remaining[0].id);
+  const pruned = removePaneFromLayout(baseLayout, paneId) ?? createPaneLayout(remaining[0].id);
   return {
     panes: remaining,
-    activePaneId: remaining[nextIdx].id,
+    activePaneId: tab.activePaneId === paneId ? remaining[nextIdx].id : tab.activePaneId,
     splitDirection: remaining.length === 1 ? "none" : tab.splitDirection,
     layout: remaining.length === 1 ? createPaneLayout(remaining[0].id) : pruned,
   };
+}
+
+/**
+ * Closes ONLY the active pane. Focus moves to the nearest surviving
+ * neighbor (the pane that took its position), not blindly to the last.
+ */
+export function closePane(tab: SplitTabState): SplitTabState {
+  if (tab.panes.length <= 1) return tab;
+  return removePaneById(tab, tab.activePaneId);
 }
 
 export function setActivePane(tab: SplitTabState, paneId: string): SplitTabState {

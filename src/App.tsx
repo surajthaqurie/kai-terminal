@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, Suspense, lazy } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo, Suspense, lazy } from "react";
 import { Toolbar } from "./components/Toolbar";
 import { TabBar } from "./components/TabBar";
 import { StatusBar } from "./components/StatusBar";
@@ -55,13 +55,14 @@ import {
 import {
   splitTab,
   closePane,
+  removePaneById,
   setLayoutSplitRatio,
-  createPaneLayout,
-  removePaneFromLayout,
   clampPaneFraction,
   computePaneRects,
   computeSplitDividers,
   resolveTabLayout,
+  PaneRect,
+  SplitDividerGeometry,
 } from "./services/paneLayout";
 import {
   APP_VERSION_FALLBACK,
@@ -748,6 +749,31 @@ export function App() {
     [codeModeProject]
   );
 
+  // Per-tab flat-grid geometry, memoized on the tabs array: `resolveTabLayout`
+  // can synthesize a fallback tree (fresh split ids) for stale layouts, and
+  // recomputing it on every render would churn divider keys. Memoizing keeps
+  // dividers — and therefore live terminals — stable across renders.
+  const tabGeometry = useMemo(() => {
+    const m = new Map<
+      string,
+      {
+        layout: PaneLayoutNode;
+        rectByPaneId: Map<string, PaneRect>;
+        dividers: SplitDividerGeometry[];
+      }
+    >();
+    for (const tab of tabs) {
+      const paneIds = tab.panes.map((p) => p.id);
+      const layout = resolveTabLayout(paneIds, tab.layout, tab.splitDirection);
+      m.set(tab.id, {
+        layout,
+        rectByPaneId: new Map(computePaneRects(layout).map((r) => [r.paneId, r])),
+        dividers: computeSplitDividers(layout),
+      });
+    }
+    return m;
+  }, [tabs]);
+
   /** Resolve each pane's own project dir (pane -> tab -> global). */
   const paneDirsKey = tabs
     .map((t) => t.panes.map((p) => resolveEffectiveProjectDir(p.cwd, t.cwd, cwd)).join("|"))
@@ -992,29 +1018,15 @@ export function App() {
     }
 
     if (targetTab.panes.length > 1) {
-      const at = targetTab.panes.findIndex((p) => p.id === paneId);
-      const remainingPanes = targetTab.panes.filter((p) => p.id !== paneId);
-      const nextIdx = Math.min(Math.max(0, at), remainingPanes.length - 1);
+      // Single shared removal path (see removePaneById): survivors keep
+      // their ids/objects and the tree prunes to exactly the survivors, so
+      // the remaining splits stay mounted on every OS — exiting one pane
+      // must never refresh (respawn) its neighbors.
       setTabs((prev) =>
         prev.map((t) => {
           if (t.id !== tabId) return t;
-          const nextRemaining = t.panes.filter((p) => p.id !== paneId);
-          const baseLayout: PaneLayoutNode = t.layout ?? {
-            kind: "pane",
-            paneId: t.panes[0]?.id ?? paneId,
-          };
-          const collapsed =
-            nextRemaining.length === 1
-              ? createPaneLayout(nextRemaining[0].id)
-              : (removePaneFromLayout(baseLayout, paneId) ?? createPaneLayout(nextRemaining[0].id));
-          return {
-            ...t,
-            panes: nextRemaining,
-            activePaneId: t.activePaneId === paneId ? nextRemaining[nextIdx].id : t.activePaneId,
-            splitDirection:
-              nextRemaining.length > 1 ? t.splitDirection : ("none" as SplitDirection),
-            layout: collapsed,
-          };
+          const next = removePaneById(t, paneId);
+          return { ...t, ...next };
         })
       );
       return;
@@ -1820,10 +1832,9 @@ export function App() {
           // brand-new split element on every split, unmounting its xterm,
           // closing its backend PTY, and spawning a fresh shell — "opening a
           // split refreshes the older terminal".)
-          const paneIds = tab.panes.map((p) => p.id);
-          const layout = resolveTabLayout(paneIds, tab.layout, tab.splitDirection);
-          const rectByPaneId = new Map(computePaneRects(layout).map((r) => [r.paneId, r]));
-          const dividers = computeSplitDividers(layout);
+          const geo = tabGeometry.get(tab.id);
+          const rectByPaneId = geo?.rectByPaneId ?? new Map<string, PaneRect>();
+          const dividers = geo?.dividers ?? [];
           const renderPane = (pane: TerminalPane): React.ReactNode => {
             const rect = rectByPaneId.get(pane.id) ?? { x: 0, y: 0, w: 1, h: 1 };
             const isPaneActive = pane.id === tab.activePaneId;
