@@ -822,9 +822,7 @@ export function App() {
                 status: "error" as const,
                 errorMessage: message,
                 panes: t.panes.map((p) =>
-                  p.id === paneId
-                    ? { ...p, status: "error" as const, errorMessage: message }
-                    : p
+                  p.id === paneId ? { ...p, status: "error" as const, errorMessage: message } : p
                 ),
               }
             : t

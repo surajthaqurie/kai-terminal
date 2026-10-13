@@ -770,8 +770,8 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
             }}
           >
             <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
-              Shell failed to start: {launchError} — check Settings → Shell or pick another
-              profile, then retry.
+              Shell failed to start: {launchError} — check Settings → Shell or pick another profile,
+              then retry.
             </span>
             <button
               type="button"
