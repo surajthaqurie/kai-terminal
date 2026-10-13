@@ -26,4 +26,4 @@ parts:
       npm run build
       cargo build --manifest-path src-tauri/Cargo.toml --release --no-default-features
       mkdir -p $CRAFT_PART_INSTALL/bin
-      cp src-tauri/target/release/cross-platform-terminal-backend $CRAFT_PART_INSTALL/bin/kai
+      cp src-tauri/target/release/kai $CRAFT_PART_INSTALL/bin/kai

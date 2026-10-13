@@ -21,7 +21,7 @@ modules:
       - npm ci
       - npm run build
       - cargo build --manifest-path src-tauri/Cargo.toml --release --no-default-features
-      - install -D -m 755 src-tauri/target/release/cross-platform-terminal-backend /app/bin/kai
+      - install -D -m 755 src-tauri/target/release/kai /app/bin/kai
     sources:
       - type: dir
         path: ../..

@@ -27,7 +27,7 @@ cargo build --manifest-path src-tauri/Cargo.toml --release --no-default-features
 %install
 rm -rf %{buildroot}
 mkdir -p %{buildroot}%{_bindir}
-install -p -m 755 src-tauri/target/release/cross-platform-terminal-backend %{buildroot}%{_bindir}/kai
+install -p -m 755 src-tauri/target/release/kai %{buildroot}%{_bindir}/kai
 
 %files
 %license LICENSE

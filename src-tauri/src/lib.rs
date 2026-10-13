@@ -1,6 +1,7 @@
 pub mod active_project;
 pub mod ai_cli;
 pub mod autostart;
+pub mod cli_guard;
 pub mod diagnostics;
 pub mod error;
 pub mod git;
@@ -33,7 +34,7 @@ use shell::{
     detect_available_shells, detect_installed_editors, open_in_editor, EditorInfo, ShellProfile,
 };
 #[cfg(feature = "tauri")]
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 #[cfg(feature = "tauri")]
 #[tauri::command]
@@ -257,6 +258,32 @@ pub fn run() {
 
     tauri::Builder::default()
         .manage(pty_manager)
+        // Single-instance enforcement (Windows / Linux / macOS): a second
+        // `kai` / `kai <path>` launch must NEVER open a duplicate ("ghost")
+        // window. The plugin routes the second process here in the FIRST
+        // (already running) process; we focus its main window, forward an
+        // optional path via `kai-open-project` (the frontend re-syncs Code
+        // Mode from the state file the CLI already wrote), and the second
+        // process exits without creating a window. The Node
+        // `isKaiAppRunning()` fast-path avoids the spawn in the common case;
+        // this is the authoritative cross-OS guarantee that closes the
+        // check-then-launch race (two rapid `kai code .` calls) and the
+        // process-name false-negative (AppImage/snap/renamed binaries,
+        // localized `tasklist`, truncated `comm`).
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+                if let Some(path) = crate::cli_guard::gui_path_from_args(&args) {
+                    let _ = window.emit("kai-open-project", serde_json::json!({ "path": path }));
+                } else {
+                    // Bare re-launch: still wake the frontend so it re-syncs
+                    // Code Mode state (covers `kai code` written externally).
+                    let _ = window.emit("kai-open-project", serde_json::json!({}));
+                }
+            }
+        }))
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { .. } = event {
                 // Reap all active PTY child processes when window is closed

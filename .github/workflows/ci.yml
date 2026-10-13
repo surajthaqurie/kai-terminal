@@ -111,5 +111,6 @@ jobs:
         with:
           name: desktop-binary-${{ matrix.target-name }}
           path: |
-            src-tauri/target/release/cross-platform-terminal-backend${{ matrix.binary-ext }}
+            src-tauri/target/release/kai${{ matrix.binary-ext }}
           if-no-files-found: error
+

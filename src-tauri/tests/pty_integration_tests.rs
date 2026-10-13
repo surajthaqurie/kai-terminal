@@ -1,5 +1,5 @@
-use cross_platform_terminal_backend::error::TerminalError;
-use cross_platform_terminal_backend::pty::{
+use kai::error::TerminalError;
+use kai::pty::{
     PtyCreateOptions, PtyExitPayload, PtyManager, PtyOutputPayload, SessionStatus,
     TerminalEventEmitter,
 };

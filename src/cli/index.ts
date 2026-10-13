@@ -141,6 +141,11 @@ import { fileURLToPath } from "url";
 
 /**
  * Locate the installed Kai Terminal desktop executable.
+ *
+ * The desktop binary has shipped under several names across releases and
+ * platforms (`kai`, `cross-platform-terminal-backend`, `kai-terminal`).
+ * All known names are probed so `kai code .` can launch the GUI regardless
+ * of which package (deb/rpm/AppImage/dmg/nsis) installed it.
  */
 export function findKaiAppBinary(): string | null {
   const home = os.homedir();
@@ -152,29 +157,48 @@ export function findKaiAppBinary(): string | null {
   }
 
   const candidates: string[] = [
-    // Linux
+    // Linux — `kai` is the current product name; older builds used the
+    // Cargo package name. NOTE: `~/.local/bin/kai` is ALSO the default
+    // location of the Node CLI shim (`npm run setup:cli`). It is probed
+    // here for convenience but isKaiCliShim() below guarantees a CLI
+    // shim is never mistaken for the desktop GUI (the "kai code ."
+    // opens a new window bug when the desktop .deb/RPM claimed the same
+    // path and shadowed the CLI).
+    path.join(home, ".local/bin/kai"),
     path.join(home, ".local/bin/cross-platform-terminal-backend"),
     path.join(home, ".local/bin/kai-terminal"),
+    "/usr/local/bin/kai",
     "/usr/local/bin/cross-platform-terminal-backend",
+    "/usr/bin/kai",
     "/usr/bin/cross-platform-terminal-backend",
+    // Linux sandboxed / distro-specific locations (all OS-safe to probe;
+    // existsSync is false elsewhere).
+    "/snap/bin/kai",
+    "/var/lib/flatpak/exports/bin/com.kai.terminal",
+    path.join(home, ".local/share/flatpak/exports/bin/com.kai.terminal"),
     // macOS
     ...(process.platform === "darwin"
       ? [
+          "/Applications/Kai Terminal.app/Contents/MacOS/kai",
           "/Applications/Kai Terminal.app/Contents/MacOS/cross-platform-terminal-backend",
+          "/Applications/Kai Terminal.app/Contents/MacOS/kai-terminal",
+          path.join(home, "Applications/Kai Terminal.app/Contents/MacOS/kai"),
           path.join(
             home,
             "Applications/Kai Terminal.app/Contents/MacOS/cross-platform-terminal-backend"
           ),
         ]
       : []),
-    // Windows
+    // Windows — NSIS installs under the product name; keep legacy names.
     ...(process.platform === "win32"
       ? [
+          path.join(process.env.LOCALAPPDATA || "", "KaiTerminal", "kai.exe"),
           path.join(
             process.env.LOCALAPPDATA || "",
             "KaiTerminal",
             "cross-platform-terminal-backend.exe"
           ),
+          path.join(process.env.PROGRAMFILES || "", "KaiTerminal", "kai.exe"),
           path.join(
             process.env.PROGRAMFILES || "",
             "KaiTerminal",
@@ -183,13 +207,26 @@ export function findKaiAppBinary(): string | null {
         ]
       : []),
     // Dev builds
+    path.resolve(baseDir, "../../src-tauri/target/debug/kai"),
+    path.resolve(baseDir, "../../src-tauri/target/release/kai"),
+    path.resolve(baseDir, "../../src-tauri/target/debug/kai.exe"),
+    path.resolve(baseDir, "../../src-tauri/target/release/kai.exe"),
     path.resolve(baseDir, "../../src-tauri/target/debug/cross-platform-terminal-backend"),
     path.resolve(baseDir, "../../src-tauri/target/release/cross-platform-terminal-backend"),
   ];
 
   for (const c of candidates) {
     try {
-      if (fs.existsSync(c) && fs.statSync(c).isFile()) {
+      if (c && fs.existsSync(c)) {
+        try {
+          if (!fs.statSync(c).isFile()) continue;
+        } catch {
+          continue;
+        }
+        // Never treat the Node CLI shim as the desktop GUI — the shim
+        // may live at the same path (e.g. ~/.local/bin/kai) depending on
+        // install order / PATH precedence on Linux, macOS, and Windows.
+        if (isKaiCliShim(c)) continue;
         return c;
       }
     } catch {
@@ -197,42 +234,204 @@ export function findKaiAppBinary(): string | null {
     }
   }
 
-  try {
-    const cmd =
-      process.platform === "win32"
-        ? "where cross-platform-terminal-backend"
-        : "which cross-platform-terminal-backend";
-    const found = execSync(cmd, { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] })
-      .trim()
-      .split("\n")[0];
-    if (found && fs.existsSync(found)) {
-      return found;
+  // PATH lookup for every known binary name (covers custom install
+  // prefixes, distro renames, and `npm i -g` shims on PATH). `which -a`
+  // / `where` can return several lines — every line is probed so a CLI
+  // shim shadowing the desktop binary (or vice versa) on any OS does not
+  // hide the real GUI binary behind the first result.
+  const binNames =
+    process.platform === "win32"
+      ? ["kai.exe", "cross-platform-terminal-backend.exe", "kai-terminal.exe", "kai"]
+      : ["kai", "cross-platform-terminal-backend", "kai-terminal"];
+  for (const name of binNames) {
+    let lines: string[] = [];
+    try {
+      const cmd = process.platform === "win32" ? `where ${name}` : `which -a ${name}`;
+      const out = execSync(cmd, { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] });
+      lines = out
+        .split(/\r?\n/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+    } catch {
+      // Fallback for minimal `which` implementations without `-a`.
+      try {
+        const cmd = process.platform === "win32" ? `where ${name}` : `which ${name}`;
+        const out = execSync(cmd, { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] });
+        lines = out
+          .split(/\r?\n/)
+          .map((s) => s.trim())
+          .filter(Boolean);
+      } catch {
+        continue; // ignore — name not on PATH
+      }
     }
-  } catch {
-    // ignore
+    for (const found of lines) {
+      try {
+        if (!found || !fs.existsSync(found)) continue;
+        if (!fs.statSync(found).isFile()) continue;
+        if (isKaiCliShim(found)) continue;
+        return found;
+      } catch {
+        // ignore this candidate
+      }
+    }
   }
 
   return null;
 }
 
 /**
+ * True when `candidate` is the Node `kai` CLI launcher rather than the
+ * Tauri desktop GUI binary. The CLI ships as `bin/kai.js` (Node) plus a
+ * compiled bundle at `dist/cli/index.js`; user-level launchers are either
+ * a symlink to `bin/kai.js` or a small shell/cmd shim that execs node with
+ * that path. Those must never be treated as the desktop app or
+ * `kai code .` would try to "launch" the CLI as if it were the GUI.
+ *
+ * Works on Linux, macOS, and Windows (checks symlink target realpath AND
+ * text-shim content, since the `setup:cli` fallback writes a shell shim
+ * whose realpath does NOT end in kai.js).
+ */
+export function isKaiCliShim(candidate: string): boolean {
+  try {
+    try {
+      const real = fs.realpathSync(candidate);
+      if (real.endsWith("kai.js") || real.endsWith("index.js")) return true;
+    } catch {
+      // not a resolvable symlink — fall through to content probe
+    }
+    try {
+      const st = fs.statSync(candidate);
+      if (!st.isFile()) return false;
+      // Only sniff small text launchers; never read a multi-MB ELF.
+      if (st.size > 8192) return false;
+      const head = fs.readFileSync(candidate, "utf-8").slice(0, 4096);
+      if (head.includes("kai.js") || head.includes("dist/cli/index.js")) return true;
+      if (head.startsWith("#!") && head.toLowerCase().includes("node")) {
+        // Generic node shebang launcher — treat as CLI shim only when it
+        // lives alongside the repo's bin/ layout is unknown, so require
+        // the kai.js marker above; plain node scripts are NOT shims.
+      }
+    } catch {
+      // unreadable — not provably a shim
+    }
+  } catch {
+    // ignore
+  }
+  return false;
+}
+/**
+ * Process names the Kai Terminal desktop app may run under. The current
+ * release runs as `kai` (Tauri productName); older builds ran as
+ * `cross-platform-terminal-backend` / `kai-terminal`. All must be detected
+ * on every OS or `kai code .` spawns a duplicate window while Kai is
+ * already running (the reported "new terminal opens on Linux" bug).
+ */
+const KAI_APP_PROCESS_NAMES = ["kai", "cross-platform-terminal-backend", "kai-terminal"] as const;
+
+/** True when a `ps` output line belongs to the Kai desktop app (not the CLI). */
+export function isKaiDesktopProcessLine(line: string): boolean {
+  const trimmed = line.trim();
+  if (!trimmed) return false;
+  // The `kai` CLI itself runs as `node .../kai.js ...` — never treat the
+  // Node CLI / MCP server as the desktop GUI.
+  if (trimmed.includes("kai.js") || trimmed.includes("dist/cli")) return false;
+  if (
+    trimmed.includes("cross-platform-terminal-backend") ||
+    trimmed.includes("cross-platform-") ||
+    trimmed.includes("kai-terminal")
+  ) {
+    return true;
+  }
+  // Bare `kai` binary: match exact comm field or a path/command token, so
+  // `opencode`, `ssh kai@host`, or `kaiman` never false-positive.
+  // Both `/` (POSIX) and `\` (Windows) separators are accepted.
+  if (trimmed === "kai" || trimmed === "kai.exe") return true;
+  if (/(^|[/\\])kai(\.exe)?(\s|$)/.test(trimmed)) return true;
+  const tokens = trimmed.split(/\s+/);
+  if (
+    tokens.some(
+      (t) =>
+        t === "kai" ||
+        t === "kai.exe" ||
+        t.endsWith("/kai") ||
+        t.endsWith("\\kai") ||
+        t.endsWith("/kai.exe") ||
+        t.endsWith("\\kai.exe")
+    )
+  )
+    return true;
+  return false;
+}
+
+/**
  * Check if the Kai Terminal desktop app process is already running.
+ *
+ * Cross-platform strategy (first hit wins):
+ *   Windows : `tasklist` scanned with word-boundary matching for every
+ *             known exe name (a loose substring check false-positives on
+ *             e.g. `opencode` tooling or `kaiman` utilities).
+ *   Unix    : `pgrep -x` for short names (macOS + Linux) + `pgrep -f` for
+ *             names longer than the kernel's 15-char comm limit
+ *             (`cross-platform-terminal-backend` is 30 chars, so
+ *             `pgrep -x` can NEVER match it — must match the full command
+ *             line) → `pidof` (Linux only, macOS lacks it) → `ps` fallback
+ *             scanning the full command line (`args`, not just `comm`,
+ *             which the kernel truncates to 15 chars).
  */
 export function isKaiAppRunning(): boolean {
   if (process.platform === "win32") {
     try {
-      const out = execSync('tasklist /FI "IMAGENAME eq cross-platform-terminal-backend.exe"', {
+      const out = execSync("tasklist", {
         encoding: "utf-8",
         stdio: ["ignore", "pipe", "ignore"],
       });
-      return out.includes("cross-platform-terminal-backend");
+      const lines = out.split(/\r?\n/);
+      const patterns = KAI_APP_PROCESS_NAMES.map(
+        (n) => new RegExp(`\\b${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(\\.exe)?\\b`, "i")
+      );
+      return lines.some((line) => patterns.some((re) => re.test(line)));
     } catch {
       return false;
     }
   }
 
+  // pgrep exists on both Linux and macOS (unlike pidof, which macOS lacks).
+  // NOTE: `pgrep -x` matches the kernel comm field (max 15 chars). Long
+  // legacy names MUST use `pgrep -f` (full command line) instead.
+  for (const name of KAI_APP_PROCESS_NAMES) {
+    const useFullMatch = name.length > 15;
+    try {
+      const cmd = useFullMatch ? `pgrep -f ${name}` : `pgrep -x ${name}`;
+      const out = execSync(cmd, {
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim();
+      if (out) {
+        // `pgrep -f` can match its own invocation or the Node CLI string
+        // containing the name (e.g. `node .../kai.js` probing). Verify via
+        // the strict line classifier before trusting it.
+        if (!useFullMatch) return true;
+        try {
+          const detail = execSync(`ps -o args= -p ${out.split(/\s+/)[0]}`, {
+            encoding: "utf-8",
+            stdio: ["ignore", "pipe", "ignore"],
+          });
+          if (isKaiDesktopProcessLine(detail)) return true;
+          // Even if the first PID was a false positive, other PIDs from
+          // the same pgrep output may be the real GUI — fall through to
+          // the ps fallback scan below which classifies every line.
+        } catch {
+          return true; // pgrep matched but detail probe failed — trust it
+        }
+      }
+    } catch {
+      // no match for this name — try the next one
+    }
+  }
+
   try {
-    const pids = execSync("pidof cross-platform-terminal-backend kai-terminal", {
+    const pids = execSync("pidof kai cross-platform-terminal-backend kai-terminal", {
       encoding: "utf-8",
       stdio: ["ignore", "pipe", "ignore"],
     }).trim();
@@ -241,18 +440,23 @@ export function isKaiAppRunning(): boolean {
     // pidof may not be installed or no match
   }
 
-  try {
-    const out = execSync("ps -A -o pid,comm", {
-      encoding: "utf-8",
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-    for (const line of out.split("\n")) {
-      if (line.includes("cross-platform-") || line.includes("kai-terminal")) {
-        return true;
+  // Fallback: full command lines. `comm` alone is unreliable — e.g. Linux
+  // reports the running app as comm=`kai` while older checks only looked
+  // for `cross-platform-`, so every `kai code .` spawned a duplicate window.
+  for (const args of ["ps -A -o args", "ps -A -o pid,comm,args", "ps -A -o pid,comm"]) {
+    try {
+      const out = execSync(args, {
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+      for (const line of out.split("\n")) {
+        if (isKaiDesktopProcessLine(line)) return true;
       }
+      // `ps` ran fine but found nothing — don't try weaker variants.
+      return false;
+    } catch {
+      // `ps` flag unsupported on this OS — try the next variant.
     }
-  } catch {
-    // ignore
   }
 
   return false;
@@ -272,6 +476,62 @@ export const SUPPORTED_AGENTS: readonly string[] = listAgentIds();
 
 export { buildAgentSetup, AGENT_REGISTRY };
 
+/**
+ * Launch the Kai Terminal desktop GUI for a Code Mode project.
+ *
+ * Cross-OS behavior (only ever called by `kai code`, never by
+ * `agent setup` / `status` / `query` / etc.):
+ *   Linux   : detached spawn of the GUI binary with stdio ignored, so the
+ *             caller's terminal is never blocked and no extra terminal
+ *             window appears — the GUI opens as its own OS window.
+ *   macOS   : direct spawn of `Kai Terminal.app/Contents/MacOS/kai` when
+ *             found; otherwise `open -a "Kai Terminal" <path>` so the app
+ *             bundle (not a stray Unix terminal) receives the open event.
+ *   Windows : detached spawn with `windowsHide: true` so no ghost conhost
+ *             window flashes alongside the GUI.
+ *
+ * Returns true when a launch was attempted.
+ */
+export function launchKaiApp(appBinary: string, projectPath: string): boolean {
+  try {
+    if (process.platform === "darwin" && appBinary.endsWith(".app/Contents/MacOS/kai")) {
+      // Prefer the bundle open path when the raw Mach-O binary cannot be
+      // spawned directly (quarantine / translocation edge cases).
+      try {
+        const child = spawn("open", ["-a", "Kai Terminal", projectPath], {
+          detached: true,
+          stdio: "ignore",
+          env: {
+            ...process.env,
+            KAI_ACTIVE_PROJECT: projectPath,
+            KAI_MODE: "code",
+          },
+        });
+        child.unref();
+        return true;
+      } catch {
+        // fall through to direct spawn
+      }
+    }
+    const child = spawn(appBinary, [projectPath], {
+      detached: true,
+      stdio: "ignore",
+      // Windows: never flash a ghost conhost window when
+      // launching the desktop app from the CLI.
+      windowsHide: true,
+      env: {
+        ...process.env,
+        KAI_ACTIVE_PROJECT: projectPath,
+        KAI_MODE: "code",
+      },
+    });
+    child.unref();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function printHelp(): void {
   console.log(`
 Kai Terminal — Project Intelligence & CLI (v${KAI_VERSION})
@@ -281,7 +541,9 @@ Usage:
   kai <command> [options]
 
 Commands:
-  code [path]             Register, index, and open project in Kai Terminal (Code Mode)
+  code [path] [--no-launch] Register, index, and open project in Kai Terminal (Code Mode)
+                            (reuses the running window when Kai is already open;
+                             --no-launch/--headless/--no-gui skips opening a window)
   stop [code]             Clear Code Mode and return to plain terminal mode
   status [path]           Show project registration, index health, and file statistics
   unregister <path|id>    Delete a project's Kai-owned index data (repo untouched)
@@ -302,9 +564,12 @@ Commands:
 Flags:
   -h, --help              Show help information
   -v, --version           Show version information
+  --no-launch, --headless, --no-gui
+                          With 'code': index only, do not open/focus a window
 
 Examples:
-  kai code .
+  kai code .              # opens Kai once; reuses the window if already running
+  kai code . --no-launch  # index + set Code Mode, stay in this terminal
   kai stop code
   kai .
   kai status
@@ -395,29 +660,33 @@ export async function runCli(argv: string[]): Promise<number> {
         const appBinary = findKaiAppBinary();
         if (appBinary) {
           if (isKaiAppRunning()) {
+            // Reuse the running window: the desktop app polls
+            // active_project.json, so no new OS window is opened here.
+            // (Only `code` launches the GUI — `agent setup`, `status`,
+            // `query`, etc. never spawn a window.)
+            // Note: this process-name check is a fast-path only. The Rust
+            // single-instance plugin is authoritative on all OSes: even if
+            // this check false-negatives (race, AppImage/snap rename), the
+            // second process only focuses the existing window and exits —
+            // no duplicate ("ghost") window is ever created.
             console.log(
-              `[kai] Kai Terminal is running — active project set to "${meta.name}" in Code Mode.`
+              `[kai] Kai Terminal is already running — switched Code Mode to "${meta.name}" in the existing window (no new window opened).`
             );
           } else {
             console.log(`[kai] Launching Kai Terminal in Code Mode for "${meta.canonicalPath}"...`);
-            try {
-              const child = spawn(appBinary, [meta.canonicalPath], {
-                detached: true,
-                stdio: "ignore",
-                // Windows: never flash a ghost conhost window when
-                // launching the desktop app from the CLI.
-                windowsHide: true,
-                env: {
-                  ...process.env,
-                  KAI_ACTIVE_PROJECT: meta.canonicalPath,
-                  KAI_MODE: "code",
-                },
-              });
-              child.unref();
-            } catch {
-              // ignore spawn failure
-            }
+            // Cross-OS launcher: detached GUI spawn (Linux/macOS/Windows
+            // specifics handled inside). Never blocks this terminal and
+            // never opens an extra terminal window — only the Kai GUI.
+            launchKaiApp(appBinary, meta.canonicalPath);
           }
+        } else {
+          // No GUI binary installed — this is expected when only the npm
+          // CLI is present (CI, servers, SSH). Indexing + Code Mode state
+          // above already succeeded, so stay in this terminal instead of
+          // opening anything new.
+          console.log(
+            `[kai] Desktop app not found — staying in this terminal. Install the Kai Terminal desktop app to open the GUI, or use 'kai code . --no-launch'.`
+          );
         }
       }
 

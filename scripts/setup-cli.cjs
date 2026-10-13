@@ -89,8 +89,12 @@ function ensureBuild() {
   } catch (err) {
     if (err && err.code === "ETIMEDOUT") {
       console.error("[kai setup] Build timed out after 10 minutes.");
-      console.error("[kai setup] Likely causes: antivirus/OneDrive locking dist/, or a stalled vite worker.");
-      console.error("[kai setup] Retry after pausing AV sync on this folder, or build with: npm run build:cli");
+      console.error(
+        "[kai setup] Likely causes: antivirus/OneDrive locking dist/, or a stalled vite worker."
+      );
+      console.error(
+        "[kai setup] Retry after pausing AV sync on this folder, or build with: npm run build:cli"
+      );
     }
     process.exit(1);
   }
@@ -152,9 +156,7 @@ function runPowerShell(script, timeoutMs = PS_TIMEOUT_MS) {
  * process's copy — the installer may run in a shell started before PATH
  * was updated. */
 function persistedPathContainsWindows(dir) {
-  const out = runPowerShell(
-    `[Environment]::GetEnvironmentVariable('Path','User')`
-  );
+  const out = runPowerShell(`[Environment]::GetEnvironmentVariable('Path','User')`);
   if (out == null) return onPath(dir);
   return out.split(";").some((s) => s.trim().toLowerCase() === dir.toLowerCase());
 }
@@ -177,7 +179,7 @@ function ensurePathWindows(dir) {
     if (out == null) {
       console.log("[kai setup] PowerShell did not respond (timed out).");
       console.log("[kai setup] Add to PATH manually (one-time), then open a NEW terminal.");
-      console.log("[kai setup] NOTE: do NOT use `setx PATH \"%PATH%;...\"` — setx silently");
+      console.log('[kai setup] NOTE: do NOT use `setx PATH "%PATH%;..."` — setx silently');
       console.log("[kai setup] truncates values over 1024 chars and can corrupt your PATH.");
       console.log("[kai setup] Run this in PowerShell instead:");
       console.log(
@@ -197,7 +199,7 @@ function ensurePathWindows(dir) {
     console.log(
       `  powershell -NoProfile -Command "[Environment]::SetEnvironmentVariable('Path', ([Environment]::GetEnvironmentVariable('Path','User').TrimEnd(';') + ';${dir}'), 'User')"`
     );
-    console.log("[kai setup] (Avoid `setx PATH \"%PATH%;...\"` — setx truncates over 1024 chars.)");
+    console.log('[kai setup] (Avoid `setx PATH "%PATH%;..."` — setx truncates over 1024 chars.)');
     return true;
   }
 }
@@ -259,13 +261,63 @@ function setupWindows() {
   console.log("[kai setup] Verify: kai --version");
 }
 
+function isDesktopBinaryCollision(linkPath) {
+  // True when ~/.local/bin/kai exists but is NOT our Node CLI shim —
+  // typically a symlink left by a desktop .deb/RPM/AppImage install
+  // (e.g. -> /usr/bin/kai or /usr/bin/cross-platform-terminal-backend),
+  // which makes `kai code .` open a NEW window instead of running the CLI.
+  try {
+    if (!fs.existsSync(linkPath)) return { collision: false };
+    let real = null;
+    try {
+      real = fs.realpathSync(linkPath);
+    } catch {}
+    if (real && (real.endsWith("kai.js") || real.endsWith("dist/cli/index.js"))) {
+      return { collision: false };
+    }
+    try {
+      const st = fs.statSync(linkPath);
+      if (st.isFile() && st.size <= 8192) {
+        const head = fs.readFileSync(linkPath, "utf8").slice(0, 4096);
+        if (head.includes("kai.js") || head.includes("dist/cli/index.js")) {
+          return { collision: false };
+        }
+      }
+    } catch {}
+    return { collision: true, real };
+  } catch {
+    return { collision: false };
+  }
+}
+
 function setupUnix() {
   const targetDir = path.join(os.homedir(), ".local", "bin");
   fs.mkdirSync(targetDir, { recursive: true });
   const linkPath = path.join(targetDir, "kai");
   const shim = `#!/bin/sh\nexec "${process.execPath}" "${binShim}" "$@"\n`;
+  // Never blindly delete: a desktop-installer symlink at the same path
+  // is the "kai code . opens a new terminal window" bug on Linux/macOS.
+  // Back it up so the desktop GUI stays launchable under another name.
+  const probe = isDesktopBinaryCollision(linkPath);
+  if (probe.collision) {
+    const backup = `${linkPath}.desktop-bak`;
+    try {
+      if (fs.existsSync(backup)) fs.rmSync(backup, { force: true });
+      fs.renameSync(linkPath, backup);
+      console.log("[kai setup] Found desktop binary shadowing the CLI at: " + linkPath);
+      if (probe.real) console.log("[kai setup]   (was -> " + probe.real + ")");
+      console.log("[kai setup] Backed it up to: " + backup);
+    } catch {
+      try {
+        if (fs.existsSync(linkPath)) fs.rmSync(linkPath, { force: true });
+      } catch {}
+    }
+  } else if (fs.existsSync(linkPath)) {
+    try {
+      fs.rmSync(linkPath, { force: true });
+    } catch {}
+  }
   try {
-    if (fs.existsSync(linkPath)) fs.rmSync(linkPath, { force: true });
     fs.symlinkSync(binShim, linkPath);
     console.log("[kai setup] Symlinked: " + linkPath + " -> " + binShim);
   } catch {
@@ -278,10 +330,33 @@ function setupUnix() {
   if (!onPath(targetDir)) {
     console.log("[kai setup] NOTE: ~/.local/bin is not on PATH in this shell.");
   }
+  // PATH-order check (Linux/macOS): ~/.local/bin must come BEFORE
+  // /usr/bin & /usr/local/bin, or the desktop /usr/bin/kai keeps winning
+  // and every `kai code .` opens a new window. Works the same on macOS
+  // (CLI shim) vs /Applications bundle (GUI never on PATH by default).
+  try {
+    const { execSync: ex } = require("child_process");
+    const whichAll = ex("which -a kai 2>/dev/null || which kai 2>/dev/null", {
+      encoding: "utf8",
+    })
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (whichAll.length > 1) {
+      console.log("[kai setup] NOTE: multiple `kai` on PATH (first wins):");
+      for (const w of whichAll) console.log("[kai setup]   - " + w);
+      if (whichAll[0] !== linkPath) {
+        console.log("[kai setup] WARNING: " + whichAll[0] + " shadows " + linkPath);
+        console.log(
+          "[kai setup] Fix: put ~/.local/bin BEFORE /usr/bin on PATH, then restart the terminal."
+        );
+      }
+    }
+  } catch {}
   const restartNeeded = ensurePathUnix(targetDir);
   if (!restartNeeded) console.log("[kai setup] Already on PATH.");
   else console.log("[kai setup] Restart your terminal, then run: kai --version");
-  console.log("[kai setup] Verify: kai --version");
+  console.log("[kai setup] Verify: kai --version  (should print `kai v...`, not open a window)");
 }
 
 ensureBuild();

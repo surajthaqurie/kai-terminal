@@ -447,9 +447,31 @@ export function App() {
     };
     window.addEventListener("focus", syncCodeModeState);
     document.addEventListener("visibilitychange", onVisible);
+    // Single-instance second launch (all OSes): the Rust backend focuses
+    // this window instead of opening a duplicate ("ghost") window and
+    // emits `kai-open-project`. Re-sync immediately — window focus alone
+    // may not fire when this window was already focused.
+    let unlistenSingle: (() => void) | undefined;
+    let cancelled = false;
+    void import("@tauri-apps/api/event")
+      .then(({ listen }) => {
+        if (cancelled) return;
+        void listen("kai-open-project", () => syncCodeModeState()).then((u) => {
+          if (cancelled) {
+            u();
+          } else {
+            unlistenSingle = u;
+          }
+        });
+      })
+      .catch(() => {
+        // Browser/mock mode: focus + visibility listeners above suffice.
+      });
     return () => {
+      cancelled = true;
       window.removeEventListener("focus", syncCodeModeState);
       document.removeEventListener("visibilitychange", onVisible);
+      if (unlistenSingle) unlistenSingle();
     };
   }, [syncCodeModeState]);
   /** Fired by TerminalView on every submitted line (Enter) in any pane. */
