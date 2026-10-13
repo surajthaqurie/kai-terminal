@@ -138,84 +138,72 @@ export const WorkspaceModal: FC<WorkspaceModalProps> = ({
             {workspaces.length === 0 ? (
               <p className="muted-text">No saved workspaces yet.</p>
             ) : (
-              workspaces.map((ws) => (
-                <div
-                  key={ws.id}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    backgroundColor: "#11111b",
-                    padding: "8px 12px",
-                    borderRadius: "6px",
-                    border: "1px solid #313244",
-                    marginBottom: "8px",
-                  }}
-                >
-                  <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
-                    {editingId === ws.id ? (
-                      <div style={{ display: "flex", gap: "6px" }}>
-                        <input
-                          type="text"
-                          className="text-input modal-input"
-                          value={editName}
-                          onChange={(e) => setEditName(e.target.value)}
-                          autoFocus
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") handleRename(ws.id);
-                            if (e.key === "Escape") setEditingId(null);
-                          }}
-                        />
-                        <button className="btn btn-secondary" onClick={() => handleRename(ws.id)}>
-                          Save
-                        </button>
-                      </div>
-                    ) : (
-                      <span style={{ fontWeight: 600, fontSize: "13px", color: "#cdd6f4" }}>
-                        {ws.name}
+              <div className="workspace-list">
+                {workspaces.map((ws) => (
+                  <div key={ws.id} className="workspace-card">
+                    <div className="workspace-info">
+                      {editingId === ws.id ? (
+                        <div style={{ display: "flex", gap: "6px" }}>
+                          <input
+                            type="text"
+                            className="text-input modal-input"
+                            value={editName}
+                            onChange={(e) => setEditName(e.target.value)}
+                            autoFocus
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") handleRename(ws.id);
+                              if (e.key === "Escape") setEditingId(null);
+                            }}
+                          />
+                          <button className="btn btn-secondary" onClick={() => handleRename(ws.id)}>
+                            Save
+                          </button>
+                        </div>
+                      ) : (
+                        <span className="workspace-name">{ws.name}</span>
+                      )}
+                      <span className="workspace-meta">
+                        {ws.tabs.length} session tab{ws.tabs.length === 1 ? "" : "s"}
+                        {ws.tabs[0]?.cwd ? ` · ${ws.tabs[0].cwd}` : ""}
                       </span>
-                    )}
-                    <span className="muted-text" style={{ fontSize: "11px" }}>
-                      {ws.tabs.length} session tab{ws.tabs.length === 1 ? "" : "s"}
-                      {ws.tabs[0]?.cwd ? ` · ${ws.tabs[0].cwd}` : ""}
-                    </span>
-                  </div>
+                    </div>
 
-                  <div style={{ display: "flex", gap: "6px" }}>
-                    <button
-                      className="btn btn-secondary"
-                      onClick={() => handleRestore(ws)}
-                      title="Restore Workspace"
-                    >
-                      <Play size={13} />
-                      <span>Restore</span>
-                    </button>
-                    <button
-                      className="btn btn-icon"
-                      onClick={() => {
-                        setEditingId(ws.id);
-                        setEditName(ws.name);
-                      }}
-                      title="Rename Workspace"
-                    >
-                      <Edit3 size={13} />
-                    </button>
-                    <button
-                      className="btn btn-icon"
-                      onClick={() => handleDelete(ws.id)}
-                      title="Delete Workspace"
-                    >
-                      <Trash2 size={13} />
-                    </button>
+                    <div className="workspace-actions">
+                      <button
+                        className="btn btn-secondary"
+                        onClick={() => handleRestore(ws)}
+                        title="Restore Workspace"
+                      >
+                        <Play size={13} />
+                        <span>Restore</span>
+                      </button>
+                      <button
+                        className="btn btn-icon"
+                        onClick={() => {
+                          setEditingId(ws.id);
+                          setEditName(ws.name);
+                        }}
+                        title="Rename Workspace"
+                      >
+                        <Edit3 size={13} />
+                      </button>
+                      <button
+                        className="btn btn-icon"
+                        onClick={() => handleDelete(ws.id)}
+                        title="Delete Workspace"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ))
+                ))}
+              </div>
             )}
           </div>
 
           <div
             className="setting-field"
-            style={{ borderTop: "1px solid #313244", paddingTop: "12px" }}
+            style={{ borderTop: "1px solid var(--border-default)", paddingTop: "12px" }}
           >
             <label>Create New Empty Workspace</label>
             <div className="setting-row">

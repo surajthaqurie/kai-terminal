@@ -43,7 +43,13 @@ describe("SettingsService", () => {
       expect(colors.background).toBeDefined();
       expect(colors.foreground).toBeDefined();
       expect(colors.cursor).toBeDefined();
+
+      const canvasColor = SettingsService.getThemeCanvasColor(themeName);
+      expect(canvasColor).toBeDefined();
+      expect(canvasColor.startsWith("#")).toBe(true);
     }
+    expect(SettingsService.getThemeCanvasColor("solarized-light")).toBe("#eee8d5");
+    expect(SettingsService.getThemeCanvasColor("kali")).toBe("#070d18");
   });
 
   it("should default to the Kali theme", () => {

@@ -438,4 +438,18 @@ export class SettingsService {
     const colors = SettingsService.getThemeColors(themeName, opacity);
     return colors.background || "#0a1428";
   }
+
+  static getThemeCanvasColor(themeName: ThemeName): string {
+    const map: Record<ThemeName, string> = {
+      kali: "#070d18",
+      "catppuccin-mocha": "#181825",
+      "tokyo-night": "#16161e",
+      nord: "#242933",
+      "one-dark": "#1e2227",
+      dracula: "#1e1f29",
+      "solarized-dark": "#00212b",
+      "solarized-light": "#eee8d5",
+    };
+    return map[themeName] || "#070d18";
+  }
 }

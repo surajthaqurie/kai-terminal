@@ -83,7 +83,7 @@ export const DiagnosticsModal: FC<DiagnosticsModalProps> = ({ isOpen, onClose, l
           <div className="setting-field">
             <label>Safe diagnostic export (no terminal content or secrets)</label>
             <pre
-              className="muted-text"
+              className="muted-text diagnostics-output"
               style={{
                 whiteSpace: "pre-wrap",
                 maxHeight: "240px",

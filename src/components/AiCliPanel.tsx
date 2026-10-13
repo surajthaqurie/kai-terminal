@@ -147,11 +147,11 @@ export const AiCliPanel: FC<AiCliPanelProps> = ({ isOpen, onClose, projectDir })
                 alignItems: "center",
                 justifyContent: "space-between",
                 padding: "8px 12px",
-                borderRadius: "6px",
-                background: "rgba(166, 227, 161, 0.15)",
-                color: "#a6e3a1",
-                fontSize: "12px",
-                border: "1px solid rgba(166, 227, 161, 0.3)",
+                borderRadius: "var(--radius-sm)",
+                background: "var(--color-success-bg)",
+                color: "var(--color-success)",
+                fontSize: "var(--text-sm)",
+                border: "1px solid var(--border-default)",
               }}
             >
               <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
@@ -163,7 +163,7 @@ export const AiCliPanel: FC<AiCliPanelProps> = ({ isOpen, onClose, projectDir })
                 className="btn-close"
                 style={{
                   padding: 0,
-                  color: "#a6e3a1",
+                  color: "var(--color-success)",
                   background: "none",
                   border: "none",
                   cursor: "pointer",
@@ -183,11 +183,11 @@ export const AiCliPanel: FC<AiCliPanelProps> = ({ isOpen, onClose, projectDir })
                 alignItems: "center",
                 justifyContent: "space-between",
                 padding: "8px 12px",
-                borderRadius: "6px",
-                background: "rgba(243, 139, 168, 0.15)",
-                color: "#f38ba8",
-                fontSize: "12px",
-                border: "1px solid rgba(243, 139, 168, 0.3)",
+                borderRadius: "var(--radius-sm)",
+                background: "var(--color-danger-bg)",
+                color: "var(--color-danger)",
+                fontSize: "var(--text-sm)",
+                border: "1px solid var(--border-default)",
               }}
               role="alert"
             >
@@ -197,7 +197,7 @@ export const AiCliPanel: FC<AiCliPanelProps> = ({ isOpen, onClose, projectDir })
                 className="btn-close"
                 style={{
                   padding: 0,
-                  color: "#f38ba8",
+                  color: "var(--color-danger)",
                   background: "none",
                   border: "none",
                   cursor: "pointer",
@@ -248,18 +248,18 @@ export const AiCliPanel: FC<AiCliPanelProps> = ({ isOpen, onClose, projectDir })
                     {d.kai_wired ? (
                       <span
                         style={{
-                          color: "#a6e3a1",
+                          color: "var(--color-success)",
                           fontWeight: 600,
-                          backgroundColor: "rgba(166, 227, 161, 0.15)",
+                          backgroundColor: "var(--color-success-bg)",
                           padding: "2px 6px",
-                          borderRadius: "4px",
+                          borderRadius: "var(--radius-xs)",
                           display: "inline-block",
                         }}
                       >
                         Configured ✓
                       </span>
                     ) : (
-                      <span style={{ color: "#a6adc8" }}>Not configured</span>
+                      <span style={{ color: "var(--text-secondary)" }}>Not configured</span>
                     )}
                   </span>
                 </div>
@@ -337,7 +337,11 @@ export const AiCliPanel: FC<AiCliPanelProps> = ({ isOpen, onClose, projectDir })
 
           <div
             className="setting-field"
-            style={{ borderTop: "1px solid #313244", paddingTop: "12px", marginTop: "8px" }}
+            style={{
+              borderTop: "1px solid var(--border-default)",
+              paddingTop: "12px",
+              marginTop: "8px",
+            }}
           >
             <label style={{ display: "block", marginBottom: "8px" }}>
               Register User-Defined AI Executable

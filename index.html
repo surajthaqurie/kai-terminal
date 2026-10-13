@@ -3,7 +3,41 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Terminal MVP</title>
+    <meta name="description" content="Kai — Desktop terminal for Windows, Linux, and macOS with AI context intelligence, local MCP, and Git diff review." />
+    <meta name="theme-color" content="#080e1a" />
+    <title>Kai — One Terminal. Every Platform.</title>
+    <script>
+      (function () {
+        try {
+          var raw =
+            localStorage.getItem("kai_user_settings") ||
+            localStorage.getItem("terminal_user_settings");
+          if (raw) {
+            var s = JSON.parse(raw);
+            if (s && s.theme) {
+              document.documentElement.setAttribute("data-theme", s.theme);
+              document.documentElement.style.colorScheme =
+                s.theme === "solarized-light" ? "light" : "dark";
+              var colors = {
+                kali: "#070d18",
+                "catppuccin-mocha": "#181825",
+                "tokyo-night": "#16161e",
+                nord: "#242933",
+                "one-dark": "#1e2227",
+                dracula: "#1e1f29",
+                "solarized-dark": "#00212b",
+                "solarized-light": "#eee8d5",
+              };
+              var c = colors[s.theme];
+              if (c) {
+                var m = document.querySelector('meta[name="theme-color"]');
+                if (m) m.setAttribute("content", c);
+              }
+            }
+          }
+        } catch (_) {}
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

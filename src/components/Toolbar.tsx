@@ -121,7 +121,7 @@ export const Toolbar: FC<ToolbarProps> = ({
 
       <div className="toolbar-group">
         {onOpenEditor && (
-          <div ref={editorMenuRef} style={{ position: "relative" }}>
+          <div ref={editorMenuRef} className="editor-picker-wrap">
             <button
               className="btn btn-icon"
               onClick={() => {
@@ -146,35 +146,11 @@ export const Toolbar: FC<ToolbarProps> = ({
               aria-expanded={editorMenuOpen}
             >
               <Code size={15} />
-              <ChevronDown size={12} style={{ marginLeft: -2 }} />
+              <ChevronDown size={12} className="btn-chevron" />
             </button>
             {editorMenuOpen && (
-              <div
-                role="menu"
-                aria-label="Choose code editor"
-                style={{
-                  position: "absolute",
-                  top: "calc(100% + 6px)",
-                  left: 0,
-                  minWidth: 260,
-                  maxWidth: 340,
-                  background: "#0a1e3c",
-                  border: "1px solid #1e3a5f",
-                  borderRadius: 8,
-                  boxShadow: "0 8px 24px rgba(0,0,0,0.5)",
-                  zIndex: 50,
-                  padding: 4,
-                }}
-              >
-                <div
-                  style={{
-                    padding: "6px 10px",
-                    fontSize: 11,
-                    color: "#8b9bb4",
-                    textTransform: "uppercase",
-                    letterSpacing: 0.5,
-                  }}
-                >
+              <div className="editor-dropdown-menu" role="menu" aria-label="Choose code editor">
+                <div className="editor-dropdown-header">
                   {isLoadingEditors
                     ? "Detecting editors…"
                     : installedEditors.length > 0
@@ -186,86 +162,36 @@ export const Toolbar: FC<ToolbarProps> = ({
                     key={ed.id}
                     type="button"
                     role="menuitem"
+                    className="editor-dropdown-item"
                     onClick={() => openWith(ed.path || ed.binary)}
                     title={ed.path}
-                    style={{
-                      display: "flex",
-                      flexDirection: "column",
-                      alignItems: "flex-start",
-                      gap: 1,
-                      width: "100%",
-                      textAlign: "left",
-                      padding: "8px 10px",
-                      borderRadius: 6,
-                      border: "none",
-                      background: "transparent",
-                      color: "#e8eef7",
-                      cursor: "pointer",
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.background = "#1e3a5f";
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.background = "transparent";
-                    }}
                   >
-                    <span style={{ fontSize: 13, fontWeight: 600 }}>{ed.name}</span>
-                    <span
-                      style={{
-                        fontSize: 11,
-                        color: "#8b9bb4",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        maxWidth: "100%",
-                      }}
-                    >
-                      {ed.path}
-                    </span>
+                    <span className="editor-dropdown-item-title">{ed.name}</span>
+                    <span className="editor-dropdown-item-path">{ed.path}</span>
                   </button>
                 ))}
                 <button
                   type="button"
                   role="menuitem"
+                  className="editor-dropdown-item editor-dropdown-divider-top"
                   onClick={() => openWith(undefined)}
                   title={
                     editorPath
                       ? `Use configured editor: ${editorPath}`
                       : "Auto-detect (first available on PATH)"
                   }
-                  style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    alignItems: "flex-start",
-                    gap: 1,
-                    width: "100%",
-                    textAlign: "left",
-                    padding: "8px 10px",
-                    borderRadius: 6,
-                    border: "none",
-                    borderTop: "1px solid #1e3a5f",
-                    marginTop: 4,
-                    background: "transparent",
-                    color: "#e8eef7",
-                    cursor: "pointer",
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.background = "#1e3a5f";
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.background = "transparent";
-                  }}
                 >
-                  <span style={{ fontSize: 13, fontWeight: 600 }}>
+                  <span className="editor-dropdown-item-title">
                     {editorPath ? `Default: ${editorPath}` : "Default (auto-detect)"}
                   </span>
-                  <span style={{ fontSize: 11, color: "#8b9bb4" }}>
+                  <span className="editor-dropdown-item-path">
                     {editorPath
                       ? "Use the editor from Settings"
                       : "Open with the first editor found on PATH"}
                   </span>
                 </button>
                 {installedEditors.length === 0 && !isLoadingEditors && (
-                  <div style={{ padding: "6px 10px", fontSize: 11, color: "#8b9bb4" }}>
+                  <div className="editor-dropdown-empty">
                     Install VS Code / Cursor / Zed, or set a custom editor path in Settings → Shell
                     & Tools.
                   </div>

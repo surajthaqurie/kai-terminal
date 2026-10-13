@@ -213,20 +213,19 @@ function getStatusBadge(status: string, staged: boolean) {
     return {
       label: "M",
       title: staged ? "Staged Modified" : "Modified",
-      color: "#e5c07b",
       className: "badge-modified",
     };
   }
   if (s === "A") {
-    return { label: "A", title: "Added", color: "#98c379", className: "badge-added" };
+    return { label: "A", title: "Added", className: "badge-added" };
   }
   if (s === "D") {
-    return { label: "D", title: "Deleted", color: "#e06c75", className: "badge-deleted" };
+    return { label: "D", title: "Deleted", className: "badge-deleted" };
   }
   if (s === "R") {
-    return { label: "R", title: "Renamed", color: "#61afef", className: "badge-renamed" };
+    return { label: "R", title: "Renamed", className: "badge-renamed" };
   }
-  return { label: "U", title: "Untracked", color: "#98c379", className: "badge-untracked" };
+  return { label: "U", title: "Untracked", className: "badge-untracked" };
 }
 
 function getFileIcon(status: string) {

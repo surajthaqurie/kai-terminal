@@ -424,6 +424,17 @@ export function App() {
     });
   }, []);
 
+  // Synchronize active theme to documentElement, color-scheme, and theme-color meta
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", userSettings.theme);
+    document.documentElement.style.colorScheme =
+      userSettings.theme === "solarized-light" ? "light" : "dark";
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) {
+      meta.setAttribute("content", SettingsService.getThemeCanvasColor(userSettings.theme));
+    }
+  }, [userSettings.theme]);
+
   // Load available shell profiles on startup
   useEffect(() => {
     PtyService.getAvailableShells()
