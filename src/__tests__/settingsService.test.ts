@@ -98,6 +98,12 @@ describe("SettingsService", () => {
     expect(SettingsService.normalize({ autoRestoreSession: true }).autoRestoreSession).toBe(true);
   });
 
+  it("should default skipShellProfile to false and coerce truthy values", () => {
+    expect(DEFAULT_SETTINGS.skipShellProfile).toBe(false);
+    expect(SettingsService.normalize({}).skipShellProfile).toBe(false);
+    expect(SettingsService.normalize({ skipShellProfile: true }).skipShellProfile).toBe(true);
+  });
+
   it("should have default fontSize of 12 and system font family", () => {
     expect(DEFAULT_SETTINGS.fontSize).toBe(12);
     expect(DEFAULT_SETTINGS.fontFamily).toContain("Fira Code");

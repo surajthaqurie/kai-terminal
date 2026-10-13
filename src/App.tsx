@@ -1,16 +1,33 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, Suspense, lazy } from "react";
 import { Toolbar } from "./components/Toolbar";
 import { TabBar } from "./components/TabBar";
 import { StatusBar } from "./components/StatusBar";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { TerminalView, TerminalViewRef } from "./components/TerminalView";
-import { CommandPalette, CommandAction } from "./components/CommandPalette";
-import { SettingsModal } from "./components/SettingsModal";
-import { AiCliPanel } from "./components/AiCliPanel";
-import { DiagnosticsModal } from "./components/DiagnosticsModal";
-import { WorkspaceModal } from "./components/WorkspaceModal";
-import { GitStatusModal } from "./components/GitStatusModal";
-import { GitChangesModal } from "./components/GitChangesModal";
+// On-demand UI is code-split out of the startup bundle: these panels and
+// modals open long after first paint (or never), so parsing them up front
+// only taxes WebView2 cold start on Windows. Each loads on first open.
+const CommandPalette = lazy(() =>
+  import("./components/CommandPalette").then((m) => ({ default: m.CommandPalette }))
+);
+const SettingsModal = lazy(() =>
+  import("./components/SettingsModal").then((m) => ({ default: m.SettingsModal }))
+);
+const AiCliPanel = lazy(() =>
+  import("./components/AiCliPanel").then((m) => ({ default: m.AiCliPanel }))
+);
+const DiagnosticsModal = lazy(() =>
+  import("./components/DiagnosticsModal").then((m) => ({ default: m.DiagnosticsModal }))
+);
+const WorkspaceModal = lazy(() =>
+  import("./components/WorkspaceModal").then((m) => ({ default: m.WorkspaceModal }))
+);
+const GitStatusModal = lazy(() =>
+  import("./components/GitStatusModal").then((m) => ({ default: m.GitStatusModal }))
+);
+const GitChangesModal = lazy(() =>
+  import("./components/GitChangesModal").then((m) => ({ default: m.GitChangesModal }))
+);
 import { PtyService, isTauriAvailable } from "./services/ptyService";
 import { SettingsService, DEFAULT_SETTINGS } from "./services/settingsService";
 import {
@@ -63,6 +80,8 @@ import {
   persistedLayoutToNode,
 } from "./services/workspaces";
 import { runCacheJanitor } from "./services/cacheJanitor";
+import { withSkipProfileArgs } from "./services/shellArgs";
+import type { CommandAction } from "./components/CommandPalette";
 import {
   ShellProfile,
   TerminalTab,
@@ -411,12 +430,14 @@ export function App() {
       });
     };
     syncCodeMode();
+    // No background interval: polling every 2 s kept IPC + backend file
+    // reads awake while Kai sat behind other apps. The focus listener above
+    // re-syncs immediately on return, which is the only transition that
+    // matters (external `kai code` / `kai stop code` runs while focused).
     window.addEventListener("focus", syncCodeMode);
-    const id = setInterval(syncCodeMode, 2000);
     return () => {
       cancelled = true;
       window.removeEventListener("focus", syncCodeMode);
-      clearInterval(id);
     };
   }, []);
   const refreshInstalledEditors = useCallback(() => {
@@ -426,38 +447,10 @@ export function App() {
       .catch(() => setInstalledEditors([]))
       .finally(() => setIsLoadingEditors(false));
   }, []);
-  // Detect installed IDEs well after first paint so the heavy PATH +
-  // Program Files scan (now backend-cached) never contends with the first
-  // PTY spawn on Windows. Skipped while hidden; editors also refresh
-  // on-demand when the Settings/picker opens.
-  useEffect(() => {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const idle =
-      typeof (window as unknown as { requestIdleCallback?: unknown }).requestIdleCallback ===
-      "function"
-        ? (window as unknown as {
-            requestIdleCallback: (cb: () => void, opts?: { timeout: number }) => number;
-            cancelIdleCallback: (id: number) => void;
-          })
-        : null;
-    let idleId: number | null = null;
-    const run = () => {
-      if (typeof document !== "undefined" && document.hidden) {
-        timer = setTimeout(run, 3000);
-        return;
-      }
-      refreshInstalledEditors();
-    };
-    if (idle) {
-      idleId = idle.requestIdleCallback(run, { timeout: 5000 });
-    } else {
-      timer = setTimeout(run, 3000);
-    }
-    return () => {
-      if (timer) clearTimeout(timer);
-      if (idle && idleId !== null) idle.cancelIdleCallback(idleId);
-    };
-  }, [refreshInstalledEditors]);
+  // Installed editors load strictly on demand: the editor picker calls
+  // `refreshInstalledEditors` when opened. No startup/idle prefetch, so the
+  // PATH + Program Files scan never contends with the first PTY spawn on
+  // Windows (the backend result is process-cached after the first scan).
 
   // Saving preferences applies a changed default shell to new sessions
   // and syncs the launch-at-startup toggle with the OS (all platforms).
@@ -486,26 +479,27 @@ export function App() {
   // On startup, reconcile the stored launch-at-startup preference with the
   // real OS state (user may have toggled it in OS settings outside the app).
   // The OS is the source of truth; the stored setting follows it.
-  // Deferred past first paint: on Windows this spawns `reg.exe query`, and
-  // running a child process during the first PTY spawn is a classic
-  // "Not Responding on launch" trigger.
+  // Resolved when Settings opens — never at startup: on Windows this spawns
+  // `reg.exe query`, and a child process during the first PTY spawn is a
+  // classic "Not Responding on launch" trigger.
   useEffect(() => {
-    const timer = setTimeout(() => {
-      if (typeof document !== "undefined" && document.hidden) return;
-      void import("./services/autostartService")
-        .then(({ getAutostartEnabled }) => getAutostartEnabled())
-        .then((enabled) => {
-          setUserSettings((prev) =>
-            Boolean(prev.launchAtStartup) === enabled ? prev : { ...prev, launchAtStartup: enabled }
-          );
-        })
-        .catch(() => {
-          // Mock/browser mode or backend unavailable: keep stored preference.
-        });
-    }, 3000);
-    return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    if (!isSettingsOpen) return;
+    let cancelled = false;
+    void import("./services/autostartService")
+      .then(({ getAutostartEnabled }) => getAutostartEnabled())
+      .then((enabled) => {
+        if (cancelled) return;
+        setUserSettings((prev) =>
+          Boolean(prev.launchAtStartup) === enabled ? prev : { ...prev, launchAtStartup: enabled }
+        );
+      })
+      .catch(() => {
+        // Mock/browser mode or backend unavailable: keep stored preference.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isSettingsOpen]);
 
   // On startup, detect host terminal preferences (Kali Linux terminal / system font) and sync defaults
   useEffect(() => {
@@ -656,9 +650,12 @@ export function App() {
     .map((t) => t.panes.map((p) => resolveEffectiveProjectDir(p.cwd, t.cwd, cwd)).join("|"))
     .join("||");
 
-  // Poll git status per distinct pane directory (each split owns its repo
-  // badge): debounced on change plus a controlled 30 s refresh. The status
-  // bar reads the active pane's entry out of the same map.
+  // Refresh git status per distinct pane directory (each split owns its
+  // repo badge): debounced on change plus on window focus and after every
+  // submitted command (TerminalView re-probes post-Enter). No 30 s background
+  // timer: each tick spawns `git` per pane, which on Windows (MSYS build +
+  // Defender) is the heaviest recurring cost while Kai sits idle behind
+  // other apps. The status bar reads the active pane's entry from the map.
   useEffect(() => {
     const dirs = Array.from(
       new Set(
@@ -704,11 +701,11 @@ export function App() {
       }
     };
     const timer = setTimeout(fetchAll, 600);
-    const interval = setInterval(fetchAll, 30000);
+    window.addEventListener("focus", fetchAll);
     return () => {
       cancelled = true;
       clearTimeout(timer);
-      clearInterval(interval);
+      window.removeEventListener("focus", fetchAll);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paneDirsKey, activeTabId]);
@@ -1106,21 +1103,26 @@ export function App() {
     });
     // Defer network auto-check well past terminal startup so a slow DNS /
     // offline hang never contends with the first PTY spawn on Windows
-    // (a classic "Not Responding on launch" trigger).
+    // (a classic "Not Responding on launch" trigger). Honors the user's
+    // "automatically check for updates" preference: previously the toggle
+    // was saved but never read here, so disabling it changed nothing.
+    const autoCheck = userSettings.autoCheckUpdates !== false;
     const initialCheckTimer = setTimeout(() => {
-      if (shouldAutoCheck()) {
+      if (autoCheck && shouldAutoCheck()) {
         void handleCheckUpdates(false);
       }
     }, 8000);
     const interval = setInterval(() => {
-      void handleCheckUpdates(false);
+      if (userSettings.autoCheckUpdates !== false) {
+        void handleCheckUpdates(false);
+      }
     }, UPDATE_PERIODIC_MS);
     return () => {
       clearTimeout(initialCheckTimer);
       clearInterval(interval);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [userSettings.autoCheckUpdates]);
 
   const handleViewUpdate = useCallback(() => {
     const url = updateInfo?.releaseUrl ?? undefined;
@@ -1324,16 +1326,21 @@ export function App() {
   // Resolve effective shell
   const baseShell = shells.find((s) => s.id === selectedShellId);
   const customPath = userSettings.customShellPath?.trim();
-  const selectedShell: ShellProfile | undefined = customPath
-    ? {
-        id: baseShell?.id ?? "custom",
-        name: baseShell ? `${baseShell.name} (custom)` : "Custom Shell",
-        path: customPath,
-        args: baseShell?.args,
-        is_default: baseShell?.is_default ?? true,
-        is_wsl: baseShell?.is_wsl ?? false,
-      }
-    : baseShell;
+  // Fast-launch option: with `skipShellProfile`, PowerShell/pwsh spawns gain
+  // -NoProfile (profile scripts dominate cold-start time on Windows).
+  const selectedShell: ShellProfile | undefined = withSkipProfileArgs(
+    customPath
+      ? {
+          id: baseShell?.id ?? "custom",
+          name: baseShell ? `${baseShell.name} (custom)` : "Custom Shell",
+          path: customPath,
+          args: baseShell?.args,
+          is_default: baseShell?.is_default ?? true,
+          is_wsl: baseShell?.is_wsl ?? false,
+        }
+      : baseShell,
+    userSettings.skipShellProfile === true
+  );
 
   const isMac = isMacPlatform();
   const kb = userSettings.keybindings;
@@ -1736,6 +1743,42 @@ export function App() {
                     onFocus={focusPane}
                     onCwdResolved={(resolved) => {
                       if (resolved) {
+                        // No-op probes (cwd unchanged) skip the whole cascade:
+                        // previously every probe rewrote tab state, touched
+                        // localStorage, invalidated the git cache, and spawned
+                        // `git` — per Enter, ×3. Unchanged dirs refresh the
+                        // badge from cache only (no spawn unless the TTL
+                        // expired), so `git commit` still updates the badge.
+                        const live = tabsRef.current.find((t) => t.id === tab.id);
+                        const livePane = live?.panes.find((p) => p.id === pane.id);
+                        if ((livePane?.cwd || live?.cwd || cwdRef.current) === resolved) {
+                          if (
+                            activeTabIdRef.current === tab.id &&
+                            (live?.activePaneId === pane.id || (live?.panes.length ?? 0) <= 1)
+                          ) {
+                            void getGitInfoCached(resolved).then(
+                              (info) => {
+                                setGitInfoByDir((prev) =>
+                                  prev[resolved]?.branch === info.branch &&
+                                  prev[resolved]?.dirty === info.dirty &&
+                                  prev[resolved]?.repo_root === info.repo_root
+                                    ? prev
+                                    : { ...prev, [resolved]: info }
+                                );
+                                setGitBranch(info.branch);
+                                setGitDirty(info.dirty);
+                                setGitRepoRoot(info.repo_root ?? null);
+                              },
+                              () => {
+                                setGitInfoByDir((prev) => ({ ...prev, [resolved]: null }));
+                                setGitBranch(null);
+                                setGitDirty(false);
+                                setGitRepoRoot(null);
+                              }
+                            );
+                          }
+                          return;
+                        }
                         setTabs((prev) =>
                           prev.map((t) =>
                             t.id === tab.id
@@ -1861,63 +1904,65 @@ export function App() {
         })}
       </div>
 
-      <CommandPalette
-        isOpen={isCommandPaletteOpen}
-        onClose={() => setIsCommandPaletteOpen(false)}
-        actions={commandActions}
-      />
-
-      <SettingsModal
-        isOpen={isSettingsOpen}
-        onClose={() => setIsSettingsOpen(false)}
-        settings={userSettings}
-        onSaveSettings={handleSaveSettings}
-        shells={shells}
-        appVersion={appVersion}
-        updateInfo={updateInfo}
-        isCheckingUpdates={isCheckingUpdates}
-        onCheckUpdates={() => void handleCheckUpdates(true)}
-        onViewUpdate={handleViewUpdate}
-      />
-
-      <WorkspaceModal
-        isOpen={isWorkspaceOpen}
-        onClose={() => setIsWorkspaceOpen(false)}
-        currentTabs={tabs}
-        onLoadWorkspace={handleRestoreWorkspace}
-      />
-
-      <AiCliPanel
-        isOpen={isAiCliOpen}
-        onClose={() => setIsAiCliOpen(false)}
-        projectDir={aiCliDir || effectiveProjectDir}
-        onLaunchInTerminal={(dir) => {
-          handleNewTab({ cwd: dir || undefined });
-          setIsAiCliOpen(false);
-        }}
-      />
-
-      {gitChangesModal && (
-        <GitChangesModal
-          dir={gitChangesModal.dir}
-          onClose={() => setGitChangesModal(null)}
-          onOpenEditor={(d, file) => void handleOpenFileInEditor(d, file)}
+      <Suspense fallback={null}>
+        <CommandPalette
+          isOpen={isCommandPaletteOpen}
+          onClose={() => setIsCommandPaletteOpen(false)}
+          actions={commandActions}
         />
-      )}
 
-      {gitStatusModal && (
-        <GitStatusModal
-          dir={gitStatusModal.dir}
-          output={gitStatusModal.output}
-          onClose={() => setGitStatusModal(null)}
+        <SettingsModal
+          isOpen={isSettingsOpen}
+          onClose={() => setIsSettingsOpen(false)}
+          settings={userSettings}
+          onSaveSettings={handleSaveSettings}
+          shells={shells}
+          appVersion={appVersion}
+          updateInfo={updateInfo}
+          isCheckingUpdates={isCheckingUpdates}
+          onCheckUpdates={() => void handleCheckUpdates(true)}
+          onViewUpdate={handleViewUpdate}
         />
-      )}
 
-      <DiagnosticsModal
-        isOpen={isDiagnosticsOpen}
-        onClose={() => setIsDiagnosticsOpen(false)}
-        lastError={lastError}
-      />
+        <WorkspaceModal
+          isOpen={isWorkspaceOpen}
+          onClose={() => setIsWorkspaceOpen(false)}
+          currentTabs={tabs}
+          onLoadWorkspace={handleRestoreWorkspace}
+        />
+
+        <AiCliPanel
+          isOpen={isAiCliOpen}
+          onClose={() => setIsAiCliOpen(false)}
+          projectDir={aiCliDir || effectiveProjectDir}
+          onLaunchInTerminal={(dir) => {
+            handleNewTab({ cwd: dir || undefined });
+            setIsAiCliOpen(false);
+          }}
+        />
+
+        {gitChangesModal && (
+          <GitChangesModal
+            dir={gitChangesModal.dir}
+            onClose={() => setGitChangesModal(null)}
+            onOpenEditor={(d, file) => void handleOpenFileInEditor(d, file)}
+          />
+        )}
+
+        {gitStatusModal && (
+          <GitStatusModal
+            dir={gitStatusModal.dir}
+            output={gitStatusModal.output}
+            onClose={() => setGitStatusModal(null)}
+          />
+        )}
+
+        <DiagnosticsModal
+          isOpen={isDiagnosticsOpen}
+          onClose={() => setIsDiagnosticsOpen(false)}
+          lastError={lastError}
+        />
+      </Suspense>
 
       {renameModalTab && (
         <div className="modal-backdrop" onClick={() => setRenameModalTab(null)}>

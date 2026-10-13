@@ -219,6 +219,12 @@ export interface UserSettings {
   autoRestoreSession?: boolean;
   /** Periodically check GitHub releases for a newer version (default true). */
   autoCheckUpdates?: boolean;
+  /**
+   * Skip PowerShell profile scripts (`-NoProfile`) for faster shell startup.
+   * Off by default: profiles provide prompt themes, conda envs, and aliases.
+   * Applies to PowerShell / pwsh only; other shells are unaffected.
+   */
+  skipShellProfile?: boolean;
   /** Customizable keyboard shortcut map. */
   keybindings: KeybindingsConfig;
 }

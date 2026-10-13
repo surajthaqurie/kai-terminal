@@ -36,6 +36,7 @@ export const DEFAULT_SETTINGS: UserSettings = {
   launchAtStartup: false,
   autoRestoreSession: false,
   autoCheckUpdates: true,
+  skipShellProfile: false,
   keybindings: DEFAULT_KEYBINDINGS,
 };
 
@@ -124,6 +125,7 @@ export class SettingsService {
     }
     merged.launchAtStartup = Boolean(merged.launchAtStartup);
     merged.autoRestoreSession = Boolean(merged.autoRestoreSession);
+    merged.skipShellProfile = Boolean(merged.skipShellProfile);
     merged.autoCheckUpdates =
       merged.autoCheckUpdates === undefined ? true : Boolean(merged.autoCheckUpdates);
     return merged;

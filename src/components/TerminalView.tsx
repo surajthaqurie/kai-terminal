@@ -1,4 +1,12 @@
-import { useEffect, useRef, useImperativeHandle, forwardRef, useState } from "react";
+import {
+  useEffect,
+  useRef,
+  useImperativeHandle,
+  forwardRef,
+  useState,
+  Suspense,
+  lazy,
+} from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
@@ -8,7 +16,10 @@ import { isCopyKeyEvent, isPasteKeyEvent } from "../services/shortcuts";
 import { ShellProfile, SessionStatus, UserSettings } from "../types/terminal";
 import { SettingsService, DEFAULT_SETTINGS } from "../services/settingsService";
 import { loadCommandHistory, recordCommand, saveCommandHistory } from "../services/autocomplete";
-import { SearchBar } from "./SearchBar";
+import { lineLikelyChangesCwd } from "../services/cwdCommand";
+// Search UI only mounts on first toggle (Ctrl+Shift+F), so it stays out of
+// the per-pane startup path.
+const SearchBar = lazy(() => import("./SearchBar").then((m) => ({ default: m.SearchBar })));
 
 export interface TerminalViewRef {
   clear: () => void;
@@ -454,15 +465,20 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       const inputDisposable = term.onData((data) => {
         const backendId = backendPtyIdRef.current;
         if (backendId) {
+          // Peek the pending line BEFORE Enter commits/clears it: the
+          // post-command cwd probe fires only for directory-changing lines.
+          // Previously every Enter (even bare Enter or `ls`) paid 3 IPC
+          // probes plus 3 git spawns and full re-render cascades — the felt
+          // input lag on Windows. Other lines rely on the OSC/focus/interval
+          // backstops, which stay untouched.
+          const submitted =
+            data.includes("\r") || data.includes("\n") ? `${lineBufferRef.current} ${data}` : "";
           trackInputData(data);
           ptyService.writeToPty(backendId, data).catch(() => {
             // Backend already reaped the session; status update arrives via pty-exit.
           });
-          // When a command is submitted (e.g. cd /location), trigger CWD detection
-          if (data.includes("\r") || data.includes("\n")) {
-            setTimeout(checkLiveCwd, 100);
-            setTimeout(checkLiveCwd, 300);
-            setTimeout(checkLiveCwd, 800);
+          if (submitted && lineLikelyChangesCwd(submitted)) {
+            setTimeout(checkLiveCwd, 250);
           }
         }
         // Dead pane: input is ignored (use Close pane). No auto-restart.
@@ -736,12 +752,14 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         }}
       >
         {isSearchVisible && (
-          <SearchBar
-            onSearch={handleSearch}
-            onSearchNext={handleSearchNext}
-            onSearchPrevious={handleSearchPrevious}
-            onClose={handleCloseSearch}
-          />
+          <Suspense fallback={null}>
+            <SearchBar
+              onSearch={handleSearch}
+              onSearchNext={handleSearchNext}
+              onSearchPrevious={handleSearchPrevious}
+              onClose={handleCloseSearch}
+            />
+          </Suspense>
         )}
         <div
           ref={containerRef}

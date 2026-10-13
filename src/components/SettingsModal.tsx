@@ -595,6 +595,24 @@ export const SettingsModal: FC<SettingsModalProps> = ({
                 <label className="checkbox-label">
                   <input
                     type="checkbox"
+                    checked={Boolean(formData.skipShellProfile)}
+                    onChange={(e) =>
+                      setFormData({ ...formData, skipShellProfile: e.target.checked })
+                    }
+                  />
+                  <span>Skip shell profile scripts (faster launch)</span>
+                </label>
+                <p className="muted-text">
+                  Adds -NoProfile for PowerShell/pwsh so new tabs skip $PROFILE scripts (prompt
+                  themes, conda init). Prompt customizations and aliases stop loading while on.
+                  Other shells are unaffected. Applies to new sessions.
+                </p>
+              </div>
+
+              <div className="setting-field checkbox-field">
+                <label className="checkbox-label">
+                  <input
+                    type="checkbox"
                     checked={Boolean(formData.launchAtStartup)}
                     onChange={(e) =>
                       setFormData({ ...formData, launchAtStartup: e.target.checked })
