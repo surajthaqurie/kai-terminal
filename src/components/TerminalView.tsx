@@ -202,14 +202,24 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       },
       pasteText: (text: string) => {
         const backendId = backendPtyIdRef.current;
-        if (text && backendId) {
-          // Pasted text becomes part of the current line buffer so
-          // command history stays in sync.
-          lineBufferRef.current = (lineBufferRef.current + text).slice(-4096);
-          PtyService.writeToPty(backendId, text).catch((e) => {
-            console.error("Paste failed:", e);
-          });
+        const term = xtermRef.current;
+        if (!text || !backendId) return;
+
+        const byteLen = new TextEncoder().encode(text).length;
+        if (byteLen > 1_048_576) {
+          term?.writeln(
+            `\r\n\x1b[33m[Input rejected: payload size (${byteLen} bytes) exceeds maximum limit of 1048576 bytes; paste smaller chunks instead of losing data silently]\x1b[0m\r\n`
+          );
+          return;
         }
+
+        // Pasted text becomes part of the current line buffer so
+        // command history stays in sync.
+        lineBufferRef.current = (lineBufferRef.current + text).slice(-4096);
+        PtyService.writeToPty(backendId, text).catch((e) => {
+          const msg = e instanceof Error ? e.message : String(e);
+          term?.writeln(`\r\n\x1b[31m[Paste failed: ${msg}]\x1b[0m\r\n`);
+        });
       },
       focus: () => {
         xtermRef.current?.focus();
@@ -409,10 +419,21 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
               .readText()
               .then((text) => {
                 const backendId = backendPtyIdRef.current;
-                if (text && backendId) {
-                  lineBufferRef.current = (lineBufferRef.current + text).slice(-4096);
-                  ptyService.writeToPty(backendId, text).catch(() => {});
+                if (!text || !backendId) return;
+
+                const byteLen = new TextEncoder().encode(text).length;
+                if (byteLen > 1_048_576) {
+                  term.writeln(
+                    `\r\n\x1b[33m[Input rejected: payload size (${byteLen} bytes) exceeds maximum limit of 1048576 bytes; paste smaller chunks instead of losing data silently]\x1b[0m\r\n`
+                  );
+                  return;
                 }
+
+                lineBufferRef.current = (lineBufferRef.current + text).slice(-4096);
+                ptyService.writeToPty(backendId, text).catch((e) => {
+                  const msg = e instanceof Error ? e.message : String(e);
+                  term.writeln(`\r\n\x1b[31m[Paste failed: ${msg}]\x1b[0m\r\n`);
+                });
               })
               .catch(() => {});
           }
@@ -552,12 +573,26 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       };
       let pendingOutput = "";
       let rafScheduled = false;
+      let rafId: number | null = null;
+      let flushTimer: ReturnType<typeof setTimeout> | null = null;
       // Single xterm write of a 1 MB flood blocks the UI thread long
       // enough for Windows to flag the window "Not Responding".
       const MAX_TERM_WRITE_CHARS = 65536;
 
       const flushOutput = () => {
         rafScheduled = false;
+        if (rafId !== null) {
+          try {
+            cancelAnimationFrame(rafId);
+          } catch {
+            // ignore
+          }
+          rafId = null;
+        }
+        if (flushTimer !== null) {
+          clearTimeout(flushTimer);
+          flushTimer = null;
+        }
         if (pendingOutput) {
           const chunk = pendingOutput;
           pendingOutput = "";
@@ -585,11 +620,11 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
             }
           };
           try {
-            requestAnimationFrame(doFlush);
+            rafId = requestAnimationFrame(doFlush);
           } catch {
             doFlush();
           }
-          setTimeout(doFlush, 250);
+          flushTimer = setTimeout(doFlush, 250);
         }
       };
 
@@ -600,7 +635,13 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
             // frontend memory without limit (xterm scrollback is also bounded).
             pendingOutput += payload.data;
             if (pendingOutput.length > 1_048_576) {
-              pendingOutput = pendingOutput.slice(-1_048_576);
+              let startIdx = pendingOutput.length - 1_048_576;
+              // If slicing right at a low surrogate, advance index by 1 so surrogate pair isn't split
+              const code = pendingOutput.charCodeAt(startIdx);
+              if (code >= 0xdc00 && code <= 0xdfff) {
+                startIdx += 1;
+              }
+              pendingOutput = pendingOutput.slice(startIdx);
             }
             scheduleFlush();
           }
@@ -678,6 +719,18 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         initSeqRef.current += 1;
         listenersCancelled = true;
         if (initialTimer) clearTimeout(initialTimer);
+        if (rafId !== null) {
+          try {
+            cancelAnimationFrame(rafId);
+          } catch {
+            // ignore
+          }
+          rafId = null;
+        }
+        if (flushTimer !== null) {
+          clearTimeout(flushTimer);
+          flushTimer = null;
+        }
         term.textarea?.removeEventListener("focus", onTextareaFocus);
         inputDisposable.dispose();
         resizeObserver.disconnect();

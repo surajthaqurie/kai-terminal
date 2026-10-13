@@ -5,7 +5,7 @@ import {
   TerminalPane,
 } from "../types/terminal";
 
-export const MAX_PANES_PER_TAB = 16;
+export const MAX_PANES_PER_TAB = 4;
 export const MIN_PANE_FRACTION = 0.2;
 export const MAX_PANE_FRACTION = 0.8;
 
