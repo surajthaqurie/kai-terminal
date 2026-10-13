@@ -74,7 +74,7 @@ describe("Terminal Native PTY and Rendering Hardening", () => {
 
   it("handles rapid pane close and repeated close calls idempotently", async () => {
     const closeSpy = vi.spyOn(PtyService, "closePty");
-    
+
     // Test multiple calls to close the same PTY id
     const ptyId = "test-pty-uuid-1";
     await expect(PtyService.closePty(ptyId)).resolves.not.toThrow();
@@ -97,7 +97,7 @@ describe("Terminal Native PTY and Rendering Hardening", () => {
 
     expect(tab.panes.length).toBe(4);
     const active = tab.activePaneId;
-    
+
     // Remove the currently active pane
     const afterRemoval = removePaneById(tab, active);
     expect(afterRemoval.panes.length).toBe(3);

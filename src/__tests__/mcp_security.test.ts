@@ -625,13 +625,54 @@ describe("Phase 9 & 10: Security, Sanitization & Concurrency Safeguards", () => 
       const statBefore = fs.statSync(testFile);
 
       // Execute all query tools
-      await handleMcpMessage({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "kai_project_info" } }, projDir);
-      await handleMcpMessage({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "kai_search_code", arguments: { query: "compute" } } }, projDir);
-      await handleMcpMessage({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "kai_find_symbol", arguments: { name: "compute" } } }, projDir);
-      await handleMcpMessage({ jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "kai_get_dependencies", arguments: { filePath: "code.ts" } } }, projDir);
-      await handleMcpMessage({ jsonrpc: "2.0", id: 5, method: "tools/call", params: { name: "kai_get_context", arguments: { task: "compute logic" } } }, projDir);
-      await handleMcpMessage({ jsonrpc: "2.0", id: 6, method: "tools/call", params: { name: "kai_refresh_index" } }, projDir);
-      await handleMcpMessage({ jsonrpc: "2.0", id: 7, method: "tools/call", params: { name: "kai_get_lsp_status" } }, projDir);
+      await handleMcpMessage(
+        { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "kai_project_info" } },
+        projDir
+      );
+      await handleMcpMessage(
+        {
+          jsonrpc: "2.0",
+          id: 2,
+          method: "tools/call",
+          params: { name: "kai_search_code", arguments: { query: "compute" } },
+        },
+        projDir
+      );
+      await handleMcpMessage(
+        {
+          jsonrpc: "2.0",
+          id: 3,
+          method: "tools/call",
+          params: { name: "kai_find_symbol", arguments: { name: "compute" } },
+        },
+        projDir
+      );
+      await handleMcpMessage(
+        {
+          jsonrpc: "2.0",
+          id: 4,
+          method: "tools/call",
+          params: { name: "kai_get_dependencies", arguments: { filePath: "code.ts" } },
+        },
+        projDir
+      );
+      await handleMcpMessage(
+        {
+          jsonrpc: "2.0",
+          id: 5,
+          method: "tools/call",
+          params: { name: "kai_get_context", arguments: { task: "compute logic" } },
+        },
+        projDir
+      );
+      await handleMcpMessage(
+        { jsonrpc: "2.0", id: 6, method: "tools/call", params: { name: "kai_refresh_index" } },
+        projDir
+      );
+      await handleMcpMessage(
+        { jsonrpc: "2.0", id: 7, method: "tools/call", params: { name: "kai_get_lsp_status" } },
+        projDir
+      );
 
       const statAfter = fs.statSync(testFile);
       expect(fs.readFileSync(testFile, "utf-8")).toBe(originalContent);
@@ -701,12 +742,9 @@ describe("Phase 9 & 10: Security, Sanitization & Concurrency Safeguards", () => 
       const inStream = new PassThrough();
       const outStream = new PassThrough();
 
-      await expect(
-        startMcpServer(nonExistentPath, inStream, outStream)
-      ).resolves.toBeUndefined();
+      await expect(startMcpServer(nonExistentPath, inStream, outStream)).resolves.toBeUndefined();
 
       inStream.end();
     });
   });
 });
-

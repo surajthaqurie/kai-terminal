@@ -102,40 +102,41 @@ pub fn get_project_intelligence_internal(
             continue;
         }
 
-    if let Ok(entries) = fs::read_dir(projects_dir) {
-        for entry in entries.flatten() {
-            let p = entry.path();
-            if p.is_dir() {
-                let meta_path = p.join("meta.json");
-                if let Ok(content) = fs::read_to_string(&meta_path) {
-                    if let Ok(meta) = serde_json::from_str::<MetaJson>(&content) {
-                        if let Some(cp) = meta.canonical_path {
-                            if normalize_canonical_for_compare(&cp)
-                                == normalize_canonical_for_compare(&canonical)
-                            {
-                                let mut total_tokens = 0;
-                                let index_path = p.join("index.json");
-                                if let Ok(idx_content) = fs::read_to_string(&index_path) {
-                                    if let Ok(idx) = serde_json::from_str::<IndexJson>(&idx_content)
-                                    {
-                                        total_tokens = idx.total_tokens_estimated.unwrap_or(0);
+        if let Ok(entries) = fs::read_dir(projects_dir) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.is_dir() {
+                    let meta_path = p.join("meta.json");
+                    if let Ok(content) = fs::read_to_string(&meta_path) {
+                        if let Ok(meta) = serde_json::from_str::<MetaJson>(&content) {
+                            if let Some(cp) = meta.canonical_path {
+                                if normalize_canonical_for_compare(&cp)
+                                    == normalize_canonical_for_compare(&canonical)
+                                {
+                                    let mut total_tokens = 0;
+                                    let index_path = p.join("index.json");
+                                    if let Ok(idx_content) = fs::read_to_string(&index_path) {
+                                        if let Ok(idx) =
+                                            serde_json::from_str::<IndexJson>(&idx_content)
+                                        {
+                                            total_tokens = idx.total_tokens_estimated.unwrap_or(0);
+                                        }
                                     }
-                                }
 
-                                return ProjectIntelligenceSummary {
-                                    status: meta.status.unwrap_or_else(|| "ready".to_string()),
-                                    file_count: meta.file_count.unwrap_or(0),
-                                    symbol_count: meta.symbol_count.unwrap_or(0),
-                                    total_tokens_estimated: total_tokens,
-                                    last_indexed_at: meta.last_indexed_at,
-                                };
+                                    return ProjectIntelligenceSummary {
+                                        status: meta.status.unwrap_or_else(|| "ready".to_string()),
+                                        file_count: meta.file_count.unwrap_or(0),
+                                        symbol_count: meta.symbol_count.unwrap_or(0),
+                                        total_tokens_estimated: total_tokens,
+                                        last_indexed_at: meta.last_indexed_at,
+                                    };
+                                }
                             }
                         }
                     }
                 }
             }
         }
-    }
     }
 
     ProjectIntelligenceSummary {
@@ -225,8 +226,7 @@ mod tests {
 
     #[test]
     fn test_candidate_homes_include_xdg_data_home() {
-        let temp_path =
-            std::env::temp_dir().join(format!("kai_test_xdg_{}", uuid::Uuid::new_v4()));
+        let temp_path = std::env::temp_dir().join(format!("kai_test_xdg_{}", uuid::Uuid::new_v4()));
         let xdg_dir = temp_path.join("xdg_share");
         let kai_xdg = xdg_dir.join("kai");
         let proj_dir = kai_xdg.join("projects").join("xdg_sample");

@@ -286,7 +286,9 @@ describe("Harden Phase: Path escaping, spaces, Unicode, quotes & dynamic agent v
     const home = makeTempHome();
 
     // Traversal attempts
-    const traversal1 = buildDynamicAgentSetup("../../evil", "/bin/evil", KAI_BIN, { homeDir: home });
+    const traversal1 = buildDynamicAgentSetup("../../evil", "/bin/evil", KAI_BIN, {
+      homeDir: home,
+    });
     expect(traversal1.skipped).toBe(true);
     expect(traversal1.wrote).toBe(false);
     expect(traversal1.message).toContain("Invalid agent id");
@@ -294,11 +296,15 @@ describe("Harden Phase: Path escaping, spaces, Unicode, quotes & dynamic agent v
     const traversal2 = buildDynamicAgentSetup("..\\evil", "/bin/evil", KAI_BIN, { homeDir: home });
     expect(traversal2.skipped).toBe(true);
 
-    const injection = buildDynamicAgentSetup("agent; rm -rf", "/bin/agent", KAI_BIN, { homeDir: home });
+    const injection = buildDynamicAgentSetup("agent; rm -rf", "/bin/agent", KAI_BIN, {
+      homeDir: home,
+    });
     expect(injection.skipped).toBe(true);
 
     // Valid agentId works
-    const valid = buildDynamicAgentSetup("my-custom_agent.v1", "/bin/agent", KAI_BIN, { homeDir: home });
+    const valid = buildDynamicAgentSetup("my-custom_agent.v1", "/bin/agent", KAI_BIN, {
+      homeDir: home,
+    });
     expect(valid.skipped).toBe(false);
     expect(valid.wrote).toBe(true);
   });
@@ -312,4 +318,3 @@ describe("Harden Phase: Path escaping, spaces, Unicode, quotes & dynamic agent v
     }
   });
 });
-

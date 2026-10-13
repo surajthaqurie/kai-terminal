@@ -18,6 +18,14 @@ pub struct GitInfo {
 /// Returns git branch/status for `cwd` using the system `git` binary only.
 /// Never scans the whole filesystem; only queries the given directory.
 /// Timeout: 8s per git invocation. No shell is spawned.
+///
+/// Error taxonomy (all graceful, never panics):
+/// - invalid / over-long / NUL paths → "Invalid directory"
+/// - missing path → "Directory does not exist"
+/// - permission-denied / inaccessible → "Directory is not accessible"
+/// - existing non-directory → "Not a directory"
+/// - git binary absent from PATH → "Git is not installed or not on PATH"
+/// - otherwise not a repo / git failure → "Not a git repository or git is missing"
 pub fn get_git_info(cwd: &str) -> GitInfo {
     let trimmed = cwd.trim().trim_matches('"').trim_matches('\'');
     if trimmed.is_empty() || trimmed.len() > 4096 || trimmed.contains('\0') {
@@ -29,13 +37,63 @@ pub fn get_git_info(cwd: &str) -> GitInfo {
             error: Some("Invalid directory".to_string()),
         };
     }
-    if !Path::new(trimmed).is_dir() {
+    match std::fs::symlink_metadata(trimmed) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return GitInfo {
+                branch: None,
+                dirty: false,
+                ahead_behind: None,
+                repo_root: None,
+                error: Some("Directory does not exist".to_string()),
+            };
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+            return GitInfo {
+                branch: None,
+                dirty: false,
+                ahead_behind: None,
+                repo_root: None,
+                error: Some("Directory is not accessible".to_string()),
+            };
+        }
+        Err(_) => {
+            return GitInfo {
+                branch: None,
+                dirty: false,
+                ahead_behind: None,
+                repo_root: None,
+                error: Some("Directory does not exist".to_string()),
+            };
+        }
+        Ok(md) => {
+            if !md.file_type().is_dir() && !md.file_type().is_symlink() {
+                return GitInfo {
+                    branch: None,
+                    dirty: false,
+                    ahead_behind: None,
+                    repo_root: None,
+                    error: Some("Not a directory".to_string()),
+                };
+            }
+            if !Path::new(trimmed).is_dir() {
+                // Symlink to non-dir, permission shadow, or racing delete.
+                return GitInfo {
+                    branch: None,
+                    dirty: false,
+                    ahead_behind: None,
+                    repo_root: None,
+                    error: Some("Directory is not accessible".to_string()),
+                };
+            }
+        }
+    }
+    if !git_binary_available() {
         return GitInfo {
             branch: None,
             dirty: false,
             ahead_behind: None,
             repo_root: None,
-            error: Some("Directory does not exist".to_string()),
+            error: Some("Git is not installed or not on PATH".to_string()),
         };
     }
     let root = match run_git(trimmed, &["rev-parse", "--show-toplevel"]) {
@@ -88,7 +146,14 @@ pub fn get_git_info(cwd: &str) -> GitInfo {
         branch = Some("main".to_string());
     }
 
-    let status = run_git(trimmed, &["status", "--porcelain"]);
+    // -c core.quotepath=off prevents git from C-string-quoting paths that
+    // contain spaces, Unicode, or other non-ASCII bytes. Without this flag,
+    // `git status --porcelain` wraps those paths in double quotes with
+    // backslash escapes, breaking the downstream path parser.
+    let status = run_git(
+        trimmed,
+        &["-c", "core.quotepath=off", "status", "--porcelain"],
+    );
     let dirty = status.map(|s| !s.trim().is_empty()).unwrap_or(false);
     GitInfo {
         branch,
@@ -129,20 +194,39 @@ pub fn run_git_action(cwd: &str, action: &str) -> Result<String, String> {
         return Err("Not a valid git repository".to_string());
     }
     let repo_dir = info.repo_root.unwrap();
-    let (args, allow_diff_exit): (&[&str], bool) = match action {
-        "fetch" => (&["fetch", "--all", "--prune"], false),
-        "pull" => (&["pull", "--ff-only"], false),
-        "status" => (&["status", "--short"], false),
-        "status_porcelain" => (&["status", "--porcelain=v1", "-uall"], false),
-        "diff" => (&["diff", "HEAD"], true),
-        "diff_working" => (&["diff"], true),
-        "diff_staged" => (&["diff", "--cached"], true),
-        "stage_all" => (&["add", "-A"], false),
-        "unstage_all" => (&["restore", "--staged", "."], false),
+    // Status commands add -c core.quotepath=off so filenames with spaces
+    // or non-ASCII bytes are not C-string quoted in the output.
+    let result = match action {
+        "fetch" => run_git_bounded(&repo_dir, &["fetch", "--all", "--prune"], 1_000_000, false),
+        "pull" => run_git_bounded(&repo_dir, &["pull", "--ff-only"], 1_000_000, false),
+        "status" => run_git_bounded(
+            &repo_dir,
+            &["-c", "core.quotepath=off", "status", "--short"],
+            1_000_000,
+            false,
+        ),
+        "status_porcelain" => run_git_bounded(
+            &repo_dir,
+            &[
+                "-c",
+                "core.quotepath=off",
+                "status",
+                "--porcelain=v1",
+                "-uall",
+            ],
+            1_000_000,
+            false,
+        ),
+        "diff" => run_git_bounded(&repo_dir, &["diff", "HEAD"], 1_000_000, true),
+        "diff_working" => run_git_bounded(&repo_dir, &["diff"], 1_000_000, true),
+        "diff_staged" => run_git_bounded(&repo_dir, &["diff", "--cached"], 1_000_000, true),
+        "stage_all" => run_git_bounded(&repo_dir, &["add", "-A"], 1_000_000, false),
+        "unstage_all" => {
+            run_git_bounded(&repo_dir, &["restore", "--staged", "."], 1_000_000, false)
+        }
         _ => return Err(format!("Unsupported git action '{}'", action)),
     };
-    run_git_bounded(&repo_dir, args, 1_000_000, allow_diff_exit)
-        .ok_or_else(|| format!("Git action '{}' failed", action))
+    result.ok_or_else(|| format!("Git action '{}' failed", action))
 }
 
 fn validate_repo_rel_path<'a>(repo_root: &str, rel_path: &'a str) -> Result<&'a str, String> {
@@ -274,7 +358,13 @@ pub fn get_git_changes(cwd: &str) -> Result<GitChangesSummary, String> {
     let repo_dir = info.repo_root.ok_or("Not a valid git repository")?;
     let status_out = run_git_bounded(
         &repo_dir,
-        &["status", "--porcelain=v1", "-uall"],
+        &[
+            "-c",
+            "core.quotepath=off",
+            "status",
+            "--porcelain=v1",
+            "-uall",
+        ],
         1_000_000,
         false,
     )
@@ -380,7 +470,14 @@ pub fn discard_git_file(cwd: &str, rel_path: &str) -> Result<String, String> {
     // If file is untracked, remove it from disk safely within repo_root
     let status_out = run_git_bounded(
         &repo_dir,
-        &["status", "--porcelain=v1", "--", valid_path],
+        &[
+            "-c",
+            "core.quotepath=off",
+            "status",
+            "--porcelain=v1",
+            "--",
+            valid_path,
+        ],
         4096,
         false,
     )
@@ -414,6 +511,55 @@ fn run_git(cwd: &str, args: &[&str]) -> Option<String> {
     run_git_bounded(cwd, args, 512, false)
 }
 
+/// True when a `git` executable resolves on PATH (or via well-known
+/// install locations). Used to distinguish "git missing" from "not a repo".
+fn git_binary_available() -> bool {
+    if let Ok(path_env) = std::env::var("PATH") {
+        for dir in std::env::split_paths(&path_env) {
+            if dir.as_os_str().is_empty() {
+                continue;
+            }
+            let candidate = dir.join("git");
+            if candidate.is_file() {
+                #[cfg(not(target_os = "windows"))]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    if let Ok(md) = candidate.metadata() {
+                        if md.permissions().mode() & 0o111 != 0 {
+                            return true;
+                        }
+                        continue;
+                    }
+                }
+                #[cfg(target_os = "windows")]
+                {
+                    return true;
+                }
+            }
+            #[cfg(target_os = "windows")]
+            {
+                for ext in ["git.exe", "git.cmd", "git.bat"] {
+                    if dir.join(ext).is_file() {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    // Absolute fallbacks (bounded, fixed set — never user input).
+    for abs in [
+        "/usr/bin/git",
+        "/usr/local/bin/git",
+        "/opt/homebrew/bin/git",
+        "/snap/bin/git",
+    ] {
+        if Path::new(abs).is_file() {
+            return true;
+        }
+    }
+    false
+}
+
 fn run_git_bounded(
     cwd: &str,
     args: &[&str],
@@ -425,7 +571,11 @@ fn run_git_bounded(
         .args(args)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
+        // stderr is never consumed (diagnostics use exit status + stdout
+        // only). Piping it without a drain thread risks deadlock when git
+        // writes >64 KiB of warnings (large repos, index churn), stalling
+        // the probe until the 8 s timeout. Discard it instead.
+        .stderr(std::process::Stdio::null());
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
@@ -722,6 +872,141 @@ mod tests {
     }
 
     #[test]
+    fn test_unborn_branch_reports_repo_and_branch() {
+        if !git_available() {
+            return;
+        }
+        let base = std::env::temp_dir().join(format!("kai-git-unborn-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        assert!(std::process::Command::new("git")
+            .current_dir(&base)
+            .arg("init")
+            .output()
+            .unwrap()
+            .status
+            .success());
+        let info = get_git_info(&base.to_string_lossy());
+        assert!(
+            info.error.is_none(),
+            "unborn repo must not error: {:?}",
+            info.error
+        );
+        assert!(info.repo_root.is_some());
+        assert!(info.branch.is_some());
+        assert!(!info.dirty);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn test_worktree_nested_and_unusual_paths() {
+        if !git_available() {
+            return;
+        }
+        let base = std::env::temp_dir().join(format!("kai-git-edge-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        init_repo_with_commit(&base);
+        let dir = base.to_string_lossy().to_string();
+
+        // Nested repository: inner init wins over outer.
+        let nested = base.join("nested");
+        std::fs::create_dir_all(&nested).unwrap();
+        assert!(std::process::Command::new("git")
+            .current_dir(&nested)
+            .arg("init")
+            .output()
+            .unwrap()
+            .status
+            .success());
+        let nested_info = get_git_info(&nested.to_string_lossy());
+        assert!(nested_info.error.is_none());
+        let nested_root = std::fs::canonicalize(&nested)
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        let reported_root = std::fs::canonicalize(nested_info.repo_root.unwrap())
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        assert_eq!(reported_root, nested_root);
+
+        // Linked worktree resolves to its own root and stays queryable.
+        let wt = base
+            .parent()
+            .unwrap()
+            .join(format!("kai-git-wt-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&wt);
+        let wt_out = std::process::Command::new("git")
+            .current_dir(&base)
+            .args(["worktree", "add", "--detach", wt.to_str().unwrap()])
+            .output()
+            .unwrap();
+        if wt_out.status.success() {
+            let wt_info = get_git_info(&wt.to_string_lossy());
+            assert!(wt_info.error.is_none());
+            assert!(wt_info.repo_root.is_some());
+            let _ = std::process::Command::new("git")
+                .current_dir(&base)
+                .args(["worktree", "remove", "--force", wt.to_str().unwrap()])
+                .output();
+        }
+        let _ = std::fs::remove_dir_all(&wt);
+
+        // Unusual paths: spaces + unicode, untracked + modified => dirty.
+        std::fs::write(base.join("sp ace ünïcode.txt"), "x\n").unwrap();
+        assert!(get_git_info(&dir).dirty);
+        let changes = get_git_changes(&dir).expect("changes with unusual path");
+        assert!(changes.untracked.iter().any(|f| f.path.contains("sp ace")));
+        std::fs::remove_file(base.join("sp ace ünïcode.txt")).unwrap();
+
+        // Deleted tracked file is dirty and surfaced as a working-tree deletion.
+        std::fs::remove_file(base.join("f.txt")).unwrap();
+        assert!(get_git_info(&dir).dirty);
+        let del = get_git_changes(&dir).expect("changes after delete");
+        assert!(del
+            .working_tree
+            .iter()
+            .any(|f| f.path == "f.txt" && f.status == "D"));
+
+        // Inaccessible / missing taxonomy never panics.
+        assert!(get_git_info("/non_existent_dir_xyz_9999").error.is_some());
+        assert!(get_git_info("").error.is_some());
+        assert!(get_git_info("bad\0dir").error.is_some());
+        let file_as_dir = base.join("nested");
+        let _ = std::fs::write(base.join("plain.txt"), "p");
+        assert!(get_git_info(&base.join("plain.txt").to_string_lossy())
+            .error
+            .is_some());
+        let _ = std::fs::remove_file(base.join("plain.txt"));
+        let _ = file_as_dir;
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn test_large_repo_changes_stay_bounded() {
+        if !git_available() {
+            return;
+        }
+        let base = std::env::temp_dir().join(format!("kai-git-large-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        init_repo_with_commit(&base);
+        for i in 0..200 {
+            let _ = std::fs::write(base.join(format!("bulk-{}.txt", i)), "bulk\n");
+        }
+        let dir = base.to_string_lossy().to_string();
+        let start = std::time::Instant::now();
+        let info = get_git_info(&dir);
+        assert!(info.dirty);
+        let changes = get_git_changes(&dir).expect("large changes");
+        assert_eq!(changes.untracked.len(), 200);
+        assert!(start.elapsed() < std::time::Duration::from_secs(8));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
     fn test_symlink_escape_rejected_by_git_validation() {
         let temp_dir = std::env::temp_dir().join(format!("kai_git_sym_{}", uuid::Uuid::new_v4()));
         let repo_dir = temp_dir.join("repo");
@@ -732,9 +1017,9 @@ mod tests {
         let secret_file = outside_dir.join("secret.txt");
         let _ = std::fs::write(&secret_file, "SECRET_DATA");
 
-        let symlink_path = repo_dir.join("leaked_link.txt");
         #[cfg(unix)]
         {
+            let symlink_path = repo_dir.join("leaked_link.txt");
             let _ = std::os::unix::fs::symlink(&secret_file, &symlink_path);
             let repo_str = repo_dir.to_string_lossy().to_string();
             let res = validate_repo_rel_path(&repo_str, "leaked_link.txt");

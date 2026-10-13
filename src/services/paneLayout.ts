@@ -340,7 +340,14 @@ export function resolveTabLayout(
   if (paneIds.length === 0) return { kind: "pane", paneId: "" };
   if (layout) {
     const ids = collectLayoutPaneIds(layout);
-    if (ids.length === paneIds.length && ids.every((id) => paneIds.includes(id))) {
+    // Exact cover AND uniqueness: a persisted tree referencing one pane
+    // twice (duplicate paneIndex refs) must not render the same live pane
+    // in two cells. Fall back to an even tiling in that case.
+    if (
+      ids.length === paneIds.length &&
+      new Set(ids).size === ids.length &&
+      ids.every((id) => paneIds.includes(id))
+    ) {
       return layout;
     }
   }

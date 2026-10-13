@@ -16,7 +16,7 @@ The test suite is divided into three verification layers:
 
 ## 2. PTY Integration Test Matrix
 
-The real PTY integration suite covers 13 core scenarios:
+The real PTY integration suite covers 15 scenarios:
 
 | # | Test Scenario | Description | Automated Test Target | Status |
 | :--- | :--- | :--- | :--- | :--- |
@@ -33,6 +33,8 @@ The real PTY integration suite covers 13 core scenarios:
 | **11** | **Process Reaping** | Verify PID tracking and cleanup when process exits | `test_11_child_process_cleanup` | **Passed** |
 | **12** | **Shutdown Safety** | Verify clean session termination on window close | `test_12_application_startup_and_shutdown` | **Passed** |
 | **13** | **AI Tool Contract** | Verify PTY compatibility when launching interactive AI CLIs | `test_13_real_ai_cli_compatibility` | **Passed** |
+| **13a** | **Executable Discovery** | Verify PATH/PATHEXT binary resolution hermetically on every OS (no AI CLI needed) | `test_13a_cli_candidate_path_probe` | **Passed** |
+| **14** | **Exit Cleanup** | Verify `exit` terminates the session and emits cleanup | `test_14_exit_command_terminates_session` | **Passed** |
 
 ---
 
@@ -95,6 +97,6 @@ cargo clippy --no-default-features --manifest-path src-tauri/Cargo.toml --all-ta
 # 6. Rust Backend Unit Tests (40 tests)
 cargo test --no-default-features --manifest-path src-tauri/Cargo.toml --lib
 
-# 7. Real PTY Integration Tests (13 tests)
+# 7. Real PTY Integration Tests (15 tests)
 cargo test --no-default-features --manifest-path src-tauri/Cargo.toml --test pty_integration_tests
 ```

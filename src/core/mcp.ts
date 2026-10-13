@@ -2,7 +2,12 @@ import readline from "readline";
 import { Transform } from "stream";
 import fs from "fs";
 import path from "path";
-import { registerProject, loadProjectIndex, resolveCanonicalPath, isWithinProjectBoundary } from "./registry";
+import {
+  registerProject,
+  loadProjectIndex,
+  resolveCanonicalPath,
+  isWithinProjectBoundary,
+} from "./registry";
 import { indexProject, isSensitiveFile } from "./indexer";
 import { assembleContext } from "./contextAssembler";
 import { retrieveContext } from "./retrieval";
@@ -439,7 +444,10 @@ export async function handleMcpMessage(
           return {
             jsonrpc: "2.0",
             id: reqId,
-            error: { code: -32602, message: "query parameter is required and must be a non-empty string" },
+            error: {
+              code: -32602,
+              message: "query parameter is required and must be a non-empty string",
+            },
           };
         }
         if (args.limit !== undefined) {
@@ -452,7 +460,8 @@ export async function handleMcpMessage(
           }
         }
         const query = args.query.trim().slice(0, 2000);
-        const limit = typeof args.limit === "number" ? Math.min(Math.max(1, Math.floor(args.limit)), 20) : 6;
+        const limit =
+          typeof args.limit === "number" ? Math.min(Math.max(1, Math.floor(args.limit)), 20) : 6;
         const retrieved = retrieveContext(index, query, { fileBudget: limit, tokenBudget: 4000 });
 
         recordMetric({
@@ -497,7 +506,10 @@ export async function handleMcpMessage(
           return {
             jsonrpc: "2.0",
             id: reqId,
-            error: { code: -32602, message: "name parameter is required and must be a non-empty string" },
+            error: {
+              code: -32602,
+              message: "name parameter is required and must be a non-empty string",
+            },
           };
         }
         const name = args.name.trim().slice(0, 256);
@@ -541,7 +553,10 @@ export async function handleMcpMessage(
           return {
             jsonrpc: "2.0",
             id: reqId,
-            error: { code: -32602, message: "filePath parameter is required and must be a non-empty string" },
+            error: {
+              code: -32602,
+              message: "filePath parameter is required and must be a non-empty string",
+            },
           };
         }
         const rawRel = args.filePath.trim().slice(0, 1024);
@@ -573,7 +588,10 @@ export async function handleMcpMessage(
           return {
             jsonrpc: "2.0",
             id: reqId,
-            error: { code: -32602, message: `Access denied: sensitive or excluded file: ${targetRel}` },
+            error: {
+              code: -32602,
+              message: `Access denied: sensitive or excluded file: ${targetRel}`,
+            },
           };
         }
 
@@ -639,7 +657,10 @@ export async function handleMcpMessage(
           return {
             jsonrpc: "2.0",
             id: reqId,
-            error: { code: -32602, message: "task parameter is required and must be a non-empty string" },
+            error: {
+              code: -32602,
+              message: "task parameter is required and must be a non-empty string",
+            },
           };
         }
         const task = args.task.trim().slice(0, 4000);
@@ -866,7 +887,11 @@ export class BoundedLineTransform extends Transform {
  */
 export function safeWrite(stream: NodeJS.WritableStream, data: string): boolean {
   try {
-    const s = stream as unknown as { writable?: boolean; destroyed?: boolean; write: (d: string) => boolean };
+    const s = stream as unknown as {
+      writable?: boolean;
+      destroyed?: boolean;
+      write: (d: string) => boolean;
+    };
     if (s.writable === false || s.destroyed === true) return false;
     return stream.write(data);
   } catch {

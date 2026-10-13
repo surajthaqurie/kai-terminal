@@ -73,9 +73,9 @@ flowchart TD
 - **`src/components/WorkspaceModal.tsx`**: Renders workspace management modal for creating, renaming, deleting, saving, and restoring named workspaces.
 - **`src/services/ptyService.ts`**: Provides the `IPtyService` interface abstraction, handling native Tauri IPC calls when running inside desktop app and fallback mock PTY behavior during browser previews.
 - **`src/services/paneLayout.ts`**: Handles split-pane calculations (up to 4 panes per tab, horizontal/vertical splits, fraction clamping). Each pane runs an independent backend PTY session ID.
-- **`src/services/workspaces.ts`**: Manages workspace configuration storage (`kai_workspaces_v1`), layout restoration, tab renaming, and safe legacy schema migration (`terminal_workspaces_v1`).
+- **`src/services/workspaces.ts`**: Manages workspace configuration storage (`kai_workspaces_v1`), layout restoration with restore-time revalidation, tab renaming, and safe legacy schema migration (`terminal_workspaces_v1`, `terminal_tab_layout_v1`).
 - **`src/services/shortcuts.ts`**: Centralized keybinding registry for custom keyboard shortcuts (including tab/pane navigation `nextTab`, `prevTab`, `nextPane`) with conflict detection and macOS key label translation.
-- **`src/services/aiCliService.ts` & `projectService.ts`**: Clients for local AI CLI presence checking, non-modifying local auth checks, and git repository status caching.
+- **`src/services/aiCliService.ts` & `projectService.ts`**: Clients for local AI CLI discovery/version/config-presence diagnostics (passive, local, non-billable; version/config never prove sign-in) and git status caching with invalidation on mutating actions.
 
 ### 2.2 IPC Boundary (`src-tauri/capabilities/`)
 
@@ -101,8 +101,8 @@ flowchart TD
 
 - **`pty.rs` (`PtyManager`)**: Manages session handles (`HashMap<String, PtySessionHandle>`) wrapped in thread-safe locks. Handles PTY spawning, chunked byte writing (`write_bytes_chunked`), and cleanup.
 - **`shell.rs`**: Cross-platform shell discovery logic for Windows (PowerShell Core, Windows PowerShell, CMD, WSL), Linux (`$SHELL`, bash, zsh, fish, sh), and macOS (`$SHELL`, zsh, Homebrew shells, bash, fish). Includes Windows build version gate checking (minimum build 17763).
-- **`ai_cli.rs`**: Checks local PATH presence and config presence for 10 catalogued AI tools (`codex`, `claude`, `gemini`, `opencode`, `copilot`, `aider`, `cursor`, `windsurf`, `cline`, `agy`), running safe, bounded `--version` checks (with an 8-second execution timeout and auto-reap) without network calls.
-- **`git.rs`**: Reads current branch name and status using local system `git` commands with timeout bounds.
+- **`ai_cli.rs`**: Checks local PATH presence and config-file presence (existence only, never credential validity) for 10 catalogued AI tools (`codex`, `claude`, `gemini`, `opencode`, `copilot`, `aider`, `cursor`, `windsurf`, `cline`, `agy`), running safe, bounded `--version` checks (5 s timeout, kill+reap, no shell, no network, nothing secret logged). Version success never implies authentication.
+- **`git.rs`**: Reads branch/dirty state using local system `git` plumbing (no shell, 8 s timeout per invocation, kill+reap, stderr discarded). Reports detached HEAD, unborn branches, untracked/modified/deleted files; worktrees, nested repos, and unusual paths; graceful taxonomy for missing git / bad dirs.
 - **`error.rs`**: Strongly typed Rust error definitions returned via IPC.
 
 ### 2.4 Project Intelligence & MCP Layer (`src/core/`, `src/cli/`, `bin/kai.js`)

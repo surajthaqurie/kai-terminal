@@ -211,6 +211,36 @@ export function validateWorkspaceDir(dir: string): string | null {
   return null;
 }
 
+/**
+ * Sanitize one workspace for restoration: drops tabs that fail validation
+ * and clears un-restorable cwd values (backend falls back to HOME) instead
+ * of spawning into a bad path. Never throws; returns the workspace with
+ * only restorable tabs.
+ */
+export function sanitizeWorkspaceForRestore(ws: Workspace): Workspace {
+  const tabs = ws.tabs
+    .map(sanitizeTab)
+    .filter((t): t is PersistedTabV2 => t !== null)
+    .map((t) => {
+      if (t.cwd && validateWorkspaceDir(t.cwd)) {
+        const { cwd: _dropped, ...rest } = t;
+        return rest;
+      }
+      if (t.panes) {
+        const panes = t.panes.map((p) => {
+          if (p.cwd && validateWorkspaceDir(p.cwd)) {
+            const { cwd: _dropped, ...prest } = p;
+            return prest;
+          }
+          return p;
+        });
+        return { ...t, panes };
+      }
+      return t;
+    });
+  return { ...ws, tabs, updatedAt: Date.now() };
+}
+
 export function sanitizeWorkspace(raw: unknown): Workspace | null {
   if (typeof raw !== "object" || raw === null) return null;
   const r = raw as Record<string, unknown>;

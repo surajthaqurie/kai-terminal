@@ -214,7 +214,7 @@ export function retrieveContext(
             // Record scored symbol candidate
             const symKey = `${normKey}:${sym.name}:${sym.location.line}`;
             const existingSym = symbolCandidateMap.get(symKey);
-            const finalScore = (symScore + (sym.isExported ? 2.0 : 0.0));
+            const finalScore = symScore + (sym.isExported ? 2.0 : 0.0);
             if (!existingSym || existingSym.score < finalScore) {
               symbolCandidateMap.set(symKey, { symbol: sym, score: finalScore });
             }
@@ -447,7 +447,8 @@ export function retrieveContext(
 
       // Duplicate content elimination:
       // If two files in the repository share identical content hash, keep only the higher-ranked
-      const contentHash = item.file.sha256 || crypto.createHash("sha256").update(content).digest("hex");
+      const contentHash =
+        item.file.sha256 || crypto.createHash("sha256").update(content).digest("hex");
       if (seenContentHashes.has(contentHash)) {
         continue;
       }

@@ -679,29 +679,83 @@ fn test_12_application_startup_and_shutdown() {
 // ---------------------------------------------------------------------------
 // 13. Real AI CLI Compatibility Interoperability Test
 // ---------------------------------------------------------------------------
+
+/// True when `p` names a launchable file: existence on all OSes, plus the
+/// executable bit on Unix (Windows uses PATHEXT instead — see below).
+#[cfg(not(target_os = "windows"))]
+fn is_launchable_file(p: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    p.is_file()
+        && p.metadata()
+            .map(|m| m.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false)
+}
+
+#[cfg(target_os = "windows")]
+fn is_launchable_file(p: &Path) -> bool {
+    p.is_file()
+}
+
+/// Cross-platform executable discovery for a candidate name.
+/// Absolute (or slash-containing) paths are returned as-is when they exist.
+/// Bare names are resolved through PATH — honoring PATHEXT (`.EXE`, `.CMD`,
+/// …) on Windows, where extensionless lookups otherwise always miss.
+fn resolve_cli_candidate(cand: &str) -> Option<String> {
+    let p = Path::new(cand);
+    if p.is_absolute() || cand.contains('/') || cand.contains('\\') {
+        return p.exists().then(|| cand.to_string());
+    }
+    let path_env = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&path_env) {
+        let direct = dir.join(cand);
+        if is_launchable_file(&direct) {
+            return Some(direct.to_string_lossy().to_string());
+        }
+        #[cfg(target_os = "windows")]
+        {
+            let pathext =
+                std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string());
+            for ext in pathext.split(';') {
+                let ext = ext.trim();
+                if ext.is_empty() {
+                    continue;
+                }
+                let with_ext = dir.join(format!("{}{}", cand, ext.to_lowercase()));
+                if with_ext.exists() {
+                    return Some(with_ext.to_string_lossy().to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Author-machine agy install, expanded via $HOME/$USERPROFILE so the probe
+/// works for any user on Linux/macOS/Windows instead of one hardcoded path.
+fn home_agy_candidate() -> Option<String> {
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .ok()?;
+    let p = Path::new(&home).join(".local").join("bin").join("agy");
+    p.exists().then(|| p.to_string_lossy().to_string())
+}
+
 #[test]
 fn test_13_real_ai_cli_compatibility() {
-    let candidates = [
-        "/home/kali/.local/bin/agy",
-        "agy",
-        "claude",
-        "gemini",
-        "codex",
-    ];
-
-    let mut found_cli_path = None;
-    for cand in candidates {
-        if Path::new(cand).exists() {
-            found_cli_path = Some(cand.to_string());
-            break;
+    let mut found_cli_path = home_agy_candidate();
+    if found_cli_path.is_none() {
+        for cand in ["agy", "claude", "gemini", "codex"] {
+            if let Some(resolved) = resolve_cli_candidate(cand) {
+                found_cli_path = Some(resolved);
+                break;
+            }
         }
     }
 
     if found_cli_path.is_none() {
         // Log clear diagnostic fallback when no AI CLI binary is pre-installed on host
         eprintln!(
-            "NOTE: No real AI CLI binary found in standard locations on runner host ({:?}). AI CLI integration test reported as skipped/supported target.",
-            candidates
+            "NOTE: No real AI CLI binary found on PATH or at $HOME/.local/bin/agy on this runner host. AI CLI integration test reported as skipped/supported target."
         );
         return;
     }
@@ -738,6 +792,30 @@ fn test_13_real_ai_cli_compatibility() {
     );
 
     manager.close_pty(&session.id).unwrap();
+}
+
+// ---------------------------------------------------------------------------
+// 13a. Executable Discovery Probe (hermetic, runs on every OS)
+// ---------------------------------------------------------------------------
+#[test]
+fn test_13a_cli_candidate_path_probe() {
+    // The host shell exists on PATH on every supported runner, so PATH /
+    // PATHEXT discovery is verified natively even when no AI CLI is
+    // installed (in which case test_13 reports its documented skip).
+    #[cfg(not(target_os = "windows"))]
+    let known = "sh";
+    #[cfg(target_os = "windows")]
+    let known = "cmd";
+    let resolved = resolve_cli_candidate(known);
+    assert!(
+        resolved.is_some(),
+        "PATH probe must resolve the host shell ({}) on this runner",
+        known
+    );
+    assert!(
+        resolve_cli_candidate("kai-definitely-not-a-real-binary-xyz-999").is_none(),
+        "PATH probe must return None for unknown names"
+    );
 }
 
 // ---------------------------------------------------------------------------

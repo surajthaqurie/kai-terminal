@@ -33,16 +33,16 @@ export const AiCliPanel: FC<AiCliPanelProps> = ({ isOpen, onClose, projectDir })
   const [newCliName, setNewCliName] = useState("");
   const [newCliPath, setNewCliPath] = useState("");
 
-  const refresh = useCallback(() => {
+  const refresh = useCallback((force = false) => {
     setIsRefreshing(true);
-    getAiCliDetails()
+    getAiCliDetails(force ? { force: true } : undefined)
       .then(setDetails)
       .catch(() => setDetails([]))
       .finally(() => setIsRefreshing(false));
   }, []);
 
   useEffect(() => {
-    if (isOpen) refresh();
+    if (isOpen) refresh(false);
   }, [isOpen, refresh]);
 
   if (!isOpen) return null;
@@ -67,7 +67,7 @@ export const AiCliPanel: FC<AiCliPanelProps> = ({ isOpen, onClose, projectDir })
       const launcher = await getKaiCliLaunch();
       const res = await setupAgentMcp(cli.id, launcher, projectDir || ".", Boolean(cli.kai_wired));
       setSuccessMessage(res.message || `Configured ${cli.name} with Kai MCP!`);
-      refresh();
+      refresh(true);
     } catch (e) {
       setCustomError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -123,15 +123,17 @@ export const AiCliPanel: FC<AiCliPanelProps> = ({ isOpen, onClose, projectDir })
           <p className="muted-text" style={{ margin: 0 }}>
             The terminal works with or without these tools. Everything below is detected
             automatically on this machine (binary on PATH or in well-known install locations,
-            version probe, local config presence, kai wiring). Scoped to this split&apos;s
-            directory: <code>{projectDir || "the active directory"}</code>.
+            bounded version probe, local config-file presence, kai wiring). All checks are passive,
+            local, and non-billable — a version response never means signed-in, and a config file
+            never proves credentials are valid. Scoped to this split&apos;s directory:{" "}
+            <code>{projectDir || "the active directory"}</code>.
           </p>
 
           <div>
             <button
               type="button"
               className="btn btn-secondary btn-small"
-              onClick={refresh}
+              onClick={() => refresh(true)}
               disabled={isRefreshing}
               title="Re-run local detection"
             >
@@ -239,9 +241,20 @@ export const AiCliPanel: FC<AiCliPanelProps> = ({ isOpen, onClose, projectDir })
                   className="ai-provider-meta"
                   style={{ display: "flex", gap: "16px", fontSize: "12px", alignItems: "center" }}
                 >
-                  <span>
-                    Auth:{" "}
-                    <strong>{d.auth_status ? d.auth_status.replace(/_/g, " ") : "unknown"}</strong>
+                  <span title="Local config-file presence only — never credential validity">
+                    Local config:{" "}
+                    <strong>
+                      {(d.auth_status === "config_present"
+                        ? "file present"
+                        : d.auth_status === "config_missing"
+                          ? "no file"
+                          : d.auth_status === "configured"
+                            ? "file present"
+                            : d.auth_status === "not_configured"
+                              ? "no file"
+                              : "unknown"
+                      ).replace(/_/g, " ")}
+                    </strong>
                   </span>
                   <span>
                     Kai wiring:{" "}

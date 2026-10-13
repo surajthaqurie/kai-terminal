@@ -135,6 +135,11 @@ const DETAILS_CACHE_TTL_MS = 60_000;
 let detailsCache: { at: number; data: AiCliDetails[] } | null = null;
 let detailsInflight: Promise<AiCliDetails[]> | null = null;
 
+/** Explicit invalidation for the details cache (manual refresh, tests). */
+export function clearAiCliDetailsCache(): void {
+  detailsCache = null;
+}
+
 async function fetchAiCliDetailsBase(): Promise<AiCliDetails[]> {
   if (!isTauriAvailable()) {
     return detailsFallback();
@@ -147,12 +152,14 @@ async function fetchAiCliDetailsBase(): Promise<AiCliDetails[]> {
   }
 }
 
-export async function getAiCliDetails(): Promise<AiCliDetails[]> {
+export async function getAiCliDetails(opts?: { force?: boolean }): Promise<AiCliDetails[]> {
   const customClis = loadUserCustomClis();
   // Stale-while-revalidate: serve the last probe result instantly while a
-  // background refresh updates the cache for the next open.
+  // background refresh updates the cache for the next open. Explicit
+  // `force: true` (manual Re-detect button) bypasses the cache entirely so
+  // the user never stares at a stale result after asking for a refresh.
   const now = Date.now();
-  if (detailsCache && now - detailsCache.at < DETAILS_CACHE_TTL_MS) {
+  if (!opts?.force && detailsCache && now - detailsCache.at < DETAILS_CACHE_TTL_MS) {
     if (!detailsInflight) {
       detailsInflight = fetchAiCliDetailsBase()
         .then((fresh) => {
@@ -270,19 +277,33 @@ export async function setupAgentMcp(
 }
 
 export async function registerUserCustomAiCli(config: CustomAiCliConfig): Promise<AiCliDetails> {
-  const existing = loadUserCustomClis().filter((c) => c.id !== config.id);
-  const updated = [...existing, config];
+  const id = config.id.trim().slice(0, 64);
+  if (!id || !/^[a-z0-9][a-z0-9_-]*$/i.test(id)) {
+    throw new Error("Custom CLI id must be alphanumeric with dashes/underscores.");
+  }
+  const cleanPath = config.path.trim().slice(0, 4096);
+  if (!cleanPath || cleanPath.includes("\0")) {
+    throw new Error("Custom CLI path is invalid.");
+  }
+  const clean: CustomAiCliConfig = {
+    ...config,
+    id,
+    name: config.name.trim().slice(0, 80) || id,
+    path: cleanPath,
+  };
+  const existing = loadUserCustomClis().filter((c) => c.id !== clean.id);
+  const updated = [...existing, clean];
   saveUserCustomClis(updated);
   if (isTauriAvailable()) {
-    return await checkCustomAiCliPath(`custom:${config.id}`, config.path);
+    return await checkCustomAiCliPath(`custom:${clean.id}`, clean.path);
   }
   return {
-    id: `custom:${config.id}`,
-    name: config.name,
+    id: `custom:${clean.id}`,
+    name: clean.name,
     available: false,
-    path: config.path,
+    path: clean.path,
     version: null,
-    install_guidance: config.install_guidance || "User-configured custom executable.",
+    install_guidance: clean.install_guidance || "User-configured custom executable.",
     diagnostic: "Validation unavailable outside desktop app.",
   };
 }

@@ -19,6 +19,11 @@ const DIAGNOSTICS_CACHE_TTL_MS = 60_000;
 let diagnosticsCache: { at: number; data: DiagnosticsReport } | null = null;
 let diagnosticsInflight: Promise<DiagnosticsReport | null> | null = null;
 
+/** Explicit invalidation for the diagnostics cache (manual refresh, tests). */
+export function clearDiagnosticsCache(): void {
+  diagnosticsCache = null;
+}
+
 async function fetchDiagnostics(): Promise<DiagnosticsReport | null> {
   if (!isTauriAvailable()) return null;
   try {
@@ -29,11 +34,14 @@ async function fetchDiagnostics(): Promise<DiagnosticsReport | null> {
   }
 }
 
-export async function getDiagnostics(): Promise<DiagnosticsReport | null> {
+export async function getDiagnostics(opts?: {
+  force?: boolean;
+}): Promise<DiagnosticsReport | null> {
   // Diagnostics fans out to shell detection + AI `--version` probes, so
   // repeat opens within 60 s reuse the last report instead of re-spawning.
+  // Explicit `force: true` bypasses the cache for manual refreshes.
   const now = Date.now();
-  if (diagnosticsCache && now - diagnosticsCache.at < DIAGNOSTICS_CACHE_TTL_MS) {
+  if (!opts?.force && diagnosticsCache && now - diagnosticsCache.at < DIAGNOSTICS_CACHE_TTL_MS) {
     return diagnosticsCache.data;
   }
   if (diagnosticsInflight) {

@@ -79,6 +79,7 @@ import {
 import {
   PersistedTabV2,
   sanitizeTab,
+  sanitizeWorkspaceForRestore,
   Workspace,
   nodeToPersistedLayout,
   persistedLayoutToNode,
@@ -1339,7 +1340,12 @@ export function App() {
 
   const handleRestoreWorkspace = useCallback((ws: Workspace) => {
     if (!ws.tabs || ws.tabs.length === 0) return;
-    const restoredTabs = ws.tabs.map((t) =>
+    // Re-validate persisted data at restore time: drops malformed tabs and
+    // clears un-restorable cwd values (backend falls back to HOME at spawn).
+    // Fresh pane ids are minted below so no backend PTY session is reused.
+    const safe = sanitizeWorkspaceForRestore(ws);
+    if (safe.tabs.length === 0) return;
+    const restoredTabs = safe.tabs.map((t) =>
       createDefaultTab(t.title, t.shellPath, t.cwd, {
         title: t.title,
         color: t.color,
@@ -1352,8 +1358,8 @@ export function App() {
     );
     setTabs(restoredTabs);
     setActiveTabId(restoredTabs[0].id);
-    if (ws.tabs[0]?.cwd) {
-      setCwd(ws.tabs[0].cwd);
+    if (safe.tabs[0]?.cwd) {
+      setCwd(safe.tabs[0].cwd);
     }
   }, []);
 

@@ -1,5 +1,17 @@
 name: Cross-Platform Terminal CI
 
+# Native-runner policy: each matrix entry builds and tests on its own OS —
+# no cross-compiled binary counts as native verification. Unit tests never
+# count as proof of interactive behavior; the real PTY step on the same
+# runner is the native proof (path handling, JSON escaping, CRLF, executable
+# discovery, permissions, process cleanup). WSL has no hosted runner and is
+# manual-only (see final reporting step). Security regression is a mandatory
+# PR gate (runs on pull_request, no skip). Full installers ship via release.yml.
+#
+# Check map: 1 rust fmt, 2 clippy, 3 rust unit, 4 PTY integration, 5 frontend
+# unit, 6 typecheck, 7 MCP security, 8 CLI smoke, 9 workspace migration, 10
+# dependency/prod-config, 11 production build/packaging verification.
+
 on:
   push:
     branches: [main, master, "feature/**"]
@@ -67,15 +79,28 @@ jobs:
       - name: Frontend Vitest Unit Tests
         run: npm run test
 
-      - name: Security Regression Tests (audit, MCP, unregister — all OSes)
-        run: npx vitest run src/__tests__/audit_regression.test.ts src/__tests__/mcp_security.test.ts src/__tests__/unregister.test.ts
+      - name: Security Regression Tests (mandatory on PRs — audit, MCP, unregister, hardening, all OSes)
+        # Mandatory quality gate for pull requests: no continue-on-error, no
+        # conditional skip. Covers MCP workspace confinement, secret scrubbing,
+        # JSON-RPC error codes, symlink boundaries, and unregister scope.
+        run: npx vitest run src/__tests__/audit_regression.test.ts src/__tests__/mcp_security.test.ts src/__tests__/audit_production_security.test.ts src/__tests__/unregister.test.ts src/__tests__/hardening.test.ts
 
-      - name: CLI Smoke Test (built bundle, all OSes)
+      - name: Workspace Migration and Persistence Tests (all OSes)
+        # Explicit check (also covered by the full suite above): workspace
+        # storage migration, restore ordering, and persistence across reloads.
+        run: npx vitest run src/__tests__/workspaces.test.ts src/__tests__/workspaceRestore.test.ts
+
+      - name: CLI Build and Smoke Tests (built bundle, all OSes)
         shell: bash
         run: |
+          set -euo pipefail
           npm run build:cli
+          test -f dist/cli/index.js
           node ./bin/kai.js --version
           node ./bin/kai.js --help
+          # Functional smoke that always succeeds cross-OS (status returns 1
+          # when no project is registered, so config list is the stable probe).
+          node ./bin/kai.js config list
 
       - name: Rust Backend Formatting Check
         run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
@@ -87,7 +112,39 @@ jobs:
         run: cargo test --no-default-features --manifest-path src-tauri/Cargo.toml --lib
 
       - name: OS-Dependent Real PTY Integration Tests
+        # Native PTY only (openpty on Linux/macOS, ConPTY on Windows) — never
+        # cross-compiled. Exercises path handling, CRLF (\n vs \r\n), Unicode,
+        # executable discovery, permissions, and child-process cleanup on the
+        # host OS. test_13 prints NOTE and passes when no AI CLI is installed.
         run: cargo test --no-default-features --manifest-path src-tauri/Cargo.toml --test pty_integration_tests -- --nocapture
+
+      - name: Dependency and Production Configuration Checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "--- production dependency audit ---"
+          npm audit --omit=dev --audit-level=high
+          echo "--- Tauri production config validation ---"
+          node -e "
+            const fs = require('fs');
+            const conf = JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json', 'utf8'));
+            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            const assert = (c, m) => { if (!c) { console.error('FAIL: ' + m); process.exit(1); } };
+            assert(conf.productName === 'kai', 'productName must be kai');
+            assert(conf.identifier === 'com.kai.terminal', 'identifier must be com.kai.terminal');
+            assert(conf.build && conf.build.frontendDist === '../dist', 'frontendDist must be ../dist');
+            assert(conf.version === pkg.version, 'tauri.conf.json version must match package.json (' + conf.version + ' vs ' + pkg.version + ')');
+            const csp = (conf.app && conf.app.security && conf.app.security.csp) || '';
+            assert(csp.includes('connect-src'), 'CSP must define connect-src');
+            assert(csp.includes('ipc:'), 'CSP must allow ipc: transport');
+            assert(csp.includes('http://ipc.localhost'), 'CSP must allow http://ipc.localhost');
+            assert(csp.includes('img-src') && csp.includes('data:'), 'CSP must allow data: images');
+            assert(conf.bundle && conf.bundle.active === true, 'bundle.active must be true');
+            console.log('Tauri production config OK (v' + conf.version + ').');
+          "
+          echo "--- installed CLI entry points ---"
+          test -f bin/kai.js
+          node -e "const p=require('./package.json'); if(!p.bin||!p.bin.kai) {console.error('FAIL: package.json bin.kai missing'); process.exit(1);} console.log('bin entry OK: '+p.bin.kai);"
 
       - name: Verify no signing secrets are committed
         shell: bash
@@ -106,6 +163,19 @@ jobs:
       - name: Build Rust Desktop Application Binary
         run: cargo build --manifest-path src-tauri/Cargo.toml --release --no-default-features
 
+      - name: Verify Production Build Outputs (where runners support them)
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "--- web frontend bundle ---"
+          test -f dist/index.html || { echo "FAIL: dist/index.html missing"; exit 1; }
+          test -f dist/cli/index.js || { echo "FAIL: dist/cli/index.js missing"; exit 1; }
+          echo "--- desktop binary ---"
+          BIN="src-tauri/target/release/kai${{ matrix.binary-ext }}"
+          test -f "$BIN" || { echo "FAIL: $BIN missing"; exit 1; }
+          ls -la dist/index.html dist/cli/index.js "$BIN"
+          echo "Production build verification passed on ${{ matrix.target-name }}."
+
       - name: Upload Desktop Binary Artifact
         uses: actions/upload-artifact@v4
         with:
@@ -113,4 +183,17 @@ jobs:
           path: |
             src-tauri/target/release/kai${{ matrix.binary-ext }}
           if-no-files-found: error
+
+      - name: Report Skipped Tests and Environment Restrictions
+        # Reproducible setup note + honest per-OS scope. Always runs so the
+        # matrix shows what was actually verified vs skipped.
+        if: always()
+        shell: bash
+        run: |
+          echo "=== Verification scope: ${{ matrix.target-name }} (${{ matrix.os }}) ==="
+          echo "- Unit tests prove logic only; interactive native behavior is proven by the PTY step above on this same runner."
+          echo "- PTY AI-CLI subtest (test_13) reports NOTE + passes when no AI CLI binary is on PATH."
+          echo "- Symlink-boundary subtests skip gracefully where the runner disallows symlinks."
+          echo "- WSL: no GitHub-hosted WSL runner exists. WSL2 verification is manual-only (run scripts/docker-test.sh or cargo/vitest natively inside WSL2 + Windows Terminal) and is NOT claimed here."
+          echo "- Full Tauri installer bundles (.deb/.AppImage/.msi/.exe/.dmg) are built only by release.yml on native runners; this CI verifies the web bundle + release binary."
 

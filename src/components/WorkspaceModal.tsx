@@ -8,6 +8,8 @@ import {
   renameWorkspace,
   deleteWorkspace,
   validateWorkspaceDir,
+  sanitizeTab,
+  nodeToPersistedLayout,
   PersistedTabV2,
 } from "../services/workspaces";
 import { TerminalTab } from "../types/terminal";
@@ -44,16 +46,25 @@ export const WorkspaceModal: FC<WorkspaceModalProps> = ({
     const name = prompt("Enter a name for this workspace:", "Project Workspace");
     if (!name || !name.trim()) return;
     setErrorMsg(null);
-    const tabsV2: PersistedTabV2[] = currentTabs.map((t) => ({
-      title: t.title,
-      shellPath: t.shellPath,
-      cwd: t.cwd,
-      splitDirection: t.splitDirection,
-      panes:
-        t.panes.length > 1
-          ? t.panes.map((p) => ({ shellPath: p.shellPath, cwd: p.cwd }))
-          : undefined,
-    }));
+    // Persist titles + cwd/shell + pane structure + nested layout only.
+    // Never scrollback, history, env values, or credentials (see sanitizeTab).
+    const tabsV2: PersistedTabV2[] = currentTabs.map((t) => {
+      const paneIds = t.panes.map((p) => p.id);
+      const raw = {
+        title: t.title,
+        color: t.color,
+        shellPath: t.shellPath,
+        cwd: t.cwd,
+        splitDirection: t.splitDirection,
+        panes:
+          t.panes.length > 1
+            ? t.panes.map((p) => ({ shellPath: p.shellPath, cwd: p.cwd }))
+            : undefined,
+        layout:
+          t.layout && t.panes.length > 1 ? nodeToPersistedLayout(t.layout, paneIds) : undefined,
+      };
+      return sanitizeTab(raw) ?? { title: t.title || "Terminal" };
+    });
     const newWs = createWorkspace(name.trim(), tabsV2);
     const updated = [newWs, ...workspaces];
     saveWorkspaces(updated);

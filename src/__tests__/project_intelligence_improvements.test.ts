@@ -118,9 +118,7 @@ describe("Project Intelligence Comprehensive Improvements", () => {
       fs.writeFileSync(path.join(repo, "src", "new_name.ts"), content);
 
       const index2 = await indexProject(meta);
-      expect(index2.changes?.renamed).toEqual([
-        { from: "src/old_name.ts", to: "src/new_name.ts" },
-      ]);
+      expect(index2.changes?.renamed).toEqual([{ from: "src/old_name.ts", to: "src/new_name.ts" }]);
       expect(index2.changes?.deleted).toEqual([]);
       expect(index2.changes?.added).toEqual([]);
       expect(index2.files["src/new_name.ts"]).toBeDefined();
@@ -160,11 +158,16 @@ describe("Project Intelligence Comprehensive Improvements", () => {
       const index = await indexProject(meta);
 
       // External change
-      fs.writeFileSync(path.join(repo, "src", "service.ts"), "export class MainService { id = 1; }");
+      fs.writeFileSync(
+        path.join(repo, "src", "service.ts"),
+        "export class MainService { id = 1; }"
+      );
 
       const { contextPackage } = assembleContext(index, { task: "explain MainService" });
       expect(contextPackage.projectMeta.indexFreshness).toBe("stale");
-      expect(contextPackage.knownLimitations.some((k) => k.includes("modified on disk"))).toBe(true);
+      expect(contextPackage.knownLimitations.some((k) => k.includes("modified on disk"))).toBe(
+        true
+      );
     });
 
     it("flags missing deleted files as stale during retrieval rather than silently ignoring", async () => {
@@ -179,7 +182,9 @@ describe("Project Intelligence Comprehensive Improvements", () => {
 
       const retrieved = retrieveContext(index, "targetFn");
       expect(retrieved.staleFiles).toContain("src/target.ts");
-      expect(retrieved.omissions.some((o) => o.identifier === "src/target.ts" && o.reason === "stale")).toBe(true);
+      expect(
+        retrieved.omissions.some((o) => o.identifier === "src/target.ts" && o.reason === "stale")
+      ).toBe(true);
     });
   });
 
@@ -309,7 +314,9 @@ describe("Project Intelligence Comprehensive Improvements", () => {
       fs.symlinkSync(path.join(outsideDir, "evil.md"), path.join(repo, "AGENTS.md"));
 
       const meta = registerProject(repo);
-      expect(isWithinProjectBoundary(fs.realpathSync(path.join(repo, "AGENTS.md")), meta.canonicalPath)).toBe(false);
+      expect(
+        isWithinProjectBoundary(fs.realpathSync(path.join(repo, "AGENTS.md")), meta.canonicalPath)
+      ).toBe(false);
     });
   });
 
@@ -324,14 +331,20 @@ describe("Project Intelligence Comprehensive Improvements", () => {
       expect(patterns).toContain("ignored_by_git.ts");
       expect(patterns).toContain("ignored_by_ignore.ts");
 
-      expect(matchesIgnorePattern("src/ignored_by_git.ts", "ignored_by_git.ts", patterns)).toBe(true);
-      expect(matchesIgnorePattern("src/ignored_by_ignore.ts", "ignored_by_ignore.ts", patterns)).toBe(true);
+      expect(matchesIgnorePattern("src/ignored_by_git.ts", "ignored_by_git.ts", patterns)).toBe(
+        true
+      );
+      expect(
+        matchesIgnorePattern("src/ignored_by_ignore.ts", "ignored_by_ignore.ts", patterns)
+      ).toBe(true);
       expect(matchesIgnorePattern("src/valid.ts", "valid.ts", patterns)).toBe(false);
     });
 
     it("matches directory patterns across subpaths", () => {
       const patterns = ["dist", "build/*", "*.tmp"];
-      expect(matchesIgnorePattern("packages/pkg1/dist/bundle.js", "bundle.js", patterns)).toBe(true);
+      expect(matchesIgnorePattern("packages/pkg1/dist/bundle.js", "bundle.js", patterns)).toBe(
+        true
+      );
       expect(matchesIgnorePattern("dist/bundle.js", "bundle.js", patterns)).toBe(true);
       expect(matchesIgnorePattern("build/output.js", "output.js", patterns)).toBe(true);
       expect(matchesIgnorePattern("src/test.tmp", "test.tmp", patterns)).toBe(true);

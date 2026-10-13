@@ -310,7 +310,9 @@ export function extractSymbolsAndDeps(
         }
 
         // Exported or module-level constants and variables
-        const constVarMatch = line.match(/(?:export\s+)?(?:const|let|var)\s+([a-zA-Z0-9_$]+)\s*[:=]/);
+        const constVarMatch = line.match(
+          /(?:export\s+)?(?:const|let|var)\s+([a-zA-Z0-9_$]+)\s*[:=]/
+        );
         if (constVarMatch && !arrowMatch) {
           const isUpper = /^[A-Z0-9_]+$/.test(constVarMatch[1]);
           symbols.push({

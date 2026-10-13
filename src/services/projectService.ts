@@ -380,10 +380,21 @@ export async function runGitAction(
   cwd: string,
   action: "fetch" | "pull" | "status" | "diff" | "stage_all" | "unstage_all"
 ): Promise<string> {
+  // Invalidate up front: callers invoke this precisely because the worktree
+  // changed, so any cached badge is suspect even if the IPC below fails.
+  invalidateGitCache(cwd);
   if (!isTauriAvailable()) {
     throw new Error("Git actions are only available inside the desktop app.");
   }
-  return await invoke<string>("run_git_action_cmd", { cwd, action });
+  try {
+    return await invoke<string>("run_git_action_cmd", { cwd, action });
+  } finally {
+    // Mutating actions (fetch/pull/stage_all/unstage_all) change what the
+    // next status probe reports. Status/diff are read-only but cheap to
+    // refresh; invalidating unconditionally keeps the 30 s cache from ever
+    // serving a stale badge after an explicit user action.
+    invalidateGitCache(cwd);
+  }
 }
 
 export async function getGitChanges(cwd: string): Promise<GitChangesSummary> {
@@ -405,22 +416,37 @@ export async function getGitDiff(
 }
 
 export async function stageGitFile(cwd: string, path: string): Promise<string> {
+  invalidateGitCache(cwd);
   if (!isTauriAvailable()) {
     throw new Error("Git actions are only available inside the desktop app.");
   }
-  return await invoke<string>("stage_git_file_cmd", { cwd, path });
+  try {
+    return await invoke<string>("stage_git_file_cmd", { cwd, path });
+  } finally {
+    invalidateGitCache(cwd);
+  }
 }
 
 export async function unstageGitFile(cwd: string, path: string): Promise<string> {
+  invalidateGitCache(cwd);
   if (!isTauriAvailable()) {
     throw new Error("Git actions are only available inside the desktop app.");
   }
-  return await invoke<string>("unstage_git_file_cmd", { cwd, path });
+  try {
+    return await invoke<string>("unstage_git_file_cmd", { cwd, path });
+  } finally {
+    invalidateGitCache(cwd);
+  }
 }
 
 export async function discardGitFile(cwd: string, path: string): Promise<string> {
+  invalidateGitCache(cwd);
   if (!isTauriAvailable()) {
     throw new Error("Git actions are only available inside the desktop app.");
   }
-  return await invoke<string>("discard_git_file_cmd", { cwd, path });
+  try {
+    return await invoke<string>("discard_git_file_cmd", { cwd, path });
+  } finally {
+    invalidateGitCache(cwd);
+  }
 }

@@ -55,10 +55,23 @@ pub enum AiCliDiagnosticState {
 /// the CLI as an ordinary process; any failure degrades to `version: None`
 /// with a human-readable diagnostic instead of an error.
 ///
+/// Five signals stay separate by construction:
+/// 1. executable discovery (`available` + `path` via PATH lookup),
+/// 2. version detection (`version` via bounded `--version` probe),
+/// 3. local config-file presence (`auth_status`: `config_present` /
+///    `config_missing` / `unknown` — file existence only, NEVER credential
+///    validity),
+/// 4. authentication verification (no passive check performs it; only an
+///    explicit user launch can prove sign-in, so `state` is never `ready`
+///    from passive probing),
+/// 5. launch validation (`state: launch_failed` / `probe_failed` for custom
+///    paths that cannot be executed).
+///
 /// `state` is the machine-readable status; `auth_status` is `"unknown"`
-/// unless a documented provider-specific local check (no network, no paid
-/// calls, no credential file writes) proves otherwise. A successful
-/// `--version` probe NEVER implies authentication success.
+/// unless a local config-file existence check classifies it as
+/// `config_present` / `config_missing`. A successful `--version` probe NEVER
+/// implies authentication success, and config-file presence NEVER proves
+/// credentials are valid.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AiCliDetails {
     pub id: String,
@@ -218,7 +231,12 @@ fn validate_launcher(launcher: &[String]) -> Result<(), String> {
         return Err("Launcher must hold 1-8 command parts.".to_string());
     }
     for part in launcher {
-        if part.is_empty() || part.len() > 4096 || part.contains('\0') || part.contains('\r') || part.contains('\n') {
+        if part.is_empty()
+            || part.len() > 4096
+            || part.contains('\0')
+            || part.contains('\r')
+            || part.contains('\n')
+        {
             return Err("Launcher contains an invalid command part.".to_string());
         }
     }
@@ -283,7 +301,11 @@ pub fn setup_agent_mcp(
         }
     })?;
     validate_launcher(&launcher)?;
-    if project_arg.len() > 1024 || project_arg.contains('\0') || project_arg.contains('\r') || project_arg.contains('\n') {
+    if project_arg.len() > 1024
+        || project_arg.contains('\0')
+        || project_arg.contains('\r')
+        || project_arg.contains('\n')
+    {
         return Err("Invalid project argument.".to_string());
     }
     let home = env::var("HOME")
@@ -656,7 +678,10 @@ fn detect_ai_cli_details_uncached() -> Vec<AiCliDetails> {
     })
 }
 
-fn check_local_auth_presence(id: &str) -> String {
+fn check_local_config_presence(id: &str) -> String {
+    // Passive, local, non-billable: only tests whether the provider's
+    // well-known config path EXISTS. File CONTENTS (tokens, secrets) are
+    // never read, never logged, and presence never implies valid credentials.
     let home = match env::var("HOME").or_else(|_| env::var("USERPROFILE")) {
         Ok(h) => std::path::PathBuf::from(h),
         Err(_) => return default_auth_status(),
@@ -666,39 +691,39 @@ fn check_local_auth_presence(id: &str) -> String {
             if home.join(".claude.json").exists()
                 || home.join(".config").join("claude-code").exists()
             {
-                "configured".to_string()
+                "config_present".to_string()
             } else {
-                "not_configured".to_string()
+                "config_missing".to_string()
             }
         }
         "codex" => {
             if home.join(".codex").exists() || home.join(".config").join("codex").exists() {
-                "configured".to_string()
+                "config_present".to_string()
             } else {
-                "not_configured".to_string()
+                "config_missing".to_string()
             }
         }
         "gemini" => {
             if home.join(".gemini").exists() || home.join(".config").join("gemini-cli").exists() {
-                "configured".to_string()
+                "config_present".to_string()
             } else {
-                "not_configured".to_string()
+                "config_missing".to_string()
             }
         }
         "opencode" => {
             if home.join(".config").join("opencode").exists() || home.join(".opencode").exists() {
-                "configured".to_string()
+                "config_present".to_string()
             } else {
-                "not_configured".to_string()
+                "config_missing".to_string()
             }
         }
         "copilot" => {
             if home.join(".config").join("github-copilot").exists()
                 || home.join(".copilot").exists()
             {
-                "configured".to_string()
+                "config_present".to_string()
             } else {
-                "not_configured".to_string()
+                "config_missing".to_string()
             }
         }
         "aider" => {
@@ -706,18 +731,18 @@ fn check_local_auth_presence(id: &str) -> String {
                 || home.join(".aider.model.settings.yml").exists()
                 || home.join(".config").join("aider").exists()
             {
-                "configured".to_string()
+                "config_present".to_string()
             } else {
-                "not_configured".to_string()
+                "config_missing".to_string()
             }
         }
         "cursor" => {
             if home.join(".cursor").join("mcp.json").exists()
                 || home.join(".cursor-server").exists()
             {
-                "configured".to_string()
+                "config_present".to_string()
             } else {
-                "not_configured".to_string()
+                "config_missing".to_string()
             }
         }
         "windsurf" => {
@@ -728,9 +753,9 @@ fn check_local_auth_presence(id: &str) -> String {
                 .exists()
                 || home.join(".windsurf").exists()
             {
-                "configured".to_string()
+                "config_present".to_string()
             } else {
-                "not_configured".to_string()
+                "config_missing".to_string()
             }
         }
         "cline" => {
@@ -740,9 +765,9 @@ fn check_local_auth_presence(id: &str) -> String {
                     .join("cline_mcp_settings.json")
                     .exists()
             {
-                "configured".to_string()
+                "config_present".to_string()
             } else {
-                "not_configured".to_string()
+                "config_missing".to_string()
             }
         }
         "agy" => {
@@ -750,9 +775,9 @@ fn check_local_auth_presence(id: &str) -> String {
                 || home.join(".config").join("agy").exists()
                 || home.join(".agy").exists()
             {
-                "configured".to_string()
+                "config_present".to_string()
             } else {
-                "not_configured".to_string()
+                "config_missing".to_string()
             }
         }
         _ => default_auth_status(),
@@ -783,11 +808,11 @@ fn details_for_entry(
             install_guidance: guidance.to_string(),
             diagnostic: "Binary not found on PATH. Install it, then restart detection.".to_string(),
             state: AiCliDiagnosticState::NotFound,
-            auth_status: check_local_auth_presence(id),
+            auth_status: check_local_config_presence(id),
             kai_wired: is_kai_wired(id),
         },
         Some(path) => {
-            let auth_status = check_local_auth_presence(id);
+            let auth_status = check_local_config_presence(id);
             let kai_wired = is_kai_wired(id);
             // GUI/IDE-backed agents (Cursor, Windsurf, Cline): their shims
             // launch a desktop app, so `--version` can hang or pop windows.
@@ -801,7 +826,7 @@ fn details_for_entry(
                     version: None,
                     install_guidance: guidance.to_string(),
                     diagnostic: format!(
-                        "Installed (version check skipped for GUI apps). Local auth configuration: {} — open it to verify it works.",
+                        "Installed (version check skipped for GUI apps). Local config file: {} — presence does not prove sign-in; launch it to verify.",
                         auth_status
                     ),
                     state: AiCliDiagnosticState::Unknown,
@@ -818,7 +843,7 @@ fn details_for_entry(
                     version: Some(v),
                     install_guidance: guidance.to_string(),
                     diagnostic: format!(
-                        "Version detected. Local auth configuration: {} — launch it in a terminal tab to sign in or run interactive sessions.",
+                        "Version detected (not authentication). Local config file: {} — presence does not prove sign-in; launch it in a terminal tab to verify.",
                         auth_status
                     ),
                     state: AiCliDiagnosticState::VersionDetected,
@@ -889,9 +914,9 @@ pub fn check_custom_ai_cli_path(id: &str, custom_path: &str) -> Result<AiCliDeta
         version: version.clone(),
         install_guidance: guidance,
         diagnostic: match version {
-            Some(_) => "Custom path validated.".to_string(),
+            Some(_) => "Custom path validated (version detected; not authentication).".to_string(),
             None => {
-                "Custom path exists but --version probe failed (binary may need auth).".to_string()
+                "Custom path exists but --version probe failed or timed out; launch it directly for details.".to_string()
             }
         },
         state: match version {
@@ -1297,17 +1322,17 @@ mod tests {
             assert_eq!(d.state, AiCliDiagnosticState::NotFound);
             assert!(
                 d.auth_status == "unknown"
-                    || d.auth_status == "not_configured"
-                    || d.auth_status == "configured"
+                    || d.auth_status == "config_missing"
+                    || d.auth_status == "config_present"
             );
             assert!(d.version.is_none());
         }
     }
 
     #[test]
-    fn test_check_local_auth_presence() {
-        let status = check_local_auth_presence("claude");
-        assert!(status == "configured" || status == "not_configured" || status == "unknown");
+    fn test_check_local_config_presence() {
+        let status = check_local_config_presence("claude");
+        assert!(status == "config_present" || status == "config_missing" || status == "unknown");
     }
 
     #[test]
@@ -1320,8 +1345,8 @@ mod tests {
             if d.state == AiCliDiagnosticState::VersionDetected {
                 assert!(
                     d.auth_status == "unknown"
-                        || d.auth_status == "configured"
-                        || d.auth_status == "not_configured"
+                        || d.auth_status == "config_present"
+                        || d.auth_status == "config_missing"
                 );
                 assert!(d.version.is_some());
                 assert_ne!(d.state, AiCliDiagnosticState::Ready);
@@ -1334,6 +1359,114 @@ mod tests {
         let start = std::time::Instant::now();
         assert!(probe_version("/non_existent_xyz_12345_binary").is_none());
         assert!(start.elapsed() < std::time::Duration::from_secs(8));
+    }
+
+    #[test]
+    fn test_malformed_version_never_implies_auth() {
+        // A binary printing garbage on --version still yields a version
+        // string (informational only) with auth unknown — never ready.
+        #[cfg(not(target_os = "windows"))]
+        {
+            let dir = std::env::temp_dir().join(format!("kai-ai-malformed-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            let script = dir.join("fake-ai");
+            std::fs::write(&script, "#!/bin/sh\necho 'not a version!!!@@@'\n").unwrap();
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mut perms = std::fs::metadata(&script).unwrap().permissions();
+                perms.set_mode(0o755);
+                std::fs::set_permissions(&script, perms).unwrap();
+            }
+            let v = probe_version(&script.to_string_lossy());
+            assert_eq!(v.as_deref(), Some("not a version!!!@@@"));
+            let det = check_custom_ai_cli_path("custom:fake", &script.to_string_lossy())
+                .expect("custom fake validates");
+            assert_eq!(det.state, AiCliDiagnosticState::VersionDetected);
+            assert_eq!(det.auth_status, "unknown");
+            assert!(det.version.is_some());
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+
+    #[test]
+    fn test_hanging_binary_probe_times_out_and_reaps() {
+        // A binary that ignores --version must not linger past the bound.
+        #[cfg(not(target_os = "windows"))]
+        {
+            let dir = std::env::temp_dir().join(format!("kai-ai-hang-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            let script = dir.join("hang-ai");
+            std::fs::write(&script, "#!/bin/sh\nsleep 30\n").unwrap();
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mut perms = std::fs::metadata(&script).unwrap().permissions();
+                perms.set_mode(0o755);
+                std::fs::set_permissions(&script, perms).unwrap();
+            }
+            let start = std::time::Instant::now();
+            assert!(probe_version(&script.to_string_lossy()).is_none());
+            assert!(start.elapsed() < std::time::Duration::from_secs(8));
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+
+    #[test]
+    fn test_custom_path_rejects_directories_and_non_executables() {
+        let dir = std::env::temp_dir().join(format!("kai-ai-custom-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(check_custom_ai_cli_path("codex", &dir.to_string_lossy()).is_err());
+        let plain = dir.join("plain.txt");
+        std::fs::write(&plain, "x").unwrap();
+        #[cfg(not(target_os = "windows"))]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&plain).unwrap().permissions();
+            perms.set_mode(0o644);
+            std::fs::set_permissions(&plain, perms).unwrap();
+            assert!(check_custom_ai_cli_path("codex", &plain.to_string_lossy()).is_err());
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_unsupported_version_state_is_reserved_and_serializes() {
+        // No minimum versions are documented today, so passive probing must
+        // never emit unsupported_version; the variant exists and round-trips
+        // for future use.
+        let json = serde_json::to_string(&AiCliDiagnosticState::UnsupportedVersion).unwrap();
+        assert_eq!(json, "\"unsupported_version\"");
+        let details = detect_ai_cli_details();
+        assert!(!details
+            .iter()
+            .any(|d| d.state == AiCliDiagnosticState::UnsupportedVersion));
+        assert!(!details
+            .iter()
+            .any(|d| d.state == AiCliDiagnosticState::Ready));
+    }
+
+    #[test]
+    fn test_config_presence_never_claims_valid_credentials() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let details = detect_ai_cli_details();
+        for d in &details {
+            // auth_status is file-existence only; diagnostics must say so.
+            assert!(
+                d.auth_status == "unknown"
+                    || d.auth_status == "config_present"
+                    || d.auth_status == "config_missing"
+            );
+            assert!(!d.diagnostic.to_lowercase().contains("authenticated"));
+            assert!(!d.diagnostic.to_lowercase().contains("signed in as"));
+            if d.state == AiCliDiagnosticState::VersionDetected {
+                assert!(
+                    d.diagnostic.contains("not authentication")
+                        || d.diagnostic.contains("does not prove")
+                );
+            }
+        }
     }
 
     #[test]

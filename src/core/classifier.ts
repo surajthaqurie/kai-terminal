@@ -203,7 +203,9 @@ export function extractSearchTokens(query: string): ExtractedSearchTokens {
   }
 
   const intentHints: TaskIntentHints = {
-    prefersTests: /\b(?:test|tests|spec|coverage|vitest|jest|cargo\s+test|pytest)\b/i.test(safeQuery),
+    prefersTests: /\b(?:test|tests|spec|coverage|vitest|jest|cargo\s+test|pytest)\b/i.test(
+      safeQuery
+    ),
     prefersConfig:
       /\b(?:config|configuration|settings|tsconfig|package\.json|cargo\.toml|options|env)\b/i.test(
         safeQuery
