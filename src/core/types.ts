@@ -73,6 +73,14 @@ export interface IndexedFile {
   isDoc: boolean;
 }
 
+export interface IndexChangeSet {
+  added: string[];
+  modified: string[];
+  renamed: Array<{ from: string; to: string }>;
+  deleted: string[];
+  isStale?: boolean;
+}
+
 export interface ProjectIndex {
   meta: ProjectMeta;
   files: Record<string, IndexedFile>; // relativePath -> file
@@ -80,6 +88,7 @@ export interface ProjectIndex {
   rules: string[]; // Content of detected project rules (.cursorrules, AGENTS.md, etc.)
   totalTokensEstimated: number;
   generatedAt: string;
+  changes?: IndexChangeSet;
 }
 
 export interface SkillDefinition {
@@ -104,9 +113,9 @@ export interface TokenMetrics {
 }
 
 export interface ContextOmission {
-  type: "file" | "symbol" | "skill" | "rule" | "dependency";
+  type: "file" | "symbol" | "skill" | "rule" | "dependency" | "secret";
   identifier: string;
-  reason: "budget_exceeded" | "low_relevance" | "untrusted" | "stale";
+  reason: "budget_exceeded" | "low_relevance" | "untrusted" | "stale" | "secret";
   estimatedTokens: number;
 }
 
@@ -150,6 +159,8 @@ export interface RetrievalOptions {
   includeSkills?: boolean;
   includeTests?: boolean;
   format?: "text" | "json";
+  assembledAt?: string;
+  tokenizer?: (text: string) => number;
 }
 
 export interface EvaluationBaseline {

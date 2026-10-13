@@ -9,6 +9,7 @@ import type {
   ContextOmission,
 } from "./types";
 import { estimateTokens, truncateToTokenBudget } from "./tokenCounter";
+import { isWithinProjectBoundary } from "./registry";
 
 export interface ScoredFileMatch {
   file: IndexedFile;
@@ -240,9 +241,24 @@ export function retrieveContext(
         });
         continue;
       }
-      const realBase = fs.realpathSync(index.meta.canonicalPath);
-      const realTarget = fs.realpathSync(joined);
-      if (realTarget !== realBase && !realTarget.startsWith(realBase + path.sep)) {
+      let realBase: string;
+      let realTarget: string;
+      try {
+        realBase = fs.realpathSync(index.meta.canonicalPath);
+        realTarget = fs.realpathSync(joined);
+      } catch {
+        // File does not exist on disk (deleted or moved); flag stale
+        staleFiles.push(item.file.relativePath);
+        omissions.push({
+          type: "file",
+          identifier: item.file.relativePath,
+          reason: "stale",
+          estimatedTokens: Math.max(1, Math.ceil(item.file.sizeBytes / 4)),
+        });
+        continue;
+      }
+
+      if (!isWithinProjectBoundary(realTarget, realBase)) {
         omissions.push({
           type: "file",
           identifier: item.file.relativePath,
@@ -262,6 +278,7 @@ export function retrieveContext(
         }
       }
     } catch {
+      staleFiles.push(item.file.relativePath);
       continue; // Unreadable
     }
 

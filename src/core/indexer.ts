@@ -7,6 +7,7 @@ import type {
   IndexedDependency,
   ProjectIndex,
   ProjectMeta,
+  IndexChangeSet,
 } from "./types";
 import {
   loadProjectIndex,
@@ -15,6 +16,8 @@ import {
   resolveCanonicalPath,
   getProjectMetaPath,
   atomicWriteJson,
+  isWithinProjectBoundary,
+  normalizePathForIdentity,
 } from "./registry";
 
 // Strict limits
@@ -106,6 +109,19 @@ export const BINARY_EXTENSIONS = new Set([
   ".db",
   ".sqlite",
   ".sqlite3",
+  ".wasm",
+  ".pyc",
+  ".pyo",
+  ".pyd",
+  ".class",
+  ".dex",
+  ".iso",
+  ".dmg",
+  ".pkg",
+  ".deb",
+  ".rpm",
+  ".node",
+  ".jar",
 ]);
 
 export function isSensitiveFile(filename: string): boolean {
@@ -122,9 +138,17 @@ export function isBinaryFile(filename: string, sampleBuffer?: Buffer): boolean {
   if (sampleBuffer && sampleBuffer.length > 0) {
     // Check first 8KB for null byte (512B misses many binaries)
     const checkLength = Math.min(sampleBuffer.length, 8192);
+    let controlCharCount = 0;
     for (let i = 0; i < checkLength; i++) {
-      if (sampleBuffer[i] === 0) return true;
+      const b = sampleBuffer[i];
+      if (b === 0) return true; // Null byte indicates binary
+      // Count control characters excluding standard whitespace (\t = 9, \n = 10, \r = 13)
+      if (b < 0x08 || (b > 0x0d && b < 0x20)) {
+        controlCharCount++;
+      }
     }
+    // High ratio of control chars indicates binary payload
+    if (controlCharCount > checkLength * 0.2) return true;
   }
   return false;
 }
@@ -213,259 +237,267 @@ export function extractSymbolsAndDeps(
 
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
     const line = lines[lineIndex];
+    if (line.length > 2048) {
+      // Skip excessively long lines (minified code / bundled single-lines)
+      continue;
+    }
     const lineNumber = lineIndex + 1;
 
-    // TypeScript / JavaScript
-    if (language === "typescript" || language === "javascript") {
-      // Imports
-      const importMatch = line.match(
-        /import\s+(?:\{([^}]+)\}|\*\s+as\s+(\w+)|(\w+))\s+from\s+['"]([^'"]+)['"]/
-      );
-      if (importMatch) {
-        const specifier = importMatch[4];
-        const rawSymbols = importMatch[1] || importMatch[2] || importMatch[3] || "";
-        const importedSymbols = rawSymbols
-          .split(",")
-          .map((s) =>
-            s
-              .trim()
-              .split(/\s+as\s+/)[0]
-              .trim()
-          )
-          .filter(Boolean);
+    try {
+      // TypeScript / JavaScript
+      if (language === "typescript" || language === "javascript") {
+        // Imports
+        const importMatch = line.match(
+          /import\s+(?:\{([^}]+)\}|\*\s+as\s+(\w+)|(\w+))\s+from\s+['"]([^'"]+)['"]/
+        );
+        if (importMatch) {
+          const specifier = importMatch[4];
+          const rawSymbols = importMatch[1] || importMatch[2] || importMatch[3] || "";
+          const importedSymbols = rawSymbols
+            .split(",")
+            .map((s) =>
+              s
+                .trim()
+                .split(/\s+as\s+/)[0]
+                .trim()
+            )
+            .filter(Boolean);
 
-        dependencies.push({
-          sourceFile: relativePath,
-          targetSpecifier: specifier,
-          isExternal: !specifier.startsWith("."),
-          importedSymbols,
-        });
-      }
-
-      // Exported or standard functions
-      const funcMatch = line.match(
-        /(?:export\s+)?(?:async\s+)?function\s+([a-zA-Z0-9_$]+)\s*\(([^)]*)\)/
-      );
-      if (funcMatch) {
-        symbols.push({
-          name: funcMatch[1],
-          kind: "function",
-          filePath: relativePath,
-          location: {
-            filePath: relativePath,
-            line: lineNumber,
-            column: line.indexOf(funcMatch[1]) + 1,
-          },
-          signature: funcMatch[0].trim(),
-          isExported: line.includes("export "),
-        });
-      }
-
-      // Const arrow functions
-      const arrowMatch = line.match(
-        /(?:export\s+)?const\s+([a-zA-Z0-9_$]+)\s*=\s*(?:async\s*)?\([^)]*\)\s*=>/
-      );
-      if (arrowMatch) {
-        symbols.push({
-          name: arrowMatch[1],
-          kind: "function",
-          filePath: relativePath,
-          location: {
-            filePath: relativePath,
-            line: lineNumber,
-            column: line.indexOf(arrowMatch[1]) + 1,
-          },
-          signature: arrowMatch[0].trim(),
-          isExported: line.includes("export "),
-        });
-      }
-
-      // Exported or module-level constants and variables
-      const constVarMatch = line.match(/(?:export\s+)?(?:const|let|var)\s+([a-zA-Z0-9_$]+)\s*[:=]/);
-      if (constVarMatch && !arrowMatch) {
-        const isUpper = /^[A-Z0-9_]+$/.test(constVarMatch[1]);
-        symbols.push({
-          name: constVarMatch[1],
-          kind: isUpper ? "constant" : "variable",
-          filePath: relativePath,
-          location: {
-            filePath: relativePath,
-            line: lineNumber,
-            column: line.indexOf(constVarMatch[1]) + 1,
-          },
-          signature: line.trim().slice(0, 120),
-          isExported: line.includes("export "),
-        });
-      }
-
-      // Classes
-      const classMatch = line.match(/(?:export\s+)?class\s+([a-zA-Z0-9_$]+)/);
-      if (classMatch) {
-        symbols.push({
-          name: classMatch[1],
-          kind: "class",
-          filePath: relativePath,
-          location: {
-            filePath: relativePath,
-            line: lineNumber,
-            column: line.indexOf(classMatch[1]) + 1,
-          },
-          isExported: line.includes("export "),
-        });
-      }
-
-      // Interfaces / Types
-      const ifaceMatch = line.match(/(?:export\s+)?(?:interface|type)\s+([a-zA-Z0-9_$]+)/);
-      if (ifaceMatch) {
-        symbols.push({
-          name: ifaceMatch[1],
-          kind: line.includes("interface ") ? "interface" : "type",
-          filePath: relativePath,
-          location: {
-            filePath: relativePath,
-            line: lineNumber,
-            column: line.indexOf(ifaceMatch[1]) + 1,
-          },
-          isExported: line.includes("export "),
-        });
-      }
-    }
-
-    // Rust
-    if (language === "rust") {
-      const useMatch = line.match(/use\s+([^;]+);/);
-      if (useMatch) {
-        dependencies.push({
-          sourceFile: relativePath,
-          targetSpecifier: useMatch[1].trim(),
-          isExternal: !useMatch[1].startsWith("crate::"),
-          importedSymbols: [useMatch[1].split("::").pop() || ""],
-        });
-      }
-
-      const fnMatch = line.match(/(?:pub\s+)?(?:async\s+)?fn\s+([a-zA-Z0-9_]+)\s*\(([^)]*)\)/);
-      if (fnMatch) {
-        symbols.push({
-          name: fnMatch[1],
-          kind: "function",
-          filePath: relativePath,
-          location: {
-            filePath: relativePath,
-            line: lineNumber,
-            column: line.indexOf(fnMatch[1]) + 1,
-          },
-          signature: fnMatch[0].trim(),
-          isExported: line.includes("pub "),
-        });
-      }
-
-      const structMatch = line.match(/(?:pub\s+)?(?:struct|enum|trait)\s+([a-zA-Z0-9_]+)/);
-      if (structMatch) {
-        symbols.push({
-          name: structMatch[1],
-          kind: "class",
-          filePath: relativePath,
-          location: {
-            filePath: relativePath,
-            line: lineNumber,
-            column: line.indexOf(structMatch[1]) + 1,
-          },
-          isExported: line.includes("pub "),
-        });
-      }
-    }
-
-    // Python
-    if (language === "python") {
-      const pyImport = line.match(
-        /(?:from\s+([a-zA-Z0-9_.]+)\s+import\s+([a-zA-Z0-9_, *]+)|import\s+([a-zA-Z0-9_,.]+))/
-      );
-      if (pyImport) {
-        dependencies.push({
-          sourceFile: relativePath,
-          targetSpecifier: pyImport[1] || pyImport[3] || "",
-          isExternal: true,
-          importedSymbols: pyImport[2] ? pyImport[2].split(",").map((s) => s.trim()) : [],
-        });
-      }
-
-      const pyDef = line.match(/^\s*(?:async\s+)?def\s+([a-zA-Z0-9_]+)\s*\(([^)]*)\):/);
-      if (pyDef) {
-        symbols.push({
-          name: pyDef[1],
-          kind: "function",
-          filePath: relativePath,
-          location: {
-            filePath: relativePath,
-            line: lineNumber,
-            column: line.indexOf(pyDef[1]) + 1,
-          },
-          signature: pyDef[0].trim(),
-          isExported: !pyDef[1].startsWith("_"),
-        });
-      }
-
-      const pyClass = line.match(/^\s*class\s+([a-zA-Z0-9_]+)/);
-      if (pyClass) {
-        symbols.push({
-          name: pyClass[1],
-          kind: "class",
-          filePath: relativePath,
-          location: {
-            filePath: relativePath,
-            line: lineNumber,
-            column: line.indexOf(pyClass[1]) + 1,
-          },
-          isExported: !pyClass[1].startsWith("_"),
-        });
-      }
-    }
-
-    // Go
-    if (language === "go") {
-      const goImportLine = line.match(/^\s*import\s+(?:"([^"]+)"|([a-zA-Z0-9_]+)\s+"([^"]+)")/);
-      if (goImportLine) {
-        const specifier = goImportLine[1] || goImportLine[3] || "";
-        if (specifier) {
           dependencies.push({
             sourceFile: relativePath,
             targetSpecifier: specifier,
             isExternal: !specifier.startsWith("."),
-            importedSymbols: goImportLine[2] ? [goImportLine[2]] : [],
+            importedSymbols,
+          });
+        }
+
+        // Exported or standard functions
+        const funcMatch = line.match(
+          /(?:export\s+)?(?:async\s+)?function\s+([a-zA-Z0-9_$]+)\s*\(([^)]*)\)/
+        );
+        if (funcMatch) {
+          symbols.push({
+            name: funcMatch[1],
+            kind: "function",
+            filePath: relativePath,
+            location: {
+              filePath: relativePath,
+              line: lineNumber,
+              column: line.indexOf(funcMatch[1]) + 1,
+            },
+            signature: funcMatch[0].trim(),
+            isExported: line.includes("export "),
+          });
+        }
+
+        // Const arrow functions
+        const arrowMatch = line.match(
+          /(?:export\s+)?const\s+([a-zA-Z0-9_$]+)\s*=\s*(?:async\s*)?\([^)]*\)\s*=>/
+        );
+        if (arrowMatch) {
+          symbols.push({
+            name: arrowMatch[1],
+            kind: "function",
+            filePath: relativePath,
+            location: {
+              filePath: relativePath,
+              line: lineNumber,
+              column: line.indexOf(arrowMatch[1]) + 1,
+            },
+            signature: arrowMatch[0].trim(),
+            isExported: line.includes("export "),
+          });
+        }
+
+        // Exported or module-level constants and variables
+        const constVarMatch = line.match(/(?:export\s+)?(?:const|let|var)\s+([a-zA-Z0-9_$]+)\s*[:=]/);
+        if (constVarMatch && !arrowMatch) {
+          const isUpper = /^[A-Z0-9_]+$/.test(constVarMatch[1]);
+          symbols.push({
+            name: constVarMatch[1],
+            kind: isUpper ? "constant" : "variable",
+            filePath: relativePath,
+            location: {
+              filePath: relativePath,
+              line: lineNumber,
+              column: line.indexOf(constVarMatch[1]) + 1,
+            },
+            signature: line.trim().slice(0, 120),
+            isExported: line.includes("export "),
+          });
+        }
+
+        // Classes
+        const classMatch = line.match(/(?:export\s+)?class\s+([a-zA-Z0-9_$]+)/);
+        if (classMatch) {
+          symbols.push({
+            name: classMatch[1],
+            kind: "class",
+            filePath: relativePath,
+            location: {
+              filePath: relativePath,
+              line: lineNumber,
+              column: line.indexOf(classMatch[1]) + 1,
+            },
+            isExported: line.includes("export "),
+          });
+        }
+
+        // Interfaces / Types
+        const ifaceMatch = line.match(/(?:export\s+)?(?:interface|type)\s+([a-zA-Z0-9_$]+)/);
+        if (ifaceMatch) {
+          symbols.push({
+            name: ifaceMatch[1],
+            kind: line.includes("interface ") ? "interface" : "type",
+            filePath: relativePath,
+            location: {
+              filePath: relativePath,
+              line: lineNumber,
+              column: line.indexOf(ifaceMatch[1]) + 1,
+            },
+            isExported: line.includes("export "),
           });
         }
       }
 
-      const goFunc = line.match(/^\s*func\s+(?:\([^)]*\)\s+)?([A-Za-z_][\w]*)\s*\(/);
-      if (goFunc) {
-        symbols.push({
-          name: goFunc[1],
-          kind: "function",
-          filePath: relativePath,
-          location: {
+      // Rust
+      if (language === "rust") {
+        const useMatch = line.match(/use\s+([^;]+);/);
+        if (useMatch) {
+          dependencies.push({
+            sourceFile: relativePath,
+            targetSpecifier: useMatch[1].trim(),
+            isExternal: !useMatch[1].startsWith("crate::"),
+            importedSymbols: [useMatch[1].split("::").pop() || ""],
+          });
+        }
+
+        const fnMatch = line.match(/(?:pub\s+)?(?:async\s+)?fn\s+([a-zA-Z0-9_]+)\s*\(([^)]*)\)/);
+        if (fnMatch) {
+          symbols.push({
+            name: fnMatch[1],
+            kind: "function",
             filePath: relativePath,
-            line: lineNumber,
-            column: line.indexOf(goFunc[1]) + 1,
-          },
-          signature: line.trim().slice(0, 200),
-          isExported: /^[A-Z]/.test(goFunc[1]),
-        });
+            location: {
+              filePath: relativePath,
+              line: lineNumber,
+              column: line.indexOf(fnMatch[1]) + 1,
+            },
+            signature: fnMatch[0].trim(),
+            isExported: line.includes("pub "),
+          });
+        }
+
+        const structMatch = line.match(/(?:pub\s+)?(?:struct|enum|trait)\s+([a-zA-Z0-9_]+)/);
+        if (structMatch) {
+          symbols.push({
+            name: structMatch[1],
+            kind: "class",
+            filePath: relativePath,
+            location: {
+              filePath: relativePath,
+              line: lineNumber,
+              column: line.indexOf(structMatch[1]) + 1,
+            },
+            isExported: line.includes("pub "),
+          });
+        }
       }
 
-      const goType = line.match(/^\s*type\s+([A-Za-z_][\w]*)\s+(?:struct|interface)/);
-      if (goType) {
-        symbols.push({
-          name: goType[1],
-          kind: "class",
-          filePath: relativePath,
-          location: {
+      // Python
+      if (language === "python") {
+        const pyImport = line.match(
+          /(?:from\s+([a-zA-Z0-9_.]+)\s+import\s+([a-zA-Z0-9_, *]+)|import\s+([a-zA-Z0-9_,.]+))/
+        );
+        if (pyImport) {
+          dependencies.push({
+            sourceFile: relativePath,
+            targetSpecifier: pyImport[1] || pyImport[3] || "",
+            isExternal: true,
+            importedSymbols: pyImport[2] ? pyImport[2].split(",").map((s) => s.trim()) : [],
+          });
+        }
+
+        const pyDef = line.match(/^\s*(?:async\s+)?def\s+([a-zA-Z0-9_]+)\s*\(([^)]*)\):/);
+        if (pyDef) {
+          symbols.push({
+            name: pyDef[1],
+            kind: "function",
             filePath: relativePath,
-            line: lineNumber,
-            column: line.indexOf(goType[1]) + 1,
-          },
-          isExported: /^[A-Z]/.test(goType[1]),
-        });
+            location: {
+              filePath: relativePath,
+              line: lineNumber,
+              column: line.indexOf(pyDef[1]) + 1,
+            },
+            signature: pyDef[0].trim(),
+            isExported: !pyDef[1].startsWith("_"),
+          });
+        }
+
+        const pyClass = line.match(/^\s*class\s+([a-zA-Z0-9_]+)/);
+        if (pyClass) {
+          symbols.push({
+            name: pyClass[1],
+            kind: "class",
+            filePath: relativePath,
+            location: {
+              filePath: relativePath,
+              line: lineNumber,
+              column: line.indexOf(pyClass[1]) + 1,
+            },
+            isExported: !pyClass[1].startsWith("_"),
+          });
+        }
       }
+
+      // Go
+      if (language === "go") {
+        const goImportLine = line.match(/^\s*import\s+(?:"([^"]+)"|([a-zA-Z0-9_]+)\s+"([^"]+)")/);
+        if (goImportLine) {
+          const specifier = goImportLine[1] || goImportLine[3] || "";
+          if (specifier) {
+            dependencies.push({
+              sourceFile: relativePath,
+              targetSpecifier: specifier,
+              isExternal: !specifier.startsWith("."),
+              importedSymbols: goImportLine[2] ? [goImportLine[2]] : [],
+            });
+          }
+        }
+
+        const goFunc = line.match(/^\s*func\s+(?:\([^)]*\)\s+)?([A-Za-z_][\w]*)\s*\(/);
+        if (goFunc) {
+          symbols.push({
+            name: goFunc[1],
+            kind: "function",
+            filePath: relativePath,
+            location: {
+              filePath: relativePath,
+              line: lineNumber,
+              column: line.indexOf(goFunc[1]) + 1,
+            },
+            signature: line.trim().slice(0, 200),
+            isExported: /^[A-Z]/.test(goFunc[1]),
+          });
+        }
+
+        const goType = line.match(/^\s*type\s+([A-Za-z_][\w]*)\s+(?:struct|interface)/);
+        if (goType) {
+          symbols.push({
+            name: goType[1],
+            kind: "class",
+            filePath: relativePath,
+            location: {
+              filePath: relativePath,
+              line: lineNumber,
+              column: line.indexOf(goType[1]) + 1,
+            },
+            isExported: /^[A-Z]/.test(goType[1]),
+          });
+        }
+      }
+    } catch {
+      // Continue parsing next line if unexpected syntax error occurred
     }
   }
 
@@ -490,20 +522,32 @@ export function matchesIgnorePattern(
   patterns: string[]
 ): boolean {
   const rel = toPosixRel(relPath);
+  const segments = rel.split("/");
   for (const raw of patterns) {
     const pat = raw.trim();
     if (!pat || pat.startsWith("#") || pat.startsWith("!")) continue;
     const p = pat.endsWith("/") ? pat.slice(0, -1) : pat;
     if (p.includes("*")) {
-      const re = new RegExp(
-        "^" + p.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*") + "$"
-      );
+      const globPattern = p.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
+      const re = new RegExp("^" + globPattern + "$");
       if (re.test(rel) || re.test(fileName)) return true;
+      if (!p.includes("/")) {
+        if (re.test(fileName)) return true;
+      } else {
+        const norm = p.startsWith("/") ? p.slice(1) : p;
+        const subGlob = norm.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
+        if (new RegExp("(^|/)" + subGlob + "($|/)").test(rel)) return true;
+      }
     } else if (!p.includes("/")) {
-      if (fileName === p || rel === p || rel.startsWith(p + "/")) return true;
+      if (fileName === p || segments.includes(p)) return true;
     } else {
       const norm = p.startsWith("/") ? p.slice(1) : p;
-      if (rel === norm || rel.startsWith(norm + "/") || rel.startsWith(norm)) {
+      if (
+        rel === norm ||
+        rel.startsWith(norm + "/") ||
+        rel.includes("/" + norm + "/") ||
+        rel.endsWith("/" + norm)
+      ) {
         return true;
       }
     }
@@ -517,24 +561,33 @@ export function matchesIgnorePattern(
 export function loadIgnorePatterns(projectRoot: string): string[] {
   const ignorePatterns: string[] = [];
   const canonicalRoot = resolveCanonicalPath(projectRoot);
-  const gitignorePath = path.join(canonicalRoot, ".gitignore");
-  try {
-    const realTarget = fs.realpathSync(gitignorePath);
-    if (realTarget !== canonicalRoot && !realTarget.startsWith(canonicalRoot + path.sep)) {
-      return ignorePatterns; // Symlink points outside project boundary
+  const candidates = [".gitignore", ".ignore"];
+
+  for (const candidate of candidates) {
+    const fullPath = path.join(canonicalRoot, candidate);
+    try {
+      let realTarget: string;
+      try {
+        realTarget = fs.realpathSync(fullPath);
+      } catch {
+        continue;
+      }
+      if (!isWithinProjectBoundary(realTarget, canonicalRoot)) {
+        continue; // Symlink points outside project boundary
+      }
+      const stat = fs.statSync(realTarget);
+      if (!stat.isFile() || stat.size > MAX_FILE_SIZE_BYTES) {
+        continue;
+      }
+      const content = fs.readFileSync(realTarget, "utf-8");
+      const lines = content
+        .split("\n")
+        .map((l) => l.trim())
+        .filter((l) => l && !l.startsWith("#"));
+      ignorePatterns.push(...lines);
+    } catch {
+      // Ignore read failure
     }
-    const stat = fs.statSync(realTarget);
-    if (!stat.isFile() || stat.size > MAX_FILE_SIZE_BYTES) {
-      return ignorePatterns;
-    }
-    const content = fs.readFileSync(realTarget, "utf-8");
-    const lines = content
-      .split("\n")
-      .map((l) => l.trim())
-      .filter((l) => l && !l.startsWith("#"));
-    ignorePatterns.push(...lines);
-  } catch {
-    // Ignore read failure
   }
   return ignorePatterns;
 }
@@ -550,8 +603,13 @@ export function loadProjectRules(projectRoot: string): string[] {
   for (const file of ruleFiles) {
     const fullPath = path.join(canonicalRoot, file);
     try {
-      const realTarget = fs.realpathSync(fullPath);
-      if (realTarget !== canonicalRoot && !realTarget.startsWith(canonicalRoot + path.sep)) {
+      let realTarget: string;
+      try {
+        realTarget = fs.realpathSync(fullPath);
+      } catch {
+        continue;
+      }
+      if (!isWithinProjectBoundary(realTarget, canonicalRoot)) {
         continue; // Symlink points outside project boundary
       }
       const stat = fs.statSync(realTarget);
@@ -571,11 +629,43 @@ export function loadProjectRules(projectRoot: string): string[] {
 }
 
 /**
+ * Fast detection of stale index entries after external filesystem changes
+ */
+export function detectStaleIndexEntries(index: ProjectIndex): {
+  isStale: boolean;
+  staleFiles: string[];
+  deletedFiles: string[];
+} {
+  const canonicalRoot = resolveCanonicalPath(index.meta.canonicalPath);
+  const staleFiles: string[] = [];
+  const deletedFiles: string[] = [];
+
+  for (const [relPath, file] of Object.entries(index.files)) {
+    const fullPath = path.join(canonicalRoot, relPath);
+    try {
+      if (!fs.existsSync(fullPath)) {
+        deletedFiles.push(relPath);
+        continue;
+      }
+      const stat = fs.statSync(fullPath);
+      if (stat.mtimeMs !== file.mtimeMs || stat.size !== file.sizeBytes) {
+        staleFiles.push(relPath);
+      }
+    } catch {
+      deletedFiles.push(relPath);
+    }
+  }
+
+  const isStale = staleFiles.length > 0 || deletedFiles.length > 0;
+  return { isStale, staleFiles, deletedFiles };
+}
+
+/**
  * Safe incremental project indexer
  */
 export async function indexProject(
   meta: ProjectMeta,
-  options: { forceRebuild?: boolean } = {}
+  options: { forceRebuild?: boolean; excludePatterns?: string[] } = {}
 ): Promise<ProjectIndex> {
   const lock = new ProjectLock(meta.id);
   if (!lock.acquire(6000)) {
@@ -596,18 +686,29 @@ export async function indexProject(
     // Normalize legacy keys: indexes written on Windows used backslash
     // separators (`src\a.ts`). Lookups below use POSIX keys (`src/a.ts`).
     const existingFiles: Record<string, IndexedFile> = Object.create(null);
+    const deletedCandidates = new Map<string, IndexedFile>();
     if (existingIndex) {
       for (const [k, v] of Object.entries(existingIndex.files)) {
-        existingFiles[toPosixRel(k)] = v;
+        const normKey = toPosixRel(k);
+        existingFiles[normKey] = v;
+        deletedCandidates.set(normKey, v);
       }
     }
 
     const indexedFiles: Record<string, IndexedFile> = Object.create(null);
     const symbolIndex: Record<string, IndexedSymbol[]> = Object.create(null);
+    const modifiedFiles: string[] = [];
+    const newFiles: string[] = [];
     let totalFilesSeen = 0;
 
     const ignorePatterns = loadIgnorePatterns(canonicalRoot);
+    if (options.excludePatterns) {
+      ignorePatterns.push(...options.excludePatterns);
+    }
     const rules = loadProjectRules(canonicalRoot);
+
+    const visitedDirs = new Set<string>();
+    visitedDirs.add(normalizePathForIdentity(canonicalRoot));
 
     function scanDir(dirPath: string, depth: number): void {
       if (depth > MAX_TRAVERSAL_DEPTH || totalFilesSeen >= MAX_TOTAL_FILES) return;
@@ -623,8 +724,6 @@ export async function indexProject(
         if (totalFilesSeen >= MAX_TOTAL_FILES) break;
 
         const fullPath = path.join(dirPath, entry.name);
-        // Normalize to POSIX forward slashes so index keys are identical
-        // on Windows and POSIX. path.relative yields `src\a.ts` on Windows.
         const relPath = toPosixRel(path.relative(canonicalRoot, fullPath));
 
         // Security boundary check: ensure real path is within canonicalRoot
@@ -635,21 +734,34 @@ export async function indexProject(
           continue; // Broken symlink or unresolvable
         }
 
-        if (
-          entryCanonical !== canonicalRoot &&
-          !entryCanonical.startsWith(canonicalRoot + path.sep)
-        ) {
+        if (!isWithinProjectBoundary(entryCanonical, canonicalRoot)) {
           // Path traversal attempt or symlink pointing outside project root
           continue;
         }
 
-        if (entry.isDirectory()) {
+        let isDir = entry.isDirectory();
+        let isFile = entry.isFile();
+        if (entry.isSymbolicLink()) {
+          try {
+            const stat = fs.statSync(entryCanonical);
+            isDir = stat.isDirectory();
+            isFile = stat.isFile();
+          } catch {
+            continue; // Dangling symlink
+          }
+        }
+
+        if (isDir) {
           if (DEFAULT_EXCLUDED_DIRS.has(entry.name)) continue;
           if (entry.name.startsWith(".") && entry.name !== ".") continue;
           if (matchesIgnorePattern(relPath, entry.name, ignorePatterns)) continue;
 
+          const normDir = normalizePathForIdentity(entryCanonical);
+          if (visitedDirs.has(normDir)) continue; // Symlink loop prevention
+          visitedDirs.add(normDir);
+
           scanDir(fullPath, depth + 1);
-        } else if (entry.isFile()) {
+        } else if (isFile) {
           totalFilesSeen++;
 
           if (isSensitiveFile(entry.name)) continue;
@@ -677,6 +789,7 @@ export async function indexProject(
             (cached.ctimeMs === undefined || ctimeMs === undefined || cached.ctimeMs === ctimeMs);
 
           if (isUnchanged) {
+            deletedCandidates.delete(relPath);
             // Migrate legacy Windows keys/paths to POSIX on reuse.
             if (cached.relativePath !== relPath) {
               cached.relativePath = relPath;
@@ -724,6 +837,13 @@ export async function indexProject(
           const isConfig = entry.name.includes("config") || entry.name.startsWith(".");
           const isDoc = language === "markdown" || relPath.includes("doc");
 
+          if (cached) {
+            deletedCandidates.delete(relPath);
+            modifiedFiles.push(relPath);
+          } else {
+            newFiles.push(relPath);
+          }
+
           const { symbols, dependencies } = extractSymbolsAndDeps(content, relPath, language);
 
           const indexedFile: IndexedFile = {
@@ -758,9 +878,40 @@ export async function indexProject(
 
     scanDir(canonicalRoot, 0);
 
-    // Calculate total tokens estimate from file sizes (content is not
-    // retained in the index; estimating from the relative path undercounted
-    // by ~100-1000x). ~4 bytes per token is consistent with tokenCounter.
+    // Rename and deletion detection
+    const renamedFiles: Array<{ from: string; to: string }> = [];
+    const addedFiles: string[] = [];
+
+    for (const newRel of newFiles) {
+      const newFile = indexedFiles[newRel];
+      let matchedOldRel: string | null = null;
+      if (newFile && deletedCandidates.size > 0) {
+        for (const [oldRel, oldFile] of deletedCandidates.entries()) {
+          if (oldFile.sha256 === newFile.sha256 && oldFile.sizeBytes === newFile.sizeBytes) {
+            matchedOldRel = oldRel;
+            break;
+          }
+        }
+      }
+
+      if (matchedOldRel) {
+        renamedFiles.push({ from: matchedOldRel, to: newRel });
+        deletedCandidates.delete(matchedOldRel);
+      } else {
+        addedFiles.push(newRel);
+      }
+    }
+
+    const deletedFiles = Array.from(deletedCandidates.keys());
+    const changes: IndexChangeSet = {
+      added: addedFiles,
+      modified: modifiedFiles,
+      renamed: renamedFiles,
+      deleted: deletedFiles,
+      isStale: false,
+    };
+
+    // Calculate total tokens estimate from file sizes
     let totalTokens = 0;
     for (const file of Object.values(indexedFiles)) {
       totalTokens += Math.max(1, Math.ceil(file.sizeBytes / 4));
@@ -782,6 +933,7 @@ export async function indexProject(
       rules,
       totalTokensEstimated: totalTokens,
       generatedAt: new Date().toISOString(),
+      changes,
     };
 
     saveProjectIndex(meta.id, projectIndex);

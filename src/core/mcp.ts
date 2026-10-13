@@ -341,6 +341,7 @@ export async function handleMcpMessage(
                     totalSymbols: Object.keys(index.symbolIndex).length,
                     languageBreakdown: languages,
                     rulesCount: index.rules.length,
+                    changes: index.changes,
                   },
                   null,
                   2
@@ -582,6 +583,7 @@ export async function handleMcpMessage(
                     refreshed: true,
                     totalFiles: Object.keys(refreshedIndex.files).length,
                     totalSymbols: Object.keys(refreshedIndex.symbolIndex).length,
+                    changes: refreshedIndex.changes,
                     timestamp: refreshedIndex.generatedAt,
                   },
                   null,
@@ -595,6 +597,7 @@ export async function handleMcpMessage(
 
       if (toolName === "kai_get_lsp_status") {
         const detected = detectInstalledLspServers();
+        const available = detected.some((d) => d.isAvailable);
         return {
           jsonrpc: "2.0",
           id: reqId,
@@ -604,7 +607,11 @@ export async function handleMcpMessage(
                 type: "text",
                 text: JSON.stringify(
                   {
-                    lspBridgeAvailable: detected.some((d) => d.isAvailable),
+                    lspBridgeAvailable: available,
+                    degradedMode: !available,
+                    degradedReason: available
+                      ? undefined
+                      : "No local language servers detected. Operating in degraded syntax-only mode.",
                     servers: detected,
                   },
                   null,

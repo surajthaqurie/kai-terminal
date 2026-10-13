@@ -31,6 +31,31 @@ struct IndexJson {
     pub total_tokens_estimated: Option<usize>,
 }
 
+fn candidate_home_dirs() -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    if let Ok(h) = std::env::var("KAI_HOME") {
+        if !h.trim().is_empty() {
+            out.push(PathBuf::from(h));
+        }
+    }
+    if let Ok(x) = std::env::var("XDG_DATA_HOME") {
+        if !x.trim().is_empty() {
+            out.push(PathBuf::from(x).join("kai"));
+        }
+    }
+    if let Ok(h) = std::env::var("HOME") {
+        if !h.trim().is_empty() {
+            out.push(PathBuf::from(h).join(".kai"));
+        }
+    }
+    if let Ok(u) = std::env::var("USERPROFILE") {
+        if !u.trim().is_empty() {
+            out.push(PathBuf::from(u).join(".kai"));
+        }
+    }
+    out
+}
+
 fn normalize_canonical_for_compare(p: &str) -> String {
     let mut s = p.to_string();
     if let Some(stripped) = s.strip_prefix(r"\\?\UNC\") {
@@ -38,11 +63,15 @@ fn normalize_canonical_for_compare(p: &str) -> String {
     } else if let Some(stripped) = s.strip_prefix(r"\\?\") {
         s = stripped.to_string();
     }
-    #[cfg(windows)]
-    {
-        s.replace('/', "\\").to_lowercase()
+    s = s.replace('\\', "/");
+    while s.len() > 1 && s.ends_with('/') {
+        s.pop();
     }
-    #[cfg(not(windows))]
+    #[cfg(any(windows, target_os = "macos"))]
+    {
+        s.to_lowercase()
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         s
     }
@@ -61,33 +90,17 @@ pub fn get_project_intelligence_internal(
         Err(_) => cwd.to_string(),
     };
 
-    let home = if let Some(h) = kai_home_override {
-        h.to_path_buf()
+    let homes: Vec<PathBuf> = if let Some(h) = kai_home_override {
+        vec![h.to_path_buf()]
     } else {
-        match std::env::var("KAI_HOME") {
-            Ok(h) => PathBuf::from(h),
-            Err(_) => match std::env::var("HOME") {
-                Ok(h) => PathBuf::from(h).join(".kai"),
-                Err(_) => match std::env::var("USERPROFILE") {
-                    Ok(u) => PathBuf::from(u).join(".kai"),
-                    Err(_) => {
-                        return ProjectIntelligenceSummary {
-                            status: "unindexed".to_string(),
-                            ..Default::default()
-                        }
-                    }
-                },
-            },
-        }
+        candidate_home_dirs()
     };
 
-    let projects_dir = home.join("projects");
-    if !projects_dir.is_dir() {
-        return ProjectIntelligenceSummary {
-            status: "unindexed".to_string(),
-            ..Default::default()
-        };
-    }
+    for home in homes {
+        let projects_dir = home.join("projects");
+        if !projects_dir.is_dir() {
+            continue;
+        }
 
     if let Ok(entries) = fs::read_dir(projects_dir) {
         for entry in entries.flatten() {
@@ -122,6 +135,7 @@ pub fn get_project_intelligence_internal(
                 }
             }
         }
+    }
     }
 
     ProjectIntelligenceSummary {
@@ -203,5 +217,46 @@ mod tests {
             normalize_canonical_for_compare(r"\\?\UNC\server\share"),
             normalize_canonical_for_compare(r"\\server\share")
         );
+        assert_eq!(
+            normalize_canonical_for_compare("/home/user/project/"),
+            normalize_canonical_for_compare("/home/user/project")
+        );
+    }
+
+    #[test]
+    fn test_candidate_homes_include_xdg_data_home() {
+        let temp_path =
+            std::env::temp_dir().join(format!("kai_test_xdg_{}", uuid::Uuid::new_v4()));
+        let xdg_dir = temp_path.join("xdg_share");
+        let kai_xdg = xdg_dir.join("kai");
+        let proj_dir = kai_xdg.join("projects").join("xdg_sample");
+        fs::create_dir_all(&proj_dir).unwrap();
+
+        let target_repo = temp_path.join("xdg_repo");
+        fs::create_dir_all(&target_repo).unwrap();
+        let canonical_repo = fs::canonicalize(&target_repo)
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+
+        let meta_json = serde_json::json!({
+            "status": "ready",
+            "canonicalPath": canonical_repo,
+            "fileCount": 10,
+            "symbolCount": 25,
+            "lastIndexedAt": "2026-10-12T00:00:00Z"
+        })
+        .to_string();
+        fs::write(proj_dir.join("meta.json"), meta_json).unwrap();
+
+        std::env::set_var("XDG_DATA_HOME", &xdg_dir);
+        let summary = get_project_intelligence(target_repo.to_str().unwrap());
+        std::env::remove_var("XDG_DATA_HOME");
+
+        assert_eq!(summary.status, "ready");
+        assert_eq!(summary.file_count, 10);
+        assert_eq!(summary.symbol_count, 25);
+
+        let _ = fs::remove_dir_all(&temp_path);
     }
 }

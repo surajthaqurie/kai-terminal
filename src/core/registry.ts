@@ -28,8 +28,37 @@ export function getCacheDir(): string {
   return path.join(getKaiHomeDir(), "cache");
 }
 
-export function computeProjectId(canonicalPath: string): string {
+export function normalizePathForIdentity(targetPath: string): string {
+  let resolved = resolveCanonicalPath(targetPath);
+  if (resolved.startsWith("\\\\?\\UNC\\")) {
+    resolved = "\\\\" + resolved.slice(8);
+  } else if (resolved.startsWith("\\\\?\\")) {
+    resolved = resolved.slice(4);
+  }
+  resolved = resolved.replace(/\\/g, "/");
+  while (resolved.length > 1 && resolved.endsWith("/")) {
+    resolved = resolved.slice(0, -1);
+  }
+  if (process.platform === "win32" || process.platform === "darwin") {
+    resolved = resolved.toLowerCase();
+  }
+  return resolved;
+}
+
+export function computeLegacyProjectId(canonicalPath: string): string {
   return crypto.createHash("sha256").update(canonicalPath).digest("hex").slice(0, 16);
+}
+
+export function computeProjectId(canonicalPath: string): string {
+  const normalized = normalizePathForIdentity(canonicalPath);
+  return crypto.createHash("sha256").update(normalized).digest("hex").slice(0, 16);
+}
+
+export function isWithinProjectBoundary(targetPath: string, rootPath: string): boolean {
+  const normTarget = normalizePathForIdentity(targetPath);
+  const normRoot = normalizePathForIdentity(rootPath);
+  if (normTarget === normRoot) return true;
+  return normTarget.startsWith(normRoot + "/");
 }
 
 export function resolveCanonicalPath(targetPath: string): string {
@@ -137,27 +166,43 @@ export class ProjectLock {
         this.isAcquired = true;
         return true;
       } catch (err: unknown) {
-        // If file exists, check if stale (> 30s) or process dead
+        // If file exists, check if stale (> 30s) or process dead or corrupted
         try {
           const content = fs.readFileSync(this.lockPath, "utf-8");
-          const data = JSON.parse(content);
-          const age = Date.now() - (data.time || 0);
+          let data: { pid?: number; time?: number } | null = null;
+          try {
+            data = JSON.parse(content);
+          } catch {
+            // Corrupt or partial lock file; mark null to unlink
+            data = null;
+          }
 
+          const age = data && typeof data.time === "number" ? Date.now() - data.time : 999999;
           let isDead = false;
-          if (data.pid) {
+          if (data && typeof data.pid === "number") {
             try {
               process.kill(data.pid, 0); // Check if process exists
             } catch {
               isDead = true;
             }
+          } else {
+            isDead = true;
           }
 
-          if (age > 30000 || isDead) {
+          if (age > 30000 || isDead || !data) {
             fs.unlinkSync(this.lockPath);
             continue;
           }
         } catch {
-          // Retry
+          // If read/parse failed or file vanished, attempt retry or unlink
+          try {
+            if (fs.existsSync(this.lockPath)) {
+              fs.unlinkSync(this.lockPath);
+              continue;
+            }
+          } catch {
+            // ignore
+          }
         }
 
         // Sleep briefly without burning CPU (busy-spin blocked the event loop)
@@ -210,11 +255,26 @@ export function registerProject(projectPath: string): ProjectMeta {
 
   if (fs.existsSync(metaPath)) {
     try {
-      const existing: ProjectMeta = JSON.parse(fs.readFileSync(metaPath, "utf-8"));
-      // Update rootPath if alias was used
-      existing.rootPath = projectPath;
-      atomicWriteJson(metaPath, existing);
-      return existing;
+      const raw = fs.readFileSync(metaPath, "utf-8");
+      const existing = JSON.parse(raw);
+      if (
+        typeof existing === "object" &&
+        existing !== null &&
+        typeof existing.id === "string" &&
+        typeof existing.canonicalPath === "string" &&
+        typeof existing.status === "string"
+      ) {
+        // Update rootPath if alias was used
+        existing.rootPath = projectPath;
+        // If it was stuck in 'indexing' from an interrupted process, reset to ready or unindexed
+        if (existing.status === "indexing") {
+          const indexPath = getProjectIndexPath(existing.id);
+          existing.status = fs.existsSync(indexPath) ? "ready" : "unindexed";
+          existing.lastError = null;
+        }
+        atomicWriteJson(metaPath, existing);
+        return existing as ProjectMeta;
+      }
     } catch {
       // Corrupt meta; recreate
     }
@@ -238,39 +298,104 @@ export function registerProject(projectPath: string): ProjectMeta {
   return meta;
 }
 
+export function cleanupDanglingTempFiles(storageDir: string): void {
+  try {
+    if (!fs.existsSync(storageDir)) return;
+    const entries = fs.readdirSync(storageDir);
+    for (const file of entries) {
+      if (file.endsWith(".tmp")) {
+        try {
+          fs.rmSync(path.join(storageDir, file), { force: true });
+        } catch {
+          // ignore
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
+}
+
 export function getProjectMeta(projectIdOrPath: string): ProjectMeta | null {
   ensureKaiDirectories();
-  let id = projectIdOrPath;
-  if (
-    projectIdOrPath === "." ||
-    projectIdOrPath === ".." ||
-    projectIdOrPath.includes("/") ||
-    projectIdOrPath.includes("\\") ||
-    fs.existsSync(projectIdOrPath)
-  ) {
-    const canonical = resolveCanonicalPath(projectIdOrPath);
-    id = computeProjectId(canonical);
-  }
-
-  const metaPath = getProjectMetaPath(id);
-  if (!fs.existsSync(metaPath)) return null;
-
-  try {
-    const raw = fs.readFileSync(metaPath, "utf-8");
-    const parsed = JSON.parse(raw);
-    if (
-      typeof parsed !== "object" ||
-      parsed === null ||
-      typeof parsed.id !== "string" ||
-      typeof parsed.canonicalPath !== "string" ||
-      typeof parsed.status !== "string"
-    ) {
-      return null;
+  // 1. Direct ID lookup if 16 hex chars
+  if (/^[0-9a-f]{16}$/.test(projectIdOrPath)) {
+    const metaPath = getProjectMetaPath(projectIdOrPath);
+    if (fs.existsSync(metaPath)) {
+      try {
+        const raw = fs.readFileSync(metaPath, "utf-8");
+        const parsed = JSON.parse(raw);
+        if (
+          typeof parsed === "object" &&
+          parsed !== null &&
+          typeof parsed.id === "string" &&
+          typeof parsed.canonicalPath === "string" &&
+          typeof parsed.status === "string"
+        ) {
+          return parsed as ProjectMeta;
+        }
+      } catch {
+        // ignore
+      }
     }
-    return parsed as ProjectMeta;
-  } catch {
-    return null;
   }
+
+  // 2. Normalized path ID lookup
+  const canonical = resolveCanonicalPath(projectIdOrPath);
+  const id = computeProjectId(canonical);
+  const metaPath = getProjectMetaPath(id);
+  if (fs.existsSync(metaPath)) {
+    try {
+      const raw = fs.readFileSync(metaPath, "utf-8");
+      const parsed = JSON.parse(raw);
+      if (
+        typeof parsed === "object" &&
+        parsed !== null &&
+        typeof parsed.id === "string" &&
+        typeof parsed.canonicalPath === "string" &&
+        typeof parsed.status === "string"
+      ) {
+        return parsed as ProjectMeta;
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  // 3. Fallback: legacy un-normalized hash lookup
+  const legacyId = computeLegacyProjectId(canonical);
+  if (legacyId !== id) {
+    const legacyMetaPath = getProjectMetaPath(legacyId);
+    if (fs.existsSync(legacyMetaPath)) {
+      try {
+        const raw = fs.readFileSync(legacyMetaPath, "utf-8");
+        const parsed = JSON.parse(raw);
+        if (
+          typeof parsed === "object" &&
+          parsed !== null &&
+          typeof parsed.id === "string" &&
+          typeof parsed.canonicalPath === "string" &&
+          typeof parsed.status === "string"
+        ) {
+          return parsed as ProjectMeta;
+        }
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  // 4. Fallback: match by equivalent normalized canonical path across registered projects
+  // (handles case-insensitivity on Windows/macOS, symlink aliases, and trailing slashes)
+  const targetNorm = normalizePathForIdentity(canonical);
+  const allProjects = listRegisteredProjects();
+  for (const proj of allProjects) {
+    if (normalizePathForIdentity(proj.canonicalPath) === targetNorm) {
+      return proj;
+    }
+  }
+
+  return null;
 }
 
 export function listRegisteredProjects(): ProjectMeta[] {
@@ -346,6 +471,8 @@ export function saveProjectIndex(projectId: string, index: ProjectIndex): void {
     meta.lastError = null;
     atomicWriteJson(getProjectMetaPath(projectId), meta);
   }
+
+  cleanupDanglingTempFiles(getProjectStorageDir(projectId));
 }
 
 export function deleteProjectData(projectId: string): { success: boolean; error?: string } {

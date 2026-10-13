@@ -66,6 +66,8 @@ export interface LspCrossFileReferenceResult {
   references: LspReferenceLocation[];
   definitions: LspReferenceLocation[];
   isAvailable: boolean;
+  degradedMode?: boolean;
+  degradedReason?: string;
   error?: string;
 }
 
@@ -225,6 +227,8 @@ export async function queryLspCrossFileReferences(
   const server = findLspServerForLanguage(targetLang);
 
   if (!server) {
+    const hint =
+      KNOWN_LSP_SERVERS.find((k) => k.language === targetLang)?.installHint || "package manager";
     return {
       symbolName,
       language: targetLang,
@@ -232,9 +236,9 @@ export async function queryLspCrossFileReferences(
       references: [],
       definitions: [],
       isAvailable: false,
-      error: `No local language server for "${targetLang}" found in PATH. Install with: ${
-        KNOWN_LSP_SERVERS.find((k) => k.language === targetLang)?.installHint || "package manager"
-      }`,
+      degradedMode: true,
+      degradedReason: `No local language server for "${targetLang}" found in PATH. Code intelligence running in degraded mode (syntax-only fallback). Install server via: ${hint}`,
+      error: `No local language server for "${targetLang}" found in PATH. Install with: ${hint}`,
     };
   }
 
@@ -260,6 +264,8 @@ export async function queryLspCrossFileReferences(
           references: [],
           definitions: [],
           isAvailable: true,
+          degradedMode: true,
+          degradedReason: `LSP request timed out after ${timeoutMs}ms; operating in degraded mode`,
           error: `LSP request timed out after ${timeoutMs}ms`,
         });
       }
@@ -385,6 +391,7 @@ export async function queryLspCrossFileReferences(
                 references: defs,
                 definitions: defs,
                 isAvailable: true,
+                degradedMode: false,
               });
             }
             break;
@@ -403,6 +410,8 @@ export async function queryLspCrossFileReferences(
             references: [],
             definitions: [],
             isAvailable: false,
+            degradedMode: true,
+            degradedReason: `Failed to spawn ${server.command}: ${err.message}`,
             error: `Failed to spawn ${server.command}: ${err.message}`,
           });
         }

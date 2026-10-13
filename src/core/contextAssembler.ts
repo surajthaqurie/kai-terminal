@@ -4,6 +4,7 @@ import { retrieveContext } from "./retrieval";
 import { selectRelevantSkills, formatSkillContent, BUILTIN_SKILLS } from "./skills";
 import { TASK_TEMPLATES } from "./templates";
 import { estimateTokens, truncateToTokenBudget } from "./tokenCounter";
+import { detectStaleIndexEntries } from "./indexer";
 
 export function assembleContext(
   index: ProjectIndex,
@@ -33,6 +34,11 @@ export function assembleContext(
       // Older than 24 hours
       indexFreshness = "stale";
     }
+  }
+
+  const stalenessCheck = detectStaleIndexEntries(index);
+  if (stalenessCheck.isStale) {
+    indexFreshness = "stale";
   }
 
   // 3. Project rules & constraints
@@ -123,7 +129,12 @@ export function assembleContext(
   if (retrieval.staleFiles && retrieval.staleFiles.length > 0) {
     indexFreshness = "stale";
     knownLimitations.push(
-      `Detected ${retrieval.staleFiles.length} file(s) modified on disk since indexing (${retrieval.staleFiles.slice(0, 3).join(", ")}). Rebuild with 'kai graph rebuild'.`
+      `Detected ${retrieval.staleFiles.length} file(s) modified on disk (or deleted) since indexing (${retrieval.staleFiles.slice(0, 3).join(", ")}). Rebuild with 'kai graph rebuild'.`
+    );
+  } else if (stalenessCheck.isStale) {
+    const allStale = [...stalenessCheck.staleFiles, ...stalenessCheck.deletedFiles];
+    knownLimitations.push(
+      `Detected ${allStale.length} file(s) modified on disk (or deleted) since indexing (${allStale.slice(0, 3).join(", ")}). Rebuild with 'kai graph rebuild'.`
     );
   } else if (indexFreshness === "stale") {
     knownLimitations.push(

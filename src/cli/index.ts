@@ -13,7 +13,7 @@ import {
   getCacheDir,
   getKaiHomeDir,
 } from "../core/registry";
-import { indexProject } from "../core/indexer";
+import { indexProject, detectStaleIndexEntries } from "../core/indexer";
 import { assembleContext } from "../core/contextAssembler";
 import { startMcpServer } from "../core/mcp";
 import { runBenchmarks } from "../core/benchmarks";
@@ -592,6 +592,14 @@ export async function runCli(argv: string[]): Promise<number> {
       console.log(`- Files indexed: ${Object.keys(index.files).length}`);
       console.log(`- Symbols indexed: ${Object.keys(index.symbolIndex).length}`);
       console.log(`- Project rules loaded: ${index.rules.length}`);
+      if (index.changes) {
+        const { added, modified, renamed, deleted } = index.changes;
+        if (added.length || modified.length || renamed.length || deleted.length) {
+          console.log(
+            `- Incremental changes: +${added.length} added, ~${modified.length} modified, ->${renamed.length} renamed, -${deleted.length} deleted`
+          );
+        }
+      }
       console.log(`- Storage directory: ${getProjectStorageDir(meta.id)}`);
 
       saveActiveProjectState(meta.canonicalPath, meta.name, meta.id, "code");
@@ -669,6 +677,29 @@ export async function runCli(argv: string[]): Promise<number> {
       console.log(`  Status:           ${meta.status}`);
       console.log(`  Files Indexed:    ${meta.fileCount}`);
       console.log(`  Symbols Indexed:  ${meta.symbolCount}`);
+
+      const index = loadProjectIndex(meta.id);
+      if (index) {
+        const staleness = detectStaleIndexEntries(index);
+        if (staleness.isStale) {
+          console.log(
+            `  Freshness:        stale (${staleness.staleFiles.length} modified, ${staleness.deletedFiles.length} deleted on disk)`
+          );
+        } else {
+          console.log(`  Freshness:        fresh`);
+        }
+      }
+
+      const lspServers = detectInstalledLspServers();
+      const hasLsp = lspServers.some((s) => s.isAvailable);
+      console.log(
+        `  Semantic Mode:    ${
+          hasLsp
+            ? "active (LSP connected)"
+            : "degraded (syntax-only indexing; no local language server in PATH)"
+        }`
+      );
+
       if (meta.lastError) {
         console.log(`  Last Error:       ${meta.lastError}`);
       }
@@ -740,6 +771,14 @@ export async function runCli(argv: string[]): Promise<number> {
       console.log(
         `[kai] Rebuild complete! Indexed ${Object.keys(index.files).length} files and ${Object.keys(index.symbolIndex).length} symbols.`
       );
+      if (index.changes) {
+        const { added, modified, renamed, deleted } = index.changes;
+        if (added.length || modified.length || renamed.length || deleted.length) {
+          console.log(
+            `  Changes: +${added.length} added, ~${modified.length} modified, ->${renamed.length} renamed, -${deleted.length} deleted`
+          );
+        }
+      }
       return 0;
     }
 
