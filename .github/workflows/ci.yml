@@ -71,6 +71,7 @@ jobs:
         run: npx vitest run src/__tests__/audit_regression.test.ts src/__tests__/mcp_security.test.ts src/__tests__/unregister.test.ts
 
       - name: CLI Smoke Test (built bundle, all OSes)
+        shell: bash
         run: |
           npm run build:cli
           node ./bin/kai.js --version
