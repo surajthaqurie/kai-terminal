@@ -31,6 +31,7 @@ import {
 import {
   matchShortcut,
   isMacPlatform,
+  isTypingTarget,
   platformLabel,
   ShortcutActionId,
 } from "./services/shortcuts";
@@ -298,6 +299,27 @@ export function App() {
   const activePaneId = activeTab?.activePaneId || activeTab?.panes[0]?.id;
   const activePane = activeTab?.panes.find((p) => p.id === activePaneId);
   const getActiveTerminal = () => terminalRefs.current[activePaneId];
+  /** Re-fit the active pane after the OS window is restored/refocused. */
+  const refitActiveTerminal = useCallback(() => {
+    const liveTabs = tabsRef.current;
+    const tabId = activeTabIdRef.current;
+    const tab = liveTabs.find((t) => t.id === tabId) || liveTabs[0];
+    const paneId = tab?.activePaneId || tab?.panes[0]?.id;
+    const view = paneId ? terminalRefs.current[paneId] : undefined;
+    try {
+      view?.refit();
+    } catch {
+      // Ignore refit errors during layout transitions.
+    }
+    // Second pass after window animations settle (intermediate sizes).
+    setTimeout(() => {
+      try {
+        view?.refit();
+      } catch {
+        // Ignore refit errors during layout transitions.
+      }
+    }, 150);
+  }, []);
   /** Effective project dir: active pane -> tab -> global toolbar input. */
   const effectiveProjectDir = resolveEffectiveProjectDir(activePane?.cwd, activeTab?.cwd, cwd);
 
@@ -928,6 +950,57 @@ export function App() {
     setUpdateBannerVisible(false);
   }, []);
 
+  // Blank-on-reopen fix (all OSes): minimizing then restoring the OS window
+  // (or hiding/showing the WebView) can leave the xterm viewport laid out
+  // at 0x0 so the terminal paints blank until the next tab switch. Re-fit
+  // the active pane on every visibility / focus / restore signal so the
+  // window always repaints with real cols/rows.
+  useEffect(() => {
+    const onVisibility = () => {
+      if (!document.hidden) refitActiveTerminal();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("focus", refitActiveTerminal);
+    let cancelled = false;
+    const unlistens: Array<() => void> = [];
+    void import("@tauri-apps/api/window")
+      .then(({ getCurrentWindow }) => {
+        if (cancelled) return;
+        try {
+          const win = getCurrentWindow();
+          void win
+            .onResized(() => {
+              refitActiveTerminal();
+            })
+            .then((u) => unlistens.push(u))
+            .catch(() => {});
+          void win
+            .onFocusChanged((e) => {
+              if (e.payload) refitActiveTerminal();
+            })
+            .then((u) => unlistens.push(u))
+            .catch(() => {});
+        } catch {
+          // Browser/mock mode: document + window listeners above suffice.
+        }
+      })
+      .catch(() => {
+        // Browser/mock mode: document + window listeners above suffice.
+      });
+    return () => {
+      cancelled = true;
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("focus", refitActiveTerminal);
+      for (const u of unlistens) {
+        try {
+          u();
+        } catch {
+          // Already removed; safe to ignore.
+        }
+      }
+    };
+  }, [refitActiveTerminal]);
+
   const handleToggleSearch = useCallback(() => {
     getActiveTerminal()?.toggleSearch();
   }, [getActiveTerminal]);
@@ -974,6 +1047,18 @@ export function App() {
         const dir = effectiveProjectDir || cwd.trim();
         if (dir) setGitChangesModal({ dir });
         return;
+      }
+      // Universal New-Tab accelerator on every OS: Ctrl+T (Windows/Linux)
+      // and Cmd+T (macOS), with or without Shift. A bare Ctrl/Cmd+T never
+      // produces shell text, so it is safe to hijack — except while typing
+      // in an input (rename box, shortcut recorder, search field), where
+      // it must not fire and steal the keystroke.
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.code === "KeyT") {
+        if (!isTypingTarget(e.target)) {
+          e.preventDefault();
+          handleNewTab();
+          return;
+        }
       }
       const action: ShortcutActionId | null = matchShortcut(e, userSettings.keybindings);
       if (!action) return;
@@ -1317,6 +1402,7 @@ export function App() {
           shells={shells}
           selectedShellId={selectedShellId}
           onSelectShell={setSelectedShellId}
+          onNewTab={() => handleNewTab()}
           onSplitHorizontal={() => handleSplitPane("horizontal")}
           onSplitVertical={() => handleSplitPane("vertical")}
           canClosePane={(activeTab?.panes.length ?? 0) > 1}
@@ -1683,6 +1769,7 @@ export function App() {
         onCheckUpdates={() => handleCheckUpdates(true)}
         onViewUpdate={handleViewUpdate}
         onGitAction={(action) => void handleGitActionRun(action)}
+        onNewTab={() => handleNewTab()}
         mode={isCodeModeForDir(effectiveProjectDir) ? "code" : "terminal"}
       />
     </div>

@@ -2406,6 +2406,36 @@ select.modal-input {
   animation: spin 1s linear infinite;
 }
 
+/* New Tab buttons: one beside the shell picker (top toolbar) and one in
+   the bottom status bar. Same action on every OS (Windows / Linux /
+   macOS), alongside the tab-bar "+" and Ctrl+T / Cmd+T. */
+.toolbar-newtab-btn {
+  margin-left: 4px;
+  white-space: nowrap;
+}
+
+.status-newtab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-xs);
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  padding: 2px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all var(--transition-fast);
+}
+
+.status-newtab-btn:hover {
+  background-color: var(--bg-surface-elevated);
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+}
+
 @keyframes spin {
   from {
     transform: rotate(0deg);

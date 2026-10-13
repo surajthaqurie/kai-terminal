@@ -12,6 +12,7 @@ import {
   Terminal,
   RefreshCw,
   GitCompare,
+  Plus,
 } from "lucide-react";
 
 interface StatusBarProps {
@@ -26,6 +27,7 @@ interface StatusBarProps {
   onCheckUpdates?: () => void;
   onViewUpdate: () => void;
   onGitAction: (action: "fetch" | "pull" | "status") => void;
+  onNewTab?: () => void;
   mode?: string;
   /** @deprecated Kept for backwards compat. Code Mode is now entered/cleared
    * via the CLI (`kai code <path>` / `kai stop code`), so the badge is
@@ -49,6 +51,7 @@ export const StatusBar: FC<StatusBarProps> = ({
   onCheckUpdates,
   onViewUpdate,
   onGitAction,
+  onNewTab,
   mode = "terminal",
 }) => {
   const [gitMenuOpen, setGitMenuOpen] = useState(false);
@@ -206,6 +209,18 @@ export const StatusBar: FC<StatusBarProps> = ({
       </div>
 
       <div className="status-right">
+        {onNewTab && (
+          <button
+            type="button"
+            className="status-newtab-btn"
+            onClick={onNewTab}
+            title="New Tab (Ctrl+T / Cmd+T — works on Windows, Linux and macOS)"
+            aria-label="New terminal tab"
+          >
+            <Plus size={12} aria-hidden="true" />
+            <span>New Tab</span>
+          </button>
+        )}
         {updateAvailable && latestVersion ? (
           <button
             type="button"

@@ -153,6 +153,30 @@ pub struct PtySessionHandle {
     pub cols: u16,
     pub rows: u16,
     pub status: SessionStatus,
+    /// Last time the live OS cwd was probed for this session. Probes are
+    /// syscalls (Linux) or child-process spawns (macOS `lsof`), so every
+    /// accessor below throttles them — unthrottled polling from the
+    /// frontend (focus + interval + per-command checks) otherwise spawns
+    /// processes fast enough to stall the window.
+    pub last_cwd_probe: std::time::Instant,
+}
+
+/// Minimum gap between live-OS cwd probes for one session.
+const CWD_PROBE_MIN_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Refreshes `handle.cwd` from the live OS at most once per
+/// `CWD_PROBE_MIN_INTERVAL`. Returns the (possibly cached) cwd.
+fn probe_session_cwd(handle: &mut PtySessionHandle) -> String {
+    if let Some(pid) = handle.pid {
+        let now = std::time::Instant::now();
+        if now.duration_since(handle.last_cwd_probe) >= CWD_PROBE_MIN_INTERVAL {
+            handle.last_cwd_probe = now;
+            if let Some(curr) = resolve_process_cwd(pid) {
+                handle.cwd = curr;
+            }
+        }
+    }
+    handle.cwd.clone()
 }
 
 /// Thread-safe manager for active PTY sessions.
@@ -302,6 +326,7 @@ impl PtyManager {
             cols,
             rows,
             status: SessionStatus::Connected,
+            last_cwd_probe: std::time::Instant::now(),
         };
 
         // Store active session in thread-safe map
@@ -319,6 +344,13 @@ impl PtyManager {
         let pid_reader = pid;
         let mut last_emitted_cwd = session_info.cwd.clone();
         let sessions_map_ref = self.sessions.clone();
+        // Throttle live-cwd probes: each check is a syscall (Linux) or a
+        // full `lsof` child-process spawn (macOS). Running it per 4 KB
+        // output chunk turned high-volume output into hundreds of process
+        // spawns per second — the "window stuck / system slow" hang.
+        // At most one probe per cwd poll interval.
+        let mut last_cwd_check = std::time::Instant::now();
+        const CWD_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
 
         let reader_thread = std::thread::spawn(move || {
             let mut read_buf = [0u8; READ_BUFFER_CHUNK_BYTES];
@@ -339,20 +371,26 @@ impl PtyManager {
                             });
                         }
 
-                        // Check if child working directory changed
+                        // Check if child working directory changed (throttled —
+                        // see CWD_POLL_INTERVAL above; unthrottled probes
+                        // spawned an `lsof` per output chunk on macOS).
                         if let Some(p) = pid_reader {
-                            if let Some(curr_cwd) = resolve_process_cwd(p) {
-                                if curr_cwd != last_emitted_cwd {
-                                    last_emitted_cwd = curr_cwd.clone();
-                                    if let Ok(mut map) = sessions_map_ref.lock() {
-                                        if let Some(handle) = map.get_mut(&id_clone) {
-                                            handle.cwd = curr_cwd.clone();
+                            let now = std::time::Instant::now();
+                            if now.duration_since(last_cwd_check) >= CWD_POLL_INTERVAL {
+                                last_cwd_check = now;
+                                if let Some(curr_cwd) = resolve_process_cwd(p) {
+                                    if curr_cwd != last_emitted_cwd {
+                                        last_emitted_cwd = curr_cwd.clone();
+                                        if let Ok(mut map) = sessions_map_ref.lock() {
+                                            if let Some(handle) = map.get_mut(&id_clone) {
+                                                handle.cwd = curr_cwd.clone();
+                                            }
                                         }
+                                        emitter_reader.emit_cwd(PtyCwdPayload {
+                                            id: id_clone.clone(),
+                                            cwd: curr_cwd,
+                                        });
                                     }
-                                    emitter_reader.emit_cwd(PtyCwdPayload {
-                                        id: id_clone.clone(),
-                                        cwd: curr_cwd,
-                                    });
                                 }
                             }
                         }
@@ -563,29 +601,19 @@ impl PtyManager {
     pub fn get_session_cwd(&self, id: &str) -> Option<String> {
         let mut sessions = self.sessions.lock().ok()?;
         let session = sessions.get_mut(id)?;
-        if let Some(pid) = session.pid {
-            if let Some(curr) = resolve_process_cwd(pid) {
-                session.cwd = curr.clone();
-                return Some(curr);
-            }
-        }
-        Some(session.cwd.clone())
+        Some(probe_session_cwd(session))
     }
 
     /// Returns session metadata for a given ID.
     pub fn get_session_info(&self, id: &str) -> Option<PtySessionInfo> {
         let mut sessions = self.sessions.lock().ok()?;
         let session = sessions.get_mut(id)?;
-        if let Some(pid) = session.pid {
-            if let Some(curr) = resolve_process_cwd(pid) {
-                session.cwd = curr;
-            }
-        }
+        let cwd = probe_session_cwd(session);
         Some(PtySessionInfo {
             id: session.id.clone(),
             pid: session.pid,
             shell_path: session.shell_path.clone(),
-            cwd: session.cwd.clone(),
+            cwd,
             cols: session.cols,
             rows: session.rows,
             status: session.status.clone(),
@@ -598,16 +626,12 @@ impl PtyManager {
             sessions
                 .values_mut()
                 .map(|s| {
-                    if let Some(pid) = s.pid {
-                        if let Some(curr) = resolve_process_cwd(pid) {
-                            s.cwd = curr;
-                        }
-                    }
+                    let cwd = probe_session_cwd(s);
                     PtySessionInfo {
                         id: s.id.clone(),
                         pid: s.pid,
                         shell_path: s.shell_path.clone(),
-                        cwd: s.cwd.clone(),
+                        cwd,
                         cols: s.cols,
                         rows: s.rows,
                         status: s.status.clone(),

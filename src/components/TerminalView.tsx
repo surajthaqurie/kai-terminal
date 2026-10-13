@@ -16,6 +16,14 @@ export interface TerminalViewRef {
   pasteText: (text: string) => void;
   focus: () => void;
   toggleSearch: () => void;
+  /**
+   * Re-fit the xterm viewport to its container and push the real cols/rows
+   * to the backend PTY. Called when the OS window is restored / refocused /
+   * resized: a terminal that was laid out while hidden (or while the
+   * window was minimized) otherwise keeps a 0-size viewport and paints
+   * blank until the next tab switch — the "reopen shows blank" bug.
+   */
+  refit: () => void;
 }
 
 interface TerminalViewProps {
@@ -134,6 +142,20 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
     useImperativeHandle(ref, () => ({
       clear: () => {
         xtermRef.current?.clear();
+      },
+      refit: () => {
+        const term = xtermRef.current;
+        const fitAddon = fitAddonRef.current;
+        if (!term || !fitAddon) return;
+        try {
+          fitAddon.fit();
+        } catch {
+          return;
+        }
+        const backendId = backendPtyIdRef.current;
+        if (term.cols && term.rows && backendId) {
+          ptyService.resizePty(backendId, term.cols, term.rows).catch(() => {});
+        }
       },
       copySelection: async () => {
         const selection = xtermRef.current?.getSelection();
