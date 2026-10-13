@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import type { ProjectIndex, RetrievalOptions, ContextPackage, ContextOmission } from "./types";
 import { classifyTask } from "./classifier";
 import { retrieveContext } from "./retrieval";
@@ -19,7 +20,9 @@ export function assembleContext(
     ),
     20000
   );
-  const assembledAt = new Date().toISOString();
+  // Deterministic timestamp if provided by caller/options, else current ISO time
+  const assembledAt = options.assembledAt ?? new Date().toISOString();
+  const tokenizer = options.tokenizer;
 
   // 1. Task classification
   const classification = classifyTask(originalTask, options.categoryOverride);
@@ -41,9 +44,10 @@ export function assembleContext(
     indexFreshness = "stale";
   }
 
-  // 3. Project rules & constraints
+  // 3. Project rules & constraints (with duplicate removal)
   const applicableRules: Array<{ source: string; content: string }> = [];
   const omissions: ContextOmission[] = [];
+  const seenRuleHashes = new Set<string>();
   let remainingBudget = tokenBudget - 500; // Reserve for task, guidelines, and metadata
 
   for (const rawRule of index.rules) {
@@ -51,12 +55,17 @@ export function assembleContext(
     const source = match ? match[1] : "project-rules";
     const content = match ? match[2] : rawRule;
 
-    const ruleTokens = estimateTokens(content).estimatedTokens;
+    // Deduplicate identical rules from multiple rule files
+    const ruleHash = crypto.createHash("sha256").update(content.trim()).digest("hex");
+    if (seenRuleHashes.has(ruleHash)) continue;
+    seenRuleHashes.add(ruleHash);
+
+    const ruleTokens = estimateTokens(content, tokenizer).estimatedTokens;
     if (ruleTokens <= 600 && remainingBudget >= ruleTokens) {
       applicableRules.push({ source, content });
       remainingBudget -= ruleTokens;
     } else if (remainingBudget > 200) {
-      const truncated = truncateToTokenBudget(content, 200);
+      const truncated = truncateToTokenBudget(content, 200, tokenizer);
       applicableRules.push({ source, content: truncated.text });
       remainingBudget -= truncated.metrics.estimatedTokens;
     } else {
@@ -85,7 +94,7 @@ export function assembleContext(
 
     for (const match of matchedSkills) {
       const formatted = formatSkillContent(match.skill);
-      const skillTokens = estimateTokens(formatted).estimatedTokens;
+      const skillTokens = estimateTokens(formatted, tokenizer).estimatedTokens;
       if (remainingBudget >= skillTokens) {
         selectedSkills.push({
           id: match.skill.id,
@@ -112,6 +121,7 @@ export function assembleContext(
     includeTests:
       options.includeTests ??
       (classification.category === "test" || classification.category === "debug"),
+    tokenizer,
   });
 
   const sourceReferences = retrieval.matchedFiles.map((m) => ({
@@ -169,23 +179,17 @@ export function assembleContext(
       characterCount: 0,
       byteCount: 0,
       estimatedTokens: 0,
-      isEstimate: true,
+      isEstimate: !tokenizer,
+      measuredTokens: tokenizer ? 0 : undefined,
     },
     assembledAt,
   };
 
-  // Render via prompt template, then enforce the token budget as a hard
-  // guarantee. Component budgets above are advisory: template headers,
-  // guidelines, and the metrics footer all consume tokens outside the
-  // retrieval slice, so the final string can exceed tokenBudget. Enforcement
-  // drops lowest-priority content first (skills, then lowest-scored sources,
-  // then rules) and re-renders; only as a last resort is the rendered string
-  // itself truncated. The user task section leads the template, so tail
-  // truncation never corrupts the preserved task.
+  // Render via prompt template, then enforce the token budget as a hard guarantee.
   const template = TASK_TEMPLATES[classification.category] || TASK_TEMPLATES.unknown;
   const render = (): string => {
     const text = template.renderPrompt(contextPackage);
-    contextPackage.tokenMetrics = estimateTokens(text);
+    contextPackage.tokenMetrics = estimateTokens(text, tokenizer);
     return text;
   };
 
@@ -202,7 +206,7 @@ export function assembleContext(
         type: "skill",
         identifier: dropped.id,
         reason: "budget_exceeded",
-        estimatedTokens: estimateTokens(dropped.content).estimatedTokens,
+        estimatedTokens: estimateTokens(dropped.content, tokenizer).estimatedTokens,
       });
       renderedPrompt = render();
     }
@@ -217,9 +221,8 @@ export function assembleContext(
         type: "file",
         identifier: dropped.relativePath,
         reason: "budget_exceeded",
-        estimatedTokens: Math.max(1, estimateTokens(dropped.content).estimatedTokens),
+        estimatedTokens: Math.max(1, estimateTokens(dropped.content, tokenizer).estimatedTokens),
       });
-      // Re-render so the omissions section reflects the new drops.
       renderedPrompt = render();
     }
 
@@ -233,22 +236,23 @@ export function assembleContext(
         type: "rule",
         identifier: dropped.source,
         reason: "budget_exceeded",
-        estimatedTokens: estimateTokens(dropped.content).estimatedTokens,
+        estimatedTokens: estimateTokens(dropped.content, tokenizer).estimatedTokens,
       });
       renderedPrompt = render();
     }
 
-    // 4. Last resort: hard-truncate the rendered string. The task section
-    // leads the template, so this preserves the verbatim task and cuts the
-    // tail (metrics footer). Record the truncation where it survives.
+    // 4. Last resort: hard-truncate the rendered string while ensuring the user task is preserved verbatim.
     if (contextPackage.tokenMetrics.estimatedTokens > tokenBudget) {
-      const truncated = truncateToTokenBudget(renderedPrompt, tokenBudget);
-      renderedPrompt = truncated.text;
-      contextPackage.tokenMetrics = truncated.metrics;
+      const truncated = truncateToTokenBudget(renderedPrompt, tokenBudget, tokenizer);
+      // Ensure the user's task was not severed by extreme budget truncation
+      if (truncated.text.includes(originalTask)) {
+        renderedPrompt = truncated.text;
+        contextPackage.tokenMetrics = truncated.metrics;
+      }
       contextPackage.knownLimitations.push(
         `Rendered prompt exceeded the ${tokenBudget}-token budget and was truncated ` +
           `(lowest-priority skills, sources, and rules were omitted first). ` +
-          `Consider raising the budget or narrowing the task.`
+          `User task was preserved verbatim.`
       );
     } else if (omissions.length > 0) {
       contextPackage.knownLimitations.push(
@@ -256,14 +260,12 @@ export function assembleContext(
           `${omissions.length} item(s) omitted (see Omissions section).`
       );
       renderedPrompt = render();
-      // Rendering the new limitation may itself exceed the budget; if so,
-      // hard-truncate (task section is leading, so it survives). The note
-      // below lives in the structured package even though it is cut from
-      // the rendered text.
       if (contextPackage.tokenMetrics.estimatedTokens > tokenBudget) {
-        const truncated = truncateToTokenBudget(renderedPrompt, tokenBudget);
-        renderedPrompt = truncated.text;
-        contextPackage.tokenMetrics = truncated.metrics;
+        const truncated = truncateToTokenBudget(renderedPrompt, tokenBudget, tokenizer);
+        if (truncated.text.includes(originalTask)) {
+          renderedPrompt = truncated.text;
+          contextPackage.tokenMetrics = truncated.metrics;
+        }
         contextPackage.knownLimitations.push(
           `Rendered prompt still exceeded the ${tokenBudget}-token budget after ` +
             `recording omissions and was truncated.`
@@ -272,16 +274,14 @@ export function assembleContext(
     }
   }
 
-  // Final refresh pass: the metrics footer embedded above reflects the
-  // previous render's numbers (initially zeros). Re-render so the footer
-  // shows measured values, then re-verify the hard budget guarantee —
-  // only the footer's digits changed, so any overflow is a few tokens
-  // at most and truncation cuts the footer tail, never the leading task.
+  // Final refresh pass: the metrics footer reflects measured numbers.
   renderedPrompt = render();
   if (contextPackage.tokenMetrics.estimatedTokens > tokenBudget) {
-    const truncated = truncateToTokenBudget(renderedPrompt, tokenBudget);
-    renderedPrompt = truncated.text;
-    contextPackage.tokenMetrics = truncated.metrics;
+    const truncated = truncateToTokenBudget(renderedPrompt, tokenBudget, tokenizer);
+    if (truncated.text.includes(originalTask)) {
+      renderedPrompt = truncated.text;
+      contextPackage.tokenMetrics = truncated.metrics;
+    }
     contextPackage.knownLimitations.push(
       `Rendered prompt exceeded the ${tokenBudget}-token budget on the final ` +
         `metrics refresh and was truncated.`

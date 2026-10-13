@@ -50,6 +50,38 @@ export const BUILTIN_SKILLS: SkillDefinition[] = [
     trustClassification: "built-in",
     maxTokens: 350,
   },
+  {
+    id: "rust-safety-idioms",
+    version: "1.0.0",
+    name: "Rust Safety Idioms",
+    description: "Idiomatic error handling, resource guards, and lifetime safety in Rust.",
+    relevantCategories: ["implement", "review", "refactor", "debug"],
+    languages: ["rust"],
+    keywords: ["rust", "cargo", "safety", "unwrap", "result", "mutex", "borrow"],
+    content: `[Skill: Rust Safety Idioms]
+- Avoid unwrap()/expect() in production paths; prefer Result and ? operator.
+- Guard against poisoned locks and handle Mutex poison gracefully.
+- Validate IO bounds and paths before syscalls or child process spawning.
+- Keep unsafe blocks minimized, thoroughly audited, and accompanied by safety comments.`,
+    trustClassification: "built-in",
+    maxTokens: 300,
+  },
+  {
+    id: "clean-refactoring-invariants",
+    version: "1.0.0",
+    name: "Clean Refactoring Invariants",
+    description: "Preserving behavioral invariants, public contracts, and incremental migration.",
+    relevantCategories: ["refactor", "architecture", "review"],
+    languages: ["typescript", "javascript", "rust", "python"],
+    keywords: ["refactor", "cleanup", "architecture", "invariant", "contract", "modularize"],
+    content: `[Skill: Clean Refactoring Invariants]
+- Verify existing tests pass before and after each refactoring transformation.
+- Keep public APIs and serialization formats backward compatible.
+- Separate architectural reorganization from behavioral alterations.
+- Extract interfaces at natural domain boundaries without speculative abstractions.`,
+    trustClassification: "built-in",
+    maxTokens: 300,
+  },
 ];
 
 export interface SkillMatchResult {
@@ -69,8 +101,11 @@ export function selectRelevantSkills(
   maxSkillsCount: number = 2
 ): SkillMatchResult[] {
   const matches: SkillMatchResult[] = [];
+  const seenSkillIds = new Set<string>();
 
   for (const skill of skills) {
+    if (seenSkillIds.has(skill.id)) continue;
+
     let score = 0;
     const reasons: string[] = [];
 
@@ -100,6 +135,7 @@ export function selectRelevantSkills(
     }
 
     if (score >= 0.5) {
+      seenSkillIds.add(skill.id);
       matches.push({
         skill,
         reason: reasons.join("; "),
@@ -108,8 +144,8 @@ export function selectRelevantSkills(
     }
   }
 
-  // Sort by highest relevance score
-  matches.sort((a, b) => b.score - a.score);
+  // Deterministic sort: highest relevance score, then lexicographical ID tie-breaker
+  matches.sort((a, b) => b.score - a.score || a.skill.id.localeCompare(b.skill.id));
 
   return matches.slice(0, maxSkillsCount);
 }
@@ -118,7 +154,6 @@ export function selectRelevantSkills(
  * Format and safely bound skill content
  */
 export function formatSkillContent(skill: SkillDefinition): string {
-  // Enforce size limits and truncate if needed
   const { text } = truncateToTokenBudget(skill.content, skill.maxTokens);
   return text;
 }

@@ -195,6 +195,9 @@ function renderStandardTemplate(pkg: ContextPackage, instructions: string[]): st
   parts.push("# Kai Project Context & Task Brief");
   parts.push(`Generated: ${pkg.assembledAt} | Template Version: ${TEMPLATE_VERSION}`);
   parts.push("");
+  parts.push(
+    "> [!NOTE]\n> Deterministic Index Notice: Context was assembled via local static AST parsing, lexical heuristics, and deterministic ranking. No cloud models, telemetry, or remote services were queried, and complete semantic proofs are not guaranteed.\n"
+  );
 
   // 1. Preserved original task (NEVER truncated or rewritten)
   parts.push("## User Task");
