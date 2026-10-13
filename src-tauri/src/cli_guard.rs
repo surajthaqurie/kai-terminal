@@ -6,7 +6,7 @@
 //! * Linux   — desktop: `/usr/bin/kai`, CLI shim: `~/.local/bin/kai`
 //! * macOS   — desktop: `Kai Terminal.app/Contents/MacOS/kai`, CLI: `~/.local/bin/kai`
 //! * Windows — desktop: `%LOCALAPPDATA%/KaiTerminal/kai.exe`,
-//!             CLI: `%USERPROFILE%/.kai/bin/kai.cmd`
+//!   CLI: `%USERPROFILE%/.kai/bin/kai.cmd`
 //!
 //! Whichever entry comes first on PATH wins. When the desktop binary wins
 //! (fresh `.deb`/NSIS/dmg install before `setup:cli`, or a stale symlink
@@ -99,9 +99,9 @@ pub fn handle_desktop_cli_collision() -> bool {
     let invoked = argv.join(" ");
     // `--version`/`version` go to stdout (script-friendly); everything
     // else goes to stderr with a non-zero exit so scripts can detect it.
-    if rest[0].to_ascii_lowercase() == "--version"
-        || rest[0].to_ascii_lowercase() == "-v"
-        || rest[0].to_ascii_lowercase() == "version"
+    if rest[0].eq_ignore_ascii_case("--version")
+        || rest[0].eq_ignore_ascii_case("-v")
+        || rest[0].eq_ignore_ascii_case("version")
     {
         println!(
             "kai-desktop {}",

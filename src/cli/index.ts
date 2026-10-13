@@ -25,6 +25,8 @@ import {
   autoSetupDetectedAgents,
   buildAgentSetup,
   detectInstalledAgentsSync,
+  findDynamicAgentBinary,
+  buildDynamicAgentSetup,
   listAgentIds,
 } from "../core/agents";
 import packageJson from "../../package.json";
@@ -62,51 +64,6 @@ export function saveActiveProjectState(
   } catch {
     // ignore
   }
-
-  // Attempt to sync SQLite localStorage for WebKitGTK / WKWebView / WebView2
-  // so the desktop app picks up the new active project without a restart.
-  // The DB path is platform-specific: Linux uses XDG data home, macOS uses
-  // Application Support, and Windows uses %APPDATA%.
-  try {
-    const dbPath = getTauriLocalStoragePath();
-    if (dbPath && fs.existsSync(dbPath)) {
-      const toHex = (str: string) => Buffer.from(str, "utf16le").toString("hex");
-      const sql = `INSERT OR REPLACE INTO ItemTable (key, value) VALUES ('kai_active_project', X'${toHex(projectPath)}'); INSERT OR REPLACE INTO ItemTable (key, value) VALUES ('kai_active_mode', X'${toHex(mode)}'); INSERT OR REPLACE INTO ItemTable (key, value) VALUES ('kai_recent_projects', X'${toHex(JSON.stringify([projectPath]))}');`;
-      execSync(`sqlite3 "${dbPath}" "${sql}"`, { stdio: "ignore" });
-    }
-  } catch {
-    // ignore if sqlite3 is not available
-  }
-}
-
-/**
- * Resolve the platform-specific path to the Tauri app's SQLite localStorage
- * database. Returns null when the platform is unsupported or the path cannot
- * be determined.
- *
- * Tauri stores its WebView localStorage in a platform-specific directory:
- *   Linux   : $XDG_DATA_HOME/com.kai.terminal/… or ~/.local/share/…
- *   macOS   : ~/Library/Application Support/com.kai.terminal/…
- *   Windows : %APPDATA%\com.kai.terminal\…
- */
-function getTauriLocalStoragePath(): string | null {
-  const APP_ID = "com.kai.terminal";
-  const DB_REL = `localstorage/tauri_localhost_0.localstorage`;
-
-  if (process.platform === "win32") {
-    const appData = process.env.APPDATA;
-    if (!appData) return null;
-    return path.join(appData, APP_ID, DB_REL);
-  }
-
-  if (process.platform === "darwin") {
-    return path.join(os.homedir(), "Library", "Application Support", APP_ID, DB_REL);
-  }
-
-  // Linux / other Unix — prefer XDG_DATA_HOME
-  const xdgData = process.env.XDG_DATA_HOME;
-  if (xdgData) return path.join(xdgData, APP_ID, DB_REL);
-  return path.join(os.homedir(), ".local", "share", APP_ID, DB_REL);
 }
 
 /**
@@ -123,17 +80,6 @@ export function clearActiveProjectState(): void {
     }
   } catch {
     // ignore
-  }
-
-  try {
-    const dbPath = getTauriLocalStoragePath();
-    if (dbPath && fs.existsSync(dbPath)) {
-      const toHex = (str: string) => Buffer.from(str, "utf16le").toString("hex");
-      const sql = `DELETE FROM ItemTable WHERE key = 'kai_active_project'; INSERT OR REPLACE INTO ItemTable (key, value) VALUES ('kai_active_mode', X'${toHex("terminal")}');`;
-      execSync(`sqlite3 "${dbPath}" "${sql}"`, { stdio: "ignore" });
-    }
-  } catch {
-    // ignore if sqlite3 is not available
   }
 }
 
@@ -1137,8 +1083,6 @@ export async function runCli(argv: string[]): Promise<number> {
         // Unknown agent — try to resolve it dynamically from PATH before giving up.
         // If a binary with that name exists, synthesise a custom mcpServers entry on
         // the fly and write it to ~/.config/<agent>/mcp.json (XDG-style).
-        const { findDynamicAgentBinary, buildDynamicAgentSetup } =
-          await import("../core/agents.js");
         const dynamicBin = findDynamicAgentBinary(rawTarget);
         if (dynamicBin) {
           console.log(`[kai] Auto-detected "${rawTarget}" at ${dynamicBin}.`);

@@ -362,21 +362,13 @@ static BUILD_CACHE: OnceLock<Option<u32>> = OnceLock::new();
 pub fn check_host_pty_support() -> Result<(), TerminalError> {
     #[cfg(target_os = "windows")]
     {
-        // Fast path: cache already warmed (startup thread or prior spawn).
-        if let Some(cached) = BUILD_CACHE.get() {
-            return match *cached {
-                Some(b) => check_windows_build_supported(b),
-                None => Err(TerminalError::PtyCreationFailed(
-                    "Unable to determine Windows version: Kai requires Windows 10 version 1809 (build 17763) or later / Windows 11 with ConPTY and the WebView2 runtime. Update Windows and reinstall if this persists.".to_string(),
-                )),
-            };
+        let cached = BUILD_CACHE.get_or_init(current_windows_build);
+        match *cached {
+            Some(b) => check_windows_build_supported(b),
+            None => Err(TerminalError::PtyCreationFailed(
+                "Unable to determine Windows version: Kai requires Windows 10 version 1809 (build 17763) or later / Windows 11 with ConPTY and the WebView2 runtime. Update Windows and reinstall if this persists.".to_string(),
+            )),
         }
-        // First spawn before the background warm finishes: do NOT block the
-        // PTY creation on up-to-10 s of `reg`/`cmd` probes (the "stuck on
-        // loading" report). Kick the background probe and let ConPTY itself
-        // surface any real failure; the next spawn uses the cached result.
-        warm_host_pty_cache();
-        Ok(())
     }
     #[cfg(not(target_os = "windows"))]
     {
@@ -690,8 +682,6 @@ fn editor_candidates() -> Vec<(&'static str, &'static str, Vec<&'static str>)> {
         ("vscodium", "VSCodium", vec!["codium", "vscodium"]),
         ("sublime", "Sublime Text", vec!["subl", "sublime_text"]),
         ("zed", "Zed", vec!["zed"]),
-        ("neovim", "Neovim", vec!["nvim"]),
-        ("vim", "Vim", vec!["vim", "vi"]),
         ("atom", "Atom", vec!["atom"]),
         ("idea", "IntelliJ IDEA", vec!["idea"]),
         ("fleet", "JetBrains Fleet", vec!["fleet"]),
@@ -900,9 +890,6 @@ pub fn open_in_editor(requested_editor: Option<&str>, cwd: &str) -> Result<Strin
         "subl",
         "sublime_text",
         "zed",
-        "nvim",
-        "vim",
-        "vi",
         "atom",
         "idea",
         "fleet",

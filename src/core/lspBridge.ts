@@ -182,7 +182,18 @@ export function decodeLspMessage(raw: string): Record<string, unknown> | null {
   const sepIndex = raw.indexOf(separator);
   if (sepIndex === -1) return null;
 
-  const body = raw.slice(sepIndex + separator.length);
+  const header = raw.slice(0, sepIndex);
+  const match = header.match(/Content-Length:\s*(\d+)/i);
+  if (!match) return null;
+
+  const length = parseInt(match[1], 10);
+  const bodyStart = sepIndex + separator.length;
+  const remaining = raw.slice(bodyStart);
+  if (Buffer.byteLength(remaining, "utf-8") < length) {
+    return null;
+  }
+
+  const body = Buffer.from(remaining, "utf-8").subarray(0, length).toString("utf-8");
   try {
     return JSON.parse(body);
   } catch {
@@ -260,46 +271,123 @@ export async function queryLspCrossFileReferences(
         stdio: ["pipe", "pipe", "ignore"],
       });
 
+      let step: "init" | "ready" | "done" = "init";
       let responseBuffer = "";
 
       proc.stdout?.on("data", (chunk: Buffer) => {
         responseBuffer += chunk.toString("utf-8");
-        const parsed = decodeLspMessage(responseBuffer);
-        if (parsed && (parsed.id === 2 || parsed.id === 1)) {
-          // Initialize response or definition response received
-          clearTimeout(timer);
-          if (!hasResolved) {
-            hasResolved = true;
-            try {
-              proc?.kill();
-            } catch {
-              // ignore
-            }
 
-            const rawResult = parsed.result;
-            const defs: LspReferenceLocation[] = [];
+        while (true) {
+          const separator = "\r\n\r\n";
+          const sepIndex = responseBuffer.indexOf(separator);
+          if (sepIndex === -1) break;
 
-            if (Array.isArray(rawResult)) {
-              for (const loc of rawResult) {
-                if (loc && loc.uri && loc.range) {
-                  const filePath = loc.uri.replace("file://", "");
-                  defs.push({
-                    uri: loc.uri,
-                    filePath: path.relative(canonicalRoot, filePath).replace(/\\/g, "/"),
-                    range: loc.range,
-                  });
-                }
-              }
-            }
+          const header = responseBuffer.slice(0, sepIndex);
+          const match = header.match(/Content-Length:\s*(\d+)/i);
+          if (!match) {
+            responseBuffer = responseBuffer.slice(sepIndex + separator.length);
+            continue;
+          }
 
-            resolve({
-              symbolName,
-              language: targetLang,
-              serverUsed: server.command,
-              references: defs,
-              definitions: defs,
-              isAvailable: true,
+          const length = parseInt(match[1], 10);
+          const bodyStart = sepIndex + separator.length;
+          const remaining = responseBuffer.slice(bodyStart);
+          if (Buffer.byteLength(remaining, "utf-8") < length) {
+            break; // Wait for full message body
+          }
+
+          const body = Buffer.from(remaining, "utf-8").subarray(0, length).toString("utf-8");
+          const consumedLength =
+            Buffer.byteLength(responseBuffer.slice(0, bodyStart), "utf-8") + length;
+          const fullBuf = Buffer.from(responseBuffer, "utf-8");
+          responseBuffer = fullBuf.subarray(consumedLength).toString("utf-8");
+
+          let parsed: Record<string, unknown> | null = null;
+          try {
+            parsed = JSON.parse(body);
+          } catch {
+            continue;
+          }
+
+          if (!parsed) continue;
+
+          if (step === "init" && parsed.id === 1) {
+            step = "ready";
+            // 1. Send initialized notification
+            const initNotification = encodeLspMessage({
+              jsonrpc: "2.0",
+              method: "initialized",
+              params: {},
             });
+            proc?.stdin?.write(initNotification);
+
+            // 2. Send definition request
+            const defReq = encodeLspMessage({
+              jsonrpc: "2.0",
+              id: 2,
+              method: "textDocument/definition",
+              params: {
+                textDocument: { uri: fileUri },
+                position: { line: Math.max(0, line - 1), character },
+              },
+            });
+            proc?.stdin?.write(defReq);
+          } else if (parsed.id === 2) {
+            step = "done";
+            clearTimeout(timer);
+            if (!hasResolved) {
+              hasResolved = true;
+              try {
+                proc?.kill();
+              } catch {
+                // ignore
+              }
+
+              const rawResult = parsed.result;
+              const defs: LspReferenceLocation[] = [];
+
+              if (Array.isArray(rawResult)) {
+                for (const loc of rawResult) {
+                  if (loc && loc.uri && loc.range) {
+                    const filePath = loc.uri.replace("file://", "");
+                    defs.push({
+                      uri: loc.uri,
+                      filePath: path.relative(canonicalRoot, filePath).replace(/\\/g, "/"),
+                      range: loc.range,
+                    });
+                  }
+                }
+              } else if (
+                rawResult &&
+                typeof rawResult === "object" &&
+                (rawResult as Record<string, unknown>).uri &&
+                (rawResult as Record<string, unknown>).range
+              ) {
+                const loc = rawResult as {
+                  uri: string;
+                  range: {
+                    start: { line: number; character: number };
+                    end: { line: number; character: number };
+                  };
+                };
+                const filePath = loc.uri.replace("file://", "");
+                defs.push({
+                  uri: loc.uri,
+                  filePath: path.relative(canonicalRoot, filePath).replace(/\\/g, "/"),
+                  range: loc.range,
+                });
+              }
+
+              resolve({
+                symbolName,
+                language: targetLang,
+                serverUsed: server.command,
+                references: defs,
+                definitions: defs,
+                isAvailable: true,
+              });
+            }
+            break;
           }
         }
       });
@@ -333,19 +421,7 @@ export async function queryLspCrossFileReferences(
         },
       });
 
-      // Send definition request
-      const defReq = encodeLspMessage({
-        jsonrpc: "2.0",
-        id: 2,
-        method: "textDocument/definition",
-        params: {
-          textDocument: { uri: fileUri },
-          position: { line: Math.max(0, line - 1), character },
-        },
-      });
-
       proc.stdin?.write(initReq);
-      proc.stdin?.write(defReq);
     } catch (err: unknown) {
       clearTimeout(timer);
       if (!hasResolved) {

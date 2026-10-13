@@ -3,7 +3,16 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import { handleMcpMessage, BoundedLineTransform, startMcpServer } from "../core/mcp";
-import { registerProject, ProjectLock, atomicWriteJson } from "../core/registry";
+import {
+  registerProject,
+  ProjectLock,
+  atomicWriteJson,
+  loadProjectIndex,
+  getProjectMeta,
+  listRegisteredProjects,
+  getProjectIndexPath,
+  getProjectMetaPath,
+} from "../core/registry";
 import { isSensitiveFile, isBinaryFile, indexProject } from "../core/indexer";
 
 describe("Phase 6 & 7: Model Context Protocol (MCP) Protocol & Tools", () => {
@@ -254,5 +263,194 @@ describe("Phase 9 & 10: Security, Sanitization & Concurrency Safeguards", () => 
     expect(responses[1].id).toBe(2);
     const content = (responses[1].result as { content: Array<{ text: string }> }).content[0].text;
     expect(content).toContain("startApp");
+  });
+
+  describe("Adversarial MCP Protocol & Input Validation", () => {
+    it("rejects non-object or null JSON-RPC payloads with -32600", async () => {
+      const nullRes = await handleMcpMessage(null as any);
+      expect(nullRes?.error?.code).toBe(-32600);
+      expect(nullRes?.error?.message).toContain("expected JSON-RPC object");
+
+      const arrayRes = await handleMcpMessage([1, 2, 3] as any);
+      expect(arrayRes?.error?.code).toBe(-32600);
+      expect(arrayRes?.error?.message).toContain("expected JSON-RPC object");
+
+      const stringRes = await handleMcpMessage("malformed string" as any);
+      expect(stringRes?.error?.code).toBe(-32600);
+      expect(stringRes?.error?.message).toContain("expected JSON-RPC object");
+
+      const numRes = await handleMcpMessage(12345 as any);
+      expect(numRes?.error?.code).toBe(-32600);
+      expect(numRes?.error?.message).toContain("expected JSON-RPC object");
+    });
+
+    it("rejects invalid jsonrpc version or malformed method", async () => {
+      const wrongVersion = await handleMcpMessage({
+        jsonrpc: "1.0",
+        id: 1,
+        method: "initialize",
+      } as any);
+      expect(wrongVersion?.error?.code).toBe(-32600);
+      expect(wrongVersion?.error?.message).toContain("jsonrpc must be '2.0'");
+
+      const emptyMethod = await handleMcpMessage({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "",
+      });
+      expect(emptyMethod?.error?.code).toBe(-32600);
+      expect(emptyMethod?.error?.message).toContain("method must be a non-empty string");
+
+      const nullMethod = await handleMcpMessage({
+        jsonrpc: "2.0",
+        id: 3,
+        method: null as any,
+      });
+      expect(nullMethod?.error?.code).toBe(-32600);
+      expect(nullMethod?.error?.message).toContain("method must be a non-empty string");
+    });
+
+    it("rejects non-object params for tools/call", async () => {
+      const invalidParams = await handleMcpMessage({
+        jsonrpc: "2.0",
+        id: 4,
+        method: "tools/call",
+        params: "not an object" as any,
+      });
+      expect(invalidParams?.error?.code).toBe(-32602);
+      expect(invalidParams?.error?.message).toContain("params must be an object");
+
+      const nullParams = await handleMcpMessage({
+        jsonrpc: "2.0",
+        id: 5,
+        method: "tools/call",
+        params: null as any,
+      });
+      expect(nullParams?.error?.code).toBe(-32602);
+      expect(nullParams?.error?.message).toContain("params must be an object");
+    });
+
+    it("rejects malicious or oversized projectPath in tool calls", async () => {
+      // Null byte injection attempt
+      const nullByteRes = await handleMcpMessage({
+        jsonrpc: "2.0",
+        id: 6,
+        method: "tools/call",
+        params: {
+          name: "kai_project_info",
+          arguments: { projectPath: "/etc/passwd\0malicious" },
+        },
+      });
+      expect(nullByteRes?.error?.code).toBe(-32602);
+      expect(nullByteRes?.error?.message).toContain(
+        "contains null bytes or exceeds maximum length"
+      );
+
+      // Excessive length path
+      const oversizedPathRes = await handleMcpMessage({
+        jsonrpc: "2.0",
+        id: 7,
+        method: "tools/call",
+        params: {
+          name: "kai_project_info",
+          arguments: { projectPath: "/path/" + "x".repeat(5000) },
+        },
+      });
+      expect(oversizedPathRes?.error?.code).toBe(-32602);
+      expect(oversizedPathRes?.error?.message).toContain(
+        "contains null bytes or exceeds maximum length"
+      );
+    });
+
+    it("BoundedLineTransform suppresses entire oversized line from downstream output", () => {
+      let oversized = false;
+      const transform = new BoundedLineTransform(40, () => {
+        oversized = true;
+      });
+
+      const outputs: Buffer[] = [];
+      transform.on("data", (chunk: Buffer) => outputs.push(chunk));
+
+      // Write oversized line in two chunks without newline
+      transform.write(Buffer.from("A".repeat(30)));
+      transform.write(Buffer.from("B".repeat(30)));
+      expect(oversized).toBe(true);
+
+      // Downstream should have received zero bytes so far
+      expect(outputs.length).toBe(0);
+
+      // Finish the oversized line and send a clean line
+      transform.write(Buffer.from("C\n"));
+      expect(outputs.length).toBe(0);
+
+      transform.write(Buffer.from("clean message\n"));
+      transform.end();
+
+      const combined = Buffer.concat(outputs).toString("utf-8");
+      expect(combined).toBe("clean message\n");
+    });
+  });
+
+  describe("Index and Metadata Deserialization Hardening & Corruption Recovery", () => {
+    it("gracefully returns null when index.json contains malformed JSON syntax", () => {
+      const projDir = path.join(tmpDir, "corrupt-json-proj");
+      fs.mkdirSync(projDir, { recursive: true });
+      const meta = registerProject(projDir);
+      const indexPath = getProjectIndexPath(meta.id);
+      fs.writeFileSync(indexPath, "{ broken json syntax !!! ");
+
+      const result = loadProjectIndex(meta.id);
+      expect(result).toBeNull();
+    });
+
+    it("gracefully returns null when index.json fails schema validation", () => {
+      const projDir = path.join(tmpDir, "invalid-schema-proj");
+      fs.mkdirSync(projDir, { recursive: true });
+      const meta = registerProject(projDir);
+      const indexPath = getProjectIndexPath(meta.id);
+
+      // Missing required symbolIndex and files is not an object
+      fs.writeFileSync(
+        indexPath,
+        JSON.stringify({
+          meta: { id: meta.id, name: "test", canonicalPath: projDir },
+          files: "not an object",
+        })
+      );
+
+      const result = loadProjectIndex(meta.id);
+      expect(result).toBeNull();
+    });
+
+    it("gracefully returns null when meta.json is corrupted or invalid", () => {
+      const projDir = path.join(tmpDir, "corrupt-meta-proj");
+      fs.mkdirSync(projDir, { recursive: true });
+      const meta = registerProject(projDir);
+      const metaPath = getProjectMetaPath(meta.id);
+
+      // Malformed syntax
+      fs.writeFileSync(metaPath, "<<<not json>>>");
+      expect(getProjectMeta(meta.id)).toBeNull();
+
+      // Schema mismatch (missing required string fields)
+      fs.writeFileSync(metaPath, JSON.stringify({ id: 12345, name: true }));
+      expect(getProjectMeta(meta.id)).toBeNull();
+    });
+
+    it("listRegisteredProjects safely ignores corrupted project meta entries", () => {
+      const projDir1 = path.join(tmpDir, "valid-proj");
+      fs.mkdirSync(projDir1, { recursive: true });
+      const meta1 = registerProject(projDir1);
+
+      const projDir2 = path.join(tmpDir, "corrupt-meta-in-list");
+      fs.mkdirSync(projDir2, { recursive: true });
+      const meta2 = registerProject(projDir2);
+      fs.writeFileSync(getProjectMetaPath(meta2.id), "CORRUPT JSON NOT VALID");
+
+      const projects = listRegisteredProjects();
+      expect(Array.isArray(projects)).toBe(true);
+      expect(projects.some((p) => p.id === meta1.id)).toBe(true);
+      expect(projects.some((p) => p.id === meta2.id)).toBe(false);
+    });
   });
 });

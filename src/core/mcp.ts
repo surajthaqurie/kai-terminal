@@ -144,11 +144,38 @@ export const MCP_TOOLS = [
  * Handle incoming MCP JSON-RPC messages and return the JSON-RPC response
  */
 export async function handleMcpMessage(
-  message: McpRequest,
+  message: unknown,
   defaultProjectRoot: string = process.cwd()
 ): Promise<McpResponse | null> {
-  const reqId = message.id !== undefined ? message.id : null;
-  const method = message.method;
+  if (typeof message !== "object" || message === null || Array.isArray(message)) {
+    return {
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: -32600, message: "Invalid Request: expected JSON-RPC object" },
+    };
+  }
+
+  const req = message as Record<string, unknown>;
+  const reqId =
+    typeof req.id === "string" || typeof req.id === "number" || req.id === null ? req.id : null;
+
+  if (req.jsonrpc !== "2.0") {
+    return {
+      jsonrpc: "2.0",
+      id: reqId,
+      error: { code: -32600, message: "Invalid Request: jsonrpc must be '2.0'" },
+    };
+  }
+
+  if (typeof req.method !== "string" || !req.method.trim()) {
+    return {
+      jsonrpc: "2.0",
+      id: reqId,
+      error: { code: -32600, message: "Invalid Request: method must be a non-empty string" },
+    };
+  }
+
+  const method = req.method;
 
   try {
     // 1. Initialize
@@ -187,12 +214,28 @@ export async function handleMcpMessage(
 
     // 4. Call tool
     if (method === "tools/call") {
-      const params = (message.params || {}) as {
+      if (
+        req.params !== undefined &&
+        (typeof req.params !== "object" || req.params === null || Array.isArray(req.params))
+      ) {
+        return {
+          jsonrpc: "2.0",
+          id: reqId,
+          error: { code: -32602, message: "Invalid params: params must be an object" },
+        };
+      }
+      const params = (req.params || {}) as {
         name?: string;
         arguments?: Record<string, unknown>;
       };
       const toolName = params.name;
-      const args = params.arguments || {};
+      const args = (
+        typeof params.arguments === "object" &&
+        params.arguments !== null &&
+        !Array.isArray(params.arguments)
+          ? params.arguments
+          : {}
+      ) as Record<string, unknown>;
 
       // Reject unknown tools before touching storage: registration and
       // auto-indexing run a full synchronous scan, which must not be
@@ -206,11 +249,17 @@ export async function handleMcpMessage(
         };
       }
 
-      if (typeof args.projectPath === "string" && args.projectPath.includes("\0")) {
+      if (
+        typeof args.projectPath === "string" &&
+        (args.projectPath.includes("\0") || args.projectPath.length > 4096)
+      ) {
         return {
           jsonrpc: "2.0",
           id: reqId,
-          error: { code: -32602, message: "Invalid project path: contains null bytes" },
+          error: {
+            code: -32602,
+            message: "Invalid project path: contains null bytes or exceeds maximum length",
+          },
         };
       }
 
@@ -598,6 +647,7 @@ export class BoundedLineTransform extends Transform {
   private maxBytes: number;
   private currentBytes: number = 0;
   private isDiscarding: boolean = false;
+  private lineChunks: Buffer[] = [];
   private onOversized?: () => void;
 
   constructor(maxBytes: number = MAX_MCP_LINE_BYTES, onOversized?: () => void) {
@@ -607,37 +657,66 @@ export class BoundedLineTransform extends Transform {
   }
 
   _transform(chunk: Buffer, _encoding: BufferEncoding, callback: () => void): void {
-    let sliceStart = 0;
+    let start = 0;
     for (let i = 0; i < chunk.length; i++) {
       if (chunk[i] === 0x0a) {
         // newline \n encountered
+        const piece = chunk.subarray(start, i + 1);
+        start = i + 1;
+
         if (this.isDiscarding) {
           this.isDiscarding = false;
           this.currentBytes = 0;
-          sliceStart = i + 1;
+          this.lineChunks = [];
         } else {
-          this.currentBytes = 0;
-        }
-      } else {
-        if (!this.isDiscarding) {
-          this.currentBytes++;
+          this.currentBytes += piece.length;
           if (this.currentBytes > this.maxBytes) {
-            this.isDiscarding = true;
+            this.isDiscarding = false;
+            this.currentBytes = 0;
+            this.lineChunks = [];
             if (this.onOversized) {
               this.onOversized();
             }
+          } else {
+            if (this.lineChunks.length === 0) {
+              this.push(piece);
+            } else {
+              this.lineChunks.push(piece);
+              this.push(Buffer.concat(this.lineChunks));
+              this.lineChunks = [];
+            }
+            this.currentBytes = 0;
           }
         }
       }
     }
 
-    if (this.isDiscarding) {
-      if (sliceStart > 0 && sliceStart < chunk.length) {
-        this.push(chunk.subarray(sliceStart));
+    if (start < chunk.length) {
+      const remaining = chunk.subarray(start);
+      if (this.isDiscarding) {
+        // Continue discarding until next newline
+      } else {
+        this.currentBytes += remaining.length;
+        if (this.currentBytes > this.maxBytes) {
+          this.isDiscarding = true;
+          this.lineChunks = [];
+          if (this.onOversized) {
+            this.onOversized();
+          }
+        } else {
+          this.lineChunks.push(remaining);
+        }
       }
-    } else {
-      this.push(sliceStart > 0 ? chunk.subarray(sliceStart) : chunk);
     }
+
+    callback();
+  }
+
+  _flush(callback: () => void): void {
+    if (!this.isDiscarding && this.lineChunks.length > 0 && this.currentBytes <= this.maxBytes) {
+      this.push(Buffer.concat(this.lineChunks));
+    }
+    this.lineChunks = [];
     callback();
   }
 }

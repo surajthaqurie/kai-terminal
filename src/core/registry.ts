@@ -256,7 +256,18 @@ export function getProjectMeta(projectIdOrPath: string): ProjectMeta | null {
   if (!fs.existsSync(metaPath)) return null;
 
   try {
-    return JSON.parse(fs.readFileSync(metaPath, "utf-8"));
+    const raw = fs.readFileSync(metaPath, "utf-8");
+    const parsed = JSON.parse(raw);
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      typeof parsed.id !== "string" ||
+      typeof parsed.canonicalPath !== "string" ||
+      typeof parsed.status !== "string"
+    ) {
+      return null;
+    }
+    return parsed as ProjectMeta;
   } catch {
     return null;
   }
@@ -273,8 +284,16 @@ export function listRegisteredProjects(): ProjectMeta[] {
       const metaPath = path.join(projectsDir, entry.name, "meta.json");
       if (fs.existsSync(metaPath)) {
         try {
-          const meta: ProjectMeta = JSON.parse(fs.readFileSync(metaPath, "utf-8"));
-          result.push(meta);
+          const raw = fs.readFileSync(metaPath, "utf-8");
+          const meta = JSON.parse(raw);
+          if (
+            typeof meta === "object" &&
+            meta !== null &&
+            typeof meta.id === "string" &&
+            typeof meta.canonicalPath === "string"
+          ) {
+            result.push(meta as ProjectMeta);
+          }
         } catch {
           // Ignore corrupt entry
         }
@@ -289,7 +308,25 @@ export function loadProjectIndex(projectId: string): ProjectIndex | null {
   const indexPath = getProjectIndexPath(projectId);
   if (!fs.existsSync(indexPath)) return null;
   try {
-    return JSON.parse(fs.readFileSync(indexPath, "utf-8"));
+    const raw = fs.readFileSync(indexPath, "utf-8");
+    const parsed = JSON.parse(raw);
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      typeof parsed.meta !== "object" ||
+      parsed.meta === null ||
+      typeof parsed.meta.id !== "string" ||
+      typeof parsed.meta.canonicalPath !== "string" ||
+      typeof parsed.files !== "object" ||
+      parsed.files === null ||
+      Array.isArray(parsed.files) ||
+      typeof parsed.symbolIndex !== "object" ||
+      parsed.symbolIndex === null ||
+      Array.isArray(parsed.symbolIndex)
+    ) {
+      return null;
+    }
+    return parsed as ProjectIndex;
   } catch {
     return null;
   }

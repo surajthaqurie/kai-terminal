@@ -147,20 +147,69 @@ pub fn run_git_action(cwd: &str, action: &str) -> Result<String, String> {
 
 fn validate_repo_rel_path<'a>(repo_root: &str, rel_path: &'a str) -> Result<&'a str, String> {
     let trimmed = rel_path.trim().trim_matches('"').trim_matches('\'');
-    if trimmed.is_empty() || trimmed.starts_with('-') || trimmed.contains('\0') {
+    if trimmed.is_empty()
+        || trimmed.starts_with('-')
+        || trimmed.contains('\0')
+        || trimmed.starts_with('/')
+        || trimmed.starts_with('\\')
+    {
         return Err("Invalid file path".to_string());
     }
-    // Prevent directory traversal outside repo root
-    let full = Path::new(repo_root).join(trimmed);
+
+    let p = Path::new(trimmed);
+    let bytes = trimmed.as_bytes();
+    let is_windows_drive = bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':';
+    if is_windows_drive || p.is_absolute() {
+        return Err("Absolute paths are not permitted".to_string());
+    }
+
+    let normalized = trimmed.replace('\\', "/");
+    for part in normalized.split('/') {
+        if part == ".." {
+            return Err("Invalid relative path: directory traversal attempt".to_string());
+        }
+    }
+
+    for component in p.components() {
+        match component {
+            std::path::Component::Prefix(_)
+            | std::path::Component::RootDir
+            | std::path::Component::ParentDir => {
+                return Err("Invalid relative path: directory traversal attempt".to_string());
+            }
+            _ => {}
+        }
+    }
+
     let canonical_root =
         std::fs::canonicalize(repo_root).unwrap_or_else(|_| Path::new(repo_root).to_path_buf());
+    let full = Path::new(repo_root).join(trimmed);
+
+    // If the path or a symlink exists, verify the canonical target remains within canonical_root
     if let Ok(c) = std::fs::canonicalize(&full) {
         if !c.starts_with(&canonical_root) {
             return Err("Path escapes repository root".to_string());
         }
-    } else if trimmed.contains("..") {
-        return Err("Invalid relative path".to_string());
+    } else if let Ok(meta) = std::fs::symlink_metadata(&full) {
+        if meta.file_type().is_symlink() {
+            // Symlink exists but canonicalize failed (broken symlink). Check link target.
+            if let Ok(target) = std::fs::read_link(&full) {
+                let resolved = if target.is_absolute() {
+                    target.clone()
+                } else {
+                    Path::new(repo_root).join(&target)
+                };
+                if let Ok(c) = std::fs::canonicalize(&resolved) {
+                    if !c.starts_with(&canonical_root) {
+                        return Err("Symlink escapes repository root".to_string());
+                    }
+                } else if resolved.is_absolute() || target.to_string_lossy().contains("..") {
+                    return Err("Symlink escapes repository root".to_string());
+                }
+            }
+        }
     }
+
     Ok(trimmed)
 }
 
@@ -371,26 +420,57 @@ fn run_git_bounded(
     max_chars: usize,
     allow_diff_exit: bool,
 ) -> Option<String> {
-    let (tx, rx) = std::sync::mpsc::channel();
-    let cwd_owned = cwd.to_string();
-    let args_owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    std::thread::spawn(move || {
-        let mut c = Command::new("git");
-        c.current_dir(&cwd_owned).args(&args_owned);
-        #[cfg(target_os = "windows")]
-        {
-            use std::os::windows::process::CommandExt;
-            c.creation_flags(0x08000000);
+    let mut c = Command::new("git");
+    c.current_dir(cwd)
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        c.creation_flags(0x08000000);
+    }
+
+    let mut child = c.spawn().ok()?;
+    let mut stdout_pipe = child.stdout.take();
+    let stdout_handle = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(ref mut pipe) = stdout_pipe {
+            let _ = std::io::Read::read_to_end(pipe, &mut buf);
         }
-        let out = c.output();
-        let _ = tx.send(out);
+        buf
     });
-    let output = rx.recv_timeout(Duration::from_secs(8)).ok()?.ok()?;
-    let success = output.status.success() || (allow_diff_exit && output.status.code() == Some(1));
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(8);
+    let mut exited = false;
+    while std::time::Instant::now() < deadline {
+        match child.try_wait() {
+            Ok(Some(_)) => {
+                exited = true;
+                break;
+            }
+            Ok(None) => {
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            Err(_) => break,
+        }
+    }
+
+    if !exited {
+        let _ = child.kill();
+        let _ = child.wait();
+        let _ = stdout_handle.join();
+        return None;
+    }
+
+    let status = child.wait().ok()?;
+    let stdout_bytes = stdout_handle.join().unwrap_or_default();
+    let success = status.success() || (allow_diff_exit && status.code() == Some(1));
     if !success {
         return None;
     }
-    let text = String::from_utf8_lossy(&output.stdout);
+    let text = String::from_utf8_lossy(&stdout_bytes);
     let trimmed = text.trim_end();
     if trimmed.is_empty() {
         Some(String::new())
@@ -603,5 +683,67 @@ mod tests {
         assert!(final_changes.clean);
 
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn test_validate_repo_rel_path_traversal_attacks() {
+        let temp_dir = std::env::temp_dir().join(format!("kai_git_sec_{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let repo_root = temp_dir.to_string_lossy().to_string();
+
+        // 1. Directory traversal via ..
+        assert!(validate_repo_rel_path(&repo_root, "../outside.txt").is_err());
+        assert!(validate_repo_rel_path(&repo_root, "src/../../outside.txt").is_err());
+        assert!(validate_repo_rel_path(&repo_root, "..\\outside.txt").is_err());
+
+        // 2. Absolute paths
+        assert!(validate_repo_rel_path(&repo_root, "/etc/passwd").is_err());
+        assert!(validate_repo_rel_path(&repo_root, "/var/log/syslog").is_err());
+        assert!(validate_repo_rel_path(&repo_root, "C:\\Windows\\System32").is_err());
+
+        // 3. Flags and command injection indicators
+        assert!(validate_repo_rel_path(&repo_root, "--all").is_err());
+        assert!(validate_repo_rel_path(&repo_root, "-f").is_err());
+
+        // 4. Null bytes
+        assert!(validate_repo_rel_path(&repo_root, "file.txt\0payload").is_err());
+
+        // 5. Empty or whitespace
+        assert!(validate_repo_rel_path(&repo_root, "").is_err());
+        assert!(validate_repo_rel_path(&repo_root, "   ").is_err());
+
+        // 6. Valid relative path succeeds
+        assert_eq!(
+            validate_repo_rel_path(&repo_root, "src/index.ts").unwrap(),
+            "src/index.ts"
+        );
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_symlink_escape_rejected_by_git_validation() {
+        let temp_dir = std::env::temp_dir().join(format!("kai_git_sym_{}", uuid::Uuid::new_v4()));
+        let repo_dir = temp_dir.join("repo");
+        let outside_dir = temp_dir.join("outside");
+        let _ = std::fs::create_dir_all(&repo_dir);
+        let _ = std::fs::create_dir_all(&outside_dir);
+
+        let secret_file = outside_dir.join("secret.txt");
+        let _ = std::fs::write(&secret_file, "SECRET_DATA");
+
+        let symlink_path = repo_dir.join("leaked_link.txt");
+        #[cfg(unix)]
+        {
+            let _ = std::os::unix::fs::symlink(&secret_file, &symlink_path);
+            let repo_str = repo_dir.to_string_lossy().to_string();
+            let res = validate_repo_rel_path(&repo_str, "leaked_link.txt");
+            assert!(
+                res.is_err(),
+                "Symlink pointing outside repo root must be rejected"
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

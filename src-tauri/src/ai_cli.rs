@@ -1187,8 +1187,11 @@ fn is_usable_executable(path: &Path) -> bool {
 mod tests {
     use super::*;
 
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn test_detect_returns_all_catalogued_clis() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let statuses = detect_ai_clis();
         let ids: Vec<&str> = statuses.iter().map(|s| s.id.as_str()).collect();
         assert!(ids.contains(&"codex"));
@@ -1206,6 +1209,7 @@ mod tests {
 
     #[test]
     fn test_missing_cli_is_reported_unavailable_not_error() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // Detection must never fail; absence is a normal state.
         let statuses = detect_ai_clis();
         for s in &statuses {
@@ -1233,6 +1237,7 @@ mod tests {
 
     #[test]
     fn test_details_always_return_guidance() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let details = detect_ai_cli_details();
         assert_eq!(details.len(), 10);
         for d in &details {
@@ -1262,11 +1267,9 @@ mod tests {
         }
     }
 
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
     #[test]
     fn test_missing_cli_reports_not_found_state() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // Point PATH at an empty dir so nothing is found. HOME is sandboxed
         // too so the supplementary well-known-dir fallback (which ignores
         // PATH) also finds nothing on machines with user-level installs.
@@ -1309,6 +1312,7 @@ mod tests {
 
     #[test]
     fn test_version_success_does_not_imply_auth() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // /bin/sh --version fails, but any binary that prints a version must
         // still report auth unknown, never ready/authenticated.
         let details = detect_ai_cli_details();
@@ -1346,7 +1350,7 @@ mod tests {
 
     /// Run `f` with HOME/USERPROFILE pointed at a fresh temp dir.
     fn with_temp_home(name: &str, f: impl FnOnce(std::path::PathBuf)) {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let dir =
             std::env::temp_dir().join(format!("kai-agent-setup-{}-{}", name, std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);

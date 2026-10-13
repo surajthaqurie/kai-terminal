@@ -62,6 +62,8 @@ describe("LSP Bridge: Probing, Protocol & Fallbacks", () => {
   it("handles malformed LSP response strings safely", () => {
     expect(decodeLspMessage("invalid text without headers")).toBeNull();
     expect(decodeLspMessage("Content-Length: 10\r\n\r\nnot json")).toBeNull();
+    expect(decodeLspMessage('Content-Length: 100\r\n\r\n{"short":1}')).toBeNull();
+    expect(decodeLspMessage("Content-Length: invalid\r\n\r\n{}")).toBeNull();
   });
 
   it("safely handles queries when an LSP server is missing without crashing or erroring out", async () => {

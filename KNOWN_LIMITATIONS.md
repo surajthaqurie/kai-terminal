@@ -48,7 +48,7 @@ This document lists known operating system constraints, platform boundaries, res
 
 ### 1.6 AI CLI Diagnostics & Provider Integration
 - **Previous Behavior:** Diagnostic probe could mistake `--version` output for authentication success or hang on slow binaries.
-- **Implementation Change:** Created provider-neutral diagnostic state enum (`AiCliDiagnosticState`: `not_found`, `version_detected`, `probe_failed`, `authentication_required`, `authentication_failed`, `ready`, `launch_failed`, `unsupported_version`, `unknown`). Auto-detects 10 catalogued agents (`codex`, `claude`, `gemini`, `opencode`, `copilot`, `aider`, `cursor`, `windsurf`, `cline`, `agy`) with non-intrusive local auth checks. Probes `--version` with a strict 8-second execution timeout and auto-reap on timeout (`probe_version`). Checks local config file presence (`check_local_auth_presence`) without inspecting token contents or making network calls. Supports custom user-defined executable paths (`check_custom_ai_cli_path`).
+- **Implementation Change:** Created provider-neutral diagnostic state enum (`AiCliDiagnosticState`: `not_found`, `version_detected`, `probe_failed`, `authentication_required`, `authentication_failed`, `ready`, `launch_failed`, `unsupported_version`, `unknown`). Auto-detects 10 catalogued agents (`codex`, `claude`, `gemini`, `opencode`, `copilot`, `aider`, `cursor`, `windsurf`, `cline`, `agy`) with non-intrusive local auth checks. Probes `--version` with a strict 5-second execution timeout and auto-reap on timeout (`probe_version`). Checks local config file presence (`check_local_auth_presence`) without inspecting token contents or making network calls. Supports custom user-defined executable paths (`check_custom_ai_cli_path`).
 - **Tests Added:** `test_detect_returns_all_catalogued_clis`, `test_version_success_does_not_imply_auth`, `test_probe_timeout_returns_quickly_for_missing_binary`, `test_missing_cli_reports_not_found_state`, `test_13_real_ai_cli_compatibility`.
 - **Actual Test Result:** Passed.
 - **Platform Coverage:** Cross-platform.
@@ -56,7 +56,7 @@ This document lists known operating system constraints, platform boundaries, res
 
 ### 1.7 Git Status Integration
 - **Previous Behavior:** Uncached git commands on render created UI latency on large repositories.
-- **Implementation Change:** Uses machine-readable git plumbing commands (`rev-parse`, `status --porcelain`) executed directly via process spawning (8 s timeout bound). Implemented bounded per-directory caching (`getGitInfoCached`, 5s TTL, max 50 entries) with manual cache invalidation (`invalidateGitCache`). Correctly reports detached HEAD commits (`detached@<sha>`), untracked files, modified files, and deleted files.
+- **Implementation Change:** Uses machine-readable git plumbing commands (`rev-parse`, `status --porcelain`) executed directly via process spawning (bounded child execution with 8 s timeout and pipe draining). Implemented bounded per-directory caching (`getGitInfoCached`, 30s TTL, max 50 entries) with manual cache invalidation (`invalidateGitCache`). Correctly reports detached HEAD commits (`detached@<sha>`), untracked files, modified files, and deleted files. Path traversal and symlink escapes from repository root are strictly validated and rejected.
 - **Tests Added:** `src/__tests__/gitCache.test.ts`, `test_branch_dirty_and_detached_head`, `test_invalid_dir_returns_error_not_panic`, `test_large_repo_status_is_bounded`.
 - **Actual Test Result:** Passed.
 - **Platform Coverage:** Cross-platform.
