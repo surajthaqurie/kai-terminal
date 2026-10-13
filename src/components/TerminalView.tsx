@@ -61,12 +61,6 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
     const backendPtyIdRef = useRef<string | null>(null);
     const initSeqRef = useRef<number>(0);
     const [isSearchVisible, setIsSearchVisible] = useState(false);
-    // Startup watchdog: PowerShell/.NET JIT + heavy profiles can stall
-    // ConPTY for seconds on Windows and the OS flags the window as
-    // "Not Responding". After 4 s without a session we show an inline
-    // escape hatch (Retry / Switch to Command Prompt) instead of a dead tab.
-    const [launchSlow, setLaunchSlow] = useState(false);
-    const [launchError, setLaunchError] = useState<string | null>(null);
 
     // ---- Command line tracking & history ---------------------------------
     // Native Kali/Linux terminal autocompletion (ZSH autosuggestions, compinit,
@@ -173,8 +167,6 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       const fitAddon = fitAddonRef.current;
       if (!term || !fitAddon) return;
       const mySeq = ++initSeqRef.current;
-      setLaunchSlow(false);
-      setLaunchError(null);
 
       // Best-effort close of the previous backend session for this tab
       // before spawning a replacement (prevents orphan PTY processes).
@@ -200,16 +192,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       const cols = term.cols || 80;
       const rows = term.rows || 24;
 
-      // Watchdog: if the backend hasn't answered in 4 s the shell is
-      // wedged (usually a PowerShell profile). Surface the overlay so the
-      // user can bail out instead of force-killing the whole PC.
-      const slowTimer = setTimeout(() => {
-        if (mySeq === initSeqRef.current && !backendPtyIdRef.current) {
-          setLaunchSlow(true);
-        }
-      }, 4000);
-
-      try {
+    try {
         const effShell = overrideShell ?? shellRef.current ?? selectedShell;
         if (overrideShell) {
           shellRef.current = overrideShell;
@@ -224,7 +207,6 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
           cols,
           rows,
         });
-        clearTimeout(slowTimer);
         if (mySeq !== initSeqRef.current) {
           // A newer init superseded this attempt; reap the orphan.
           try {
@@ -237,50 +219,18 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
 
         backendPtyIdRef.current = sessionInfo.id;
         onStatusRef.current?.("connected");
-        setLaunchSlow(false);
-        setLaunchError(null);
         if (sessionInfo.cwd) {
           onCwdResolvedRef.current?.(sessionInfo.cwd);
         }
       } catch (err: unknown) {
-        clearTimeout(slowTimer);
         if (mySeq !== initSeqRef.current) return;
         const errorMsg = err instanceof Error ? err.message : String(err);
         term.writeln(`\r\n\x1b[31m[Failed to launch shell: ${errorMsg}]\x1b[0m\r\n`);
-        term.writeln(`\x1b[33m[Tip: try Retry, or Switch to Command Prompt below.]\x1b[0m\r\n`);
-        setLaunchSlow(false);
-        setLaunchError(errorMsg);
+        term.writeln(
+          `\x1b[33m[Tip: if this persists, check your PowerShell profile or pick Command Prompt as the default shell in Settings.]\x1b[0m\r\n`
+        );
         onStatusRef.current?.("error", errorMsg);
       }
-    };
-
-    const handleRetryLaunch = () => {
-      void initPtySession();
-    };
-
-    const handleFallbackToCmd = async () => {
-      // Prefer cmd.exe: instant start, no .NET JIT, no profile scripts.
-      try {
-        const shells = await PtyService.getAvailableShells();
-        const cmd =
-          shells.find((s) => s.id === "cmd") ?? shells.find((s) => /cmd\.exe$/i.test(s.path));
-        if (cmd) {
-          void initPtySession(cmd);
-          return;
-        }
-      } catch {
-        // fall through to direct path guess
-      }
-      const sysRoot =
-        typeof process !== "undefined" && process.env?.SystemRoot
-          ? process.env.SystemRoot
-          : "C:\\Windows";
-      void initPtySession({
-        id: "cmd",
-        name: "Command Prompt",
-        path: `${sysRoot}\\System32\\cmd.exe`,
-        is_default: true,
-      });
     };
 
     // React to settings changes dynamically
@@ -471,8 +421,32 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       let unlistenOutput: (() => void) | undefined;
       let unlistenExit: (() => void) | undefined;
       let unlistenCwd: (() => void) | undefined;
+      // Set on cleanup BEFORE the async listener promises below resolve:
+      // without this, unmounting a pane quickly leaks all three global
+      // Tauri listeners (cleanup sees `undefined` and never unlistens),
+      // so tab churn grows memory and duplicates output handling.
+      let listenersCancelled = false;
+      const trackUnlisten = (
+        promise: Promise<() => void>,
+        assign: (unlisten: () => void) => void
+      ) => {
+        void promise.then((unlisten) => {
+          if (listenersCancelled) {
+            try {
+              unlisten();
+            } catch {
+              // Already removed; safe to ignore.
+            }
+          } else {
+            assign(unlisten);
+          }
+        });
+      };
       let pendingOutput = "";
       let rafScheduled = false;
+      // Single xterm write of a 1 MB flood blocks the UI thread long
+      // enough for Windows to flag the window "Not Responding".
+      const MAX_TERM_WRITE_CHARS = 65536;
 
       const flushOutput = () => {
         rafScheduled = false;
@@ -480,7 +454,9 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
           const chunk = pendingOutput;
           pendingOutput = "";
           try {
-            term.write(chunk);
+            for (let off = 0; off < chunk.length; off += MAX_TERM_WRITE_CHARS) {
+              term.write(chunk.slice(off, off + MAX_TERM_WRITE_CHARS));
+            }
           } catch {
             // Terminal disposed; drop remaining output.
           }
@@ -490,12 +466,27 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       const scheduleFlush = () => {
         if (!rafScheduled) {
           rafScheduled = true;
-          requestAnimationFrame(flushOutput);
+          // rAF stalls for hidden/background tabs, which would let
+          // pendingOutput sit until the 1 MB cap; the timeout guarantees
+          // progress so memory stays bounded either way.
+          let flushed = false;
+          const doFlush = () => {
+            if (!flushed) {
+              flushed = true;
+              flushOutput();
+            }
+          };
+          try {
+            requestAnimationFrame(doFlush);
+          } catch {
+            doFlush();
+          }
+          setTimeout(doFlush, 250);
         }
       };
 
-      ptyService
-        .onPtyOutput((payload) => {
+      trackUnlisten(
+        ptyService.onPtyOutput((payload) => {
           if (payload.id === backendPtyIdRef.current) {
             // Bound the pending buffer so a flood of output cannot grow
             // frontend memory without limit (xterm scrollback is also bounded).
@@ -505,13 +496,14 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
             }
             scheduleFlush();
           }
-        })
-        .then((unlisten) => {
+        }),
+        (unlisten) => {
           unlistenOutput = unlisten;
-        });
+        }
+      );
 
-      ptyService
-        .onPtyExit((payload) => {
+      trackUnlisten(
+        ptyService.onPtyExit((payload) => {
           if (payload.id === backendPtyIdRef.current) {
             flushOutput();
             backendPtyIdRef.current = null;
@@ -520,20 +512,22 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
             // Immediately close the pane or tab cleanly like a native terminal
             onExitRef.current?.(exitCode);
           }
-        })
-        .then((unlisten) => {
+        }),
+        (unlisten) => {
           unlistenExit = unlisten;
-        });
+        }
+      );
 
-      ptyService
-        .onPtyCwd((payload) => {
+      trackUnlisten(
+        ptyService.onPtyCwd((payload) => {
           if (payload.id === backendPtyIdRef.current && payload.cwd) {
             onCwdResolvedRef.current?.(payload.cwd);
           }
-        })
-        .then((unlisten) => {
+        }),
+        (unlisten) => {
           unlistenCwd = unlisten;
-        });
+        }
+      );
 
       // 5. Container resize handling (debounced 150 ms so drag-resize and
       // rapid layout changes send at most one IPC resize each).
@@ -574,6 +568,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       // id (not the tab id) so no orphan child process survives.
       return () => {
         initSeqRef.current += 1;
+        listenersCancelled = true;
         if (initialTimer) clearTimeout(initialTimer);
         term.textarea?.removeEventListener("focus", onTextareaFocus);
         inputDisposable.dispose();
@@ -595,10 +590,14 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [sessionId]);
 
-    // Periodic live CWD synchronization for the visible pane (ensures footer updates on cd)
+    // Periodic live CWD synchronization for the visible pane (ensures footer updates on cd).
+    // Polled at 5 s (not 1.5 s): each tick is a backend IPC + mutex grab,
+    // and with several splits the old cadence contended with an already
+    // slow PowerShell startup. Skipped while the window is hidden.
     useEffect(() => {
       if (!visible) return;
       const timer = setInterval(() => {
+        if (typeof document !== "undefined" && document.hidden) return;
         const backendId = backendPtyIdRef.current;
         if (backendId) {
           void PtyService.getPtyCwd(backendId).then((resolved) => {
@@ -607,7 +606,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
             }
           });
         }
-      }, 1500);
+      }, 5000);
       return () => clearInterval(timer);
     }, [visible]);
 
@@ -697,50 +696,6 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
           role="log"
           aria-label="Terminal output"
         />
-        {(launchSlow || launchError) && (
-          <div
-            className="terminal-launch-overlay"
-            role="status"
-            aria-label={launchError ? "Shell failed to launch" : "Shell is slow to launch"}
-            style={{
-              position: "absolute",
-              left: 12,
-              right: 12,
-              bottom: 12,
-              padding: "10px 12px",
-              borderRadius: 8,
-              background: "rgba(10, 20, 40, 0.92)",
-              border: "1px solid rgba(0, 168, 232, 0.45)",
-              color: "#e8eef7",
-              fontSize: 12,
-              display: "flex",
-              gap: 8,
-              alignItems: "center",
-              flexWrap: "wrap",
-              zIndex: 5,
-            }}
-          >
-            <span style={{ flex: "1 1 220px" }}>
-              {launchError
-                ? `Shell failed to start: ${launchError}`
-                : "Shell is taking longer than usual (often a PowerShell profile). You can wait, retry, or switch to Command Prompt."}
-            </span>
-            <button
-              type="button"
-              className="btn btn-secondary btn-small"
-              onClick={handleRetryLaunch}
-            >
-              Retry
-            </button>
-            <button
-              type="button"
-              className="btn btn-primary btn-small"
-              onClick={handleFallbackToCmd}
-            >
-              Use Command Prompt
-            </button>
-          </div>
-        )}
       </div>
     );
   }

@@ -49,6 +49,16 @@ function newestSourceMtime(dirs) {
 }
 
 function ensureBuild() {
+  // Skip flag for environments where the bundle is prebuilt (CI, re-runs).
+  if (process.argv.includes("--skip-build") || process.argv.includes("--no-build")) {
+    if (!fs.existsSync(bundledCli)) {
+      console.error("[kai setup] --skip-build given but " + bundledCli + " is missing.");
+      console.error("[kai setup] Re-run without the flag to build it.");
+      process.exit(1);
+    }
+    console.log("[kai setup] Skipping build (--skip-build).");
+    return;
+  }
   // Fast path: rebuild only when sources are newer than the bundle.
   if (fs.existsSync(bundledCli)) {
     try {
@@ -67,7 +77,24 @@ function ensureBuild() {
   } else {
     console.log("[kai setup] CLI bundle missing — building (npm run build:cli)...");
   }
-  execSync("npm run build:cli", { cwd: repoRoot, stdio: "inherit", shell: true });
+  console.log("[kai setup] First build can take a minute; progress is below...");
+  const startedAt = Date.now();
+  try {
+    execSync("npm run build:cli", {
+      cwd: repoRoot,
+      stdio: "inherit",
+      shell: true,
+      timeout: 10 * 60 * 1000,
+    });
+  } catch (err) {
+    if (err && err.code === "ETIMEDOUT") {
+      console.error("[kai setup] Build timed out after 10 minutes.");
+      console.error("[kai setup] Likely causes: antivirus/OneDrive locking dist/, or a stalled vite worker.");
+      console.error("[kai setup] Retry after pausing AV sync on this folder, or build with: npm run build:cli");
+    }
+    process.exit(1);
+  }
+  console.log(`[kai setup] Build finished in ${((Date.now() - startedAt) / 1000).toFixed(1)}s.`);
   if (!fs.existsSync(bundledCli)) {
     console.error("[kai setup] Build did not produce " + bundledCli);
     process.exit(1);
@@ -79,19 +106,57 @@ function onPath(dir) {
   return entries.includes(dir.toLowerCase());
 }
 
+const PS_TIMEOUT_MS = 15000;
+
+/**
+ * Run a PowerShell snippet with a hard timeout. Prefers `pwsh`
+ * (PowerShell 7, faster cold start) and falls back to Windows
+ * PowerShell 5.1. Returns stdout, or null when PowerShell is
+ * missing, blocked, or hung — callers must degrade to manual
+ * instructions instead of hanging the install forever.
+ */
+function runPowerShell(script, timeoutMs = PS_TIMEOUT_MS) {
+  const candidates = [];
+  try {
+    const where = execSync("where pwsh", {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 5000,
+    })
+      .trim()
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    for (const w of where) candidates.push(`"${w}"`);
+  } catch {
+    // pwsh not on PATH — fall back to Windows PowerShell below.
+  }
+  candidates.push("powershell");
+  for (const bin of candidates) {
+    const last = bin === candidates[candidates.length - 1];
+    try {
+      return execSync(`${bin} -NoProfile -NonInteractive -Command "${script}"`, {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+        timeout: timeoutMs,
+      });
+    } catch (err) {
+      if (!last) continue; // timed-out pwsh: try Windows PowerShell next.
+      return null; // hung/blocked shell: caller prints manual steps.
+    }
+  }
+  return null;
+}
+
 /** Persistent per-user PATH entries (registry on Windows), not just this
  * process's copy — the installer may run in a shell started before PATH
  * was updated. */
 function persistedPathContainsWindows(dir) {
-  try {
-    const out = execSync(
-      `powershell -NoProfile -NonInteractive -Command "[Environment]::GetEnvironmentVariable('Path','User')"`,
-      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }
-    );
-    return out.split(";").some((s) => s.trim().toLowerCase() === dir.toLowerCase());
-  } catch {
-    return onPath(dir);
-  }
+  const out = runPowerShell(
+    `[Environment]::GetEnvironmentVariable('Path','User')`
+  );
+  if (out == null) return onPath(dir);
+  return out.split(";").some((s) => s.trim().toLowerCase() === dir.toLowerCase());
 }
 
 /** Ensure `dir` is on the user's PATH automatically (no manual step).
@@ -101,15 +166,20 @@ function ensurePathWindows(dir) {
   try {
     // Update the User-level PATH via PowerShell so it persists for all
     // future terminals. Idempotent: appends only when missing.
+    // Bounded by a timeout: a hung shell (slow .NET JIT, AV hook,
+    // constrained-language policy) must not freeze the whole install.
     const ps =
       `$p=[Environment]::GetEnvironmentVariable('Path','User');` +
       `if(($p -split ';') -notcontains '${dir}'){` +
       `[Environment]::SetEnvironmentVariable('Path',($p.TrimEnd(';')+';${dir}'),'User');'CHANGED'}` +
       `else{'PRESENT'}`;
-    const out = execSync(`powershell -NoProfile -NonInteractive -Command "${ps}"`, {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    });
+    const out = runPowerShell(ps, 20000);
+    if (out == null) {
+      console.log("[kai setup] PowerShell did not respond (timed out).");
+      console.log("[kai setup] Add to PATH manually (one-time), then open a NEW terminal:");
+      console.log(`  setx PATH "%PATH%;${dir}"`);
+      return true;
+    }
     if (out.includes("CHANGED")) {
       console.log("[kai setup] Added to your user PATH automatically: " + dir);
     } else {

@@ -101,10 +101,26 @@ export class PtyServiceImpl implements IPtyService {
     }
     // 20 s launch timeout so a wedged backend never leaves the UI stuck on
     // "Initializing…" forever; callers surface the error instead.
+    // If the backend spawn still succeeds after our timeout, its session id
+    // would otherwise leak (hidden shell + reader/waiter threads forever),
+    // so reap the late arrival when it lands.
+    const pending = invoke<PtySessionInfo>("create_pty", { options });
     const timeout = new Promise<never>((_, reject) =>
       setTimeout(() => reject(new Error("PTY launch timed out after 20s")), 20000)
     );
-    return await Promise.race([invoke<PtySessionInfo>("create_pty", { options }), timeout]);
+    try {
+      return await Promise.race([pending, timeout]);
+    } catch (err) {
+      void pending.then(
+        (info) => {
+          if (info && info.id) {
+            PtyService.closePty(info.id).catch(() => {});
+          }
+        },
+        () => {}
+      );
+      throw err;
+    }
   }
 
   static async writeToPty(id: string, data: string): Promise<void> {

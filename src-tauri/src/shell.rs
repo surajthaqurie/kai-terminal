@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::env;
 use std::path::Path;
+use std::sync::OnceLock;
 
 /// Shell profile configuration for host OS or user configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -17,7 +18,23 @@ pub struct ShellProfile {
 }
 
 /// Detects installed available shell profiles on the host operating system.
+///
+/// Result is cached per process: every scan walks the filesystem across all
+/// PATH entries (including slow network / OneDrive-synced locations), and
+/// previously every new tab paid that cost synchronously during launch —
+/// a classic first-tab stall on Windows. Restart the app to pick up a
+/// newly installed shell. Use `detect_available_shells_uncached` to force
+/// a rescan (tests, future refresh UI).
 pub fn detect_available_shells() -> Vec<ShellProfile> {
+    static SHELLS_CACHE: OnceLock<Vec<ShellProfile>> = OnceLock::new();
+    SHELLS_CACHE
+        .get_or_init(detect_available_shells_uncached)
+        .clone()
+}
+
+/// Uncached filesystem scan for installed shells (see
+/// `detect_available_shells` for why callers should prefer the cache).
+pub fn detect_available_shells_uncached() -> Vec<ShellProfile> {
     let mut profiles = Vec::new();
     let mut default_set = false;
 
@@ -318,7 +335,6 @@ pub fn check_windows_build_supported(build: u32) -> Result<(), TerminalError> {
 pub fn check_host_pty_support() -> Result<(), TerminalError> {
     #[cfg(target_os = "windows")]
     {
-        use std::sync::OnceLock;
         static BUILD_CACHE: OnceLock<Option<u32>> = OnceLock::new();
         let build = *BUILD_CACHE.get_or_init(current_windows_build);
         match build {
@@ -334,16 +350,84 @@ pub fn check_host_pty_support() -> Result<(), TerminalError> {
     }
 }
 
+/// Runs a Windows helper process with a hard timeout, killing it on expiry.
+/// Console-host spawns (`cmd`, `reg`, `powershell`) can stall for tens of
+/// seconds on loaded machines (AV hooks, syncing disks) — without a timeout
+/// the first PTY creation hangs and the OS flags the window "Not Responding".
+#[cfg(target_os = "windows")]
+fn run_bounded_windows(cmd: &str, args: &[&str], timeout_secs: u64) -> Option<String> {
+    use std::io::Read;
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+    let mut child = Command::new(cmd)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    // Take the pipe up front so no output is lost after reaping.
+    let mut piped = child.stdout.take();
+    let deadline = Instant::now() + Duration::from_secs(timeout_secs);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return None;
+                }
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            Err(_) => return None,
+        }
+    }
+    let _ = child.wait();
+    // Helper outputs (`ver`, `reg query`) are < 1 KB — far below the 64 KB
+    // pipe buffer, so the child can never block on a full pipe here.
+    let mut text = String::new();
+    if let Some(ref mut out) = piped {
+        let _ = out.read_to_string(&mut text);
+    }
+    if text.trim().is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
 /// Best-effort query of the current Windows build number without extra deps.
-/// Parses `cmd /c ver` output (e.g. `... [Version 10.0.22631.4169]`).
+///
+/// Tries the registry first (locale-independent, no console host), then
+/// falls back to parsing `cmd /c ver` output (e.g.
+/// `... [Version 10.0.22631.4169]`). Both helpers run under a hard timeout.
 /// Returns `None` when the version cannot be determined.
 #[cfg(target_os = "windows")]
 fn current_windows_build() -> Option<u32> {
-    let out = std::process::Command::new("cmd")
-        .args(["/c", "ver"])
-        .output()
-        .ok()?;
-    let text = String::from_utf8_lossy(&out.stdout);
+    // 1. Registry: CurrentBuildNumber (e.g. "22631").
+    if let Some(out) = run_bounded_windows(
+        "reg",
+        &[
+            "query",
+            r"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion",
+            "/v",
+            "CurrentBuildNumber",
+        ],
+        5,
+    ) {
+        for line in out.lines() {
+            if line.contains("CurrentBuildNumber") {
+                if let Some(token) = line.split_whitespace().last() {
+                    if let Ok(build) = token.trim().parse::<u32>() {
+                        return Some(build);
+                    }
+                }
+            }
+        }
+    }
+    // 2. Fallback: `cmd /c ver`.
+    let text = run_bounded_windows("cmd", &["/c", "ver"], 5)?;
     // Find last dotted group like 10.0.22631.4169 and take the third component.
     let version_token = text.split_whitespace().find_map(|tok| {
         let t = tok.trim_matches(|c| c == '[' || c == ']');
@@ -1063,6 +1147,16 @@ mod tests {
             shells.iter().any(|s| s.is_default),
             "At least one shell should be marked default"
         );
+    }
+
+    #[test]
+    fn test_shell_detection_cache_is_stable() {
+        // Repeated spawns must not re-walk PATH/the filesystem every time.
+        let first = detect_available_shells();
+        let second = detect_available_shells();
+        assert_eq!(first, second);
+        let uncached = detect_available_shells_uncached();
+        assert_eq!(first, uncached);
     }
 
     #[test]

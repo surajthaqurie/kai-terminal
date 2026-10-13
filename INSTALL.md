@@ -158,6 +158,7 @@ npm run tauri build
 | Problem | Cause / Solution |
 | :--- | :--- |
 | **`kai: command not found` after installing the desktop app** | The Tauri `.exe`/`.msi`/`.deb`/`.dmg` installer ships the terminal UI only — it never puts the Node `kai` CLI on PATH. Fix: `npm install && npm run setup:cli`, **restart the terminal**, then `kai --version`. |
+| **`npm run setup:cli` hangs on Windows (no output, looks frozen)** | `powershell` first launch (`.NET` JIT) or the first `vite` build can stall under antivirus/OneDrive locks. Wait up to a minute; the script now prints build timing and caps PowerShell probes at 15–20 s before printing manual `setx` steps instead of hanging. Re-run with `node scripts/setup-cli.cjs --skip-build` to skip a finished build. |
 | **`kai` still not found right after `setup:cli`** | PATH is read when a shell starts. Open a **new** terminal window (or restart the IDE terminal) — no reinstall needed. |
 | **Manual PATH fallback (Windows)** | If auto-update failed: `setx PATH "%PATH%;%USERPROFILE%\.kai\bin"`, then open a **new** terminal. |
 | **Manual PATH fallback (Linux/macOS)** | If auto-update failed: add `export PATH="$HOME/.local/bin:$PATH"` to `~/.bashrc` / `~/.zshrc` / `~/.profile`, then restart the terminal. |

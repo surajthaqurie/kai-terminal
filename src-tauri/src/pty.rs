@@ -137,13 +137,18 @@ pub fn resolve_process_cwd(_pid: u32) -> Option<String> {
 }
 
 /// Internal session handle holding native PTY master, writer, and process killer handle.
+///
+/// The writer lives behind its own `Arc<Mutex<..>>` so a large paste (up to
+/// 1 MB, streamed in 32 KB syscalls) only contends with writers of the SAME
+/// session — it never holds the manager-wide sessions lock, which previously
+/// blocked other tabs' create/resize/close for the whole write duration.
 pub struct PtySessionHandle {
     pub id: String,
     pub pid: Option<u32>,
     pub shell_path: String,
     pub cwd: String,
     pub master: Box<dyn MasterPty + Send>,
-    pub writer: Box<dyn Write + Send>,
+    pub writer: Arc<Mutex<Box<dyn Write + Send>>>,
     pub killer: Box<dyn ChildKiller + Send + Sync>,
     pub cols: u16,
     pub rows: u16,
@@ -267,6 +272,7 @@ impl PtyManager {
             .master
             .take_writer()
             .map_err(|e| TerminalError::IoError(format!("Failed to acquire PTY writer: {}", e)))?;
+        let writer = Arc::new(Mutex::new(writer));
 
         let mut reader = pair
             .master
@@ -427,38 +433,47 @@ impl PtyManager {
             )));
         }
 
-        let mut sessions = self
-            .sessions
+        // Grab the per-session writer under a brief map lock, then release
+        // the map before touching the pipe: a large paste must not stall
+        // other sessions' create/resize/close on the global mutex.
+        let writer_handle: Arc<Mutex<Box<dyn Write + Send>>> = {
+            let sessions = self
+                .sessions
+                .lock()
+                .map_err(|e| TerminalError::IoError(format!("Lock failure: {}", e)))?;
+
+            match sessions.get(id) {
+                Some(session) if session.status == SessionStatus::Connected => {
+                    Arc::clone(&session.writer)
+                }
+                Some(_) => return Ok(()),
+                None => return Err(TerminalError::SessionNotFound(id.to_string())),
+            }
+        };
+
+        let mut writer = writer_handle
             .lock()
             .map_err(|e| TerminalError::IoError(format!("Lock failure: {}", e)))?;
 
-        if let Some(session) = sessions.get_mut(id) {
-            if session.status != SessionStatus::Connected {
+        if let Err(e) = write_bytes_chunked(&mut *writer, data.as_bytes()) {
+            if e.kind() == std::io::ErrorKind::BrokenPipe {
                 return Ok(());
             }
-
-            if let Err(e) = write_bytes_chunked(&mut session.writer, data.as_bytes()) {
-                if e.kind() == std::io::ErrorKind::BrokenPipe {
-                    return Ok(());
-                }
-                return Err(TerminalError::WriteFailed(format!(
-                    "Failed to write to PTY: {}",
-                    e
-                )));
-            }
-            if let Err(e) = session.writer.flush() {
-                if e.kind() == std::io::ErrorKind::BrokenPipe {
-                    return Ok(());
-                }
-                return Err(TerminalError::WriteFailed(format!(
-                    "Failed to flush PTY writer: {}",
-                    e
-                )));
-            }
-            Ok(())
-        } else {
-            Err(TerminalError::SessionNotFound(id.to_string()))
+            return Err(TerminalError::WriteFailed(format!(
+                "Failed to write to PTY: {}",
+                e
+            )));
         }
+        if let Err(e) = writer.flush() {
+            if e.kind() == std::io::ErrorKind::BrokenPipe {
+                return Ok(());
+            }
+            return Err(TerminalError::WriteFailed(format!(
+                "Failed to flush PTY writer: {}",
+                e
+            )));
+        }
+        Ok(())
     }
 
     /// Sends a Ctrl+C interrupt byte (\x03) to target PTY session.
@@ -721,23 +736,26 @@ fn write_bytes_chunked_generic(writer: &mut dyn Write, bytes: &[u8]) -> std::io:
 }
 
 /// Helper extracting maximum valid UTF-8 string from buffer while retaining incomplete trailing UTF-8 sequences.
+///
+/// Drain-based (no full-buffer clones): the reader thread calls this on
+/// every 4 KB chunk, so the old `buf.clone()` + `to_vec()` copies turned
+/// high-volume output (e.g. `npm install` floods) into O(n^2) copying.
 fn split_valid_utf8(buf: &mut Vec<u8>) -> String {
     if buf.is_empty() {
         return String::new();
     }
     match std::str::from_utf8(buf) {
         Ok(_) => {
-            let text = unsafe { String::from_utf8_unchecked(buf.clone()) };
-            buf.clear();
-            text
+            // Whole buffer is valid: move it out without copying.
+            String::from_utf8(std::mem::take(buf)).unwrap_or_default()
         }
         Err(e) => {
             let valid_len = e.valid_up_to();
             if e.error_len().is_none() {
                 if valid_len > 0 {
-                    let text = unsafe { String::from_utf8_unchecked(buf[..valid_len].to_vec()) };
-                    *buf = buf[valid_len..].to_vec();
-                    text
+                    let taken: Vec<u8> = buf.drain(..valid_len).collect();
+                    // `taken` is the valid prefix of valid UTF-8, so this is infallible.
+                    String::from_utf8(taken).unwrap_or_default()
                 } else {
                     String::new()
                 }
@@ -1082,8 +1100,37 @@ mod tests {
     }
 
     #[test]
-    fn test_write_chunked_preserves_exact_bytes() {
-        struct VecWriter(Vec<u8>);
+    fn test_split_valid_utf8_buffers_partial_sequences() {
+        // ASCII fast path drains the buffer without copying leftovers.
+        let mut buf = b"hello".to_vec();
+        assert_eq!(split_valid_utf8(&mut buf), "hello");
+        assert!(buf.is_empty());
+
+        // Incomplete multi-byte tail is retained for the next chunk.
+        let emoji = "🚀".as_bytes(); // 4 bytes in UTF-8
+        let mut buf = vec![b'a'];
+        buf.extend_from_slice(&emoji[..2]);
+        assert_eq!(split_valid_utf8(&mut buf), "a");
+        assert_eq!(buf, &emoji[..2]);
+        buf.extend_from_slice(&emoji[2..]);
+        buf.extend_from_slice(b"!");
+        assert_eq!(split_valid_utf8(&mut buf), "🚀!");
+        assert!(buf.is_empty());
+
+        // Lone incomplete sequence with no valid prefix emits nothing.
+        let mut buf = emoji[..1].to_vec();
+        assert_eq!(split_valid_utf8(&mut buf), "");
+        assert_eq!(buf, &emoji[..1]);
+
+        // Invalid bytes fall back to lossy conversion and clear the buffer.
+        let mut buf = vec![0x66, 0x6f, 0xff, 0x6f];
+        let text = split_valid_utf8(&mut buf);
+        assert!(text.contains("fo"), "unexpected lossy text: {}", text);
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn test_write_chunked_preserves_exact_bytes() {        struct VecWriter(Vec<u8>);
         impl Write for VecWriter {
             fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
                 // Simulate partial writes: accept at most 7 bytes per call.
