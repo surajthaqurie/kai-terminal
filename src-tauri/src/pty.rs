@@ -455,7 +455,7 @@ impl PtyManager {
             .lock()
             .map_err(|e| TerminalError::IoError(format!("Lock failure: {}", e)))?;
 
-        if let Err(e) = write_bytes_chunked(&mut *writer, data.as_bytes()) {
+        if let Err(e) = write_bytes_chunked(&mut writer, data.as_bytes()) {
             if e.kind() == std::io::ErrorKind::BrokenPipe {
                 return Ok(());
             }
