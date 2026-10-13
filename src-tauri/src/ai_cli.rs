@@ -84,6 +84,10 @@ fn default_auth_status() -> String {
     "unknown".to_string()
 }
 
+/// Cached `detect_ai_cli_details` result with its capture time.
+type AiCliDetailsCacheEntry = (std::time::Instant, Vec<AiCliDetails>);
+type AiCliDetailsCache = std::sync::Mutex<Option<AiCliDetailsCacheEntry>>;
+
 /// MCP config merge style per agent (mirrors `src/core/agents.ts`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum McpKeyStyle {
@@ -599,9 +603,7 @@ pub fn detect_ai_cli_details() -> Vec<AiCliDetails> {
     if cfg!(test) {
         return detect_ai_cli_details_uncached();
     }
-    static CACHE: std::sync::OnceLock<
-        std::sync::Mutex<Option<(std::time::Instant, Vec<AiCliDetails>)>>,
-    > = std::sync::OnceLock::new();
+    static CACHE: std::sync::OnceLock<AiCliDetailsCache> = std::sync::OnceLock::new();
     let lock = CACHE.get_or_init(|| std::sync::Mutex::new(None));
     if let Ok(guard) = lock.lock() {
         if let Some((at, cached)) = guard.as_ref() {

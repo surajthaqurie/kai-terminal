@@ -35,7 +35,8 @@
     "test:docker:build": "docker compose -f docker-compose.test.yml build",
     "tauri": "tauri",
     "changeset": "changeset",
-    "version-packages": "changeset version"
+    "version-packages": "changeset version",
+    "release:repoint": "bash scripts/repoint-tag.sh"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.1.1",
