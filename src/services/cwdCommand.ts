@@ -48,3 +48,56 @@ export function lineLikelyChangesCwd(line: string): boolean {
   }
   return false;
 }
+
+/**
+ * Detects whether a submitted shell line likely changes Code Mode state.
+ *
+ * Gates the POST-execution Code Mode re-sync: `kai code .` / `kai stop code`
+ * write/remove the state file DURING execution (after indexing), so the
+ * pre-Enter sync reads stale state and — inside Kai's own tab — no window
+ * focus change ever follows to correct it. Only `kai` lines invoking a
+ * state-changing subcommand (`code`, `stop`, `clear`, or a bare/direct path
+ * like `kai .`, which also enters Code Mode) schedule delayed re-syncs;
+ * every other line relies on the cheap pre-Enter sync + focus polling.
+ * False positives cost a few file-read IPCs; false negatives only delay the
+ * badge until the next focus event or command.
+ */
+const CODE_MODE_SUBCOMMANDS = new Set(["code", "stop", "clear"]);
+
+function kaiBasename(token: string): string {
+  const base = token.toLowerCase().split(/[/\\]/).pop() ?? "";
+  return base.replace(/\.(js|cmd|bat|exe|ps1)$/, "");
+}
+
+export function lineLikelyChangesCodeMode(line: string): boolean {
+  if (!line) return false;
+  const segments = line.split(/;|&&|\|\||\r|\n/);
+  for (const seg of segments) {
+    const parts = seg.trim().split(/\s+/).filter(Boolean);
+    if (parts.length === 0) continue;
+    let idx = 0;
+    // Tolerate common wrappers: `sudo kai code .`, `npx kai stop code`.
+    const first = parts[0].toLowerCase();
+    if ((first === "sudo" || first === "npx") && parts.length > 1) idx = 1;
+    if (kaiBasename(parts[idx] ?? "") !== "kai") continue;
+    const sub = (parts[idx + 1] ?? "").toLowerCase();
+    // Bare `kai` (prints help) and flag-only invocations such as
+    // `kai --version` change no state.
+    if (!sub || sub.startsWith("-")) continue;
+    if (CODE_MODE_SUBCOMMANDS.has(sub)) return true;
+    // Direct-path invocation (`kai .`, `kai ~/proj`, `kai C:\work`, `kai /x`)
+    // also registers + enters Code Mode (see runCli isDirectPath).
+    if (
+      sub === "." ||
+      sub === "~" ||
+      sub.startsWith("./") ||
+      sub.startsWith("../") ||
+      sub.startsWith("~/") ||
+      sub.startsWith("/") ||
+      /^[a-zA-Z]:/.test(sub)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}

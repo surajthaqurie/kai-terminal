@@ -208,6 +208,18 @@ function normalizeCodeModePath(p: string): string {
 }
 
 /**
+ * Strips the macOS `/private` alias (`/tmp` -> `/private/tmp`): the CLI
+ * canonicalizes with `realpath` (yielding `/private/...`) while shells
+ * usually report the logical `$PWD` (`/...`). Applied to BOTH sides before
+ * comparing, and only meaningful on macOS — a real `/private/...` dir on
+ * Linux would mismatch only against an active project that is its
+ * `/private`-less shadow, which cannot both exist as intended targets.
+ */
+function stripMacPrivateAlias(s: string): string {
+  return s.replace(/^\/private\//, "/");
+}
+
+/**
  * True when `dir` is the active Code Mode project or lives inside it.
  * Returns false when there is no active project (plain terminal mode).
  * A bare prefix match is NOT enough: `/repo-demo` is not inside `/repo`.
@@ -217,7 +229,12 @@ export function isCodeModeActiveForDir(dir: string, activePath: string | null): 
   const d = normalizeCodeModePath(dir);
   const c = normalizeCodeModePath(activePath);
   if (!d || !c) return false;
-  return d === c || d.startsWith(`${c}/`);
+  if (d === c || d.startsWith(`${c}/`)) return true;
+  // macOS `/private` alias fallback (see stripMacPrivateAlias).
+  const ds = stripMacPrivateAlias(d);
+  const cs = stripMacPrivateAlias(c);
+  if (ds === d && cs === c) return false;
+  return ds === cs || ds.startsWith(`${cs}/`);
 }
 
 /** Records a working directory as recently used. Never replays history automatically. */

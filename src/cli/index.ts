@@ -363,7 +363,15 @@ export async function runCli(argv: string[]): Promise<number> {
     if (command === "code" || isDirectPath) {
       const targetArg = command === "code" ? args[1] : command;
       const targetPath = targetArg && !targetArg.startsWith("-") ? targetArg : process.cwd();
+      // registerProject validates the path (throws for missing/invalid), so
+      // everything below runs with a known-good canonical directory.
       const meta = registerProject(targetPath);
+      // Persist active project in Code Mode FIRST, before the slow indexing
+      // pass: the desktop app polls this file, and `kai code .` typed inside
+      // Kai's own tab previously left the badge stale for the whole index
+      // duration (seconds on large repos). Re-saved after indexing to refresh
+      // the timestamp with the final meta.
+      saveActiveProjectState(meta.canonicalPath, meta.name, meta.id, "code");
       console.log(`[kai] Registered project: "${meta.name}"`);
       console.log(`[kai] Canonical path: ${meta.canonicalPath}`);
       console.log(`[kai] Indexing project files...`);
@@ -375,7 +383,6 @@ export async function runCli(argv: string[]): Promise<number> {
       console.log(`- Project rules loaded: ${index.rules.length}`);
       console.log(`- Storage directory: ${getProjectStorageDir(meta.id)}`);
 
-      // Persist active project in Code Mode
       saveActiveProjectState(meta.canonicalPath, meta.name, meta.id, "code");
 
       const noLaunch =

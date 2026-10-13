@@ -256,15 +256,44 @@ impl PtyManager {
             })?;
 
         let mut cmd = CommandBuilder::new(&shell_path);
+        // Cwd-reporting prompt integration (Windows footer fix): native
+        // shells never emit OSC 7/9 by default and Windows exposes no
+        // /proc-style cwd query (`resolve_process_cwd` is Linux/macOS
+        // only), so without this the status bar / git badge stays stuck at
+        // the spawn directory after `cd` — the "path never changes in the
+        // window" bug. Best-effort only: an explicit user `-Command`/`-File`
+        // invocation or a custom PROMPT override opts out (tracking then
+        // degrades to today's behavior, never worse).
+        let user_env_has_prompt = options
+            .env
+            .as_ref()
+            .is_some_and(|e| e.keys().any(|k| k.eq_ignore_ascii_case("PROMPT")));
+        if is_cmd_shell(&shell_path) && !user_env_has_prompt {
+            let existing = std::env::var("PROMPT").ok();
+            cmd.env("PROMPT", cmd_cwd_prompt_value(existing.as_deref()));
+        }
         if let Some(ref args) = options.args {
             validate_spawn_args(args)?;
-            cmd.args(args);
+            if is_powershell_shell(&shell_path) && !powershell_args_take_command(args) {
+                // Preserve the caller's args (-NoLogo etc.), then stay
+                // interactive after installing the OSC 9;9 prompt wrapper
+                // (runs after profiles load, wrapping the existing prompt).
+                cmd.args(args);
+                cmd.arg("-NoExit");
+                cmd.arg("-Command");
+                cmd.arg(powershell_cwd_hook_script());
+            } else {
+                cmd.args(args);
+            }
         } else if is_powershell_shell(&shell_path) {
             // Fast-path default: skip the banner even when the frontend
             // passes no args (older persisted tabs, custom launchers).
             // Profile scripts still run; this only removes the logo print
             // that floods ConPTY on slow first launches.
             cmd.arg("-NoLogo");
+            cmd.arg("-NoExit");
+            cmd.arg("-Command");
+            cmd.arg(powershell_cwd_hook_script());
         }
         cmd.cwd(&cwd);
         // Ensure standard terminal capabilities so shells (zsh, bash, fish) and tools
@@ -355,6 +384,11 @@ impl PtyManager {
         let reader_thread = std::thread::spawn(move || {
             let mut read_buf = [0u8; READ_BUFFER_CHUNK_BYTES];
             let mut batch_buf = Vec::with_capacity(MAX_OUTPUT_BATCH_BYTES);
+            // Raw-byte window for OSC 7 / 9;9 cwd reports (primary Windows
+            // mechanism — see the prompt integration in `create_pty`). The
+            // retained tail reassembles sequences split across 4 KB reads;
+            // overlap re-scans are harmless (deduped by the equality check).
+            let mut scan_buf: Vec<u8> = Vec::with_capacity(8192);
 
             loop {
                 match reader.read(&mut read_buf) {
@@ -369,6 +403,32 @@ impl PtyManager {
                                 id: id_clone.clone(),
                                 data: text,
                             });
+                        }
+
+                        // OSC 7 / OSC 9;9 cwd reports sniffed from shell output.
+                        // This is what keeps `handle.cwd` (and therefore
+                        // `get_pty_cwd` + focus/interval/cd probes) truthful
+                        // on Windows, where `resolve_process_cwd` is
+                        // unavailable. Frontend xterm parses the same bytes
+                        // independently; output forwarding below is untouched.
+                        scan_buf.extend_from_slice(&read_buf[..n]);
+                        for osc_cwd in extract_osc_cwds(&scan_buf) {
+                            if osc_cwd != last_emitted_cwd {
+                                last_emitted_cwd = osc_cwd.clone();
+                                if let Ok(mut map) = sessions_map_ref.lock() {
+                                    if let Some(handle) = map.get_mut(&id_clone) {
+                                        handle.cwd = osc_cwd.clone();
+                                    }
+                                }
+                                emitter_reader.emit_cwd(PtyCwdPayload {
+                                    id: id_clone.clone(),
+                                    cwd: osc_cwd,
+                                });
+                            }
+                        }
+                        if scan_buf.len() > 8192 {
+                            let drop = scan_buf.len() - 8192;
+                            scan_buf.drain(..drop);
                         }
 
                         // Check if child working directory changed (throttled —
@@ -658,6 +718,211 @@ fn is_powershell_shell(shell_path: &str) -> bool {
     let file = lower.rsplit(['/', '\\']).next().unwrap_or(&lower);
     let base = file.strip_suffix(".exe").unwrap_or(file);
     base == "powershell" || base == "pwsh"
+}
+
+/// True for cmd.exe (any directory, case-insensitive, with or without `.exe`).
+fn is_cmd_shell(shell_path: &str) -> bool {
+    let lower = shell_path.to_lowercase();
+    let file = lower.rsplit(['/', '\\']).next().unwrap_or(&lower);
+    let base = file.strip_suffix(".exe").unwrap_or(file);
+    base == "cmd"
+}
+
+/// PowerShell prompt hook reporting cwd via `OSC 9;9` on every prompt while
+/// preserving the user's prompt text. Passed as a single `-Command` argv
+/// (runs after profiles load, so it wraps a profile-defined `prompt` when
+/// one exists). `Write-Host -NoNewline` keeps the prompt line itself clean;
+/// failures are swallowed so a broken `$PWD` never breaks the prompt.
+fn powershell_cwd_hook_script() -> String {
+    "$__kai_o=(GI function:prompt -EA SilentlyContinue).ScriptBlock; function global:prompt{$e=[char]27; try{$l=(Get-Location).Path; Write-Host -NoNewline \"$e]9;9;$l$e\\\"}catch{}; if($__kai_o){&$__kai_o}else{'PS> '}}"
+        .to_string()
+}
+
+/// True when argv already drives PowerShell non-interactively (`-Command`,
+/// `-c`, `-EncodedCommand`, `-File`): injecting our own `-Command` would
+/// conflict, so cwd tracking stays best-effort there.
+fn powershell_args_take_command(args: &[String]) -> bool {
+    args.iter().any(|a| {
+        let t = a
+            .trim_start_matches('-')
+            .trim_start_matches('/')
+            .to_lowercase();
+        matches!(
+            t.as_str(),
+            "command" | "c" | "encodedcommand" | "e" | "enc" | "file" | "f"
+        )
+    })
+}
+
+/// cmd.exe PROMPT value reporting cwd via `OSC 9;9` before every prompt.
+/// `$e` = ESC (Windows 10+), `$P` = drive+path. An existing prompt tail is
+/// preserved; prompts that already report cwd are left untouched.
+fn cmd_cwd_prompt_value(existing: Option<&str>) -> String {
+    const OSC_PREFIX: &str = "$e]9;9;$P$e\\";
+    match existing {
+        Some(t) if !t.trim().is_empty() => {
+            let trimmed = t.trim();
+            if trimmed.contains("]9;9;") {
+                trimmed.to_string()
+            } else {
+                format!("{OSC_PREFIX}{trimmed}")
+            }
+        }
+        _ => format!("{OSC_PREFIX}$P$G"),
+    }
+}
+
+/// Finds the end of an OSC sequence starting data at `from`: returns
+/// `(data_end, next_pos)` where the terminator is BEL (`0x07`) or ST
+/// (`ESC \`). Returns `None` when the sequence is incomplete (e.g. the
+/// buffer ends mid-sequence or on a trailing lone ESC).
+fn find_osc_end(buf: &[u8], from: usize) -> Option<(usize, usize)> {
+    let mut k = from;
+    while k < buf.len() {
+        if buf[k] == 0x07 {
+            return Some((k, k + 1));
+        }
+        if buf[k] == 0x1B {
+            if k + 1 >= buf.len() {
+                return None;
+            }
+            if buf[k + 1] == 0x5C {
+                return Some((k, k + 2));
+            }
+        }
+        k += 1;
+    }
+    None
+}
+
+fn hex_val(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
+}
+
+/// Percent-decodes `s` (byte-wise, then lossy UTF-8) for OSC 7 file URLs.
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut raw: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let (Some(h), Some(l)) = (hex_val(bytes[i + 1]), hex_val(bytes[i + 2])) {
+                raw.push((h << 4) | l);
+                i += 3;
+                continue;
+            }
+        }
+        raw.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&raw).into_owned()
+}
+
+/// Parses OSC 7 payload bytes (`file://host/path`, percent-encoded) into a
+/// cwd, mirroring the frontend xterm OSC 7 handler (URL parse, drive-letter
+/// `/C:/` unstripping). Returns `None` for non-file payloads.
+fn parse_osc7_data(data: &[u8]) -> Option<String> {
+    let s = String::from_utf8_lossy(data);
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+    let without_scheme = s.strip_prefix("file://")?;
+    // Split host from path at the first `/`.
+    let path_part = match without_scheme.find('/') {
+        Some(idx) => &without_scheme[idx..],
+        None => return None,
+    };
+    if path_part.is_empty() {
+        return None;
+    }
+    let mut p = percent_decode(path_part);
+    // `file:///C:/x` -> `C:/x` (same rule as the frontend handler).
+    if p.len() >= 3 && p.as_bytes()[0] == b'/' && p.as_bytes()[2] == b':' {
+        if let Some(drive) = p.as_bytes().get(1) {
+            if drive.is_ascii_alphabetic() {
+                p = p[1..].to_string();
+            }
+        }
+    }
+    if p.trim().is_empty() {
+        return None;
+    }
+    Some(p)
+}
+
+/// Parses OSC 9;9 payload bytes (literal Windows path, e.g. `C:\Users\x`).
+fn parse_osc9_data(data: &[u8]) -> Option<String> {
+    let s = String::from_utf8_lossy(data);
+    let p = s.trim();
+    if p.is_empty() {
+        None
+    } else {
+        Some(p.to_string())
+    }
+}
+
+/// Scans raw PTY output bytes for completed OSC 7 / OSC 9;9 cwd reports and
+/// returns each reported cwd in order. Handles BEL and ST (`ESC \`)
+/// terminators. Incomplete trailing sequences are skipped (callers retain a
+/// tail and prepend it to the next chunk).
+pub fn extract_osc_cwds(chunk: &[u8]) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i + 2 < chunk.len() {
+        if chunk[i] == 0x1B && chunk[i + 1] == 0x5D {
+            let mut j = i + 2;
+            let num_start = j;
+            while j < chunk.len() && chunk[j].is_ascii_digit() {
+                j += 1;
+            }
+            if j == num_start || j >= chunk.len() || chunk[j] != b';' {
+                i += 1;
+                continue;
+            }
+            let id: u32 = std::str::from_utf8(&chunk[num_start..j])
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(u32::MAX);
+            j += 1; // skip ';'
+            if id == 7 {
+                match find_osc_end(chunk, j) {
+                    Some((end, next)) => {
+                        if let Some(cwd) = parse_osc7_data(&chunk[j..end]) {
+                            out.push(cwd);
+                        }
+                        i = next;
+                        continue;
+                    }
+                    None => break, // incomplete tail: wait for more bytes
+                }
+            } else if id == 9 {
+                // Windows Terminal convention: `OSC 9;9;<dir>`.
+                if j + 1 < chunk.len() && chunk[j] == b'9' && chunk[j + 1] == b';' {
+                    j += 2;
+                    match find_osc_end(chunk, j) {
+                        Some((end, next)) => {
+                            if let Some(cwd) = parse_osc9_data(&chunk[j..end]) {
+                                out.push(cwd);
+                            }
+                            i = next;
+                            continue;
+                        }
+                        None => break,
+                    }
+                }
+                i += 1;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    out
 }
 
 /// Validates IPC-supplied spawn args without shell-string interpolation.
@@ -1293,6 +1558,88 @@ mod tests {
         let clamped = manager.get_session_info(&info.id).unwrap();
         assert_eq!((clamped.cols, clamped.rows), (MAX_COLS, MAX_ROWS));
         manager.close_pty(&info.id).unwrap();
+    }
+
+    #[test]
+    fn test_is_cmd_shell() {
+        assert!(is_cmd_shell("C:\\Windows\\System32\\cmd.exe"));
+        assert!(is_cmd_shell("cmd"));
+        assert!(is_cmd_shell("CMD.EXE"));
+        assert!(!is_cmd_shell("powershell.exe"));
+        assert!(!is_cmd_shell("pwsh.exe"));
+    }
+
+    #[test]
+    fn test_powershell_args_take_command() {
+        assert!(!powershell_args_take_command(&["-NoLogo".to_string()]));
+        assert!(!powershell_args_take_command(&[]));
+        assert!(powershell_args_take_command(&[
+            "-NoLogo".to_string(),
+            "-Command".to_string(),
+        ]));
+        assert!(powershell_args_take_command(&["-c".to_string()]));
+        assert!(powershell_args_take_command(&["-EncodedCommand".to_string()]));
+        assert!(powershell_args_take_command(&["-File".to_string()]));
+    }
+
+    #[test]
+    fn test_powershell_hook_wraps_prompt_and_reports_osc99() {
+        let hook = powershell_cwd_hook_script();
+        assert!(hook.contains("global:prompt"), "hook must define prompt");
+        assert!(hook.contains("]9;9;"), "hook must emit OSC 9;9");
+        assert!(hook.contains("-NoNewline"), "hook must not pollute prompt line");
+        assert!(hook.contains("$__kai_o"), "hook must preserve existing prompt");
+    }
+
+    #[test]
+    fn test_cmd_prompt_reports_osc99() {
+        let def = cmd_cwd_prompt_value(None);
+        assert!(def.starts_with("$e]9;9;$P$e\\"), "got: {def}");
+        assert!(def.ends_with("$P$G"));
+        // Existing custom prompt tail is preserved, not replaced.
+        let custom = cmd_cwd_prompt_value(Some("$P$G$S"));
+        assert!(custom.starts_with("$e]9;9;$P$e\\"));
+        assert!(custom.ends_with("$P$G$S"), "got: {custom}");
+        // Already-integrated prompts are left untouched (no doubling).
+        let already = "$e]9;9;$P$e\\$P$G";
+        assert_eq!(cmd_cwd_prompt_value(Some(already)), already);
+    }
+
+    #[test]
+    fn test_extract_osc99_bel_and_st() {
+        let bel = b"\x1b]9;9;C:\\Users\\kai\x07";
+        assert_eq!(extract_osc_cwds(bel), vec!["C:\\Users\\kai"]);
+        let st = b"\x1b]9;9;D:\\repo\x1b\\";
+        assert_eq!(extract_osc_cwds(st), vec!["D:\\repo"]);
+        // Empty payloads are ignored.
+        let empty = b"\x1b]9;9;\x07";
+        assert!(extract_osc_cwds(empty).is_empty());
+    }
+
+    #[test]
+    fn test_extract_osc7_file_url() {
+        // Unix path with percent-encoding.
+        let seq = b"\x1b]7;file://host/home/kai/my%20proj\x07";
+        assert_eq!(extract_osc_cwds(seq), vec!["/home/kai/my proj"]);
+        // Windows drive-letter URL unstripped like the frontend handler.
+        let win = b"\x1b]7;file://PC/C%3A/Users/kai\x1b\\";
+        assert_eq!(extract_osc_cwds(win), vec!["C:/Users/kai"]);
+        // Non-file payloads are ignored.
+        let other = b"\x1b]7;https://example.com/x\x07";
+        assert!(extract_osc_cwds(other).is_empty());
+    }
+
+    #[test]
+    fn test_extract_osc_split_across_chunks() {
+        // A sequence split across 4 KB reads yields nothing until complete;
+        // the caller's retained tail + remainder then parses (mirrors the
+        // reader thread's scan_buf behavior).
+        let part1 = b"\x1b]9;9;C:\\Users\\k";
+        let part2 = b"ai\x07";
+        assert!(extract_osc_cwds(part1).is_empty());
+        let mut rejoined = part1.to_vec();
+        rejoined.extend_from_slice(part2);
+        assert_eq!(extract_osc_cwds(&rejoined), vec!["C:\\Users\\kai"]);
     }
 
     #[test]

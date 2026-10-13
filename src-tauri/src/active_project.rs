@@ -19,23 +19,37 @@ struct ActiveProjectFile {
     mode: Option<String>,
 }
 
-fn kai_home_dir() -> Option<PathBuf> {
+/// Candidate Kai home directories in CLI-matching precedence.
+///
+/// MUST mirror `getKaiHomeDir()` in `src/core/registry.ts` (`KAI_HOME` >
+/// `XDG_DATA_HOME/kai` > `~/.kai`): the CLI writes `active_project.json`
+/// under the first candidate, so the backend must read the same order.
+/// Previously the backend skipped `XDG_DATA_HOME`, so on Linux systems with
+/// `XDG_DATA_HOME` set, `kai code .` wrote one location while the desktop
+/// app read another — Code Mode never activated.
+fn candidate_home_dirs() -> Vec<PathBuf> {
+    let mut out = Vec::new();
     if let Ok(h) = std::env::var("KAI_HOME") {
         if !h.trim().is_empty() {
-            return Some(PathBuf::from(h));
+            out.push(PathBuf::from(h));
+        }
+    }
+    if let Ok(x) = std::env::var("XDG_DATA_HOME") {
+        if !x.trim().is_empty() {
+            out.push(PathBuf::from(x).join("kai"));
         }
     }
     if let Ok(h) = std::env::var("HOME") {
         if !h.trim().is_empty() {
-            return Some(PathBuf::from(h).join(".kai"));
+            out.push(PathBuf::from(h).join(".kai"));
         }
     }
     if let Ok(u) = std::env::var("USERPROFILE") {
         if !u.trim().is_empty() {
-            return Some(PathBuf::from(u).join(".kai"));
+            out.push(PathBuf::from(u).join(".kai"));
         }
     }
-    None
+    out
 }
 
 fn sanitize_path(p: &str) -> Option<String> {
@@ -43,7 +57,36 @@ fn sanitize_path(p: &str) -> Option<String> {
     if t.is_empty() || t.len() > 4096 || t.contains('\0') {
         return None;
     }
-    Some(t.to_string())
+    Some(canonicalize_state_path(t))
+}
+
+/// Canonicalizes a Code Mode state path for cross-side comparison.
+///
+/// The CLI writes `resolveCanonicalPath()` (Node `realpathSync`) while pane
+/// directories arrive from shells (`$PWD`, OSC 9;9) — on Windows these can
+/// disagree textually for the SAME directory (8.3 short names like
+/// `C:\Users\SURAJC~1\...` vs long names, verbatim `\\?\` prefixes).
+/// Filesystem canonicalization collapses those to one long-name form (and
+/// resolves symlinks everywhere, matching the CLI). Falls back to the
+/// sanitized input when the path no longer exists. The frontend applies its
+/// own case/separator normalization on top before comparing.
+fn canonicalize_state_path(p: &str) -> String {
+    match std::fs::canonicalize(p) {
+        Ok(canon) => {
+            let mut s = canon.to_string_lossy().replace('\\', "/");
+            if let Some(rest) = s.strip_prefix("//?/UNC/") {
+                s = format!("//{rest}");
+            } else if let Some(rest) = s.strip_prefix("//?/") {
+                s = rest.to_string();
+            }
+            if s.trim().is_empty() {
+                p.to_string()
+            } else {
+                s
+            }
+        }
+        Err(_) => p.to_string(),
+    }
 }
 
 /// Reads the active Code Mode project.
@@ -51,7 +94,8 @@ fn sanitize_path(p: &str) -> Option<String> {
 /// Precedence:
 /// 1. `KAI_ACTIVE_PROJECT` env (set when the CLI launches the app) with
 ///    `KAI_MODE == "code"`. Works in dev AND release builds.
-/// 2. `$KAI_HOME/active_project.json` with `mode == "code"`.
+/// 2. `active_project.json` with `mode == "code"` under the first candidate
+///    home that has one (`candidate_home_dirs` order).
 /// 3. Otherwise `{ path: None, mode: "terminal" }` — plain terminal mode.
 ///
 /// Never falls back to recent history. Never defaults to code.
@@ -70,8 +114,10 @@ pub fn get_active_project() -> ActiveProject {
         }
     }
 
-    // 2. Persisted CLI state file.
-    if let Some(home) = kai_home_dir() {
+    // 2. Persisted CLI state file. Every candidate home is checked in
+    // precedence order so a state file written under any of them (e.g. CLI
+    // with `XDG_DATA_HOME` set, app launched without it) still activates.
+    for home in candidate_home_dirs() {
         let file = home.join("active_project.json");
         if let Ok(content) = fs::read_to_string(&file) {
             if let Ok(parsed) = serde_json::from_str::<ActiveProjectFile>(&content) {
@@ -109,18 +155,59 @@ mod tests {
         std::env::remove_var("KAI_HOME");
     }
 
+    /// Snapshot of the home-locating env vars, for test isolation: the
+    /// reader now consults `XDG_DATA_HOME`/`HOME`/`USERPROFILE` fallbacks,
+    /// so tests must pin ALL of them to the temp dir (a real
+    /// `~/.kai/active_project.json` on the dev machine would otherwise
+    /// leak into assertions). Restored at the end of each test.
+    struct EnvSnapshot {
+        kai_home: Option<String>,
+        xdg: Option<String>,
+        home: Option<String>,
+        userprofile: Option<String>,
+    }
+
+    fn isolate_home(tmp: &std::path::Path) -> EnvSnapshot {
+        let snap = EnvSnapshot {
+            kai_home: std::env::var("KAI_HOME").ok(),
+            xdg: std::env::var("XDG_DATA_HOME").ok(),
+            home: std::env::var("HOME").ok(),
+            userprofile: std::env::var("USERPROFILE").ok(),
+        };
+        std::env::set_var("KAI_HOME", tmp);
+        std::env::set_var("XDG_DATA_HOME", tmp.join("xdg-nowhere"));
+        std::env::set_var("HOME", tmp);
+        std::env::set_var("USERPROFILE", tmp);
+        snap
+    }
+
+    fn restore_env(snap: EnvSnapshot) {
+        for (k, v) in [
+            ("KAI_HOME", snap.kai_home),
+            ("XDG_DATA_HOME", snap.xdg),
+            ("HOME", snap.home),
+            ("USERPROFILE", snap.userprofile),
+        ] {
+            match v {
+                Some(val) => std::env::set_var(k, val),
+                None => std::env::remove_var(k),
+            }
+        }
+        clear_env();
+    }
+
     #[test]
     fn test_no_state_returns_terminal_not_code() {
         let _g = ENV_LOCK.lock().unwrap();
         clear_env();
         let tmp = std::env::temp_dir().join(format!("kai-ap-none-{}", std::process::id()));
         let _ = fs::create_dir_all(&tmp);
-        std::env::set_var("KAI_HOME", &tmp);
+        let _snap = isolate_home(&tmp);
         let s = get_active_project();
         assert_eq!(s.path, None);
         assert_eq!(s.mode, "terminal");
         let _ = fs::remove_dir_all(&tmp);
-        clear_env();
+        restore_env(_snap);
     }
 
     #[test]
@@ -129,7 +216,7 @@ mod tests {
         clear_env();
         let tmp = std::env::temp_dir().join(format!("kai-ap-code-{}", std::process::id()));
         let _ = fs::create_dir_all(&tmp);
-        std::env::set_var("KAI_HOME", &tmp);
+        let _snap = isolate_home(&tmp);
         fs::write(
             tmp.join("active_project.json"),
             r#"{"id":"abc","name":"demo","path":"C:\\repo\\demo","mode":"code"}"#,
@@ -139,7 +226,7 @@ mod tests {
         assert_eq!(s.path.as_deref(), Some("C:\\repo\\demo"));
         assert_eq!(s.mode, "code");
         let _ = fs::remove_dir_all(&tmp);
-        clear_env();
+        restore_env(_snap);
     }
 
     #[test]
@@ -148,7 +235,7 @@ mod tests {
         clear_env();
         let tmp = std::env::temp_dir().join(format!("kai-ap-term-{}", std::process::id()));
         let _ = fs::create_dir_all(&tmp);
-        std::env::set_var("KAI_HOME", &tmp);
+        let _snap = isolate_home(&tmp);
         fs::write(
             tmp.join("active_project.json"),
             r#"{"path":"C:\\repo\\demo","mode":"terminal"}"#,
@@ -158,7 +245,7 @@ mod tests {
         assert_eq!(s.path, None);
         assert_eq!(s.mode, "terminal");
         let _ = fs::remove_dir_all(&tmp);
-        clear_env();
+        restore_env(_snap);
     }
 
     #[test]
@@ -167,13 +254,77 @@ mod tests {
         clear_env();
         let tmp = std::env::temp_dir().join(format!("kai-ap-env-{}", std::process::id()));
         let _ = fs::create_dir_all(&tmp);
-        std::env::set_var("KAI_HOME", &tmp);
+        let _snap = isolate_home(&tmp);
         std::env::set_var("KAI_ACTIVE_PROJECT", "D:\\work\\app");
         std::env::set_var("KAI_MODE", "code");
         let s = get_active_project();
         assert_eq!(s.path.as_deref(), Some("D:\\work\\app"));
         assert_eq!(s.mode, "code");
         let _ = fs::remove_dir_all(&tmp);
+        restore_env(_snap);
+    }
+
+    #[test]
+    fn test_xdg_fallback_activates_when_kai_home_unset() {
+        // Regression: CLI honours XDG_DATA_HOME but the backend did not, so
+        // `kai code .` on such systems wrote state the app never read.
+        let _g = ENV_LOCK.lock().unwrap();
         clear_env();
+        // KAI_HOME must be ABSENT here so the XDG candidate is exercised.
+        std::env::remove_var("KAI_HOME");
+        let tmp = std::env::temp_dir().join(format!("kai-ap-xdg-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        let _ = fs::create_dir_all(&tmp);
+        let snap = EnvSnapshot {
+            kai_home: None,
+            xdg: std::env::var("XDG_DATA_HOME").ok(),
+            home: std::env::var("HOME").ok(),
+            userprofile: std::env::var("USERPROFILE").ok(),
+        };
+        let xdg_kai = tmp.join("xdg-home").join("kai");
+        let _ = fs::create_dir_all(&xdg_kai);
+        std::env::set_var("XDG_DATA_HOME", tmp.join("xdg-home"));
+        // Point HOME/USERPROFILE at empty dirs so no real state leaks in.
+        std::env::set_var("HOME", tmp.join("home-nowhere"));
+        std::env::set_var("USERPROFILE", tmp.join("home-nowhere"));
+        fs::write(
+            xdg_kai.join("active_project.json"),
+            r#"{"path":"/repo/xdg-demo","mode":"code"}"#,
+        )
+        .unwrap();
+        let s = get_active_project();
+        assert_eq!(s.path.as_deref(), Some("/repo/xdg-demo"));
+        assert_eq!(s.mode, "code");
+        let _ = fs::remove_dir_all(&tmp);
+        restore_env(snap);
+    }
+
+    #[test]
+    fn test_state_path_is_canonicalized_for_comparison() {
+        // A valid-but-unclean path (`/./` segment) must come back
+        // canonicalized so it textually matches shell-reported cwds.
+        let _g = ENV_LOCK.lock().unwrap();
+        clear_env();
+        let tmp = std::env::temp_dir().join(format!("kai-ap-canon-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        let _ = fs::create_dir_all(&tmp);
+        let _snap = isolate_home(&tmp);
+        let messy = format!("{}/./", tmp.to_string_lossy());
+        fs::write(
+            tmp.join("active_project.json"),
+            format!(r#"{{"path":{messy:?},"mode":"code"}}"#),
+        )
+        .unwrap();
+        let s = get_active_project();
+        assert_eq!(s.mode, "code");
+        let got = s.path.expect("canonicalized path");
+        assert!(
+            !got.contains("/./"),
+            "state path should be canonicalized, got: {got}"
+        );
+        // Canonical form still points at the same directory.
+        assert!(std::path::Path::new(&got).is_dir());
+        let _ = fs::remove_dir_all(&tmp);
+        restore_env(_snap);
     }
 }

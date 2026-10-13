@@ -16,7 +16,7 @@ import { isCopyKeyEvent, isPasteKeyEvent } from "../services/shortcuts";
 import { ShellProfile, SessionStatus, UserSettings } from "../types/terminal";
 import { SettingsService, DEFAULT_SETTINGS } from "../services/settingsService";
 import { loadCommandHistory, recordCommand, saveCommandHistory } from "../services/autocomplete";
-import { lineLikelyChangesCwd } from "../services/cwdCommand";
+import { lineLikelyChangesCwd, lineLikelyChangesCodeMode } from "../services/cwdCommand";
 // Search UI only mounts on first toggle (Ctrl+Shift+F), so it stays out of
 // the per-pane startup path.
 const SearchBar = lazy(() => import("./SearchBar").then((m) => ({ default: m.SearchBar })));
@@ -491,7 +491,15 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
             // Backend already reaped the session; status update arrives via pty-exit.
           });
           if (submitted && lineLikelyChangesCwd(submitted)) {
+            // Triple-tap: the shell's next prompt (OSC 9;9 / getPtyCwd
+            // truth) can land well after 250 ms on slow commands and
+            // heavy profiles, and a single early probe reads the pre-cd
+            // directory — the "footer never updates after cd" report.
+            // The extra probes are cheap (one IPC each, cd-gated) and
+            // converge on the post-cd truth.
             setTimeout(checkLiveCwd, 250);
+            setTimeout(checkLiveCwd, 1000);
+            setTimeout(checkLiveCwd, 2500);
           }
           // Notify the app shell about EVERY submitted line (cheap: the
           // handler only re-reads the active-project state file). This is
@@ -500,6 +508,16 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
           // would leave the Code Mode badge stale.
           if (submitted) {
             onCommandSubmittedRef.current?.();
+            // POST-execution re-sync for state-changing `kai` lines: the
+            // pre-Enter sync above runs BEFORE the CLI writes/removes the
+            // state file (after its indexing pass), so without these the
+            // badge stays stale until the next focus event or command.
+            if (lineLikelyChangesCodeMode(submitted)) {
+              const resync = () => onCommandSubmittedRef.current?.();
+              setTimeout(resync, 800);
+              setTimeout(resync, 2500);
+              setTimeout(resync, 6000);
+            }
           }
         }
         // Dead pane: input is ignored (use Close pane). No auto-restart.
