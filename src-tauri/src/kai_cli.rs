@@ -643,10 +643,17 @@ mod tests {
 
     #[test]
     fn test_append_is_idempotent_and_handles_empty() {
-        assert_eq!(append_dir_to_path_var("", "C:\\x"), "C:\\x");
-        let once = append_dir_to_path_var("C:\\a", "C:\\x");
-        assert!(path_contains_dir(&once, "C:\\x"));
-        let twice = append_dir_to_path_var(&once, "C:\\x");
+        // PATH entries are platform-native: drive-letter paths contain a
+        // colon, which is the Unix separator, so cross-style inputs would
+        // be ambiguous there. Each platform tests its own shape.
+        #[cfg(target_os = "windows")]
+        let (existing, add) = ("C:\\a", "C:\\x");
+        #[cfg(not(target_os = "windows"))]
+        let (existing, add) = ("/opt/a", "/opt/x");
+        assert_eq!(append_dir_to_path_var("", add), add);
+        let once = append_dir_to_path_var(existing, add);
+        assert!(path_contains_dir(&once, add));
+        let twice = append_dir_to_path_var(&once, add);
         assert_eq!(once, twice);
     }
 
