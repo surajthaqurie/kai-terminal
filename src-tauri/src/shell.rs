@@ -1065,7 +1065,7 @@ pub fn open_external_url(url: &str) -> Result<(), TerminalError> {
         hide_console(&mut c);
         c.spawn()
             .map_err(|e| TerminalError::IoError(format!("Failed to open URL: {e}")))?;
-        return Ok(());
+        Ok(())
     }
     #[cfg(target_os = "macos")]
     {
@@ -1073,7 +1073,7 @@ pub fn open_external_url(url: &str) -> Result<(), TerminalError> {
             .arg(url)
             .spawn()
             .map_err(|e| TerminalError::IoError(format!("Failed to open URL: {e}")))?;
-        return Ok(());
+        Ok(())
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
@@ -1083,7 +1083,7 @@ pub fn open_external_url(url: &str) -> Result<(), TerminalError> {
             .map_err(|e| {
                 TerminalError::IoError(format!("Failed to open URL (is xdg-open installed?): {e}"))
             })?;
-        return Ok(());
+        Ok(())
     }
 }
 

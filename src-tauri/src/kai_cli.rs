@@ -22,6 +22,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+#[cfg(target_os = "windows")]
 use std::time::{Duration, Instant};
 
 /// Status of the bundled CLI install, surfaced to the frontend.
@@ -43,7 +44,7 @@ pub fn kai_bin_dir() -> PathBuf {
         let base = std::env::var("USERPROFILE")
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("."));
-        return base.join(".kai").join("bin");
+        base.join(".kai").join("bin")
     }
     #[cfg(not(target_os = "windows"))]
     {
