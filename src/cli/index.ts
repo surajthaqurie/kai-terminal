@@ -1109,7 +1109,17 @@ export async function runCli(argv: string[]): Promise<number> {
           : ("auto" as const);
       // Resolve the installed entry point, not the cwd. The old code used
       // process.cwd()/bin/kai.js which is wrong for global installs.
-      const kaiBin = process.argv[1] ? path.resolve(process.argv[1]) : "kai";
+      // Prefer the real bundle path when argv[1] is a symlink (npm/pnpm
+      // global installs link through to bin/kai.js): the baked MCP entry
+      // must survive the link changing, and agents resolve `node <file>`
+      // more reliably against the real file.
+      let kaiBin = process.argv[1] ? path.resolve(process.argv[1]) : "kai";
+      try {
+        const real = fs.realpathSync(kaiBin);
+        if (real.toLowerCase().endsWith(".js")) kaiBin = real;
+      } catch {
+        // Unresolvable (deleted/moved since launch) — keep the resolved argv.
+      }
 
       if (!rawTarget || rawTarget.startsWith("-")) {
         // Missing target: show dynamic system state so users can see at a

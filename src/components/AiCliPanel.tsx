@@ -1,10 +1,11 @@
 import { FC, useCallback, useEffect, useState } from "react";
-import { X, Plus, RefreshCw, Wrench, CheckCircle } from "lucide-react";
+import { X, Plus, RefreshCw, Wrench, CheckCircle, Copy, Check, BookOpen } from "lucide-react";
 import {
   getAiCliDetails,
   checkCustomAiCliPath,
   registerUserCustomAiCli,
   getKaiCliLaunch,
+  getAgentSetupSnippet,
   setupAgentMcp,
   AiCliDetails,
 } from "../services/aiCliService";
@@ -28,6 +29,12 @@ export const AiCliPanel: FC<AiCliPanelProps> = ({ isOpen, onClose, projectDir })
   const [customError, setCustomError] = useState<string | null>(null);
   const [configuringId, setConfiguringId] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  // Lazily-loaded verified manual snippets (backend `agent_setup_snippet`),
+  // shown when auto-wire is declined, fails, or the user prefers hand-edit.
+  const [manualOpen, setManualOpen] = useState<Record<string, boolean>>({});
+  const [manualSnippet, setManualSnippet] = useState<Record<string, string>>({});
+  const [manualLoading, setManualLoading] = useState<Record<string, boolean>>({});
+  const [manualCopied, setManualCopied] = useState<Record<string, boolean>>({});
 
   // New user-defined CLI form inputs
   const [newCliName, setNewCliName] = useState("");
@@ -65,13 +72,55 @@ export const AiCliPanel: FC<AiCliPanelProps> = ({ isOpen, onClose, projectDir })
     setSuccessMessage(null);
     try {
       const launcher = await getKaiCliLaunch();
-      const res = await setupAgentMcp(cli.id, launcher, projectDir || ".", Boolean(cli.kai_wired));
+      const res = await setupAgentMcp(
+        cli.id,
+        launcher,
+        projectDir || ".",
+        Boolean(cli.kai_wired),
+        projectDir || undefined
+      );
       setSuccessMessage(res.message || `Configured ${cli.name} with Kai MCP!`);
       refresh(true);
     } catch (e) {
       setCustomError(e instanceof Error ? e.message : String(e));
+      // Auto-open the manual fallback so a declined/failed write still
+      // leaves the user with copyable steps instead of a dead end.
+      void ensureManualSnippet(cli.id, true);
     } finally {
       setConfiguringId(null);
+    }
+  };
+
+  const ensureManualSnippet = async (id: string, open = true) => {
+    setManualOpen((prev) => ({ ...prev, [id]: open }));
+    if (!open || manualSnippet[id] || manualLoading[id]) return;
+    setManualLoading((prev) => ({ ...prev, [id]: true }));
+    try {
+      const snippet = await getAgentSetupSnippet(id, projectDir || ".");
+      setManualSnippet((prev) => ({ ...prev, [id]: snippet }));
+    } catch (e) {
+      // Browser/mock or backend miss: still show the terminal fallback.
+      setManualSnippet((prev) => ({
+        ...prev,
+        [id]: `Run in a terminal for the verified snippet:\n\n  kai agent setup ${id} --print`,
+      }));
+      if (e instanceof Error && e.message) {
+        setCustomError((prev) => prev ?? e.message);
+      }
+    } finally {
+      setManualLoading((prev) => ({ ...prev, [id]: false }));
+    }
+  };
+
+  const handleCopySnippet = async (id: string) => {
+    const text = manualSnippet[id];
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      setManualCopied((prev) => ({ ...prev, [id]: true }));
+      setTimeout(() => setManualCopied((prev) => ({ ...prev, [id]: false })), 1500);
+    } catch {
+      // clipboard unavailable: text stays selectable below
     }
   };
 
@@ -295,17 +344,22 @@ export const AiCliPanel: FC<AiCliPanelProps> = ({ isOpen, onClose, projectDir })
                     flexWrap: "wrap",
                   }}
                 >
-                  {/* Configure / Reconfigure button for available CLIs */}
-                  {d.available && (
+                  {/* Configure / Reconfigure button for available CLIs with a
+                      known config format. Custom-registered binaries are
+                      launch targets, not config owners, so they get guidance
+                      instead of a button that can only fail. */}
+                  {d.available && !d.id.startsWith("custom:") && (
                     <button
                       type="button"
                       className={`btn ${d.kai_wired ? "btn-secondary" : "btn-primary"} btn-small`}
                       onClick={() => void handleConfigureMcp(d)}
                       disabled={configuringId === d.id}
                       title={
-                        d.kai_wired
-                          ? `Reconfigure ${d.name} with Kai MCP`
-                          : `Configure ${d.name} with Kai MCP`
+                        d.id === "copilot"
+                          ? `Configure ${d.name} with Kai MCP in this project (.vscode/mcp.json)`
+                          : d.kai_wired
+                            ? `Reconfigure ${d.name} with Kai MCP`
+                            : `Configure ${d.name} with Kai MCP`
                       }
                     >
                       <Wrench size={13} />
@@ -314,8 +368,31 @@ export const AiCliPanel: FC<AiCliPanelProps> = ({ isOpen, onClose, projectDir })
                           ? "Configuring…"
                           : d.kai_wired
                             ? "Reconfigure"
-                            : "Configure"}
+                            : d.id === "copilot"
+                              ? "Configure in this project"
+                              : "Configure"}
                       </span>
+                    </button>
+                  )}
+                  {d.available && d.id.startsWith("custom:") && (
+                    <p className="muted-text" style={{ margin: 0, fontSize: "12px" }}>
+                      Registered custom binary — launch it from a terminal tab. Kai MCP wiring
+                      applies to the built-in providers above.
+                    </p>
+                  )}
+
+                  {/* Manual setup fallback: verified snippet + terminal
+                      command, for declined writes or hand-edit preference. */}
+                  {!d.id.startsWith("custom:") && (
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-small"
+                      onClick={() => void ensureManualSnippet(d.id, !manualOpen[d.id])}
+                      title={`Show manual MCP setup for ${d.name}`}
+                      aria-expanded={Boolean(manualOpen[d.id])}
+                    >
+                      <BookOpen size={13} />
+                      <span>Manual setup</span>
                     </button>
                   )}
 
@@ -344,6 +421,56 @@ export const AiCliPanel: FC<AiCliPanelProps> = ({ isOpen, onClose, projectDir })
                     </div>
                   )}
                 </div>
+                {manualOpen[d.id] && !d.id.startsWith("custom:") && (
+                  <div
+                    style={{
+                      background: "var(--bg-surface-sunken)",
+                      border: "1px solid var(--border-default)",
+                      borderRadius: "var(--radius-sm)",
+                      padding: "8px 10px",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "6px",
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                      }}
+                    >
+                      <span style={{ fontSize: "12px", fontWeight: 600 }}>
+                        Manual setup — {d.name}
+                      </span>
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-small"
+                        onClick={() => void handleCopySnippet(d.id)}
+                        disabled={!manualSnippet[d.id] || manualLoading[d.id]}
+                        title="Copy snippet to clipboard"
+                      >
+                        {manualCopied[d.id] ? <Check size={13} /> : <Copy size={13} />}
+                        <span>{manualCopied[d.id] ? "Copied!" : "Copy"}</span>
+                      </button>
+                    </div>
+                    <pre
+                      style={{
+                        margin: 0,
+                        whiteSpace: "pre-wrap",
+                        wordBreak: "break-word",
+                        fontSize: "12px",
+                        userSelect: "text",
+                      }}
+                      tabIndex={0}
+                      aria-label={`Manual MCP setup snippet for ${d.name}`}
+                    >
+                      {manualLoading[d.id]
+                        ? "Loading verified snippet…"
+                        : manualSnippet[d.id] || "No snippet yet."}
+                    </pre>
+                  </div>
+                )}
               </div>
             ))}
           </div>

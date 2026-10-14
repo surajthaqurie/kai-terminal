@@ -723,21 +723,34 @@ export const SettingsModal: FC<SettingsModalProps> = ({
                   <span className="status-version" title={`Kai Terminal v${appVersion}`}>
                     v{appVersion}
                   </span>
-                  {updateInfo?.latestVersion && (
+                  {updateInfo?.latestVersion ? (
                     <span className="muted-text">Latest: v{updateInfo.latestVersion}</span>
+                  ) : (
+                    <span className="muted-text">Latest: —</span>
                   )}
-                  {updateInfo?.releaseAuthor && (
+                  {updateInfo?.latestVersion && updateInfo?.releaseAuthor && (
                     <span className="muted-text">by {updateInfo.releaseAuthor}</span>
                   )}
                 </div>
+                {updateInfo?.releaseName &&
+                updateInfo.latestVersion &&
+                updateInfo.releaseName !== `v${updateInfo.latestVersion}` &&
+                updateInfo.releaseName !== updateInfo.latestVersion ? (
+                  <p className="muted-text">Release: {updateInfo.releaseName}</p>
+                ) : null}
+                {updateInfo?.publishedAt && updateInfo?.latestVersion && !updateInfo?.error ? (
+                  <p className="muted-text">
+                    Published: {new Date(updateInfo.publishedAt).toLocaleDateString()}
+                  </p>
+                ) : null}
                 {updateInfo?.updateAvailable && updateInfo.latestVersion ? (
                   <p className="update-available-text" role="status">
                     Update available: v{appVersion} → v{updateInfo.latestVersion}
                     {updateInfo.releaseName ? ` (${updateInfo.releaseName})` : ""}
                   </p>
-                ) : updateInfo && !updateInfo.error ? (
+                ) : updateInfo && !updateInfo.error && updateInfo.latestVersion ? (
                   <p className="muted-text" role="status">
-                    You are running the latest version.
+                    You&apos;re up to date — you are running the latest version.
                   </p>
                 ) : null}
                 {updateInfo?.error && (
@@ -765,19 +778,20 @@ export const SettingsModal: FC<SettingsModalProps> = ({
                     <ArrowUpCircle size={14} />
                     <span>{isCheckingUpdates ? "Checking…" : "Check for Updates"}</span>
                   </button>
-                  {updateInfo?.updateAvailable && onViewUpdate && (
+                  {updateInfo?.updateAvailable && updateInfo.releaseUrl && onViewUpdate && (
                     <button
                       type="button"
                       className="btn btn-secondary btn-small"
                       onClick={onViewUpdate}
+                      title="Open the GitHub release page to see what's changed"
                     >
-                      <span>View Release</span>
+                      <span>See what&apos;s new on GitHub</span>
                     </button>
                   )}
                 </div>
                 <p className="muted-text">
-                  Checks the public GitHub releases page. Failures (offline, rate-limited) never
-                  block the app.
+                  Checks the public GitHub releases page for a newer version. Failures (offline,
+                  rate-limited) never block the app.
                 </p>
               </div>
 

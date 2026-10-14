@@ -258,12 +258,16 @@ export async function getKaiCliLaunch(): Promise<string[]> {
 /**
  * Automatically install the kai MCP entry into a provider's own config
  * file (with `.kai.bak` backup). `launcher` comes from getKaiCliLaunch().
+ * `projectDir` is required for project-scoped agents (copilot writes
+ * `<project>/.vscode/mcp.json`); global agents ignore it for the file
+ * location (the baked MCP project arg still comes from `projectArg`).
  */
 export async function setupAgentMcp(
   id: string,
   launcher: string[],
   projectArg: string = ".",
-  force: boolean = false
+  force: boolean = false,
+  projectDir?: string
 ): Promise<AgentSetupResult> {
   if (!isTauriAvailable()) {
     throw new Error("Auto-wire is only available inside the desktop app.");
@@ -273,7 +277,21 @@ export async function setupAgentMcp(
     launcher,
     projectArg,
     force,
+    projectDir: projectDir ?? null,
   });
+}
+
+/**
+ * Verified manual MCP snippet for an agent (desktop panel "Manual setup"
+ * fallback). Rejects outside the desktop app with a terminal-CLI hint.
+ */
+export async function getAgentSetupSnippet(id: string, projectArg: string = "."): Promise<string> {
+  if (!isTauriAvailable()) {
+    throw new Error(
+      `Manual snippets need the desktop app — or run \`kai agent setup ${id} --print\` in a terminal.`
+    );
+  }
+  return await invoke<string>("get_agent_setup_snippet_cmd", { id, projectArg });
 }
 
 export async function registerUserCustomAiCli(config: CustomAiCliConfig): Promise<AiCliDetails> {

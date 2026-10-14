@@ -216,14 +216,132 @@ pub struct AgentSetupResult {
     pub message: String,
 }
 
-/// Best-effort launcher for the installed kai CLI (`["kai"]` when the
-/// `kai` binary is on PATH). The desktop panel uses this to auto-wire
-/// providers without guessing paths.
+/// Best-effort launcher for the installed kai CLI.
+///
+/// Search order (first plausible hit wins):
+/// 1. Live `PATH` (`kai`, honouring Windows `PATHEXT`).
+/// 2. This app's own user-level bin dir (`~/.local/bin/kai` on
+///    Linux/macOS, `%USERPROFILE%\.kai\bin\kai.cmd` on Windows) — the
+///    installer / `setup:cli` location that GUI processes frequently miss
+///    through their minimal inherited `PATH`.
+/// 3. Well-known per-user install locations (nvm shims, `~/.cargo/bin`, …).
+/// 4. Well-known absolute paths (`/usr/local/bin/kai`, …) and the npm
+///    global prefix on Windows.
+///
+/// Every candidate must look like the Node CLI launcher, never the desktop
+/// GUI binary (both may be called `kai`): symlinks/realpaths ending in
+/// `.js`, or small text shims referencing `kai.js`, are accepted; large
+/// binaries without a JS reference are skipped so agents are never pointed
+/// at the desktop GUI as their MCP server.
 pub fn get_kai_cli_launch() -> Result<Vec<String>, String> {
-    if let Some(p) = find_on_path("kai") {
-        return Ok(vec![p]);
+    for candidate in kai_launcher_candidates() {
+        if is_cli_launcher_candidate(&candidate) {
+            return Ok(vec![candidate]);
+        }
     }
-    Err("kai CLI not found on PATH. Install it first (npm i -g kai-terminal), then retry auto-wire.".to_string())
+    Err("kai CLI not found. Install it first (npm i -g kai-terminal or npm run setup:cli), then retry auto-wire.".to_string())
+}
+
+/// Ordered launcher search locations for [`get_kai_cli_launch`].
+fn kai_launcher_candidates() -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut push = |p: String| {
+        if !p.trim().is_empty() && !out.iter().any(|e| e == &p) {
+            out.push(p);
+        }
+    };
+    if let Some(p) = find_on_path("kai") {
+        push(p);
+    }
+    // App-managed user bin dir (installer + `setup:cli` target). Often
+    // absent from the GUI process PATH, so it is probed by absolute path.
+    let bindir = crate::kai_cli::kai_bin_dir();
+    #[cfg(target_os = "windows")]
+    {
+        for name in ["kai.cmd", "kai.ps1", "kai"] {
+            let c = bindir.join(name);
+            if c.is_file() {
+                push(c.to_string_lossy().to_string());
+            }
+        }
+        // npm global prefix on Windows (`%APPDATA%\npm\kai.cmd`).
+        if let Ok(appdata) = std::env::var("APPDATA") {
+            if !appdata.trim().is_empty() {
+                for name in ["kai.cmd", "kai.ps1", "kai"] {
+                    let c = std::path::Path::new(&appdata).join("npm").join(name);
+                    if c.is_file() {
+                        push(c.to_string_lossy().to_string());
+                    }
+                }
+            }
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let c = bindir.join("kai");
+        if c.is_file() {
+            push(c.to_string_lossy().to_string());
+        }
+    }
+    // Well-known per-user install locations (nvm, cargo, …).
+    for dir in supplementary_search_dirs() {
+        if let Some(found) = probe_dir_for_cmd(&dir, "kai") {
+            push(found);
+        }
+        // Same-dir runnable shim under its PATHEXT name: `probe_dir_for_cmd`
+        // returns a single hit, so an extensionless POSIX script must not
+        // hide a sibling `.cmd` (or vice versa) from the CLI-shim check.
+        #[cfg(target_os = "windows")]
+        {
+            let c = dir.join("kai.cmd");
+            if c.is_file() {
+                push(c.to_string_lossy().to_string());
+            }
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    for abs in [
+        "/usr/local/bin/kai",
+        "/usr/bin/kai",
+        "/opt/homebrew/bin/kai",
+        "/snap/bin/kai",
+    ] {
+        let p = std::path::Path::new(abs);
+        if p.is_file() {
+            push(abs.to_string());
+        }
+    }
+    out
+}
+
+/// True when `p` looks like the Node `kai` CLI launcher rather than the
+/// desktop GUI binary: a realpath ending in `.js` (symlinked npm/global
+/// installs, direct bundle references), or a small text shim/loader that
+/// mentions `kai.js`. Large binaries without a JS reference (the desktop
+/// `kai`/`kai.exe`) are rejected so agent configs never spawn the GUI as
+/// their MCP server.
+fn is_cli_launcher_candidate(p: &str) -> bool {
+    let path = std::path::Path::new(p);
+    if let Ok(real) = std::fs::canonicalize(path) {
+        if real.to_string_lossy().to_lowercase().ends_with(".js") {
+            return true;
+        }
+    } else if p.to_lowercase().ends_with(".js") {
+        return true;
+    }
+    if let Ok(meta) = std::fs::metadata(path) {
+        if meta.is_file() && meta.len() <= 8192 {
+            if let Ok(raw) = std::fs::read(path) {
+                if !raw.contains(&0) {
+                    let head = String::from_utf8_lossy(&raw);
+                    if head.contains("kai.js") || head.contains("dist/cli/index.js") {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false
 }
 
 fn validate_launcher(launcher: &[String]) -> Result<(), String> {
@@ -252,24 +370,193 @@ fn validate_launcher(launcher: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-fn kai_entry_json(style: McpKeyStyle, launcher: &[String], project_arg: &str) -> serde_json::Value {
-    let mut cmd: Vec<String> = launcher.to_vec();
-    cmd.push("mcp".to_string());
-    cmd.push(project_arg.to_string());
+/// Resolved spawn form for a kai MCP server config entry.
+struct McpSpawn {
+    command: String,
+    args_head: Vec<String>,
+}
+
+/// Full argument list for a tool call: head + `mcp <project>`.
+fn spawn_full_args(spawn: &McpSpawn, project_arg: &str) -> Vec<String> {
+    let mut full = spawn.args_head.clone();
+    full.push("mcp".to_string());
+    full.push(project_arg.to_string());
+    full
+}
+
+/// Resolve `launcher` (from [`get_kai_cli_launch`]) to the verified
+/// `node <kai.js> mcp` spawn form used by `kai agent setup`.
+///
+/// Background: the desktop panel used to write the launcher shim itself as
+/// the entry command. On Windows that shim is `kai.cmd`, which agents
+/// cannot spawn directly (no shell), so every desktop-wired MCP server
+/// failed to start. Resolving to the JS bundle + `node` matches the
+/// CLI-written entries on every OS.
+///
+/// Resolution order:
+/// 1. Head already ends in `.js` → `node <head>`.
+/// 2. Shim text (`.cmd`/`.ps1`/POSIX shell) embeds the bundle path
+///    (quoted or bare token ending in `.js`, resolved relative to the shim
+///    dir, `\\?\` verbatim prefixes stripped) → `node <bundle>`.
+/// 3. Directly runnable binary as-is (POSIX shebang/ELF, Windows `.exe`).
+/// 4. Otherwise an error — never write a config entry the agent cannot
+///    launch; the message points at the terminal CLI instead.
+fn resolve_mcp_command(launcher: &[String]) -> Result<McpSpawn, String> {
+    let head = launcher.first().map(|s| s.as_str()).unwrap_or("");
+    // 1. Direct bundle reference.
+    if head.to_lowercase().ends_with(".js") {
+        return Ok(McpSpawn {
+            command: "node".to_string(),
+            args_head: vec![strip_verbatim_prefix(head)],
+        });
+    }
+    // 2. Bundle path embedded in a launcher shim.
+    if let Some(js) = js_from_shim_file(head) {
+        if std::path::Path::new(&js).is_file() {
+            return Ok(McpSpawn {
+                command: "node".to_string(),
+                args_head: vec![js],
+            });
+        }
+        return Err(format!(
+            "kai CLI bundle not found at {js} — reinstall the CLI (npm run setup:cli) or repair the desktop install, then retry."
+        ));
+    }
+    // 3. Directly runnable binary, kept verbatim.
+    #[cfg(not(target_os = "windows"))]
+    {
+        if is_usable_executable(std::path::Path::new(head)) {
+            let mut args_head = launcher.to_vec();
+            let command = args_head.remove(0);
+            return Ok(McpSpawn { command, args_head });
+        }
+        return Err("The kai launcher is not directly runnable and no kai JS bundle could be found inside it. Run `kai agent setup <name>` from a terminal instead.".to_string());
+    }
+    #[cfg(target_os = "windows")]
+    {
+        if is_windows_runnable_binary(head) {
+            let mut args_head = launcher.to_vec();
+            let command = args_head.remove(0);
+            return Ok(McpSpawn { command, args_head });
+        }
+        return Err("The kai launcher is a shell shim (.cmd/.ps1) that agents cannot spawn directly, and no kai JS bundle could be found inside it. Run `kai agent setup <name>` from a terminal instead.".to_string());
+    }
+}
+
+/// True on Windows for binaries agents can spawn directly (`.exe`/`.com`,
+/// or extensionless files with an MZ header). Script shims (`.cmd`/`.bat`/
+/// `.ps1`/…) are deliberately excluded — those must go through
+/// [`js_from_shim_file`] instead.
+#[cfg(target_os = "windows")]
+fn is_windows_runnable_binary(p: &str) -> bool {
+    let path = std::path::Path::new(p);
+    if !path.is_file() {
+        return false;
+    }
+    match path.extension().and_then(|e| e.to_str()) {
+        Some(ext) => matches!(ext.to_lowercase().as_str(), "exe" | "com"),
+        None => has_mz_header(path),
+    }
+}
+
+/// Extract the kai JS bundle path embedded in a launcher shim
+/// (`kai.cmd`, `kai.ps1`, POSIX `kai` shell script). Returns the resolved,
+/// verbatim-stripped path, or `None` when the file is binary/oversized or
+/// holds no resolvable `.js` token. Tokens with shell expansions (`$…`,
+/// `%…`, backticks) are never trusted.
+fn js_from_shim_file(shim_path: &str) -> Option<String> {
+    // Size-gate BEFORE reading: never slurp multi-MB binaries into memory
+    // looking for shim text.
+    if let Ok(meta) = std::fs::metadata(shim_path) {
+        if !meta.is_file() || meta.len() > 8192 {
+            return None;
+        }
+    }
+    let raw = std::fs::read(shim_path).ok()?;
+    if raw.len() > 8192 || raw.contains(&0) {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&raw);
+    // Quoted tokens first (paths with spaces), then bare tokens.
+    let mut cands: Vec<String> = Vec::new();
+    let mut quoted: Option<(char, String)> = None;
+    for ch in text.chars() {
+        if let Some((q, ref mut buf)) = quoted {
+            if ch == q {
+                cands.push(std::mem::take(buf));
+                quoted = None;
+            } else {
+                buf.push(ch);
+                if buf.len() > 4096 {
+                    quoted = None;
+                }
+            }
+        } else if ch == '"' || ch == '\'' {
+            quoted = Some((ch, String::new()));
+        }
+    }
+    for tok in text.split(|c: char| c.is_whitespace() || c == '"' || c == '\'' || c == ';') {
+        let t = tok.trim();
+        if !t.is_empty() {
+            cands.push(t.to_string());
+        }
+    }
+    let usable = |t: &str| {
+        t.to_lowercase().ends_with(".js")
+            && t.len() <= 4096
+            && !t.contains('$')
+            && !t.contains('%')
+            && !t.contains('`')
+            && !t.contains('\0')
+    };
+    let pick = cands
+        .iter()
+        .find(|t| usable(t) && t.to_lowercase().contains("kai"))
+        .or_else(|| cands.iter().find(|t| usable(t)));
+    let token = pick?;
+    let resolved = if std::path::Path::new(token).is_absolute() {
+        token.clone()
+    } else {
+        std::path::Path::new(shim_path)
+            .parent()
+            .map(|d| d.join(token))
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|| token.clone())
+    };
+    Some(strip_verbatim_prefix(&resolved))
+}
+
+/// Drop Win32 verbatim prefixes (`\\?\C:\…`, `//?/C:/…`, `\\?\UNC\…`) that
+/// the installer bakes into shim contents: Node itself tolerates them, but
+/// agent-side spawning/config parsing frequently does not.
+fn strip_verbatim_prefix(p: &str) -> String {
+    if let Some(rest) = p
+        .strip_prefix("\\\\?\\UNC\\")
+        .or_else(|| p.strip_prefix("//?/UNC/"))
+    {
+        return format!("\\\\{rest}");
+    }
+    if let Some(rest) = p.strip_prefix("\\\\?\\").or_else(|| p.strip_prefix("//?/")) {
+        return rest.to_string();
+    }
+    p.to_string()
+}
+
+fn kai_entry_json(style: McpKeyStyle, spawn: &McpSpawn, project_arg: &str) -> serde_json::Value {
+    let full = spawn_full_args(spawn, project_arg);
     match style {
         McpKeyStyle::McpOpencode => serde_json::json!({
             "type": "local",
-            "command": cmd,
+            "command": std::iter::once(spawn.command.clone()).chain(full.into_iter()).collect::<Vec<_>>(),
             "enabled": true,
         }),
         McpKeyStyle::VscodeServers => serde_json::json!({
             "type": "stdio",
-            "command": cmd[0],
-            "args": cmd[1..],
+            "command": spawn.command.clone(),
+            "args": full,
         }),
         _ => {
-            let (head, rest) = cmd.split_first().expect("launcher validated non-empty");
-            serde_json::json!({ "command": head, "args": rest })
+            serde_json::json!({ "command": spawn.command.clone(), "args": full })
         }
     }
 }
@@ -277,8 +564,13 @@ fn kai_entry_json(style: McpKeyStyle, launcher: &[String], project_arg: &str) ->
 /// Automatically install kai MCP wiring into an agent's own config file.
 ///
 /// Safety contract (mirrors the Node CLI):
-/// - `id` must be a known registry id (copilot is project-scoped and
-///   rejected here); anything else is an error, never a path.
+/// - `id` must be a known registry id; anything else is an error, never a path.
+/// - `copilot` is project-scoped (`.vscode/mcp.json`) and additionally
+///   requires `project_dir` (absolute); without it the call is declined with
+///   guidance instead of guessing.
+/// - The launcher resolves to the verified `node <kai.js>` spawn form first:
+///   a config entry the agent cannot launch (e.g. a Windows `.cmd` shim) is
+///   never written — the error points at the terminal CLI instead.
 /// - Existing files are backed up to `<file>.kai.bak` before any write;
 ///   unrelated keys are preserved via JSON merge.
 /// - Invalid/oversized configs are never rewritten; the error tells the
@@ -289,18 +581,11 @@ pub fn setup_agent_mcp(
     launcher: Vec<String>,
     project_arg: &str,
     force: bool,
+    project_dir: Option<String>,
 ) -> Result<AgentSetupResult, String> {
-    let (rel, style, require_app_dir) = agent_mcp_target(id).ok_or_else(|| {
-        if id == "copilot" {
-            "Copilot uses project-scoped .vscode/mcp.json — run `kai agent setup copilot` inside the project instead.".to_string()
-        } else {
-            format!(
-                "Unknown agent id '{}'. Auto-wire supports the built-in providers only.",
-                id
-            )
-        }
-    })?;
     validate_launcher(&launcher)?;
+    // Resolve the spawn form BEFORE touching any files.
+    let spawn = resolve_mcp_command(&launcher)?;
     if project_arg.len() > 1024
         || project_arg.contains('\0')
         || project_arg.contains('\r')
@@ -308,6 +593,31 @@ pub fn setup_agent_mcp(
     {
         return Err("Invalid project argument.".to_string());
     }
+    // Project-scoped agents resolve into the caller's project directory.
+    if id == "copilot" {
+        let dir = project_dir.as_deref().unwrap_or("").trim();
+        if dir.is_empty() {
+            return Err(
+                "Copilot uses project-scoped .vscode/mcp.json — open a project and retry auto-wire there, or run `kai agent setup copilot` inside the project.".to_string(),
+            );
+        }
+        if dir.len() > 4096 || dir.contains('\0') || dir.contains('\r') || dir.contains('\n') {
+            return Err("Invalid project directory.".to_string());
+        }
+        let base = std::path::Path::new(dir);
+        if !base.is_absolute() {
+            return Err(
+                "Project directory must be absolute for Copilot wiring — retry with the project open.".to_string(),
+            );
+        }
+        return setup_copilot_project(id, base, &spawn, project_arg, force);
+    }
+    let (rel, style, require_app_dir) = agent_mcp_target(id).ok_or_else(|| {
+        format!(
+            "Unknown agent id '{}'. Auto-wire supports the built-in providers only.",
+            id
+        )
+    })?;
     let home = env::var("HOME")
         .or_else(|_| env::var("USERPROFILE"))
         .map_err(|_| "Cannot resolve home directory.".to_string())?;
@@ -323,7 +633,7 @@ pub fn setup_agent_mcp(
     let file = home.join(rel);
 
     if style == McpKeyStyle::TomlCodex {
-        return setup_codex_toml(id, &file, &launcher, project_arg, force);
+        return setup_codex_toml(id, &file, &spawn, project_arg, force);
     }
 
     let container_key = match style {
@@ -331,7 +641,39 @@ pub fn setup_agent_mcp(
         McpKeyStyle::VscodeServers => "servers",
         _ => "mcpServers",
     };
-    let existing_raw = std::fs::read_to_string(&file).ok();
+    write_merged_json_config(id, &file, container_key, &spawn, project_arg, force)
+}
+
+/// Project-scoped Copilot wiring: `<project>/.vscode/mcp.json` in the
+/// `servers` style, merged (never clobbered) with atomic write + backup.
+fn setup_copilot_project(
+    id: &str,
+    project_base: &Path,
+    spawn: &McpSpawn,
+    project_arg: &str,
+    force: bool,
+) -> Result<AgentSetupResult, String> {
+    let file = project_base.join(".vscode/mcp.json");
+    write_merged_json_config(id, &file, "servers", spawn, project_arg, force)
+}
+
+/// Merge the kai entry into a JSON agent config (creating parent dirs and
+/// the file as needed), preserving unrelated keys, with `.kai.bak` backup
+/// and atomic temp-file + rename writes.
+fn write_merged_json_config(
+    id: &str,
+    file: &Path,
+    container_key: &str,
+    spawn: &McpSpawn,
+    project_arg: &str,
+    force: bool,
+) -> Result<AgentSetupResult, String> {
+    let style = match container_key {
+        "mcp" => McpKeyStyle::McpOpencode,
+        "servers" => McpKeyStyle::VscodeServers,
+        _ => McpKeyStyle::McpServers,
+    };
+    let existing_raw = std::fs::read_to_string(file).ok();
     let mut doc: serde_json::Value = match &existing_raw {
         None => serde_json::json!({}),
         Some(raw) => {
@@ -358,7 +700,7 @@ pub fn setup_agent_mcp(
             file.to_string_lossy()
         ));
     }
-    let entry = kai_entry_json(style, &launcher, project_arg);
+    let entry = kai_entry_json(style, spawn, project_arg);
     let already = doc.get(container_key).and_then(|c| c.get("kai")).is_some();
     if already && !force {
         return Ok(AgentSetupResult {
@@ -389,7 +731,7 @@ pub fn setup_agent_mcp(
             "{}.kai.bak",
             file.file_name().unwrap_or_default().to_string_lossy()
         ));
-        std::fs::copy(&file, &bak).map_err(|e| format!("Cannot back up existing config: {}", e))?;
+        std::fs::copy(file, &bak).map_err(|e| format!("Cannot back up existing config: {}", e))?;
         Some(bak.to_string_lossy().to_string())
     } else {
         None
@@ -404,7 +746,7 @@ pub fn setup_agent_mcp(
         format!("{}\n", serde_json::to_string_pretty(&doc).unwrap()),
     )
     .map_err(|e| format!("Cannot write config: {}", e))?;
-    std::fs::rename(&tmp, &file).map_err(|e| {
+    std::fs::rename(&tmp, file).map_err(|e| {
         let _ = std::fs::remove_file(&tmp);
         format!("Cannot replace config: {}", e)
     })?;
@@ -418,10 +760,31 @@ pub fn setup_agent_mcp(
     })
 }
 
+/// Remove a previously written `[mcp_servers.kai]` section (up to the next
+/// table header or EOF) so forced refreshes replace instead of duplicating.
+fn strip_codex_kai_section(raw: &str) -> String {
+    let mut out: Vec<&str> = Vec::new();
+    let mut skipping = false;
+    for line in raw.lines() {
+        let t = line.trim();
+        if t == "[mcp_servers.kai]" {
+            skipping = true;
+            continue;
+        }
+        if skipping && t.starts_with('[') && t.ends_with(']') {
+            skipping = false;
+        }
+        if !skipping {
+            out.push(line);
+        }
+    }
+    out.join("\n").trim_end().to_string()
+}
+
 fn setup_codex_toml(
     id: &str,
     file: &Path,
-    launcher: &[String],
+    spawn: &McpSpawn,
     project_arg: &str,
     force: bool,
 ) -> Result<AgentSetupResult, String> {
@@ -440,14 +803,11 @@ fn setup_codex_toml(
             message: "Kai entry already present.".to_string(),
         });
     }
-    let mut cmd = launcher.to_vec();
-    cmd.push("mcp".to_string());
-    cmd.push(project_arg.to_string());
-    let (head, rest) = cmd.split_first().expect("launcher validated non-empty");
+    let full = spawn_full_args(spawn, project_arg);
     let section = format!(
         "[mcp_servers.kai]\ncommand = {}\nargs = {}\n",
-        serde_json::to_string(head).unwrap(),
-        serde_json::to_string(rest).unwrap()
+        serde_json::to_string(&spawn.command).unwrap(),
+        serde_json::to_string(&full).unwrap()
     );
     if let Some(parent) = file.parent() {
         std::fs::create_dir_all(parent)
@@ -464,6 +824,17 @@ fn setup_codex_toml(
         None
     };
     let content = match existing {
+        // Forced refresh replaces the stale kai section instead of appending
+        // a duplicate table (duplicate `[mcp_servers.kai]` tables are a TOML
+        // parse error in the agent).
+        Some(raw) if has_kai => {
+            let stripped = strip_codex_kai_section(&raw);
+            if stripped.is_empty() {
+                section
+            } else {
+                format!("{stripped}\n\n{section}")
+            }
+        }
         Some(raw) if raw.ends_with('\n') => format!("{}\n{}", raw, section),
         Some(raw) => format!("{}\n\n{}", raw, section),
         None => section,
@@ -487,6 +858,92 @@ fn setup_codex_toml(
         message: "Kai MCP section installed.".to_string(),
     })
 }
+/// Verified manual MCP snippet for an agent, for the desktop panel's
+/// "Manual setup" fallback (unwired agents, declined writes, offline CLI).
+/// Mirrors the Node CLI `buildSetup` texts: same keys, same verified
+/// `node <kai.js> mcp` spawn form. Unknown ids are an error.
+pub fn agent_setup_snippet(id: &str, project_arg: &str) -> Result<String, String> {
+    let project_arg = if project_arg.trim().is_empty() {
+        "."
+    } else {
+        project_arg.trim()
+    };
+    // Resolve the real spawn form when the CLI is present; otherwise fall
+    // back to a clearly-marked placeholder so the snippet stays copyable.
+    let (command, head, install_note) = match get_kai_cli_launch()
+        .ok()
+        .and_then(|l| resolve_mcp_command(&l).ok())
+    {
+        Some(spawn) => (
+            spawn.command.clone(),
+            spawn.args_head.first().cloned().unwrap_or_default(),
+            String::new(),
+        ),
+        None => (
+            "node".to_string(),
+            "<path-to-kai-cli-bundle>".to_string(),
+            " (kai CLI not detected — install it: npm i -g kai-terminal or npm run setup:cli)"
+                .to_string(),
+        ),
+    };
+    let cmd_json = serde_json::to_string(&command).unwrap_or_else(|_| "\"node\"".to_string());
+    let args_json = serde_json::to_string(&{
+        let mut full = vec![head.clone()];
+        full.push("mcp".to_string());
+        full.push(project_arg.to_string());
+        full
+    })
+    .unwrap_or_else(|_| "[]".to_string());
+    let opencode_cmd_json = serde_json::to_string(&{
+        let mut full = vec![command.clone(), head.clone()];
+        full.push("mcp".to_string());
+        full.push(project_arg.to_string());
+        full
+    })
+    .unwrap_or_else(|_| "[]".to_string());
+
+    let (file_label, body) = match id {
+        "opencode" => (
+            "~/.config/opencode/opencode.json",
+            format!(
+                "{{\n  \"$schema\": \"https://opencode.ai/config.json\",\n  \"mcp\": {{\n    \"kai\": {{\n      \"type\": \"local\",\n      \"command\": {opencode_cmd_json},\n      \"enabled\": true\n    }}\n  }}\n}}"
+            ),
+        ),
+        "codex" => (
+            "~/.codex/config.toml",
+            format!("[mcp_servers.kai]\ncommand = {cmd_json}\nargs = {args_json}"),
+        ),
+        "copilot" => (
+            "<project>/.vscode/mcp.json",
+            format!(
+                "{{\n  \"servers\": {{\n    \"kai\": {{\n      \"type\": \"stdio\",\n      \"command\": {cmd_json},\n      \"args\": {args_json}\n    }}\n  }}\n}}"
+            ),
+        ),
+        "claude" | "cursor" | "gemini" | "windsurf" | "cline" | "aider" | "agy" => (
+            match id {
+                "claude" => "~/.claude.json",
+                "cursor" => ".cursor/mcp.json",
+                "gemini" => "~/.muse/settings.json",
+                "windsurf" => "~/.codeium/windsurf/mcp_config.json",
+                "cline" => "cline_mcp_settings.json (VS Code Cline extension storage)",
+                "aider" => "~/.config/aider/mcp.json",
+                _ => "~/.gemini/antigravity-cli/settings.json",
+            },
+            format!(
+                "{{\n  \"mcpServers\": {{\n    \"kai\": {{\n      \"command\": {cmd_json},\n      \"args\": {args_json}\n    }}\n  }}\n}}"
+            ),
+        ),
+        _ => {
+            return Err(format!(
+                "Unknown agent id '{id}'. Run `kai agent list` for targets."
+            ))
+        }
+    };
+    Ok(format!(
+        "Add to {file_label}{install_note}:\n\n{body}\n\nThen restart {id} so it picks up the kai MCP server, or run: kai agent setup {id}"
+    ))
+}
+
 /// Configuration for a user-defined custom AI CLI tool.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CustomAiCliConfig {
@@ -1529,28 +1986,283 @@ mod tests {
     fn test_setup_rejects_unknown_and_project_scoped_ids() {
         let _env = crate::test_support::lock_test_env();
         let launcher = test_launcher();
-        assert!(setup_agent_mcp("no-such-agent", launcher.clone(), ".", false).is_err());
-        assert!(setup_agent_mcp("custom:mine", launcher.clone(), ".", false).is_err());
-        // copilot is project-scoped (.vscode/mcp.json): desktop declines it.
-        assert!(setup_agent_mcp("copilot", launcher, ".", false).is_err());
+        assert!(setup_agent_mcp("no-such-agent", launcher.clone(), ".", false, None).is_err());
+        assert!(setup_agent_mcp("custom:mine", launcher.clone(), ".", false, None).is_err());
+        // copilot is project-scoped (.vscode/mcp.json): without a project
+        // dir the desktop declines it; with one it wires the file.
+        assert!(setup_agent_mcp("copilot", launcher.clone(), ".", false, None).is_err());
+    }
+
+    /// Write a fake launcher shim + bundle pair into a tag-unique temp dir
+    /// (tests run in threads of one process, so the tag — not just the pid
+    /// — must disambiguate). Returns `(shim_path, js_path)`.
+    fn write_fake_shim(
+        tag: &str,
+        name: &str,
+        shim_body: &str,
+    ) -> (std::path::PathBuf, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!(
+            "kai-mcp-resolve-{tag}-{name}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let js = dir.join("dist").join("cli").join("index.js");
+        std::fs::create_dir_all(js.parent().unwrap()).unwrap();
+        std::fs::write(&js, "console.log('kai');\n").unwrap();
+        let shim = dir.join(name);
+        std::fs::write(&shim, shim_body.replace("{JS}", &js.to_string_lossy())).unwrap();
+        (shim, js)
+    }
+
+    #[test]
+    fn test_resolve_prefers_direct_js_head() {
+        let _env = crate::test_support::lock_test_env();
+        let dir = std::env::temp_dir().join(format!("kai-mcp-js-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let js = dir.join("kai.js");
+        std::fs::write(&js, "console.log(1);\n").unwrap();
+        let spawn =
+            resolve_mcp_command(&[js.to_string_lossy().to_string()]).expect("js head resolves");
+        assert_eq!(spawn.command, "node");
+        assert_eq!(spawn.args_head, vec![js.to_string_lossy().to_string()]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_resolve_extracts_js_from_cmd_and_ps1_shims() {
+        let _env = crate::test_support::lock_test_env();
+        for (name, body) in [
+            ("kai.cmd", "@echo off\r\nnode \"{JS}\" %*\r\n"),
+            ("kai.ps1", "& node \"{JS}\" @args\r\nexit $LASTEXITCODE\r\n"),
+            ("kai", "#!/bin/sh\nexec node \"{JS}\" \"$@\"\n"),
+        ] {
+            let (shim, js) = write_fake_shim("extract", name, body);
+            let spawn = resolve_mcp_command(&[shim.to_string_lossy().to_string()])
+                .expect("shim resolves to node+js");
+            assert_eq!(spawn.command, "node");
+            assert_eq!(spawn.args_head, vec![js.to_string_lossy().to_string()]);
+            let _ = std::fs::remove_dir_all(shim.parent().unwrap());
+        }
+    }
+
+    #[test]
+    fn test_resolve_strips_verbatim_prefix_and_relative_tokens() {
+        let _env = crate::test_support::lock_test_env();
+        assert_eq!(
+            strip_verbatim_prefix("\\\\?\\C:\\app\\kai.js"),
+            "C:\\app\\kai.js"
+        );
+        assert_eq!(strip_verbatim_prefix("//?/C:/app/kai.js"), "C:/app/kai.js");
+        assert_eq!(strip_verbatim_prefix("C:\\app\\kai.js"), "C:\\app\\kai.js");
+        // Relative token resolves against the shim directory.
+        let dir = std::env::temp_dir().join(format!("kai-mcp-rel-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("pkg")).unwrap();
+        let js = dir.join("pkg").join("kai.js");
+        std::fs::write(&js, "x").unwrap();
+        let shim = dir.join("kai.cmd");
+        std::fs::write(&shim, "@echo off\r\nnode \"pkg\\kai.js\" %*\r\n").unwrap();
+        let got = js_from_shim_file(&shim.to_string_lossy()).expect("relative token");
+        assert!(got.ends_with("kai.js"), "got: {got}");
+        assert!(std::path::Path::new(&got).is_file());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_resolve_missing_bundle_is_an_error_not_a_broken_entry() {
+        let _env = crate::test_support::lock_test_env();
+        let dir = std::env::temp_dir().join(format!("kai-mcp-miss-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let shim = dir.join("kai.cmd");
+        std::fs::write(
+            &shim,
+            "@echo off\r\nnode \"C:\\nope\\kai-missing-xyz\\index.js\" %*\r\n",
+        )
+        .unwrap();
+        let err = resolve_mcp_command(&[shim.to_string_lossy().to_string()]).unwrap_err();
+        assert!(err.contains("not found"), "unexpected: {err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_desktop_gui_binary_is_not_a_cli_launcher() {
+        let _env = crate::test_support::lock_test_env();
+        // Small MZ-header .exe with no JS reference: the desktop GUI shape.
+        let dir = std::env::temp_dir().join(format!("kai-gui-skip-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let exe = dir.join("kai.exe");
+        std::fs::write(&exe, b"MZ fake desktop binary\x00\x01\x02").unwrap();
+        assert!(!is_cli_launcher_candidate(&exe.to_string_lossy()));
+        // ...while a real shim next to it is accepted.
+        let (shim, _) = write_fake_shim("guiskip", "kai.cmd", "@echo off\r\nnode \"{JS}\" %*\r\n");
+        assert!(is_cli_launcher_candidate(&shim.to_string_lossy()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(shim.parent().unwrap());
+    }
+
+    #[test]
+    fn test_launch_falls_back_to_user_bin_dir() {
+        let _env = crate::test_support::lock_test_env();
+        with_temp_home("launch-fallback", |home| {
+            // Empty PATH so the live lookup misses; the user bin dir (under
+            // the sandboxed HOME/USERPROFILE) still resolves.
+            let old_path = std::env::var("PATH").unwrap_or_default();
+            let empty = std::env::temp_dir().join(format!("kai-empty-path-{}", std::process::id()));
+            let _ = std::fs::create_dir_all(&empty);
+            std::env::set_var("PATH", empty.to_string_lossy().to_string());
+            #[cfg(target_os = "windows")]
+            let shim_name = "kai.cmd";
+            #[cfg(not(target_os = "windows"))]
+            let shim_name = "kai";
+            let (shim, _) =
+                write_fake_shim("fallback", shim_name, "@echo off\r\nnode \"{JS}\" %*\r\n");
+            // Stage the fake shim where get_kai_cli_launch looks.
+            #[cfg(target_os = "windows")]
+            let dest_dir = home.join(".kai").join("bin");
+            #[cfg(not(target_os = "windows"))]
+            let dest_dir = home.join(".local").join("bin");
+            std::fs::create_dir_all(&dest_dir).unwrap();
+            let dest = dest_dir.join(shim_name);
+            std::fs::copy(&shim, &dest).unwrap();
+            let got = get_kai_cli_launch().expect("fallback launch");
+            std::env::set_var("PATH", old_path);
+            assert_eq!(got.len(), 1);
+            assert!(
+                got[0]
+                    .to_lowercase()
+                    .ends_with(shim_name.to_lowercase().as_str()),
+                "got: {:?}",
+                got
+            );
+            let _ = std::fs::remove_dir_all(shim.parent().unwrap());
+        });
+    }
+
+    #[test]
+    fn test_setup_copilot_project_scope_writes_vscode_mcp() {
+        let _env = crate::test_support::lock_test_env();
+        with_temp_home("copilot", |home| {
+            let proj = home.join("proj");
+            std::fs::create_dir_all(proj.join(".vscode")).unwrap();
+            std::fs::write(
+                proj.join(".vscode/mcp.json"),
+                r#"{"servers":{"other":{"command":"other-bin"}}}"#,
+            )
+            .unwrap();
+            let res = setup_agent_mcp(
+                "copilot",
+                test_launcher(),
+                ".",
+                false,
+                Some(proj.to_string_lossy().to_string()),
+            )
+            .expect("copilot project setup");
+            assert!(res.wrote);
+            let raw = std::fs::read_to_string(proj.join(".vscode/mcp.json")).unwrap();
+            let doc: serde_json::Value = serde_json::from_str(&raw).unwrap();
+            assert!(doc["servers"]["kai"].is_object());
+            assert!(doc["servers"]["other"].is_object());
+            // Idempotent without force.
+            let again = setup_agent_mcp(
+                "copilot",
+                test_launcher(),
+                ".",
+                false,
+                Some(proj.to_string_lossy().to_string()),
+            )
+            .expect("copilot again");
+            assert!(again.already_configured);
+            // Relative project dir is declined, never resolved against the
+            // app's opaque working directory.
+            assert!(
+                setup_agent_mcp("copilot", test_launcher(), ".", false, Some(".".into())).is_err()
+            );
+        });
+    }
+
+    #[test]
+    fn test_setup_codex_force_replaces_instead_of_duplicating() {
+        let _env = crate::test_support::lock_test_env();
+        with_temp_home("codex-force", |home| {
+            let res = setup_agent_mcp("codex", test_launcher(), ".", false, None).expect("setup");
+            assert!(res.wrote);
+            let forced =
+                setup_agent_mcp("codex", test_launcher(), ".", true, None).expect("force setup");
+            assert!(forced.wrote);
+            let raw = std::fs::read_to_string(home.join(".codex/config.toml")).unwrap();
+            assert_eq!(
+                raw.matches("[mcp_servers.kai]").count(),
+                1,
+                "duplicate kai tables would be a TOML parse error: {raw}"
+            );
+        });
+    }
+
+    #[test]
+    fn test_setup_writes_node_spawn_form_not_shim() {
+        let _env = crate::test_support::lock_test_env();
+        with_temp_home("spawnform", |_| {
+            let (shim, js) =
+                write_fake_shim("spawnform", "kai.cmd", "@echo off\r\nnode \"{JS}\" %*\r\n");
+            let res = setup_agent_mcp(
+                "aider",
+                vec![shim.to_string_lossy().to_string()],
+                ".",
+                false,
+                None,
+            )
+            .expect("setup via shim");
+            assert!(res.wrote);
+            let raw = std::fs::read_to_string(&res.path).unwrap();
+            let doc: serde_json::Value = serde_json::from_str(&raw).unwrap();
+            assert_eq!(
+                doc["mcpServers"]["kai"]["command"],
+                serde_json::json!("node")
+            );
+            let args = doc["mcpServers"]["kai"]["args"].as_array().unwrap();
+            assert_eq!(args[0], serde_json::json!(js.to_string_lossy()));
+            assert!(is_kai_wired("aider"));
+            let _ = std::fs::remove_dir_all(shim.parent().unwrap());
+        });
+    }
+
+    #[test]
+    fn test_snippet_covers_key_styles_and_rejects_unknown() {
+        let _env = crate::test_support::lock_test_env();
+        let open = agent_setup_snippet("opencode", ".").expect("opencode snippet");
+        assert!(open.contains("\"mcp\""));
+        assert!(open.contains("node"));
+        let codex = agent_setup_snippet("codex", ".").expect("codex snippet");
+        assert!(codex.contains("[mcp_servers.kai]"));
+        let copilot = agent_setup_snippet("copilot", ".").expect("copilot snippet");
+        assert!(copilot.contains("\"servers\""));
+        let claude = agent_setup_snippet("claude", ".").expect("claude snippet");
+        assert!(claude.contains("\"mcpServers\""));
+        assert!(agent_setup_snippet("nope", ".").is_err());
     }
 
     #[test]
     fn test_setup_validates_launcher() {
         let _env = crate::test_support::lock_test_env();
-        assert!(setup_agent_mcp("aider", vec![], ".", false).is_err());
+        assert!(setup_agent_mcp("aider", vec![], ".", false, None).is_err());
         assert!(setup_agent_mcp(
             "aider",
             vec!["/non_existent_xyz_12345_launcher".to_string()],
             ".",
-            false
+            false,
+            None
         )
         .is_err());
         assert!(setup_agent_mcp(
             "aider",
             vec!["definitely-not-on-path-xyz-12345".to_string()],
             ".",
-            false
+            false,
+            None
         )
         .is_err());
     }
@@ -1560,7 +2272,7 @@ mod tests {
         let _env = crate::test_support::lock_test_env();
         with_temp_home("aider", |home| {
             assert!(!is_kai_wired("aider"));
-            let res = setup_agent_mcp("aider", test_launcher(), ".", false).expect("setup");
+            let res = setup_agent_mcp("aider", test_launcher(), ".", false, None).expect("setup");
             assert!(res.wrote);
             assert!(!res.already_configured);
             assert!(res.backup_path.is_none());
@@ -1570,11 +2282,11 @@ mod tests {
             );
             assert!(is_kai_wired("aider"));
             // Idempotent second run without force.
-            let again = setup_agent_mcp("aider", test_launcher(), ".", false).expect("setup");
+            let again = setup_agent_mcp("aider", test_launcher(), ".", false, None).expect("setup");
             assert!(!again.wrote);
             assert!(again.already_configured);
             // Force refresh rewrites and keeps a backup.
-            let forced = setup_agent_mcp("aider", test_launcher(), ".", true).expect("setup");
+            let forced = setup_agent_mcp("aider", test_launcher(), ".", true, None).expect("setup");
             assert!(forced.wrote);
             assert!(forced.backup_path.is_some());
         });
@@ -1591,7 +2303,7 @@ mod tests {
                 r#"{"mcpServers":{"other":{"command":"other-bin","args":[]}}}"#,
             )
             .unwrap();
-            let res = setup_agent_mcp("aider", test_launcher(), ".", false).expect("setup");
+            let res = setup_agent_mcp("aider", test_launcher(), ".", false, None).expect("setup");
             assert!(res.wrote);
             assert!(res.backup_path.is_some());
             let raw = std::fs::read_to_string(dir.join("mcp.json")).unwrap();
@@ -1608,7 +2320,7 @@ mod tests {
             let dir = home.join(".config/aider");
             std::fs::create_dir_all(&dir).unwrap();
             std::fs::write(dir.join("mcp.json"), "{not valid json").unwrap();
-            assert!(setup_agent_mcp("aider", test_launcher(), ".", false).is_err());
+            assert!(setup_agent_mcp("aider", test_launcher(), ".", false, None).is_err());
             // File left untouched.
             assert_eq!(
                 std::fs::read_to_string(dir.join("mcp.json")).unwrap(),
@@ -1622,7 +2334,8 @@ mod tests {
     fn test_setup_opencode_uses_mcp_key_style() {
         let _env = crate::test_support::lock_test_env();
         with_temp_home("opencode", |_| {
-            let res = setup_agent_mcp("opencode", test_launcher(), ".", false).expect("setup");
+            let res =
+                setup_agent_mcp("opencode", test_launcher(), ".", false, None).expect("setup");
             assert!(res.wrote);
             let raw = std::fs::read_to_string(&res.path).unwrap();
             let doc: serde_json::Value = serde_json::from_str(&raw).unwrap();
@@ -1636,12 +2349,12 @@ mod tests {
     fn test_setup_codex_toml_append_is_idempotent() {
         let _env = crate::test_support::lock_test_env();
         with_temp_home("codex", |home| {
-            let res = setup_agent_mcp("codex", test_launcher(), ".", false).expect("setup");
+            let res = setup_agent_mcp("codex", test_launcher(), ".", false, None).expect("setup");
             assert!(res.wrote);
             let raw = std::fs::read_to_string(home.join(".codex/config.toml")).unwrap();
             assert!(raw.contains("[mcp_servers.kai]"));
             assert!(is_kai_wired("codex"));
-            let again = setup_agent_mcp("codex", test_launcher(), ".", false).expect("setup");
+            let again = setup_agent_mcp("codex", test_launcher(), ".", false, None).expect("setup");
             assert!(again.already_configured);
         });
     }
@@ -1652,7 +2365,7 @@ mod tests {
         with_temp_home("cline", |_| {
             // Fresh temp HOME has no VS Code storage dir: must decline, not
             // fabricate foreign app directories.
-            let err = setup_agent_mcp("cline", test_launcher(), ".", false).unwrap_err();
+            let err = setup_agent_mcp("cline", test_launcher(), ".", false, None).unwrap_err();
             assert!(err.contains("manually"));
         });
     }

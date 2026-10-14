@@ -3,7 +3,47 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import { lineLikelyChangesCodeMode } from "../services/cwdCommand";
-import { isCodeModeActiveForDir } from "../services/projectService";
+import {
+  isCodeModeActiveForDir,
+  resolveModeDisplay,
+  codeProjectName,
+} from "../services/projectService";
+
+describe("resolveModeDisplay (footer pill: global + per-pane truth)", () => {
+  it("is terminal without a persisted project — always clears, even mid-resolve", () => {
+    expect(resolveModeDisplay(null, "/repo/demo")).toBe("terminal");
+    expect(resolveModeDisplay(null, "")).toBe("terminal");
+    // `kai stop code` must reflect at once, not keep a stale pill.
+    expect(resolveModeDisplay(null, "/repo/demo", "code")).toBe("terminal");
+    expect(resolveModeDisplay(null, "", "code-elsewhere")).toBe("terminal");
+  });
+
+  it("is code inside the project (exact dir and children)", () => {
+    expect(resolveModeDisplay("/repo/demo", "/repo/demo")).toBe("code");
+    expect(resolveModeDisplay("/repo/demo", "/repo/demo/sub")).toBe("code");
+    expect(resolveModeDisplay("C:\\Repo\\Demo", "c:/repo/demo/src")).toBe("code");
+  });
+
+  it("is code-elsewhere when the pane sits outside the project", () => {
+    expect(resolveModeDisplay("/repo/demo", "/repo/other")).toBe("code-elsewhere");
+    expect(resolveModeDisplay("/repo/demo", "/repo/demo-x")).toBe("code-elsewhere");
+  });
+
+  it("keeps the previous pill while the cwd is still resolving", () => {
+    expect(resolveModeDisplay("/repo/demo", "", "code")).toBe("code");
+    expect(resolveModeDisplay("/repo/demo", "", "code-elsewhere")).toBe("code-elsewhere");
+    expect(resolveModeDisplay("/repo/demo", "")).toBe("terminal");
+  });
+});
+
+describe("codeProjectName", () => {
+  it("shows the last path segment on every OS shape", () => {
+    expect(codeProjectName("/repo/demo")).toBe("demo");
+    expect(codeProjectName("C:\\work\\app")).toBe("app");
+    expect(codeProjectName("C:/work/app/")).toBe("app");
+    expect(codeProjectName(null)).toBe("");
+  });
+});
 
 describe("lineLikelyChangesCodeMode", () => {
   it("returns false for empty input and non-kai commands", () => {

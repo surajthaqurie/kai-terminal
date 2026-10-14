@@ -2,18 +2,13 @@ import { FC, useEffect, useRef, useState } from "react";
 import {
   GitBranch,
   ArrowUpCircle,
-  Check,
-  Copy,
   Folder,
-  ArrowDownToLine,
-  ArrowUpFromLine,
   ListOrdered,
   Code,
   Terminal,
   RefreshCw,
   GitCompare,
 } from "lucide-react";
-import { formatFooterPath } from "../services/projectService";
 
 interface StatusBarProps {
   gitBranch: string | null;
@@ -26,8 +21,14 @@ interface StatusBarProps {
   isCheckingUpdates?: boolean;
   onCheckUpdates?: () => void;
   onViewUpdate: () => void;
-  onGitAction: (action: "fetch" | "pull" | "status") => void;
+  /** Footer git menu is intentionally minimal: status list + changes diff. */
+  onGitAction: (action: "status" | "changes") => void;
   mode?: string;
+  /** Active Code Mode project (null when plain terminal mode). */
+  codeProjectPath?: string | null;
+  codeProjectName?: string | null;
+  /** Jump to the Code Mode project (focus its tab, or open one). */
+  onOpenCodeProject?: () => void;
   /** Re-probe git for the active pane + re-sync Code Mode (footer refresh button). */
   onRefreshGit?: () => void;
   isRefreshingGit?: boolean;
@@ -54,11 +55,13 @@ export const StatusBar: FC<StatusBarProps> = ({
   onViewUpdate,
   onGitAction,
   mode = "terminal",
+  codeProjectPath = null,
+  codeProjectName = null,
+  onOpenCodeProject,
   onRefreshGit,
   isRefreshingGit = false,
 }) => {
   const [gitMenuOpen, setGitMenuOpen] = useState(false);
-  const [copied, setCopied] = useState(false);
   const [copiedPath, setCopiedPath] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -84,9 +87,11 @@ export const StatusBar: FC<StatusBarProps> = ({
     ? gitRepoRoot.split(/[/\\]/).filter(Boolean).pop() || gitRepoRoot
     : null;
 
-  // Compact display (`C:\…\repo\src`) so long Windows paths never push the
-  // git + version pills out of view; the full path stays one click away.
-  const dirDisplay = projectDir ? formatFooterPath(projectDir) : "";
+  // Full path is always the source of truth: the button shows as much
+  // as fits (CSS ellipsis) while the tooltip + click-to-copy expose the
+  // complete value on every OS. No JS middle-truncation, so long Windows
+  // paths are never cut to an unreadable fragment.
+  const dirDisplay = projectDir || "";
 
   const handleCopyPath = async () => {
     if (!projectDir) return;
@@ -99,18 +104,7 @@ export const StatusBar: FC<StatusBarProps> = ({
     }
   };
 
-  const handleCopyBranch = async () => {
-    if (!gitBranch) return;
-    try {
-      await navigator.clipboard.writeText(gitBranch);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      // clipboard unavailable: keep menu open, no crash
-    }
-  };
-
-  const runAction = (action: "fetch" | "pull" | "status") => {
+  const runAction = (action: "status" | "changes") => {
     setGitMenuOpen(false);
     onGitAction(action);
   };
@@ -127,6 +121,21 @@ export const StatusBar: FC<StatusBarProps> = ({
             <Code size={12} aria-hidden="true" />
             <span>Code Mode</span>
           </span>
+        ) : mode === "code-elsewhere" ? (
+          <button
+            type="button"
+            className="status-mode-pill status-mode-elsewhere"
+            title={
+              `Code Mode is active for ${codeProjectPath || codeProjectName || "another project"}.\n` +
+              `This pane is outside that project — click to open it.`
+            }
+            aria-label={`Code Mode active for ${codeProjectName || "another project"}. Activate to open it.`}
+            onClick={onOpenCodeProject}
+            disabled={!onOpenCodeProject}
+          >
+            <Code size={12} aria-hidden="true" />
+            <span>Code Mode: {codeProjectName || "elsewhere"}</span>
+          </button>
         ) : (
           projectDir && (
             <span
@@ -167,7 +176,7 @@ export const StatusBar: FC<StatusBarProps> = ({
             </button>
             {gitMenuOpen && (
               <div className="status-git-menu" role="menu" aria-label="Git actions">
-                <button type="button" role="menuitem" onClick={() => runAction("status")}>
+                <button type="button" role="menuitem" onClick={() => runAction("changes")}>
                   <GitCompare size={13} />
                   <span>Review Changes (Diff)</span>
                 </button>
@@ -175,25 +184,13 @@ export const StatusBar: FC<StatusBarProps> = ({
                   <ListOrdered size={13} />
                   <span>Show status</span>
                 </button>
-                <button type="button" role="menuitem" onClick={() => runAction("fetch")}>
-                  <ArrowDownToLine size={13} />
-                  <span>Fetch updates</span>
-                </button>
-                <button type="button" role="menuitem" onClick={() => runAction("pull")}>
-                  <ArrowUpFromLine size={13} />
-                  <span>Fast-forward pull</span>
-                </button>
-                <button type="button" role="menuitem" onClick={handleCopyBranch}>
-                  {copied ? <Check size={13} /> : <Copy size={13} />}
-                  <span>{copied ? "Copied!" : `Copy branch name`}</span>
-                </button>
               </div>
             )}
             {gitDirty && (
               <button
                 type="button"
                 className="status-changes-pill"
-                onClick={() => onGitAction("status")}
+                onClick={() => onGitAction("changes")}
                 title="Uncommitted changes detected. Click to review changes and diffs (like VS Code)."
                 aria-label="Review uncommitted changes and diffs"
               >

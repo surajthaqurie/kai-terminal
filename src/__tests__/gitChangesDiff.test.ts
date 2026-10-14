@@ -354,4 +354,48 @@ describe("StatusBar Footer with Active Split Directory, Mode and Git", () => {
     root.unmount();
     container.remove();
   });
+
+  it("renders the code-elsewhere pill with project name and jump action", async () => {
+    const React = await import("react");
+    const { createRoot } = await import("react-dom/client");
+    const { StatusBar } = await import("../components/StatusBar");
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    let opened = 0;
+    await React.act(async () => {
+      root.render(
+        React.createElement(StatusBar, {
+          gitBranch: "main",
+          gitDirty: false,
+          gitRepoRoot: "/home/user/other",
+          projectDir: "/home/user/other",
+          appVersion: "1.0.0",
+          updateAvailable: false,
+          onViewUpdate: () => {},
+          onGitAction: () => {},
+          mode: "code-elsewhere",
+          codeProjectPath: "/home/user/workspace/kai",
+          codeProjectName: "kai",
+          onOpenCodeProject: () => {
+            opened += 1;
+          },
+        })
+      );
+    });
+
+    const pill = container.querySelector(".status-mode-elsewhere") as HTMLButtonElement | null;
+    expect(pill).not.toBeNull();
+    expect(pill?.textContent).toContain("kai");
+    expect(pill?.tagName).toBe("BUTTON");
+    await React.act(async () => {
+      pill?.click();
+    });
+    expect(opened).toBe(1);
+
+    root.unmount();
+    container.remove();
+  });
 });

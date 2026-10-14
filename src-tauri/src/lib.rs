@@ -104,8 +104,15 @@ fn setup_agent_mcp_cmd(
     launcher: Vec<String>,
     project_arg: String,
     force: bool,
+    project_dir: Option<String>,
 ) -> Result<AgentSetupResult, String> {
-    setup_agent_mcp(&id, launcher, &project_arg, force)
+    setup_agent_mcp(&id, launcher, &project_arg, force, project_dir)
+}
+
+#[cfg(feature = "tauri")]
+#[tauri::command]
+fn get_agent_setup_snippet_cmd(id: String, project_arg: String) -> Result<String, String> {
+    ai_cli::agent_setup_snippet(&id, &project_arg)
 }
 
 #[cfg(feature = "tauri")]
@@ -340,6 +347,7 @@ pub fn run() {
             check_ai_cli_path,
             get_kai_cli_launch_cmd,
             setup_agent_mcp_cmd,
+            get_agent_setup_snippet_cmd,
             get_git_info_cmd,
             run_git_action_cmd,
             get_git_changes_cmd,

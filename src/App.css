@@ -2251,6 +2251,20 @@ select.modal-input {
   color: var(--color-warning);
 }
 
+.update-version-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.update-available-text {
+  color: var(--color-warning);
+  font-weight: 600;
+  font-size: var(--text-sm);
+  margin: 6px 0 0 0;
+}
+
 /* =========================================================================
    Status Bar Footer
    ========================================================================= */
@@ -2300,6 +2314,28 @@ select.modal-input {
   background-color: var(--bg-surface);
   border-color: var(--border-default);
   color: var(--text-secondary);
+}
+
+/* Code Mode active, but this pane is outside the project: same accent
+   family, dashed outline, clickable (jumps to the project). Rendered as a
+   <button>, so reset button chrome to match the span pills. */
+.status-mode-pill.status-mode-elsewhere {
+  background-color: transparent;
+  border-style: dashed;
+  cursor: pointer;
+  font: inherit;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.status-mode-pill.status-mode-elsewhere:hover:not(:disabled) {
+  background-color: var(--accent-subtle);
+}
+
+.status-mode-pill.status-mode-elsewhere:disabled {
+  cursor: default;
+  opacity: 0.8;
 }
 
 .status-git-wrap {
@@ -2432,8 +2468,10 @@ select.modal-input {
   padding: 1px 4px;
   color: var(--text-secondary);
   font-size: var(--text-xs);
-  max-width: 320px;
+  max-width: 52vw;
   min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
   user-select: text;
 }
 
@@ -2441,7 +2479,11 @@ select.modal-input {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 260px;
+  /* Full path stays intact in the DOM + tooltip; CSS only clips what
+     does not fit, on every OS. Wide cap so typical Windows/Linux/macOS
+     project paths render completely. */
+  max-width: 46vw;
+  min-width: 60px;
   font-family: var(--font-mono);
   user-select: text;
   cursor: text;
@@ -2586,6 +2628,8 @@ select.modal-input {
   max-width: 96vw;
   height: 86vh;
   max-height: 920px;
+  min-width: 720px;
+  min-height: 480px;
   background-color: var(--bg-surface);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-lg);
@@ -2593,8 +2637,56 @@ select.modal-input {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  position: relative;
   color: var(--text-primary);
   animation: scaleIn var(--transition-fast);
+}
+
+.git-changes-resizable {
+  /* Pointer-drag handle below drives sizing on all OSes; native CSS
+     resize stays as a fallback where the WebView honors it. */
+  resize: both;
+  overflow: hidden;
+}
+
+.git-changes-divider {
+  flex: 0 0 6px;
+  cursor: col-resize;
+  background: transparent;
+  position: relative;
+}
+
+.git-changes-divider::after {
+  content: "";
+  position: absolute;
+  inset: 0 2px;
+  background: var(--border-subtle);
+  border-radius: 2px;
+}
+
+.git-changes-divider:hover::after {
+  background: var(--accent-primary);
+}
+
+.git-changes-resize-handle {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: nwse-resize;
+  color: var(--text-tertiary);
+  border-radius: var(--radius-xs);
+  touch-action: none;
+  user-select: none;
+}
+
+.git-changes-resize-handle:hover {
+  color: var(--accent-primary);
+  background-color: var(--bg-surface-elevated);
 }
 
 .git-changes-header {
@@ -3366,6 +3458,7 @@ select.modal-input {
   .git-changes-modal {
     width: 98vw;
     height: 94vh;
+    min-width: 0;
   }
 
   .git-changes-content {
@@ -3373,11 +3466,17 @@ select.modal-input {
   }
 
   .git-changes-sidebar {
-    width: 100%;
+    width: 100% !important;
     max-width: 100%;
+    flex: none !important;
     height: 200px;
     border-right: none;
     border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .git-changes-divider,
+  .git-changes-resize-handle {
+    display: none;
   }
 
   .settings-modal {

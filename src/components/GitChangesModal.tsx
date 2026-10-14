@@ -1,24 +1,21 @@
-import { FC, useState, useEffect, useCallback, useMemo } from "react";
+import { FC, useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   X,
-  Copy,
-  Check,
   GitBranch,
   GitCompare,
   Plus,
   Minus,
   RotateCcw,
-  ExternalLink,
   RefreshCw,
   Columns,
   AlignLeft,
   CheckCircle2,
   AlertCircle,
-  FileText,
   FileCode,
   FilePlus,
   FileX,
   Trash2,
+  Maximize2,
 } from "lucide-react";
 import {
   GitFileChange,
@@ -236,7 +233,7 @@ function getFileIcon(status: string) {
   return <FileCode size={14} className="file-status-icon modified" />;
 }
 
-export const GitChangesModal: FC<GitChangesModalProps> = ({ dir, onClose, onOpenEditor }) => {
+export const GitChangesModal: FC<GitChangesModalProps> = ({ dir, onClose }) => {
   const [summary, setSummary] = useState<GitChangesSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -245,9 +242,16 @@ export const GitChangesModal: FC<GitChangesModalProps> = ({ dir, onClose, onOpen
   const [loadingDiff, setLoadingDiff] = useState(false);
   const [viewMode, setViewMode] = useState<"unified" | "split">("unified");
   const [filterText, setFilterText] = useState("");
-  const [copied, setCopied] = useState(false);
   const [confirmDiscardFile, setConfirmDiscardFile] = useState<GitFileChange | null>(null);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
+  // Resizable modal + sidebar (pointer-drag, works on all OSes — no
+  // OS-specific APIs). Defaults match the previous fixed 1200x86vh layout.
+  const [modalSize, setModalSize] = useState<{ w: number; h: number } | null>(null);
+  const [sidebarWidth, setSidebarWidth] = useState(320);
+  const resizeRef = useRef<{ startX: number; startY: number; baseW: number; baseH: number } | null>(
+    null
+  );
+  const sidebarDragRef = useRef<{ startX: number; baseW: number } | null>(null);
 
   const showStatusBanner = (msg: string) => {
     setStatusMsg(msg);
@@ -376,17 +380,6 @@ export const GitChangesModal: FC<GitChangesModalProps> = ({ dir, onClose, onOpen
     }
   };
 
-  const handleCopyDiff = async () => {
-    if (!rawDiff) return;
-    try {
-      await navigator.clipboard.writeText(rawDiff);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      // ignore
-    }
-  };
-
   // Keyboard navigation
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -412,6 +405,53 @@ export const GitChangesModal: FC<GitChangesModalProps> = ({ dir, onClose, onOpen
   const filteredUntracked = (summary?.untracked || []).filter(filterMatch);
   const totalCount = summary?.total_changes ?? 0;
 
+  const beginModalResize = (e: React.PointerEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const el = (e.currentTarget as HTMLElement).closest(".git-changes-modal") as HTMLElement | null;
+    const rect = el?.getBoundingClientRect();
+    resizeRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      baseW: rect?.width ?? 1200,
+      baseH: rect?.height ?? 700,
+    };
+    const move = (ev: PointerEvent) => {
+      const r = resizeRef.current;
+      if (!r) return;
+      const vw = window.innerWidth || 1280;
+      const vh = window.innerHeight || 800;
+      const w = Math.min(vw * 0.98, Math.max(720, r.baseW + (ev.clientX - r.startX)));
+      const h = Math.min(vh * 0.96, Math.max(480, r.baseH + (ev.clientY - r.startY)));
+      setModalSize({ w, h });
+    };
+    const up = () => {
+      resizeRef.current = null;
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+
+  const beginSidebarResize = (e: React.PointerEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    sidebarDragRef.current = { startX: e.clientX, baseW: sidebarWidth };
+    const move = (ev: PointerEvent) => {
+      const r = sidebarDragRef.current;
+      if (!r) return;
+      setSidebarWidth(Math.min(560, Math.max(230, r.baseW + (ev.clientX - r.startX))));
+    };
+    const up = () => {
+      sidebarDragRef.current = null;
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+
   return (
     <div
       className="modal-backdrop git-changes-backdrop"
@@ -420,7 +460,16 @@ export const GitChangesModal: FC<GitChangesModalProps> = ({ dir, onClose, onOpen
       aria-modal="true"
       aria-label={`Source Control and Diff Viewer for ${dir}`}
     >
-      <div className="git-changes-modal" onClick={(e) => e.stopPropagation()} role="document">
+      <div
+        className="git-changes-modal git-changes-resizable"
+        onClick={(e) => e.stopPropagation()}
+        role="document"
+        style={
+          modalSize
+            ? { width: `${modalSize.w}px`, height: `${modalSize.h}px`, maxWidth: "98vw" }
+            : undefined
+        }
+      >
         {/* Header */}
         <div className="git-changes-header">
           <div className="git-changes-title-group">
@@ -472,8 +521,13 @@ export const GitChangesModal: FC<GitChangesModalProps> = ({ dir, onClose, onOpen
 
         {/* Main Body: Two-panel VS Code layout */}
         <div className="git-changes-content">
-          {/* Left Panel: File Changes Explorer */}
-          <div className="git-changes-sidebar" role="region" aria-label="Source Control Changes">
+          {/* Left Panel: File Changes Explorer (drag the divider to resize) */}
+          <div
+            className="git-changes-sidebar"
+            role="region"
+            aria-label="Source Control Changes"
+            style={{ width: `${sidebarWidth}px`, flex: `0 0 ${sidebarWidth}px` }}
+          >
             <div className="sidebar-filter-row">
               <input
                 type="text"
@@ -541,20 +595,6 @@ export const GitChangesModal: FC<GitChangesModalProps> = ({ dir, onClose, onOpen
                             >
                               <Minus size={12} />
                             </button>
-                            {onOpenEditor && (
-                              <button
-                                type="button"
-                                className="file-action-btn"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  onOpenEditor(dir, f.path);
-                                }}
-                                title="Open in editor"
-                                aria-label={`Open ${f.path} in editor`}
-                              >
-                                <ExternalLink size={12} />
-                              </button>
-                            )}
                           </div>
                         </div>
                       );
@@ -627,20 +667,6 @@ export const GitChangesModal: FC<GitChangesModalProps> = ({ dir, onClose, onOpen
                             >
                               <RotateCcw size={12} />
                             </button>
-                            {onOpenEditor && (
-                              <button
-                                type="button"
-                                className="file-action-btn"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  onOpenEditor(dir, f.path);
-                                }}
-                                title="Open in editor"
-                                aria-label={`Open ${f.path} in editor`}
-                              >
-                                <ExternalLink size={12} />
-                              </button>
-                            )}
                           </div>
                         </div>
                       );
@@ -705,20 +731,6 @@ export const GitChangesModal: FC<GitChangesModalProps> = ({ dir, onClose, onOpen
                             >
                               <Trash2 size={12} />
                             </button>
-                            {onOpenEditor && (
-                              <button
-                                type="button"
-                                className="file-action-btn"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  onOpenEditor(dir, f.path);
-                                }}
-                                title="Open in editor"
-                                aria-label={`Open ${f.path} in editor`}
-                              >
-                                <ExternalLink size={12} />
-                              </button>
-                            )}
                           </div>
                         </div>
                       );
@@ -740,6 +752,15 @@ export const GitChangesModal: FC<GitChangesModalProps> = ({ dir, onClose, onOpen
               )}
             </div>
           </div>
+
+          {/* Sidebar / diff divider (drag to resize file list) */}
+          <div
+            className="git-changes-divider"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize file list"
+            onPointerDown={beginSidebarResize}
+          />
 
           {/* Right Panel: VS Code Diff Viewer */}
           <div className="git-diff-viewer" role="region" aria-label="Diff Viewer">
@@ -823,30 +844,6 @@ export const GitChangesModal: FC<GitChangesModalProps> = ({ dir, onClose, onOpen
                         <span>Discard</span>
                       </button>
                     )}
-
-                    {/* Open in Editor button */}
-                    {onOpenEditor && (
-                      <button
-                        type="button"
-                        className="btn btn-secondary btn-small"
-                        onClick={() => onOpenEditor(dir, selectedFile.path)}
-                        title="Open file in editor"
-                      >
-                        <ExternalLink size={13} />
-                        <span>Open Editor</span>
-                      </button>
-                    )}
-
-                    {/* Copy diff button */}
-                    <button
-                      type="button"
-                      className="btn btn-secondary btn-small"
-                      onClick={handleCopyDiff}
-                      title="Copy diff to clipboard"
-                    >
-                      {copied ? <Check size={13} /> : <Copy size={13} />}
-                      <span>{copied ? "Copied!" : "Copy Diff"}</span>
-                    </button>
                   </div>
                 </div>
 
@@ -886,7 +883,7 @@ export const GitChangesModal: FC<GitChangesModalProps> = ({ dir, onClose, onOpen
                     </div>
                   ) : parsedDiff.hunks.length === 0 ? (
                     <div className="diff-empty-state">
-                      <FileText size={32} />
+                      <FileCode size={32} />
                       <p>
                         {rawDiff
                           ? rawDiff
@@ -1001,7 +998,7 @@ export const GitChangesModal: FC<GitChangesModalProps> = ({ dir, onClose, onOpen
         <div className="git-changes-footer">
           <div className="footer-left">
             <span className="muted-text">
-              Tip: AI agents and manual terminal commands update this working tree in real time.
+              Drag the corner to resize • drag the divider to resize the file list
             </span>
           </div>
           <div className="footer-right">
@@ -1009,6 +1006,17 @@ export const GitChangesModal: FC<GitChangesModalProps> = ({ dir, onClose, onOpen
               Close
             </button>
           </div>
+        </div>
+
+        {/* Corner resize handle (all OSes, pointer-drag) */}
+        <div
+          className="git-changes-resize-handle"
+          role="separator"
+          aria-label="Resize changes window"
+          title="Drag to resize"
+          onPointerDown={beginModalResize}
+        >
+          <Maximize2 size={12} aria-hidden="true" />
         </div>
       </div>
     </div>

@@ -36,17 +36,19 @@ import {
   getCachedGitInfo,
   getGitInfoCached,
   cleanCwdForStore,
+  codeProjectName,
   invalidateGitCache,
-  isCodeModeActiveForDir,
   loadRecentProjects,
   normalizeCwdForCompare,
   recordRecentProject,
+  resolveModeDisplay,
   openProjectInEditor,
   runGitAction,
   getInstalledEditors,
   resolveEffectiveProjectDir,
   GitInfo,
   InstalledEditor,
+  ModeDisplay,
 } from "./services/projectService";
 import {
   matchShortcut,
@@ -407,14 +409,39 @@ export function App() {
   // AI providers panel is scoped to a specific pane's directory, so each
   // split gets its own agent setup context instead of sharing one global.
   const [aiCliDir, setAiCliDir] = useState<string>("");
+  // Live handleNewTab for stable callbacks defined before it (single-instance
+  // listener, footer jump). Assigned after handleNewTab is created below.
+  const handleNewTabRef = useRef<(opts?: { cwd?: string }) => void>(() => {});
+  /**
+   * Focus a tab already living in `dir`, or open a fresh one there. Reads
+   * live refs (never state closures) so it targets the current tabs even
+   * from long-lived Tauri event listeners. Used by the footer Code Mode
+   * jump pill and the single-instance `kai-open-project` path forward.
+   */
+  const openOrFocusDirStable = useCallback((dir: string) => {
+    const cleaned = cleanCwdForStore(dir);
+    if (!cleaned) return;
+    const norm = normalizeCwdForCompare(cleaned);
+    const globalCwd = cwdRef.current;
+    const found = tabsRef.current.find((t) =>
+      [t.cwd, ...t.panes.map((p) => p.cwd), globalCwd].some(
+        (c) => c && normalizeCwdForCompare(cleanCwdForStore(c)) === norm
+      )
+    );
+    if (found) {
+      setActiveTabId(found.id);
+      return;
+    }
+    handleNewTabRef.current({ cwd: cleaned });
+  }, []);
   // Code Mode badge state: driven ONLY by the persisted active project
   // (`kai code <path>` sets it, `kai stop code` clears it). The backend
   // reads `~/.kai/active_project.json` + launch env, so dev and release
   // builds agree. Recent folders / new tabs never activate Code Mode.
   // Polled so an externally-run CLI updates the footer without a restart.
-  // Per-split semantics: a pane is in Code Mode when its own directory is
-  // the indexed project or lives inside it (see isCodeModeActiveForDir).
-  // Splits in different repos therefore show different badges.
+  // The footer pill combines global + per-pane truth (see
+  // resolveModeDisplay): inside the project → "Code Mode", project set but
+  // this pane elsewhere → "Code Mode: <name>" with a jump action.
   const [codeModeProject, setCodeModeProject] = useState<string | null>(() => {
     try {
       return getActiveProject();
@@ -456,13 +483,29 @@ export function App() {
     // Single-instance second launch (all OSes): the Rust backend focuses
     // this window instead of opening a duplicate ("ghost") window and
     // emits `kai-open-project`. Re-sync immediately — window focus alone
-    // may not fire when this window was already focused.
+    // may not fire when this window was already focused. When the event
+    // carries a path (`kai <path>` while running), surface it: focus a tab
+    // already there, or open one — otherwise the request is silently
+    // swallowed and the user thinks the launch did nothing.
     let unlistenSingle: (() => void) | undefined;
     let cancelled = false;
     void import("@tauri-apps/api/event")
       .then(({ listen }) => {
         if (cancelled) return;
-        void listen("kai-open-project", () => syncCodeModeState()).then((u) => {
+        void listen("kai-open-project", (event) => {
+          syncCodeModeState();
+          const rawPath =
+            event && typeof event === "object" && "payload" in event
+              ? (event as { payload?: unknown }).payload
+              : null;
+          const candidate =
+            rawPath && typeof rawPath === "object" && rawPath !== null
+              ? (rawPath as Record<string, unknown>).path
+              : null;
+          if (typeof candidate === "string" && candidate.trim()) {
+            openOrFocusDirStable(candidate.trim());
+          }
+        }).then((u) => {
           if (cancelled) {
             u();
           } else {
@@ -792,21 +835,18 @@ export function App() {
     setTabs((prev) => prev.map((t) => (t.id === id ? { ...t, color } : t)));
   }, []);
 
-  /** Per-pane Code Mode: pane dir is the indexed project or inside it. */
-  const isCodeModeForDir = useCallback(
-    (dir: string): boolean => isCodeModeActiveForDir(dir, codeModeProject),
-    [codeModeProject]
-  );
-
-  // Stable footer pill: derived inline, the badge flapped between "Terminal"
-  // and nothing whenever the effective dir was momentarily empty (cwd still
-  // resolving) — one more source of footer blanking while typing. Unknown
-  // dir keeps the last pill instead of flashing.
-  const [modeDisplay, setModeDisplay] = useState<"code" | "terminal">("terminal");
+  // Stable footer pill with global + per-pane truth (see resolveModeDisplay):
+  // the badge flapped between "Terminal" and nothing whenever the effective
+  // dir was momentarily empty (cwd still resolving) — unknown dir keeps the
+  // last pill instead of flashing, while clearing the project always drops
+  // to Terminal immediately (`kai stop code` must reflect at once).
+  const [modeDisplay, setModeDisplay] = useState<ModeDisplay>("terminal");
   useEffect(() => {
-    if (!effectiveProjectDir) return;
-    setModeDisplay(isCodeModeForDir(effectiveProjectDir) ? "code" : "terminal");
-  }, [effectiveProjectDir, isCodeModeForDir]);
+    setModeDisplay((prev) => {
+      const next = resolveModeDisplay(codeModeProject, effectiveProjectDir, prev);
+      return prev === next ? prev : next;
+    });
+  }, [effectiveProjectDir, codeModeProject]);
 
   // Per-tab flat-grid geometry, memoized on the tabs array: `resolveTabLayout`
   // can synthesize a fallback tree (fresh split ids) for stale layouts, and
@@ -898,8 +938,11 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paneDirsKey, activeTabId]);
 
-  // Immediately synchronize active pane's git status and code mode when active
-  // pane changes or user clicks a split.
+  // Footer git badge with dwell: the path pill updates instantly, but the
+  // git probe only fires after the user has stayed in one directory for
+  // ~800 ms. Fast `cd` hopping keeps the last good badge instead of
+  // flickering through "No git repo" / partial states. Cache hits still
+  // apply synchronously (zero IPC). Same behavior on all OSes.
   useEffect(() => {
     if (!effectiveProjectDir) {
       setGitBranch(null);
@@ -924,21 +967,48 @@ export function App() {
       setGitRepoRoot(syncHit.repo_root ?? null);
       return;
     }
+    if (cached !== undefined) {
+      // Fresh map entry: revalidate in the background without blanking.
+      let cancelled = false;
+      const timer = setTimeout(() => {
+        void getGitInfoCached(effectiveProjectDir).then(
+          (info) => {
+            if (cancelled) return;
+            setGitInfoByDir((prev) => ({ ...prev, [effectiveProjectDir]: info }));
+            setGitBranch(info.branch);
+            setGitDirty(info.dirty);
+            setGitRepoRoot(info.repo_root ?? null);
+          },
+          () => {
+            // Probe failure: keep the last good badge — never blank the footer.
+          }
+        );
+      }, 800);
+      return () => {
+        cancelled = true;
+        clearTimeout(timer);
+      };
+    }
+    // Unknown directory: dwell before the first spawn so quick pass-through
+    // `cd`s never spawn `git` at all. Previous badge stays visible meanwhile.
     let cancelled = false;
-    void getGitInfoCached(effectiveProjectDir).then(
-      (info) => {
-        if (cancelled) return;
-        setGitInfoByDir((prev) => ({ ...prev, [effectiveProjectDir]: info }));
-        setGitBranch(info.branch);
-        setGitDirty(info.dirty);
-        setGitRepoRoot(info.repo_root ?? null);
-      },
-      () => {
-        // Probe failure: keep the last good badge — never blank the footer.
-      }
-    );
+    const timer = setTimeout(() => {
+      void getGitInfoCached(effectiveProjectDir).then(
+        (info) => {
+          if (cancelled) return;
+          setGitInfoByDir((prev) => ({ ...prev, [effectiveProjectDir]: info }));
+          setGitBranch(info.branch);
+          setGitDirty(info.dirty);
+          setGitRepoRoot(info.repo_root ?? null);
+        },
+        () => {
+          // Probe failure: keep the last good badge — never blank the footer.
+        }
+      );
+    }, 800);
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
   }, [effectiveProjectDir, activePaneId, activeTabId]);
 
@@ -968,6 +1038,9 @@ export function App() {
     },
     [shells, selectedShellId, userSettings.customShellPath, cwd]
   );
+  // Keep the stable pre-definition ref above pointed at the latest new-tab
+  // implementation (single-instance jumps + footer pill use it).
+  handleNewTabRef.current = handleNewTab;
 
   const handleCloseTab = useCallback(
     (id: string) => {
@@ -1208,29 +1281,31 @@ export function App() {
   );
 
   const handleGitActionRun = useCallback(
-    async (action: "fetch" | "pull" | "status", dirOverride?: string) => {
+    async (action: "status" | "changes", dirOverride?: string) => {
       try {
         const dir = dirOverride || effectiveProjectDir;
         if (!dir) {
           setLastError("No project directory set. Enter a working directory first.");
           return;
         }
-        invalidateGitCache(dir);
-        if (action === "status") {
-          // Centered in-app VS Code style changes review & diff modal
+        if (action === "changes") {
+          // Full VS Code-style changes review & diff modal.
           setGitChangesModal({ dir });
-        } else {
-          await runGitAction(dir, action);
-          // Trigger immediate git badge refresh (active + per-pane map)
-          void getGitInfoCached(dir).then((info) => {
-            setGitInfoByDir((prev) => ({ ...prev, [dir]: info }));
-            if (dir === effectiveProjectDir) {
-              setGitBranch(info.branch);
-              setGitDirty(info.dirty);
-              setGitRepoRoot(info.repo_root ?? null);
-            }
-          });
+          return;
         }
+        // Plain `git status` list output in a centered dialog.
+        invalidateGitCache(dir);
+        const output = await runGitAction(dir, "status");
+        setGitStatusModal({ dir, output });
+        // Refresh the footer badge from cache (status is read-only, cheap).
+        void getGitInfoCached(dir).then((info) => {
+          setGitInfoByDir((prev) => ({ ...prev, [dir]: info }));
+          if (dir === effectiveProjectDir) {
+            setGitBranch(info.branch);
+            setGitDirty(info.dirty);
+            setGitRepoRoot(info.repo_root ?? null);
+          }
+        });
       } catch (err) {
         setLastError(err instanceof Error ? err.message : String(err));
       }
@@ -1644,18 +1719,26 @@ export function App() {
       perform: handleOpenEditor,
     },
     {
-      id: "git-fetch",
-      label: "Git Action: Fetch Updates",
+      id: "git-status",
+      label: "Git: Show Status List",
       category: "Git",
       icon: <Activity size={16} />,
-      perform: () => handleGitActionRun("fetch"),
+      perform: () => handleGitActionRun("status"),
     },
     {
-      id: "git-pull",
-      label: "Git Action: Fast-Forward Pull",
+      id: "review-changes",
+      label: "Git: Review Changes & Diff",
       category: "Git",
-      icon: <Activity size={16} />,
-      perform: () => handleGitActionRun("pull"),
+      shortcut: "Ctrl+Shift+G",
+      icon: <GitCompare size={16} />,
+      perform: () => {
+        const dir = effectiveProjectDir || cwd.trim();
+        if (dir) {
+          setGitChangesModal({ dir });
+        } else {
+          setLastError("No project directory set. Enter or open a directory first.");
+        }
+      },
     },
     {
       id: "check-updates",
@@ -1703,21 +1786,6 @@ export function App() {
       category: "Help",
       icon: <Activity size={16} />,
       perform: () => setIsDiagnosticsOpen(true),
-    },
-    {
-      id: "review-changes",
-      label: "Review Changes & Diff (Source Control)",
-      category: "Git",
-      shortcut: "Ctrl+Shift+G",
-      icon: <GitCompare size={16} />,
-      perform: () => {
-        const dir = effectiveProjectDir || cwd.trim();
-        if (dir) {
-          setGitChangesModal({ dir });
-        } else {
-          setLastError("No project directory set. Enter or open a directory first.");
-        }
-      },
     },
     {
       id: "open-settings",
@@ -2282,6 +2350,11 @@ export function App() {
         onRefreshGit={handleRefreshGit}
         isRefreshingGit={isRefreshingGit}
         mode={modeDisplay}
+        codeProjectPath={codeModeProject}
+        codeProjectName={codeModeProject ? codeProjectName(codeModeProject) : null}
+        onOpenCodeProject={
+          codeModeProject ? () => openOrFocusDirStable(codeModeProject) : undefined
+        }
       />
     </div>
   );

@@ -190,6 +190,11 @@ describe("desktop auto-wire service (outside Tauri)", () => {
     await expect(getKaiCliLaunch()).rejects.toThrow("desktop app");
     await expect(setupAgentMcp("aider", ["kai"])).rejects.toThrow("desktop app");
   });
+
+  it("rejects manual snippets when Tauri is unavailable (with CLI hint)", async () => {
+    const { getAgentSetupSnippet } = await import("../services/aiCliService");
+    await expect(getAgentSetupSnippet("claude")).rejects.toThrow("kai agent setup claude");
+  });
 });
 
 describe("autoSetupDetectedAgents (system-driven wiring)", () => {

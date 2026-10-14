@@ -334,6 +334,39 @@ export function isCodeModeActiveForDir(dir: string, activePath: string | null): 
   return ds === cs || ds.startsWith(`${cs}/`);
 }
 
+export type ModeDisplay = "code" | "code-elsewhere" | "terminal";
+
+/**
+ * Footer Code Mode pill state from the global persisted project + the
+ * active pane directory.
+ *
+ * - No persisted project → `"terminal"` (always clears, even while the cwd
+ *   is still resolving — `kai stop code` must reflect immediately).
+ * - Pane inside the project → `"code"`.
+ * - Project set but the active pane is elsewhere → `"code-elsewhere"` (the
+ *   CLI said "switched Code Mode in the existing window" but this pane is
+ *   not in that project — the footer shows the project with a jump action
+ *   instead of lying with "Terminal").
+ * - Cwd still resolving (`""`) with a project set → keep `prev` (never
+ *   blank/flap the pill mid-navigation).
+ */
+export function resolveModeDisplay(
+  codeModeProject: string | null,
+  effectiveDir: string,
+  prev: ModeDisplay = "terminal"
+): ModeDisplay {
+  if (!codeModeProject) return "terminal";
+  if (!effectiveDir) return prev;
+  return isCodeModeActiveForDir(effectiveDir, codeModeProject) ? "code" : "code-elsewhere";
+}
+
+/** Short display name for a Code Mode project path (`…/repo` → `repo`). */
+export function codeProjectName(projectPath: string | null): string {
+  if (!projectPath) return "";
+  const parts = projectPath.split(/[/\\]/).filter(Boolean);
+  return parts.length > 0 ? parts[parts.length - 1] : projectPath;
+}
+
 /** Records a working directory as recently used. Never replays history automatically. */
 export function recordRecentProject(cwd: string): string[] {
   const trimmed = cwd.trim();

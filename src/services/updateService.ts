@@ -116,7 +116,11 @@ export async function checkForUpdates(
     updateAvailable: false,
     releaseUrl: RELEASES_PAGE_URL,
     releaseName: null,
-    releaseAuthor: GITHUB_OWNER,
+    // Author is only shown once a real release payload arrives (success
+    // path below falls back to the repo owner). Error / not-checked states
+    // keep it null so the Settings Updates tab never renders a stray
+    // "by <owner>" next to a missing version.
+    releaseAuthor: null,
     publishedAt: null,
     error: null,
     checkedAt,
