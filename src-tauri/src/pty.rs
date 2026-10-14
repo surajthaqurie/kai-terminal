@@ -308,6 +308,8 @@ impl PtyManager {
         // enable line-editing (ZLE/Readline), 256 colors, truecolor, and autosuggestions.
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
+        cmd.env("KAI_TERMINAL", "1");
+        cmd.env("TERM_PROGRAM", "kai");
         if let Some(ref env_vars) = options.env {
             validate_spawn_env(env_vars)?;
             for (k, v) in env_vars {

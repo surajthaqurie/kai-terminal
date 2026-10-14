@@ -48,42 +48,44 @@ Other scripts: `npm run dev` (browser mock PTY) · `npm run tauri build` (bundle
 
 ## Kai CLI — local index + MCP
 
-Kai ships a CLI that indexes one folder at a time into `~/.kai/` (outside your repo) and serves context to AI tools over stdio MCP. Read-only — your files are not modified.
+Kai ships a CLI that indexes projects into `~/.kai/` (outside your repo) and serves context to AI tools over stdio MCP. Read-only — your source code is never modified.
 
-### Commands
+> **Environment Note**: Project intelligence and agent execution commands run inside Kai Terminal (`KAI_TERMINAL=1`). Outside Kai Terminal, use `kai open [path]` to launch or focus Kai Terminal. See [USER_MANUAL.md](USER_MANUAL.md) for full documentation.
+
+### External Commands (Any Terminal)
 
 ```bash
-kai code .              # index the current folder (also installs a commit-msg
-                        # hook that strips AI Co-authored-by trailers automatically)
-kai run -- claude -p "fix bug" # run external agent, then auto-sync graph
-kai graph rebuild .     # rebuild symbol index and dependency graph
-kai status              # show indexed projects and health (includes hook state)
-kai unregister . --dry-run   # preview index removal (repo untouched)
-kai query "Explain PtyManager lifecycle"   # budgeted output, default 4000 tokens
-kai cost                # token usage for the last query
-kai mcp .               # serve the MCP tools over stdio
-kai lsp status          # local language server availability
-kai bench .             # local retrieval benchmark
-
-kai agent setup claude    # install wiring into ~/.claude.json
-kai agent setup cursor    # install wiring into .cursor/mcp.json
-kai agent setup codex     # install wiring into ~/.codex/config.toml
-kai agent setup gemini    # install wiring into ~/.muse/settings.json
-kai agent setup copilot   # install wiring into .vscode/mcp.json (project)
-kai agent setup windsurf  # install wiring into ~/.codeium/windsurf/mcp_config.json
-kai agent setup cline     # install wiring into Cline's VS Code storage
-kai agent setup opencode  # install wiring into ~/.config/opencode/opencode.json
-kai agent setup aider     # install wiring into ~/.config/aider/mcp.json
-kai agent setup agy       # install wiring into ~/.gemini/antigravity-cli/settings.json
-kai agent setup all       # auto-wire every agent installed on this system
-kai agent list            # dynamically detect installs + kai wiring state
-# flags: --print (snippet only), --dry-run (preview), --force (refresh),
-#        --global / --project (config scope)
+kai open [path]           # open or focus Kai Terminal for project (defaults to .)
+kai close                 # close active Kai Terminal instances
 ```
 
-`kai agent setup` writes the config automatically (merging the `kai` MCP
-entry, keeping a `.kai.bak` backup, never touching other keys). Invalid or
-oversized configs are left alone with manual merge instructions.
+### Internal Commands (Inside Kai Terminal)
+
+```bash
+kai claude .              # run Claude: auto-wires MCP, enters Code Mode, builds & syncs graph
+kai cursor /path/to/proj  # launch Cursor with auto-wired MCP and project context
+kai setup all             # auto-wire Kai MCP into every detected agent configuration
+kai setup claude          # auto-wire Kai MCP into Claude Code configuration
+kai list -a               # detect installed agents and Kai MCP wiring status (default)
+kai list -i               # list all indexed projects, symbol counts, and freshness
+kai list -s               # list active session and cache files
+kai list -c               # display current CLI configuration
+kai remove -i .           # safely delete project index from ~/.kai/projects/ (repo untouched)
+kai remove -a claude      # un-wire Kai MCP from agent configuration
+kai remove -s             # clear session and cache files
+kai graph init .          # initialize AST symbol index and dependency graph
+kai graph update .        # force update and rebuild of project graph
+kai graph status .        # show graph index status and symbol counts
+kai status .              # show project health, commit hook, and LSP status
+kai stop                  # clear Code Mode and return to plain terminal
+kai doctor                # run environment, PATH, and desktop drawer diagnostics
+kai lsp                   # probe locally installed Language Server Protocol servers
+```
+
+`kai <agent> [path]` (e.g. `kai claude .`, `kai opencode .`, `kai cursor .`) automatically
+wires Kai MCP configuration if needed, activates Code Mode, generates the
+project graph, runs the agent inside the project directory, and auto-syncs graph changes on exit.
+Detailed guide and syntax: see [USER_MANUAL.md](USER_MANUAL.md).
 
 ### Supported agents
 
@@ -100,7 +102,7 @@ oversized configs are left alone with manual merge instructions.
 | Aider             | `~/.config/aider/mcp.json`                                    | `mcpServers.kai` stdio entry                     |
 | Antigravity (agy) | `~/.gemini/antigravity-cli/settings.json`                     | `mcpServers.kai` stdio entry                     |
 
-Agent detection is dynamic: `kai agent list` probes the live system
+Agent detection is dynamic: `kai list` probes the live system
 PATH plus known config files at runtime, so newly installed agents show
 up without any code changes. All 10 agents share one registry
 (`src/core/agents.ts`).
@@ -115,7 +117,6 @@ system-installed tools.
 ### Notes on speed
 
 Measured on the maintainer's machine: local queries typically complete in a few ms.
-`kai query` caps output to the token budget instead of dumping whole repos.
 Your numbers will differ by repo size and hardware — run `kai bench .` to check.
 
 ### MCP tools (stdio)
@@ -131,12 +132,11 @@ Your numbers will differ by repo size and hardware — run `kai bench .` to chec
 - `kai_sync_graph` — guarded post-change graph validation and freshness sync.
 
 All tools are read-only on project sources. Hands-free co-author prevention needs no tool:
-entering Code Mode (`kai code .`) installs a self-contained `commit-msg`
+entering Code Mode (e.g. `kai <agent>` or `kai graph init .`) installs a self-contained `commit-msg`
 hook into the repo, so every future commit from any agent lands without
 `Co-authored-by:` trailers. The hook is POSIX sh only (Linux, macOS,
 Windows), fails open, and preserves/chains any pre-existing hook.
-`kai status` shows the hook state; skip the install with
-`kai code . --no-hook`. To remove the hook later, delete
+`kai status` shows the hook state. To remove the hook later, delete
 `.git/hooks/commit-msg` (and rename `commit-msg.kai-orig` back to
 `commit-msg` if your own hook was preserved there).
 
@@ -148,7 +148,7 @@ The status bar in the app shows the indexed project, file/symbol counts and last
 - `.env*`, keys and binaries are skipped by default.
 - MCP input is size-capped before parsing.
 - Retrieval checks file hashes and warns on stale indexes.
-- Indexes live in `~/.kai/`; `kai unregister` deletes them.
+- Indexes live in `~/.kai/`; `kai remove` deletes them.
 - Local diagnostics go to `~/.kai/metrics.jsonl`. No account, no telemetry in the app.
 
 See [KNOWN_LIMITATIONS](KNOWN_LIMITATIONS.md) for what v0.1.4 does not do yet.

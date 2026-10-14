@@ -133,7 +133,14 @@ export function retrieveContext(
     tokenizer?: TokenizerFunction;
   } = {}
 ): RetrievalResult {
-  const tokenBudget = Math.min(Math.max(options.tokenBudget ?? 3500, 200), 20000);
+  // Non-finite budgets (NaN, ±Infinity) fall back to the default instead of
+  // silently voiding the bound below (comparisons against NaN are always
+  // false, which would invert the include/omit decisions).
+  const rawTokenBudget = options.tokenBudget ?? 3500;
+  const tokenBudget = Math.min(
+    Math.max(Number.isFinite(rawTokenBudget) ? rawTokenBudget : 3500, 200),
+    20000
+  );
   const rawFileBudget = options.fileBudget ?? 8;
   const fileBudget = Math.min(
     Math.max(Number.isFinite(rawFileBudget) ? Math.floor(rawFileBudget) : 8, 1),

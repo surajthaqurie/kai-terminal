@@ -1254,3 +1254,136 @@ export function autoSetupDetectedAgents(
     return applyAgentSetup(d.id, kaiBin, opts);
   });
 }
+
+export interface AgentRemoveResult {
+  id: string;
+  name: string;
+  path: string;
+  removed: boolean;
+  message: string;
+}
+
+/**
+ * Remove Kai MCP wiring from an agent's configuration file.
+ */
+export function removeAgentSetup(
+  agent: string,
+  opts: AgentSetupOptions = {}
+): AgentRemoveResult {
+  const def = getAgentDefinition(agent);
+  if (!def) {
+    return {
+      id: agent,
+      name: agent,
+      path: "",
+      removed: false,
+      message: `Unknown agent "${agent}". Run 'kai list -a' to see available agents.`,
+    };
+  }
+  const resolved = resolveAgentConfigPath(def, opts);
+  if ("error" in resolved) {
+    return {
+      id: def.id,
+      name: def.name,
+      path: "",
+      removed: false,
+      message: resolved.error,
+    };
+  }
+  const { path: filePath, target } = resolved;
+  if (!fs.existsSync(filePath)) {
+    return {
+      id: def.id,
+      name: def.name,
+      path: filePath,
+      removed: false,
+      message: `Config file ${filePath} does not exist.`,
+    };
+  }
+
+  const dryRun = opts.dryRun === true;
+
+  if (target.keyStyle === "toml-codex") {
+    const raw = fs.readFileSync(filePath, "utf-8");
+    if (!raw.includes(CODEX_TOML_SECTION)) {
+      return {
+        id: def.id,
+        name: def.name,
+        path: filePath,
+        removed: false,
+        message: `No kai entry found in ${filePath}.`,
+      };
+    }
+    if (dryRun) {
+      return {
+        id: def.id,
+        name: def.name,
+        path: filePath,
+        removed: true,
+        message: `Would remove kai MCP section from ${filePath}.`,
+      };
+    }
+    backupExistingConfig(filePath);
+    const updated = raw.replace(/\n?\[mcp_servers\.kai\][\s\S]*?(?=\n\[|$)/, "");
+    atomicWriteFile(filePath, updated);
+    return {
+      id: def.id,
+      name: def.name,
+      path: filePath,
+      removed: true,
+      message: `Removed kai MCP section from ${filePath}.`,
+    };
+  }
+
+  const parsed = readJsonConfigFile(filePath);
+  if (parsed.parseError) {
+    return {
+      id: def.id,
+      name: def.name,
+      path: filePath,
+      removed: false,
+      message: parsed.parseError,
+    };
+  }
+
+  const containerKey =
+    target.keyStyle === "mcp-opencode"
+      ? "mcp"
+      : target.keyStyle === "mcp_servers"
+        ? "mcp_servers"
+        : target.keyStyle === "vscode-servers"
+          ? "servers"
+          : "mcpServers";
+
+  const container = parsed.data[containerKey] as Record<string, unknown> | undefined;
+  if (!container || typeof container !== "object" || container.kai === undefined) {
+    return {
+      id: def.id,
+      name: def.name,
+      path: filePath,
+      removed: false,
+      message: `No kai entry found in ${filePath}.`,
+    };
+  }
+
+  if (dryRun) {
+    return {
+      id: def.id,
+      name: def.name,
+      path: filePath,
+      removed: true,
+      message: `Would remove kai MCP entry from ${filePath}.`,
+    };
+  }
+
+  backupExistingConfig(filePath);
+  delete container.kai;
+  atomicWriteFile(filePath, JSON.stringify(parsed.data, null, 2) + "\n");
+  return {
+    id: def.id,
+    name: def.name,
+    path: filePath,
+    removed: true,
+    message: `Removed kai MCP entry from ${filePath}.`,
+  };
+}

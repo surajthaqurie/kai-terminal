@@ -322,4 +322,23 @@ describe("Harden Phase: Path escaping, spaces, Unicode, quotes & dynamic agent v
       expect(snippet).toContain(KAI_BIN);
     }
   });
+
+  it("resolves registered agents, aliases, and rejects unknown commands", async () => {
+    const { resolveAgent } = await import("../cli/index");
+    expect(resolveAgent("claude")?.agentId).toBe("claude");
+    expect(resolveAgent("CURSOR")?.agentId).toBe("cursor");
+    expect(resolveAgent("vscode")?.agentId).toBe("copilot");
+    expect(resolveAgent("unknown-random-agent")).toBeNull();
+  });
+
+  it("kai list command succeeds and outputs detection status", async () => {
+    const { runCli } = await import("../cli/index");
+    expect(await runCli(["node", "kai", "list"])).toBe(0);
+    expect(await runCli(["node", "kai", "agents"])).toBe(0);
+  });
+
+  it("kai stop clears Code Mode without arguments", async () => {
+    const { runCli } = await import("../cli/index");
+    expect(await runCli(["node", "kai", "stop"])).toBe(0);
+  });
 });

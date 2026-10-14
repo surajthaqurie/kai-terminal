@@ -137,12 +137,12 @@ describe("kai code end-to-end state file", () => {
     fs.rmSync(tmpBase, { recursive: true, force: true });
   });
 
-  it("kai code <dir> persists mode=code state the badge can read", async () => {
+  it("kai graph init <dir> persists mode=code state the badge can read", async () => {
     const { runCli } = await import("../cli/index");
     const projDir = fs.mkdtempSync(path.join(os.tmpdir(), "kai-codemode-proj-"));
     fs.writeFileSync(path.join(projDir, "a.txt"), "hello\n");
     try {
-      const exit = await runCli(["node", "kai", "code", projDir]);
+      const exit = await runCli(["node", "kai", "graph", "init", projDir]);
       expect(exit).toBe(0);
       const raw = fs.readFileSync(
         path.join(process.env.KAI_HOME as string, "active_project.json"),
@@ -164,7 +164,7 @@ describe("kai code end-to-end state file", () => {
     const projDir = fs.mkdtempSync(path.join(os.tmpdir(), "kai-codemode-proj-"));
     fs.writeFileSync(path.join(projDir, "a.txt"), "hello\n");
     try {
-      expect(await runCli(["node", "kai", "code", projDir])).toBe(0);
+      expect(await runCli(["node", "kai", "graph", "init", projDir])).toBe(0);
       expect(await runCli(["node", "kai", "stop", "code"])).toBe(0);
       expect(fs.existsSync(path.join(process.env.KAI_HOME as string, "active_project.json"))).toBe(
         false
@@ -179,7 +179,7 @@ describe("kai code end-to-end state file", () => {
     const projDir = fs.mkdtempSync(path.join(os.tmpdir(), "kai-codemode-proj-"));
     fs.writeFileSync(path.join(projDir, "a.txt"), "hello\n");
     try {
-      expect(await runCli(["node", "kai", "code", projDir])).toBe(0);
+      expect(await runCli(["node", "kai", "graph", "init", projDir])).toBe(0);
       expect(await runCli(["node", "kai", "stop"])).toBe(0);
       expect(fs.existsSync(path.join(process.env.KAI_HOME as string, "active_project.json"))).toBe(
         false

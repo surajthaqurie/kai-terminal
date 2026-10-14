@@ -41,21 +41,21 @@ npm link
 ```
 After installing, the `kai` command is available in your shell:
 ```bash
+# External command (from any terminal)
+kai open .
+kai close
 kai --version
-kai code .
-kai run -- <agent-command>
-kai graph rebuild .
-kai status
-kai mcp .
+
+# Internal commands (inside Kai Terminal)
+kai claude .
+kai list -a
+kai list -i
+kai setup all
+kai graph init .
+kai status .
 ```
 
-### Local Execution
-```bash
-./bin/kai.js --help
-./bin/kai.js code .
-./bin/kai.js run -- claude -p "add tests"
-./bin/kai.js query "Explain architecture"
-```
+See [USER_MANUAL.md](USER_MANUAL.md) for full syntax and command reference.
 
 ---
 
@@ -185,8 +185,8 @@ npm run tauri build
 | **AppImage fails with FUSE error** | Install `libfuse2` package, or launch with `--appimage-extract`. |
 | **"Developer cannot be verified" on macOS** | Right-click the app > click Open, or run `xattr -cr /Applications/"Kai.app"`. |
 | **PTY creation or directory error** | Verify shell executable exists on system; leave working directory empty to default to `$HOME`. |
-| **CLI reports stale results after editing files** | Re-index with `kai graph rebuild <path>` (incremental detection compares mtime, ctime, and size; queries flag live disk changes via SHA-256). |
-| **CLI reports "No project registered" after disk changes** | The index under `~/.kai/projects/` may be corrupt or deleted; rerun `kai code <path>`. |
+| **CLI reports stale results after editing files** | Re-index with `kai graph update <path>` (incremental detection compares mtime, ctime, and size). |
+| **CLI reports "No project registered" after disk changes** | The index under `~/.kai/projects/` may be corrupt or deleted; rerun `kai graph init <path>`. |
 | **Indexing fails with a lock error** | Another `kai` process is indexing the same project; wait ~30s for stale-lock expiry and retry. |
 
 ---
@@ -205,8 +205,8 @@ The `kai` CLI keeps all of its data **outside** your repositories:
 To remove a single project's index without touching the repository:
 
 ```bash
-kai unregister <path-or-id> --dry-run  # inspect first (supports path or 16-hex ID for orphaned cleanup)
-kai unregister <path-or-id>
+kai remove <path-or-id> --dry-run  # inspect first (supports path or 16-hex ID for orphaned cleanup)
+kai remove <path-or-id>
 ```
 
 To fully uninstall the CLI and delete all Kai-owned data:

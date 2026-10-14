@@ -180,27 +180,23 @@ describe.skipIf(!hasGit)("commit-msg hook lifecycle", () => {
     expect(stored).toContain("CHAINED-MARKER");
   });
 
-  it("Code Mode auto-installs the hook; --no-hook opts out", async () => {
+  it("Code Mode / graph init auto-installs the hook", async () => {
     const repo = track(initRepo());
-    expect(await runCli(["node", "kai", "code", repo])).toBe(0);
+    expect(await runCli(["node", "kai", "graph", "init", repo])).toBe(0);
     expect(hookStatus(repo).state).toBe("ours");
     // Second entry is idempotent and stays quiet.
-    expect(await runCli(["node", "kai", "code", repo])).toBe(0);
+    expect(await runCli(["node", "kai", "graph", "init", repo])).toBe(0);
     expect(hookStatus(repo).state).toBe("ours");
-
-    const plain = track(initRepo());
-    expect(await runCli(["node", "kai", "code", plain, "--no-hook"])).toBe(0);
-    expect(hookStatus(plain).state).toBe("none");
   });
 
   it("Code Mode works in non-git folders without a hook", async () => {
     const plain = track(fs.mkdtempSync(path.join(os.tmpdir(), "kai-githooks-plain-")));
-    expect(await runCli(["node", "kai", "code", plain])).toBe(0);
+    expect(await runCli(["node", "kai", "graph", "init", plain])).toBe(0);
   });
 
   it("kai status reports the hook state", async () => {
     const repo = track(initRepo());
-    expect(await runCli(["node", "kai", "code", repo])).toBe(0);
+    expect(await runCli(["node", "kai", "graph", "init", repo])).toBe(0);
     expect(await runCli(["node", "kai", "status", repo])).toBe(0);
     expect(hookStatus(repo).state).toBe("ours");
   });

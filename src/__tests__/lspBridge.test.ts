@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   KNOWN_LSP_SERVERS,
   detectInstalledLspServers,
@@ -7,6 +7,47 @@ import {
   decodeLspMessage,
   queryLspCrossFileReferences,
 } from "../core/lspBridge";
+
+/**
+ * Fault-injection control for child_process.spawn, declared via vi.hoisted so
+ * the hoisted vi.mock factory below can read it. All modes keep execSync and
+ * the filesystem probes real; only spawn behavior is altered.
+ */
+const spawnControl = vi.hoisted(() => ({
+  mode: "real" as "real" | "throwSync" | "hang",
+  killCalls: 0,
+}));
+
+vi.mock("child_process", async (importOriginal) => {
+  const orig = await importOriginal<typeof import("child_process")>();
+  const realSpawn = orig.spawn.bind(orig);
+  function fakeHangingChild() {
+    return {
+      stdin: { write: () => true, end: () => {} },
+      stdout: { on: () => {} },
+      kill: () => {
+        spawnControl.killCalls += 1;
+        return true;
+      },
+      on: () => {},
+    };
+  }
+  return {
+    ...orig,
+    spawn: ((...args: Parameters<typeof orig.spawn>) => {
+      if (spawnControl.mode === "throwSync") throw new Error("injected sync spawn failure");
+      if (spawnControl.mode === "hang") return fakeHangingChild();
+      return (realSpawn as (...a: unknown[]) => unknown)(...args);
+    }) as typeof orig.spawn,
+  };
+});
+
+const EXT_FOR_LANGUAGE: Record<string, string> = {
+  typescript: "probe.ts",
+  rust: "probe.rs",
+  python: "probe.py",
+  go: "probe.go",
+};
 
 describe("LSP Bridge: Probing, Protocol & Fallbacks", () => {
   it("catalogues known LSP server binaries with install hints", () => {
@@ -82,5 +123,77 @@ describe("LSP Bridge: Probing, Protocol & Fallbacks", () => {
     expect(typeof result.isAvailable).toBe("boolean");
     expect(Array.isArray(result.references)).toBe(true);
     expect(Array.isArray(result.definitions)).toBe(true);
+  });
+});
+
+describe("LSP Bridge: degraded-contract hardening (KNOWN_LIMITATIONS 1.8.1)", () => {
+  beforeEach(() => {
+    spawnControl.mode = "real";
+    spawnControl.killCalls = 0;
+  });
+
+  it("missing-server path carries the full degraded contract deterministically", async () => {
+    const missing = KNOWN_LSP_SERVERS.find((e) => !isCommandAvailable(e.command));
+    if (!missing) return; // every catalogued server installed: degraded path unreachable here
+    const result = await queryLspCrossFileReferences(
+      process.cwd(),
+      EXT_FOR_LANGUAGE[missing.language] ?? "probe.ts",
+      1,
+      0,
+      "SomeSymbol",
+      1000
+    );
+    expect(result.isAvailable).toBe(false);
+    expect(result.serverUsed).toBe("none");
+    expect(result.references).toEqual([]);
+    expect(result.definitions).toEqual([]);
+    expect(result.degradedMode).toBe(true);
+    expect(result.degradedReason).toContain("degraded mode");
+    expect(result.degradedReason).toContain(missing.command);
+    expect(result.error).toBeDefined();
+  });
+
+  it("synchronous spawn failure still reports degradedMode (never a silent miss)", async () => {
+    // .rs resolves to rust-analyzer where installed, so lookup succeeds and the
+    // mocked spawn throw below reaches the synchronous-failure catch block. Where
+    // no server exists, this exercises the missing-server path, which carries the
+    // same contract.
+    spawnControl.mode = "throwSync";
+    const result = await queryLspCrossFileReferences(
+      process.cwd(),
+      "probe.rs",
+      1,
+      0,
+      "SomeSymbol",
+      1000
+    );
+    expect(result.references).toEqual([]);
+    expect(result.definitions).toEqual([]);
+    expect(result.degradedMode).toBe(true);
+    expect(result.degradedReason).toBeDefined();
+  });
+
+  it("unresponsive server resolves in degraded mode within the timeout and is reaped", async () => {
+    const present = KNOWN_LSP_SERVERS.find((e) => isCommandAvailable(e.command));
+    if (!present) return; // no live server here: timeout path unreachable
+    spawnControl.mode = "hang";
+    const start = Date.now();
+    const result = await queryLspCrossFileReferences(
+      process.cwd(),
+      EXT_FOR_LANGUAGE[present.language] ?? "probe.ts",
+      1,
+      0,
+      "SomeSymbol",
+      300
+    );
+    const elapsed = Date.now() - start;
+    expect(result.isAvailable).toBe(true);
+    expect(result.serverUsed).toBe(present.command);
+    expect(result.references).toEqual([]);
+    expect(result.definitions).toEqual([]);
+    expect(result.degradedMode).toBe(true);
+    expect(result.degradedReason).toContain("timed out");
+    expect(elapsed).toBeLessThan(3000);
+    expect(spawnControl.killCalls).toBeGreaterThanOrEqual(1);
   });
 });

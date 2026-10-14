@@ -61,14 +61,14 @@ This document describes process execution controls, IPC capabilities, permission
   - Project paths and symbol query arguments containing NUL bytes (`\0`) are strictly rejected.
   - Graph-dependent reads (`kai_search_code`, `kai_find_symbol`, `kai_get_dependencies`, `kai_get_context`) automatically gate freshness and execute a bounded auto-refresh when out of date, reporting verified freshness metrics.
 - **Live Staleness Detection & Index Verification:**
-  - Context retrieval computes on-the-fly SHA-256 digests of disk sources and compares them against index snapshot hashes. Stale files trigger explicit warnings directing users to re-index (`kai graph rebuild`).
+  - Context retrieval computes on-the-fly SHA-256 digests of disk sources and compares them against index snapshot hashes. Stale files trigger explicit warnings directing users to re-index (`kai graph update`).
   - Index caching validates `mtimeMs`, `ctimeMs`, and `sizeBytes` to prevent silent corruption or stale reuse across filesystem changes.
 - **Prototype Pollution Defense & Input Boundaries:**
   - In-memory index maps and dependency lookups use null-prototype objects (`Object.create(null)`) with explicit `Object.prototype.hasOwnProperty` guards.
   - Task classifier inputs are strictly bounded to 4,000 characters to prevent regex backtracking or CPU exhaustion on oversized prompts.
   - `kai config get` restricts lookups strictly to an approved configuration key allowlist (`ALLOWED_KEYS`).
   - Language server probes validate command names before checking system `PATH`.
-  - Storage deletion in `kai unregister` validates input project paths and supports clean deletion of orphaned storage by 16-character hexadecimal ID when `meta.json` is missing or corrupted.
+  - Storage deletion in `kai remove` validates input project paths and supports clean deletion of orphaned storage by 16-character hexadecimal ID when `meta.json` is missing or corrupted.
 - **Privacy-Safe Telemetry:**
   - Local diagnostic metrics are appended to `~/.kai/metrics.jsonl` tracking only execution latencies, token counts, and error codes.
   - The telemetry file automatically rotates at 5 MB (retaining one `.1` generation) to prevent unbounded disk growth.

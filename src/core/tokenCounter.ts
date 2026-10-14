@@ -43,12 +43,17 @@ export function estimateTokens(
   if (activeTokenizer) {
     try {
       const measured = activeTokenizer(text);
-      if (typeof measured === "number" && Number.isFinite(measured) && measured >= 0) {
+      // Exact status requires a well-formed whole count: fractional output is
+      // malformed and falls back to the labeled heuristic instead of being
+      // presented as exact (Number.isInteger also implies finiteness).
+      if (typeof measured === "number" && Number.isInteger(measured) && measured >= 0) {
+        // Normalize -0 to +0 so serialized counts never carry a signed zero.
+        const count = measured === 0 ? 0 : measured;
         return {
           characterCount,
           byteCount,
-          estimatedTokens: measured,
-          measuredTokens: measured,
+          estimatedTokens: count,
+          measuredTokens: count,
           isEstimate: false,
         };
       }

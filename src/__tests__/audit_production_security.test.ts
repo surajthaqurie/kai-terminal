@@ -263,27 +263,27 @@ describe("Production Security & Audit Validations", () => {
       expect(savedMeta?.lastError).toBeNull();
     });
 
-    it("supports flexible flag ordering in kai unregister (--dry-run first or last)", async () => {
+    it("supports flexible flag ordering in kai unregister (-i with --dry-run first or last)", async () => {
       const projDir = path.join(tmpDir, "unreg_proj");
       fs.mkdirSync(projDir, { recursive: true });
       fs.writeFileSync(path.join(projDir, "main.ts"), "export const x = 1;");
 
-      await runCli(["node", "kai", "code", projDir]);
+      await runCli(["node", "kai", "graph", "init", projDir]);
       const meta = getProjectMeta(projDir)!;
       expect(fs.existsSync(getProjectStorageDir(meta.id))).toBe(true);
 
       // Flag before target
-      const exit1 = await runCli(["node", "kai", "unregister", "--dry-run", projDir]);
+      const exit1 = await runCli(["node", "kai", "unregister", "--dry-run", "-i", projDir]);
       expect(exit1).toBe(0);
       expect(fs.existsSync(getProjectStorageDir(meta.id))).toBe(true);
 
-      // Target before flag
-      const exit2 = await runCli(["node", "kai", "unregister", projDir, "--dry-run"]);
+      // Target before dry-run flag
+      const exit2 = await runCli(["node", "kai", "unregister", "-i", projDir, "--dry-run"]);
       expect(exit2).toBe(0);
       expect(fs.existsSync(getProjectStorageDir(meta.id))).toBe(true);
 
       // Actual deletion
-      const exit3 = await runCli(["node", "kai", "unregister", projDir]);
+      const exit3 = await runCli(["node", "kai", "unregister", "-i", projDir]);
       expect(exit3).toBe(0);
       expect(fs.existsSync(getProjectStorageDir(meta.id))).toBe(false);
     });

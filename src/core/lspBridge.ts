@@ -442,6 +442,7 @@ export async function queryLspCrossFileReferences(
       clearTimeout(timer);
       if (!hasResolved) {
         hasResolved = true;
+        const message = err instanceof Error ? err.message : String(err);
         resolve({
           symbolName,
           language: targetLang,
@@ -449,6 +450,8 @@ export async function queryLspCrossFileReferences(
           references: [],
           definitions: [],
           isAvailable: false,
+          degradedMode: true,
+          degradedReason: `Failed to start ${server.command}: ${message}; operating in degraded mode`,
           error: String(err),
         });
       }

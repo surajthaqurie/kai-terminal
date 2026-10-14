@@ -43,52 +43,59 @@ afterEach(() => {
   fs.rmSync(kaiHome, { recursive: true, force: true });
 });
 
-describe("kai unregister command", () => {
-  it("deletes index data for a registered project and reports scope", async () => {
+describe("kai remove / unregister command", () => {
+  it("deletes index data for a registered project with -i and reports scope", async () => {
     const dir = makeTempProject({ "src/a.ts": "export function a() {}\n" });
-    expect(await runCli(["node", "kai", "code", dir])).toBe(0);
+    expect(await runCli(["node", "kai", "graph", "init", dir])).toBe(0);
     const meta = getProjectMeta(dir)!;
     expect(fs.existsSync(getProjectStorageDir(meta.id))).toBe(true);
 
-    expect(await runCli(["node", "kai", "unregister", dir, "--dry-run"])).toBe(0);
+    expect(await runCli(["node", "kai", "remove", "-i", dir, "--dry-run"])).toBe(0);
     expect(fs.existsSync(getProjectStorageDir(meta.id))).toBe(true);
 
-    expect(await runCli(["node", "kai", "unregister", dir])).toBe(0);
+    expect(await runCli(["node", "kai", "remove", "-i", dir])).toBe(0);
     expect(fs.existsSync(getProjectStorageDir(meta.id))).toBe(false);
     // Project is gone: status now reports unregistered
     expect(await runCli(["node", "kai", "status", dir])).toBe(1);
   });
 
-  it("accepts a project id as well as a path", async () => {
+  it("accepts a project id as well as a path with -i / --index", async () => {
     const dir = makeTempProject({ "src/a.ts": "export function a() {}\n" });
-    expect(await runCli(["node", "kai", "code", dir])).toBe(0);
+    expect(await runCli(["node", "kai", "graph", "init", dir])).toBe(0);
     const meta = getProjectMeta(dir)!;
-    expect(await runCli(["node", "kai", "unregister", meta.id])).toBe(0);
+    expect(await runCli(["node", "kai", "remove", "--index", meta.id])).toBe(0);
     expect(fs.existsSync(getProjectStorageDir(meta.id))).toBe(false);
   });
 
-  it("unregisters orphaned project storage by ID even if meta.json is missing", async () => {
+  it("unregisters orphaned project storage by ID with -i even if meta.json is missing", async () => {
     const orphanId = "1234567890abcdef";
     const storageDir = getProjectStorageDir(orphanId);
     fs.mkdirSync(storageDir, { recursive: true });
     fs.writeFileSync(path.join(storageDir, "index.json"), "{}");
     expect(fs.existsSync(storageDir)).toBe(true);
 
-    expect(await runCli(["node", "kai", "unregister", orphanId])).toBe(0);
+    expect(await runCli(["node", "kai", "remove", "-i", orphanId])).toBe(0);
     expect(fs.existsSync(storageDir)).toBe(false);
   });
 
-  it("requires a target and fails cleanly for unknown projects", async () => {
-    expect(await runCli(["node", "kai", "unregister"])).toBe(1);
-    expect(await runCli(["node", "kai", "unregister", "--dry-run"])).toBe(1);
-    expect(await runCli(["node", "kai", "unregister", "/nonexistent-xyz"])).toBe(1);
+  it("requires a flag and fails cleanly for unknown projects", async () => {
+    expect(await runCli(["node", "kai", "remove"])).toBe(1);
+    expect(await runCli(["node", "kai", "remove", "--dry-run"])).toBe(1);
+    expect(await runCli(["node", "kai", "remove", "/nonexistent-xyz"])).toBe(1);
+    expect(await runCli(["node", "kai", "remove", "-i", "/nonexistent-xyz"])).toBe(1);
+    expect(await runCli(["node", "kai", "remove", "-a", "nonexistent-agent"])).toBe(1);
   });
 
   it("never touches the repository itself", async () => {
     const dir = makeTempProject({ "src/a.ts": "export function a() {}\n" });
-    await runCli(["node", "kai", "code", dir]);
-    await runCli(["node", "kai", "unregister", dir]);
+    await runCli(["node", "kai", "graph", "init", dir]);
+    await runCli(["node", "kai", "remove", "-i", dir]);
     expect(fs.existsSync(path.join(dir, "src", "a.ts"))).toBe(true);
+  });
+
+  it("supports session removal with -s", async () => {
+    expect(await runCli(["node", "kai", "remove", "-s", "--dry-run"])).toBe(0);
+    expect(await runCli(["node", "kai", "remove", "-s"])).toBe(0);
   });
 });
 
@@ -120,22 +127,21 @@ describe("runCli smoke coverage", () => {
     expect(await runCli(["node", "kai", "--version"])).toBe(0);
     expect(await runCli(["node", "kai", "--help"])).toBe(0);
     expect(await runCli(["node", "kai", "frobnicate"])).toBe(1);
-    expect(await runCli(["node", "kai", "query"])).toBe(1);
+    expect(await runCli(["node", "kai", "remove"])).toBe(1);
     expect(await runCli(["node", "kai", "status", "/nonexistent-xyz"])).toBe(1);
     expect(await runCli(["node", "kai", "config", "get", "defaultTokenBudget"])).toBe(0);
     expect(await runCli(["node", "kai", "config", "get", "bogusKey"])).toBe(1);
     expect(await runCli(["node", "kai", "config", "set", "bogus", "1"])).toBe(1);
   });
 
-  it("runs code/status/query/cost end to end", async () => {
+  it("runs graph init/status/update end to end", async () => {
     const dir = makeTempProject({
       "src/hello.ts": "export function helloWorld() { return 42; }\n",
     });
-    expect(await runCli(["node", "kai", "code", dir])).toBe(0);
+    expect(await runCli(["node", "kai", "graph", "init", dir])).toBe(0);
+    expect(await runCli(["node", "kai", "graph", "status", dir])).toBe(0);
     expect(await runCli(["node", "kai", "status", dir])).toBe(0);
-    expect(await runCli(["node", "kai", "query", "explain helloWorld", dir])).toBe(0);
-    expect(await runCli(["node", "kai", "cost", dir])).toBe(0);
-    expect(await runCli(["node", "kai", "graph", "rebuild", dir])).toBe(0);
+    expect(await runCli(["node", "kai", "graph", "update", dir])).toBe(0);
   });
 
   it("config set works on a fresh KAI_HOME with no directories yet", async () => {
