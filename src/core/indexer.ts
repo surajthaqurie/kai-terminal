@@ -19,6 +19,8 @@ import {
   markProjectGraphStatus,
   isWithinProjectBoundary,
   normalizePathForIdentity,
+  newProjectIncarnation,
+  SCHEMA_VERSION,
 } from "./registry";
 
 // Strict limits
@@ -632,12 +634,18 @@ export function loadProjectRules(projectRoot: string): string[] {
 }
 
 /**
- * Fast detection of stale index entries after external filesystem changes
+ * Fast detection of stale index entries after external filesystem changes.
+ *
+ * Covers modified/deleted tracked files (mtime/size/ctime), case-only
+ * renames (realpath basename mismatch on case-insensitive filesystems),
+ * and untracked new files (bounded readdir-only walk with the same
+ * exclusion rules as the indexer, so excluded files never mark stale).
  */
 export function detectStaleIndexEntries(index: ProjectIndex): {
   isStale: boolean;
   staleFiles: string[];
   deletedFiles: string[];
+  newFiles: string[];
 } {
   const canonicalRoot = resolveCanonicalPath(index.meta.canonicalPath);
   const staleFiles: string[] = [];
@@ -653,14 +661,116 @@ export function detectStaleIndexEntries(index: ProjectIndex): {
       const stat = fs.statSync(fullPath);
       if (stat.mtimeMs !== file.mtimeMs || stat.size !== file.sizeBytes) {
         staleFiles.push(relPath);
+        continue;
+      }
+      // Case-only rename on case-insensitive filesystems: the old key
+      // still resolves but the on-disk case differs.
+      try {
+        const real = fs.realpathSync(fullPath);
+        if (path.basename(real) !== path.basename(relPath)) {
+          staleFiles.push(relPath);
+        }
+      } catch {
+        // realpath failure already handled as deleted above; ignore here.
       }
     } catch {
       deletedFiles.push(relPath);
     }
   }
 
-  const isStale = staleFiles.length > 0 || deletedFiles.length > 0;
-  return { isStale, staleFiles, deletedFiles };
+  let newFiles: string[] = [];
+  try {
+    newFiles = detectUntrackedNewFiles(canonicalRoot, index);
+  } catch {
+    newFiles = [];
+  }
+
+  const isStale = staleFiles.length > 0 || deletedFiles.length > 0 || newFiles.length > 0;
+  return { isStale, staleFiles, deletedFiles, newFiles };
+}
+
+/**
+ * Bounded readdir-only scan for files present on disk that the index does
+ * not track. Mirrors the indexer's exclusion rules (excluded dirs, dot
+ * dirs, .gitignore patterns, sensitive names, binary extensions, size cap)
+ * without reading file contents, so excluded files never report stale.
+ * Collects at most 50 entries; finding even one proves staleness.
+ */
+export function detectUntrackedNewFiles(
+  canonicalRoot: string,
+  index: ProjectIndex,
+  limit: number = 50
+): string[] {
+  const found: string[] = [];
+  const ignorePatterns = loadIgnorePatterns(canonicalRoot);
+  const visited = new Set<string>();
+  try {
+    visited.add(fs.realpathSync(canonicalRoot));
+  } catch {
+    visited.add(canonicalRoot);
+  }
+  const stack: Array<{ dir: string; depth: number }> = [{ dir: canonicalRoot, depth: 0 }];
+  while (stack.length > 0 && found.length < limit) {
+    const { dir, depth } = stack.pop()!;
+    if (depth > MAX_TRAVERSAL_DEPTH) continue;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (found.length >= limit) break;
+      const fullPath = path.join(dir, entry.name);
+      let rel: string;
+      try {
+        rel = toPosixRel(path.relative(canonicalRoot, fullPath));
+      } catch {
+        continue;
+      }
+      if (!rel || rel.startsWith("..")) continue;
+      let canonical: string;
+      try {
+        canonical = fs.realpathSync(fullPath);
+      } catch {
+        continue;
+      }
+      if (!isWithinProjectBoundary(canonical, canonicalRoot)) continue;
+      let isDir = entry.isDirectory();
+      let isFile = entry.isFile();
+      if (entry.isSymbolicLink()) {
+        try {
+          const st = fs.statSync(canonical);
+          isDir = st.isDirectory();
+          isFile = st.isFile();
+        } catch {
+          continue;
+        }
+      }
+      if (isDir) {
+        if (DEFAULT_EXCLUDED_DIRS.has(entry.name)) continue;
+        if (entry.name.startsWith(".") && entry.name !== ".") continue;
+        if (matchesIgnorePattern(rel, entry.name, ignorePatterns)) continue;
+        if (visited.has(canonical)) continue;
+        visited.add(canonical);
+        stack.push({ dir: fullPath, depth: depth + 1 });
+      } else if (isFile) {
+        if (isSensitiveFile(entry.name)) continue;
+        if (isBinaryFile(entry.name)) continue;
+        if (matchesIgnorePattern(rel, entry.name, ignorePatterns)) continue;
+        try {
+          const st = fs.statSync(fullPath);
+          if (st.size > MAX_FILE_SIZE_BYTES) continue;
+        } catch {
+          continue;
+        }
+        if (!Object.prototype.hasOwnProperty.call(index.files, rel)) {
+          found.push(rel);
+        }
+      }
+    }
+  }
+  return found;
 }
 
 /**
@@ -922,13 +1032,23 @@ export async function indexProject(
       totalTokens += Math.max(1, Math.ceil(file.sizeBytes / 4));
     }
 
+    const nowIso = new Date().toISOString();
+    // One shared snapshot id for this build: stamped on the embedded meta
+    // and the top-level index so saveProjectIndex can pair both
+    // persistence copies unambiguously (timestamps alone are not robust).
+    const snapshotId = newProjectIncarnation();
     const updatedMeta: ProjectMeta = {
       ...meta,
-      lastIndexedAt: new Date().toISOString(),
+      // A rebuild normalizes the schema: a persisted snapshot with an
+      // unknown future version is recovered into the version this build
+      // writes, so consistency can converge instead of failing forever.
+      schemaVersion: SCHEMA_VERSION,
+      lastIndexedAt: nowIso,
       status: "ready",
       fileCount: Object.keys(indexedFiles).length,
       symbolCount: Object.keys(symbolIndex).length,
       lastError: null,
+      snapshotId,
     };
 
     const projectIndex: ProjectIndex = {
@@ -937,8 +1057,9 @@ export async function indexProject(
       symbolIndex,
       rules,
       totalTokensEstimated: totalTokens,
-      generatedAt: new Date().toISOString(),
+      generatedAt: nowIso,
       changes,
+      snapshotId,
     };
 
     // A dry-run build is a validation candidate only: it must never become

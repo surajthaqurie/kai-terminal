@@ -85,6 +85,15 @@ jobs:
         # JSON-RPC error codes, symlink boundaries, and unregister scope.
         run: npx vitest run src/__tests__/audit_regression.test.ts src/__tests__/mcp_security.test.ts src/__tests__/audit_production_security.test.ts src/__tests__/unregister.test.ts src/__tests__/hardening.test.ts
 
+      - name: Lifecycle & Persistence Targeted Tests (all OSes)
+        # Release-gate coverage that must pass natively on Linux, Windows,
+        # and macOS — never inferred from one OS: external-agent spawn /
+        # timeout / abort / tree-termination, file-lock + atomic-persistence
+        # behavior, crash-split snapshot recovery, incarnation identity, and
+        # cross-platform path handling (drive-letter/UNC forms, case-only
+        # renames, lock retries). Failing platform jobs are never optional.
+        run: npx vitest run src/__tests__/releaseHardening.test.ts src/__tests__/finalHardening.test.ts src/__tests__/autoSyncLifecycle.test.ts src/__tests__/codeModeWorkflow.test.ts src/__tests__/codeMode.test.ts
+
       - name: Workspace Migration and Persistence Tests (all OSes)
         # Explicit check (also covered by the full suite above): workspace
         # storage migration, restore ordering, and persistence across reloads.
@@ -196,4 +205,3 @@ jobs:
           echo "- Symlink-boundary subtests skip gracefully where the runner disallows symlinks."
           echo "- WSL: no GitHub-hosted WSL runner exists. WSL2 verification is manual-only (run scripts/docker-test.sh or cargo/vitest natively inside WSL2 + Windows Terminal) and is NOT claimed here."
           echo "- Full Tauri installer bundles (.deb/.AppImage/.msi/.exe/.dmg) are built only by release.yml on native runners; this CI verifies the web bundle + release binary."
-

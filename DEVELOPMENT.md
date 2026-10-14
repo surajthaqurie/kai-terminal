@@ -77,6 +77,7 @@ kai-terminal/
 │   │   ├── skills.ts         # On-demand skill registry
 │   │   ├── retrieval.ts      # Deterministic relevance search & ranking
 │   │   ├── contextAssembler.ts # Multi-stage context package builder
+│   │   ├── codeModeWorkflow.ts # Task planning, lifecycle & graph auto-sync
 │   │   ├── mcp.ts            # Stdio JSON-RPC Model Context Protocol server
 │   │   ├── benchmarks.ts     # 4-configuration benchmark harness
 │   │   └── telemetry.ts      # Privacy-safe local metrics logging
@@ -85,7 +86,11 @@ kai-terminal/
 │   ├── types/                # UI TypeScript Interfaces
 │   └── __tests__/            # Unit & Integration Tests (Vitest)
 │       ├── intelligence.test.ts # Intelligence, tokens, classifier tests
-│       └── mcp_security.test.ts # MCP protocol, security, concurrency tests
+│       ├── mcp_security.test.ts # MCP protocol, security, concurrency tests
+│       ├── autoSyncLifecycle.test.ts # Auto-sync, task planning & lifecycle tests
+│       ├── codeModeWorkflow.test.ts  # Code mode workflow & lock tests
+│       ├── finalHardening.test.ts    # Process tree, signal, shell & crash consistency tests
+│       └── releaseHardening.test.ts  # Incarnations, process group cleanup, persistence tests
 └── src-tauri/                # Rust Desktop Backend
     ├── Cargo.toml            # Rust crate dependencies
     ├── tauri.conf.json       # Tauri app security and packaging config
@@ -126,6 +131,8 @@ npm run check
 # Verify CLI commands directly
 ./bin/kai.js --help
 ./bin/kai.js code .
+./bin/kai.js run -- node -e "console.log('agent done')"
+./bin/kai.js graph rebuild .
 ./bin/kai.js status
 ./bin/kai.js bench .
 ```

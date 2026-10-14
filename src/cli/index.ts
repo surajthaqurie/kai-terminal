@@ -12,6 +12,7 @@ import {
   getSessionsDir,
   getCacheDir,
   getKaiHomeDir,
+  checkPersistenceConsistency,
 } from "../core/registry";
 import { indexProject, detectStaleIndexEntries } from "../core/indexer";
 import { assembleContext } from "../core/contextAssembler";
@@ -33,6 +34,7 @@ import {
   detectChangedFilesFromDisk,
   runCodeTaskWithAutoSync,
   runExternalAgentCommand,
+  needsShellForCommand,
 } from "../core/codeModeWorkflow";
 import { installCommitMsgHook, hookStatus } from "../core/githooks";
 import packageJson from "../../package.json";
@@ -565,6 +567,7 @@ export async function runCli(argv: string[]): Promise<number> {
       (!command.startsWith("-") &&
         command !== "code" &&
         command !== "stop" &&
+        command !== "clear" &&
         command !== "status" &&
         command !== "unregister" &&
         command !== "graph" &&
@@ -573,10 +576,14 @@ export async function runCli(argv: string[]): Promise<number> {
         command !== "config" &&
         command !== "session" &&
         command !== "mcp" &&
+        command !== "run" &&
         command !== "bench" &&
         command !== "agent" &&
+        command !== "agents" &&
+        command !== "setup" &&
         command !== "metrics" &&
         command !== "lsp" &&
+        command !== "doctor" &&
         (() => {
           try {
             return fs.existsSync(command) && fs.statSync(command).isDirectory();
@@ -718,10 +725,22 @@ export async function runCli(argv: string[]): Promise<number> {
       const index = loadProjectIndex(meta.id);
       if (index) {
         const staleness = detectStaleIndexEntries(index);
-        if (staleness.isStale) {
-          console.log(
-            `  Freshness:        stale (${staleness.staleFiles.length} modified, ${staleness.deletedFiles.length} deleted on disk)`
-          );
+        // A torn persistence snapshot (crash between renames) must never
+        // read as fresh: validate the pairing before reporting.
+        let consistencyNote = "";
+        try {
+          const consistency = checkPersistenceConsistency(meta.id);
+          if (!consistency.consistent) {
+            consistencyNote = ` (persisted snapshot inconsistent: ${consistency.reason}; rebuild recommended)`;
+          }
+        } catch {
+          // Validation unavailable; report the on-disk signal as-is.
+        }
+        if (staleness.isStale || consistencyNote) {
+          const base = staleness.isStale
+            ? `stale (${staleness.staleFiles.length} modified, ${staleness.deletedFiles.length} deleted on disk)`
+            : `stale (on-disk files match, but persistence pairing failed)`;
+          console.log(`  Freshness:        ${base}${consistencyNote}`);
         } else {
           console.log(`  Freshness:        fresh`);
         }
@@ -806,23 +825,39 @@ export async function runCli(argv: string[]): Promise<number> {
       return 0;
     }
 
-    // 3. kai graph rebuild [path]
-    if (command === "graph" && args[1] === "rebuild") {
-      const targetPath = args[2] || process.cwd();
-      const meta = registerProject(targetPath);
-      console.log(`[kai] Rebuilding index for "${meta.name}"...`);
-      const index = await indexProject(meta, { forceRebuild: true });
-      console.log(
-        `[kai] Rebuild complete! Indexed ${Object.keys(index.files).length} files and ${Object.keys(index.symbolIndex).length} symbols.`
-      );
-      if (index.changes) {
-        const { added, modified, renamed, deleted } = index.changes;
-        if (added.length || modified.length || renamed.length || deleted.length) {
-          console.log(
-            `  Changes: +${added.length} added, ~${modified.length} modified, ->${renamed.length} renamed, -${deleted.length} deleted`
-          );
+    // 3. kai graph [rebuild|status] [path]
+    if (command === "graph") {
+      const isRebuild = args[1] === "rebuild";
+      const isStatus = args[1] === "status";
+      const targetPath = (isRebuild || isStatus ? args[2] : args[1]) || process.cwd();
+      if (isRebuild) {
+        const meta = registerProject(targetPath);
+        console.log(`[kai] Rebuilding index for "${meta.name}"...`);
+        const index = await indexProject(meta, { forceRebuild: true });
+        console.log(
+          `[kai] Rebuild complete! Indexed ${Object.keys(index.files).length} files and ${Object.keys(index.symbolIndex).length} symbols.`
+        );
+        if (index.changes) {
+          const { added, modified, renamed, deleted } = index.changes;
+          if (added.length || modified.length || renamed.length || deleted.length) {
+            console.log(
+              `  Changes: +${added.length} added, ~${modified.length} modified, ->${renamed.length} renamed, -${deleted.length} deleted`
+            );
+          }
         }
+        return 0;
       }
+      const meta = getProjectMeta(targetPath);
+      if (!meta) {
+        console.log(`[kai] No project registered for: ${targetPath}`);
+        console.log(`Run 'kai code ${targetPath}' or 'kai graph rebuild ${targetPath}' to index.`);
+        return 1;
+      }
+      console.log(`[kai] Graph Status for "${meta.name}":`);
+      console.log(`  Files Indexed:   ${meta.fileCount}`);
+      console.log(`  Symbols Indexed: ${meta.symbolCount}`);
+      console.log(`  Last Indexed:    ${meta.lastIndexedAt || "never"}`);
+      console.log(`Tip: Run 'kai graph rebuild' to force re-indexing.`);
       return 0;
     }
 
@@ -968,8 +1003,8 @@ export async function runCli(argv: string[]): Promise<number> {
       return 1;
     }
 
-    // 7. kai session list
-    if (command === "session" && args[1] === "list") {
+    // 7. kai session [list]
+    if (command === "session" && (!args[1] || args[1] === "list")) {
       const sessionsDir = getSessionsDir();
       if (!fs.existsSync(sessionsDir)) {
         console.log(`[kai] No active session files found.`);
@@ -1095,7 +1130,7 @@ export async function runCli(argv: string[]): Promise<number> {
         const outcome = await runCodeTaskWithAutoSync(
           meta,
           async () => {
-            const useShell = process.platform === "win32" && /\.(cmd|bat)$/i.test(cmdArgs[0] ?? "");
+            const useShell = needsShellForCommand(cmdArgs[0] ?? "");
             const result = await runExternalAgentCommand(cmdArgs[0], cmdArgs.slice(1), {
               cwd: meta.canonicalPath,
               timeoutMs,
@@ -1106,6 +1141,14 @@ export async function runCli(argv: string[]): Promise<number> {
             agentTimedOut = result.timedOut;
             agentSignal = result.signal;
             const changedOnDisk = detectChangedFilesFromDisk(loadProjectIndex(meta.id));
+            // Timeout/signal/cancel outcomes may still be mutating via a
+            // surviving detached grandchild: force the broader refresh path
+            // and warn, rather than trusting an immediately-fresh graph.
+            const uncertainOutcome =
+              changedOnDisk.length === 0 ||
+              result.timedOut ||
+              result.signal !== null ||
+              controller.signal.aborted;
             const exitNote = result.timedOut
               ? `command timed out after ${timeoutMs}ms`
               : result.signal
@@ -1114,7 +1157,7 @@ export async function runCli(argv: string[]): Promise<number> {
             console.log(`[kai] Agent finished (${exitNote}, ${result.durationMs}ms).`);
             return {
               changedFiles: changedOnDisk,
-              uncertain: changedOnDisk.length === 0,
+              uncertain: uncertainOutcome,
               codeValidation: {
                 ran: false,
                 passed: false,
@@ -1135,7 +1178,17 @@ export async function runCli(argv: string[]): Promise<number> {
           );
         }
         // The agent's exit outcome is preserved: sync status is reported
-        // above but never rewrites it.
+        // above but never rewrites it. Conventional codes: 124 = timeout,
+        // 130 = terminated by signal / cancelled (SIGINT convention).
+        if (agentTimedOut) {
+          console.log(
+            `[kai] Note: the timed-out command was signalled (SIGTERM, then SIGKILL after 2 s; process tree on Windows). A detached grandchild may still be writing; freshness above is point-in-time — rerun 'kai status' or 'kai graph rebuild' if it keeps changing.`
+          );
+        } else if (agentSignal) {
+          console.log(
+            `[kai] Note: the command was terminated by ${agentSignal}; a surviving detached child may still be writing — treat freshness as point-in-time.`
+          );
+        }
         if (controller.signal.aborted || outcome.taskOutcome === "cancelled") return 130;
         if (outcome.taskOutcome === "failed") return 1;
         if (agentTimedOut) return 124;
@@ -1187,8 +1240,11 @@ export async function runCli(argv: string[]): Promise<number> {
       return 0;
     }
 
-    // 11. kai agent list (dynamic system detection + wiring state)
-    if (command === "agent" && (args[1] === "list" || args[1] === "status")) {
+    // 11. kai agent list / kai agents (dynamic system detection + wiring state)
+    if (
+      (command === "agent" || command === "agents") &&
+      (!args[1] || args[1] === "list" || args[1] === "status")
+    ) {
       const detected = detectInstalledAgentsSync({ projectDir: process.cwd() });
       console.log(`[kai] AI Agent Detection (live system probe):`);
       for (const d of detected) {
@@ -1205,19 +1261,34 @@ export async function runCli(argv: string[]): Promise<number> {
         }
       }
       console.log(
-        `\nRun 'kai agent setup <name>' to install MCP wiring, e.g. 'kai agent setup opencode'.`
+        `\nRun 'kai setup agent <name>' to install MCP wiring, e.g. 'kai setup agent opencode'.`
       );
-      console.log(`Run 'kai agent setup all' to wire every installed agent at once.`);
+      console.log(`Run 'kai setup agent all' to wire every installed agent at once.`);
       return 0;
     }
 
-    // 11b. kai agent setup <agent|all> / kai agent register ...
+    // 11b. kai agent setup <agent|all> / kai setup [agent] <agent|all> / kai agent register ...
     // Automatically installs kai MCP wiring into the agent's own config
     // file (with backup). Use --print for the snippet only, --dry-run to
     // preview, --force to refresh an existing kai entry.
-    if (command === "agent" && (args[1] === "setup" || args[1] === "register")) {
+    if (
+      ((command === "agent" || command === "agents") &&
+        (args[1] === "setup" || args[1] === "register")) ||
+      command === "setup"
+    ) {
       // Flags may appear before or after the agent name.
-      const rest = args.slice(2);
+      // Normalize rest positionals whether invoked as:
+      // - `kai agent setup claude`
+      // - `kai setup agent claude`
+      // - `kai setup claude`
+      let rest = args.slice(2);
+      if (command === "setup") {
+        if (args[1] === "agent" || args[1] === "agents") {
+          rest = args.slice(2);
+        } else {
+          rest = args.slice(1);
+        }
+      }
       const positionals = rest.filter((a) => !a.startsWith("-"));
       const rawTarget = (positionals[0] || "").toLowerCase();
       const printOnly = args.includes("--print");
@@ -1370,25 +1441,6 @@ export async function runCli(argv: string[]): Promise<number> {
       console.log(
         `  Operation Breakdown:   ${JSON.stringify(summary.operationsBreakdown, null, 2)}`
       );
-      return 0;
-    }
-
-    // 13. kai lsp [status]
-    if (command === "lsp") {
-      const detected = detectInstalledLspServers();
-      console.log(`[kai] Language Server Protocol (LSP) Bridge Status:`);
-      for (const server of detected) {
-        const statusIcon = server.isAvailable ? "✓" : "✗";
-        const statusText = server.isAvailable
-          ? `Available (${server.version || "installed"})`
-          : "Not Found";
-        console.log(
-          `  ${statusIcon} ${server.language.padEnd(12)} ${server.command.padEnd(28)} ${statusText}`
-        );
-        if (!server.isAvailable && server.installHint) {
-          console.log(`    └─ Install hint: ${server.installHint}`);
-        }
-      }
       return 0;
     }
 
@@ -1644,5 +1696,42 @@ export function printDoctorReport(): void {
     }
   } else {
     console.log(`  App-drawer audit: Linux only (skipped on ${process.platform}).`);
+  }
+}
+
+// Auto-execute when run directly as a script (e.g. node dist/cli/index.js)
+if (!process.env.VITEST && typeof process !== "undefined" && process.argv && process.argv[1]) {
+  try {
+    const scriptPath = path.resolve(process.argv[1]);
+    const thisPath = fileURLToPath(import.meta.url);
+    const isDirectRun =
+      (scriptPath === thisPath ||
+        fs.realpathSync(scriptPath) === fs.realpathSync(thisPath) ||
+        scriptPath.endsWith(path.join("cli", "index.js")) ||
+        scriptPath.endsWith("cli/index.js")) &&
+      !scriptPath.endsWith("kai.js");
+
+    if (isDirectRun) {
+      runCli(process.argv)
+        .then((code) => {
+          if (typeof code === "number") process.exit(code);
+        })
+        .catch((err) => {
+          console.error("[kai] Fatal error:", err);
+          process.exit(1);
+        });
+    }
+  } catch {
+    // If realpathSync fails (e.g. file unlinked), fall back to path suffix check
+    if (process.argv[1].endsWith("dist/cli/index.js") || process.argv[1].endsWith("cli/index.js")) {
+      runCli(process.argv)
+        .then((code) => {
+          if (typeof code === "number") process.exit(code);
+        })
+        .catch((err) => {
+          console.error("[kai] Fatal error:", err);
+          process.exit(1);
+        });
+    }
   }
 }

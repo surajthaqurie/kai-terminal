@@ -21,6 +21,7 @@ export default defineConfig({
     rollupOptions: {
       output: {
         entryFileNames: "index.js",
+        banner: "#!/usr/bin/env node",
       },
       external: [
         "fs",

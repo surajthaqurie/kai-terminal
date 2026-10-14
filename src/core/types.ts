@@ -31,6 +31,24 @@ export interface ProjectMeta {
   fileCount: number;
   symbolCount: number;
   lastError?: string | null;
+  /**
+   * Unique registration incarnation token (UUID). Minted fresh for every
+   * newly created registration — including re-registration at the same
+   * path after a delete — and preserved across idempotent re-lookups.
+   * In-flight tasks capture this value at start; publishing paths reject
+   * a task whose captured incarnation no longer matches the registry, so
+   * a stale task can never publish into a newly registered project.
+   * Optional because persisted metadata from older versions predates it.
+   */
+  incarnation?: string | null;
+  /**
+   * Shared snapshot identifier (UUID) pairing `meta.json` with the `meta`
+   * embedded in `index.json` (and the top-level `ProjectIndex.snapshotId`).
+   * Both copies are stamped with the same id on every save; a crash
+   * between the two sequential renames leaves mismatched ids that
+   * `checkPersistenceConsistency` detects. Optional for legacy snapshots.
+   */
+  snapshotId?: string | null;
 }
 
 export interface SymbolLocation {
@@ -89,6 +107,12 @@ export interface ProjectIndex {
   totalTokensEstimated: number;
   generatedAt: string;
   changes?: IndexChangeSet;
+  /**
+   * Shared snapshot identifier pairing this index file with `meta.json`
+   * (see `ProjectMeta.snapshotId`). Optional for legacy snapshots, which
+   * fall back to the timestamp-skew consistency check.
+   */
+  snapshotId?: string | null;
 }
 
 export interface SkillDefinition {

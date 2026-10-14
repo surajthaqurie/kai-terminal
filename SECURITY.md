@@ -7,6 +7,7 @@ This document describes process execution controls, IPC capabilities, permission
 ## 1. Process Launching Controls
 
 - **Direct Argv Execution:** Child processes are spawned using `portable-pty`'s `CommandBuilder` with direct `shell_path` and string arguments. Command line strings are never interpolated through a shell interpreter, preventing command injection vulnerabilities.
+- **External Agent Execution Controls (`kai run`):** When executing external coding agents via `kai run`, processes are spawned with `shell: false` across all POSIX platforms (and on Windows unless targeting `.cmd`/`.bat` binaries). This prevents argument injection and shell metacharacter expansion. Scripts like `.ps1` require explicit interpreter invocation (`powershell -File script.ps1`). Process timeouts and cancellations trigger POSIX SIGTERM followed by SIGKILL after a 2-second grace period (or `taskkill /PID /T /F` on Windows for complete process trees). Agent exit codes (success, failure, timeout `124`, cancel `130`) pass through intact and are never overwritten by subsequent background graph sync tasks.
 - **Path & Parameter Validation:** `shell_path` and `cwd` are checked before spawning: executable files must exist on disk and possess executable permissions. NUL bytes and oversized paths (>4096 bytes) are rejected.
 - **Environment & Working Directory:** The default working directory falls back to `$HOME` / `%USERPROFILE%`. Working directory paths fall back safely rather than auto-creating missing paths or using elevated system folders.
 
@@ -48,14 +49,17 @@ This document describes process execution controls, IPC capabilities, permission
   - Prompt templates demarcate untrusted context boundaries with explicit warning headers.
   - Dynamic code fence escaping (`safeCodeFence`) prevents markdown breakout when user source code contains triple or quadruple backticks.
 - **Concurrency & Atomic Storage:**
-  - Index and metadata writes use atomic temporary file creation followed by rename (`atomicWriteJson`).
-  - Concurrent operations are protected by PID-tracked file locks (`ProjectLock`) preventing index corruption.
+  - Index and metadata writes use atomic temporary file creation followed by rename (`atomicWriteJson`) with Windows retry logic on transient anti-virus locks.
+  - Concurrent operations are protected by PID-tracked file locks (`ProjectLock`) and generation guards preventing index corruption or stale candidate overwrites.
+  - Dual-copy crash consistency checks (`checkPersistenceConsistency`) detect schema, id, status, or timestamp skew between `meta.json` and `index.json`, triggering a safe rebuild rather than serving corrupted state.
+  - Status transitions (`markProjectGraphStatus`) atomically synchronize both `meta.json` and embedded index copies.
 - **MCP Stdio Isolation & Stream Protection:**
   - The MCP server operates exclusively over standard input/output (`stdio`) JSON-RPC. It does not open network sockets or unauthenticated network ports.
   - All tools are strictly read-only on project sources.
   - All tool arguments resolving file paths enforce strict workspace confinement using `fs.realpathSync`, rejecting unauthorized path traversal and out-of-boundary access.
   - Stream-level line size enforcement (`BoundedLineTransform`) discards requests exceeding 10 MB directly on the byte stream before Node buffers or `readline` can accumulate unbounded memory.
   - Project paths and symbol query arguments containing NUL bytes (`\0`) are strictly rejected.
+  - Graph-dependent reads (`kai_search_code`, `kai_find_symbol`, `kai_get_dependencies`, `kai_get_context`) automatically gate freshness and execute a bounded auto-refresh when out of date, reporting verified freshness metrics.
 - **Live Staleness Detection & Index Verification:**
   - Context retrieval computes on-the-fly SHA-256 digests of disk sources and compares them against index snapshot hashes. Stale files trigger explicit warnings directing users to re-index (`kai graph rebuild`).
   - Index caching validates `mtimeMs`, `ctimeMs`, and `sizeBytes` to prevent silent corruption or stale reuse across filesystem changes.

@@ -55,6 +55,8 @@ Kai ships a CLI that indexes one folder at a time into `~/.kai/` (outside your r
 ```bash
 kai code .              # index the current folder (also installs a commit-msg
                         # hook that strips AI Co-authored-by trailers automatically)
+kai run -- claude -p "fix bug" # run external agent, then auto-sync graph
+kai graph rebuild .     # rebuild symbol index and dependency graph
 kai status              # show indexed projects and health (includes hook state)
 kai unregister . --dry-run   # preview index removal (repo untouched)
 kai query "Explain PtyManager lifecycle"   # budgeted output, default 4000 tokens

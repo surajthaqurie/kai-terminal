@@ -3,7 +3,6 @@ import {
   GitBranch,
   ArrowUpCircle,
   Folder,
-  ListOrdered,
   Code,
   Terminal,
   RefreshCw,
@@ -178,25 +177,9 @@ export const StatusBar: FC<StatusBarProps> = ({
               <div className="status-git-menu" role="menu" aria-label="Git actions">
                 <button type="button" role="menuitem" onClick={() => runAction("changes")}>
                   <GitCompare size={13} />
-                  <span>Review Changes (Diff)</span>
-                </button>
-                <button type="button" role="menuitem" onClick={() => runAction("status")}>
-                  <ListOrdered size={13} />
-                  <span>Show status</span>
+                  <span>Changes</span>
                 </button>
               </div>
-            )}
-            {gitDirty && (
-              <button
-                type="button"
-                className="status-changes-pill"
-                onClick={() => onGitAction("changes")}
-                title="Uncommitted changes detected. Click to review changes and diffs (like VS Code)."
-                aria-label="Review uncommitted changes and diffs"
-              >
-                <GitCompare size={11} aria-hidden="true" />
-                <span>Changes ●</span>
-              </button>
             )}
             {onRefreshGit && (
               <button

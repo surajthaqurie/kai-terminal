@@ -16,6 +16,7 @@ import { detectInstalledLspServers } from "./lspBridge";
 import {
   isCodeMode,
   getGraphFreshness,
+  getValidatedFreshness,
   synchronizeGraphDeduped,
   ensureFreshIndex,
   planCodeTask,
@@ -518,6 +519,11 @@ export async function handleMcpMessage(
         for (const file of Object.values(index.files)) {
           languages[file.language] = (languages[file.language] || 0) + 1;
         }
+        // Truthful freshness without triggering a refresh here: read tools
+        // own the bounded auto-refresh gate; project_info only reports.
+        // The pairing is validated first so a torn snapshot (crash between
+        // the index.json and meta.json renames) never reports `fresh`.
+        const infoFreshness = getValidatedFreshness(meta.id, index);
 
         recordMetric({
           projectId: meta.id,
@@ -545,6 +551,7 @@ export async function handleMcpMessage(
                     totalSymbols: Object.keys(index.symbolIndex).length,
                     languageBreakdown: languages,
                     rulesCount: index.rules.length,
+                    freshness: infoFreshness,
                     changes: index.changes,
                   },
                   null,
@@ -826,6 +833,18 @@ export async function handleMcpMessage(
           success: true,
         });
 
+        // Stale fallback results must never look authoritative: when the
+        // freshness gate could not produce a fresh graph, surface it
+        // inline (additive prefix only; tool name/args unchanged).
+        let promptText = renderedPrompt;
+        if (autoFreshness !== "fresh") {
+          const warnLine =
+            autoRefreshOutcome === "refresh-failed"
+              ? `> Graph freshness warning: refresh failed (${autoRefreshWarning ?? "using last-known index"}); results below are a stale fallback, not authoritative. Run kai_sync_graph or kai_refresh_index, then retry.`
+              : `> Graph freshness note: index is ${autoFreshness}; results below may be incomplete. Run kai_sync_graph or kai_refresh_index for authoritative context.`;
+          promptText = `${warnLine}\n\n${renderedPrompt}`;
+        }
+
         return {
           jsonrpc: "2.0",
           id: reqId,
@@ -833,7 +852,7 @@ export async function handleMcpMessage(
             content: [
               {
                 type: "text",
-                text: renderedPrompt,
+                text: promptText,
               },
             ],
           },

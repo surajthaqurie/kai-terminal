@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { spawn } from "child_process";
+import { spawn, spawnSync } from "child_process";
 import type {
   IndexedDependency,
   IndexedSymbol,
@@ -12,6 +12,7 @@ import { classifyTask } from "./classifier";
 import { detectStaleIndexEntries, indexProject, isSensitiveFile, toPosixRel } from "./indexer";
 import {
   getProjectMeta,
+  checkPersistenceConsistency,
   isWithinProjectBoundary,
   loadProjectIndex,
   markProjectGraphStatus,
@@ -508,6 +509,16 @@ export function detectChangedFilesFromDisk(index: ProjectIndex | null): string[]
  * Verify the intended project is still the registered project before
  * touching its index. Protects stale task callbacks from writing to a
  * different project after the user switches, closes, or deletes projects.
+ *
+ * Identity is the stable id + normalized canonical path AND the
+ * registration incarnation token: deleting a project and re-registering
+ * the same path yields the same id/path but a fresh incarnation, so an
+ * older in-flight task captured under the previous registration is
+ * rejected instead of publishing into the new project. A caller-provided
+ * token is never trusted on its own — it is always compared against the
+ * registry copy. Tasks carrying no token (legacy metadata) cannot prove
+ * they belong to the current incarnation and are refused; purely legacy
+ * flows where neither side carries a token keep the historical behavior.
  */
 export function verifyProjectIdentity(
   meta: ProjectMeta
@@ -534,16 +545,63 @@ export function verifyProjectIdentity(
         reason: `project identity changed since task start (path mismatch); refusing to write to another project's index`,
       };
     }
+    const capturedInc = typeof meta.incarnation === "string" ? meta.incarnation : null;
+    const registeredInc =
+      typeof registered.incarnation === "string" ? registered.incarnation : null;
+    if (capturedInc && registeredInc) {
+      if (capturedInc !== registeredInc) {
+        return {
+          ok: false,
+          reason: `project was deleted and re-registered since task start (incarnation changed); refusing to publish a stale task into the new project`,
+        };
+      }
+    } else if (!capturedInc && registeredInc) {
+      return {
+        ok: false,
+        reason: `task carries no registration incarnation but the project was re-registered; refusing to write without proof of identity`,
+      };
+    } else if (capturedInc && !registeredInc) {
+      return {
+        ok: false,
+        reason: `registered project carries no registration incarnation; refusing to write without proof of identity`,
+      };
+    }
   } catch {
     return { ok: false, reason: `cannot verify project identity; refusing to write` };
   }
   return { ok: true };
 }
 
+/**
+ * Freshness that never reports `fresh` for a torn persistence snapshot.
+ * `getGraphFreshness` is a pure function of the loaded index; a crash
+ * between the `index.json` and `meta.json` renames can leave two copies
+ * that still look fresh individually. Every graph read path that can
+ * report freshness to a caller must go through here (or through
+ * `ensureFreshIndex`, which rebuilds on mismatch) instead of calling
+ * `getGraphFreshness` directly on unvalidated data.
+ */
+export function getValidatedFreshness(
+  projectId: string,
+  index: ProjectIndex | null | undefined
+): GraphFreshness {
+  if (!index) return "unindexed";
+  let mismatched = false;
+  try {
+    mismatched = !checkPersistenceConsistency(projectId).consistent;
+  } catch {
+    mismatched = false;
+  }
+  const actual = getGraphFreshness(index);
+  if (mismatched) return actual === "fresh" ? "stale" : actual;
+  return actual;
+}
+
 /** Read actual freshness, coercing `fresh` to `stale` on failure paths so a
- * failed refresh can never be reported as `fresh`. */
+ * failed refresh can never be reported as `fresh`. Persistence consistency
+ * is validated first so a torn snapshot can never read as `fresh` either. */
 function failureFreshness(projectId: string): GraphFreshness {
-  const actual = getGraphFreshness(loadProjectIndex(projectId));
+  const actual = getValidatedFreshness(projectId, loadProjectIndex(projectId));
   return actual === "fresh" ? "stale" : actual;
 }
 
@@ -617,19 +675,37 @@ export async function synchronizeGraphAfterChanges(
       warnings.push(`On-disk drift detected (${drifted.slice(0, 3).join(", ")}); refreshing.`);
     }
   }
-  const scope: GraphScope = opts.forceFull && impact.scope !== "none" ? "full" : impact.scope;
+  let scope: GraphScope = opts.forceFull && impact.scope !== "none" ? "full" : impact.scope;
 
   if (scope === "none") {
-    const freshnessAfter = getGraphFreshness(loadProjectIndex(meta.id));
-    return {
-      codeValidation,
-      graphScope: scope,
-      graphResult: "skipped",
-      freshnessAfter,
-      message: `No relevant graph impact (${impact.reason}); rebuild skipped.`,
-      rejectedFiles: rejectedFiles.length > 0 ? rejectedFiles : undefined,
-      warnings: warnings.length > 0 ? warnings : undefined,
-    };
+    // A torn persistence snapshot must never be reported as fresh just
+    // because no caller-reported change was in scope: validate the pairing
+    // before skipping, and take a safe broader refresh on mismatch.
+    let mismatched = false;
+    try {
+      mismatched = !checkPersistenceConsistency(meta.id).consistent;
+    } catch {
+      mismatched = true;
+    }
+    if (mismatched) {
+      impact = {
+        scope: "full",
+        reason: "persisted snapshot is inconsistent; safe broader refresh",
+      };
+      warnings.push("Persisted index snapshot is inconsistent (likely partial write); rebuilding.");
+      scope = "full";
+    } else {
+      const freshnessAfter = getValidatedFreshness(meta.id, loadProjectIndex(meta.id));
+      return {
+        codeValidation,
+        graphScope: scope,
+        graphResult: "skipped",
+        freshnessAfter,
+        message: `No relevant graph impact (${impact.reason}); rebuild skipped.`,
+        rejectedFiles: rejectedFiles.length > 0 ? rejectedFiles : undefined,
+        warnings: warnings.length > 0 ? warnings : undefined,
+      };
+    }
   }
 
   // Active-project correctness: a stale callback must never write to a
@@ -723,12 +799,36 @@ export async function synchronizeGraphAfterChanges(
       }
       saveProjectIndex(meta.id, candidate);
       const after = loadProjectIndex(meta.id);
+      // The candidate was built from disk over a non-atomic window: files
+      // may have changed during the build or between drift detection and
+      // publishing. Re-check before reporting fresh; if drift is found,
+      // keep the graph marked stale so the next read schedules a safe
+      // follow-up instead of falsely reporting fresh.
+      let freshnessAfter = getGraphFreshness(after);
+      let followUpWarning: string | undefined;
+      try {
+        if (after && detectStaleIndexEntries(after).isStale) {
+          markProjectGraphStatus(
+            meta.id,
+            "stale",
+            "disk changed during sync; follow-up refresh recommended"
+          );
+          freshnessAfter = getGraphFreshness(loadProjectIndex(meta.id));
+          if (freshnessAfter === "fresh") freshnessAfter = "stale";
+          followUpWarning =
+            "Disk changed during synchronization; graph kept stale and a follow-up refresh is recommended.";
+        }
+      } catch {
+        // best effort; keep the computed freshnessAfter
+      }
+      const mergedWarnings =
+        followUpWarning !== undefined ? [...warnings, followUpWarning] : warnings;
       return {
         codeValidation,
         graphScope: scope,
         graphResult: "synced",
-        freshnessAfter: getGraphFreshness(after),
-        message: `Graph synchronized (${scope}; ${impact.reason}).`,
+        freshnessAfter,
+        message: `Graph synchronized (${scope}; ${impact.reason}).${followUpWarning ? " Follow-up refresh recommended." : ""}`,
         changes: candidate.changes
           ? {
               added: candidate.changes.added.length,
@@ -738,7 +838,7 @@ export async function synchronizeGraphAfterChanges(
             }
           : undefined,
         rejectedFiles: rejectedFiles.length > 0 ? rejectedFiles : undefined,
-        warnings: warnings.length > 0 ? warnings : undefined,
+        warnings: mergedWarnings.length > 0 ? mergedWarnings : undefined,
       };
     } catch (err) {
       markStaleGuarded(meta.id, baseGeneratedAt, `synchronization failed: ${String(err)}`);
@@ -764,9 +864,26 @@ export async function synchronizeGraphAfterChanges(
   };
 }
 
-/** In-flight sync promises keyed by project id: duplicate completion
- * callbacks for the same project share one rebuild instead of racing. */
+/** In-flight sync promises keyed by project id plus a stable hash of the
+ * requested change set: duplicate completion callbacks for the same
+ * project AND the same change set share one rebuild instead of racing.
+ * Different change sets or options run as separate tasks (serialized by
+ * the index file lock plus a generation guard) so a narrow incremental
+ * request can never inherit a broad full-rebuild result or vice versa. */
 const syncInFlight = new Map<string, Promise<SyncReport>>();
+
+function dedupKeyFor(
+  meta: ProjectMeta,
+  changedFiles: string[],
+  codeValidation: { ran: boolean; passed: boolean; detail: string },
+  opts: { uncertain?: boolean; forceFull?: boolean }
+): string {
+  const norm = [...new Set(sanitizeChangedFiles(changedFiles))].sort();
+  // The incarnation is part of the key: a stale task reusing an old
+  // registration must never share (or inherit) a fresh task's rebuild.
+  const inc = typeof meta.incarnation === "string" ? meta.incarnation : "";
+  return `${meta.id}::${inc}::${JSON.stringify({ f: norm, r: codeValidation.ran, p: codeValidation.passed, u: !!opts.uncertain, ff: !!opts.forceFull })}`;
+}
 
 /**
  * Deduplicating wrapper around {@link synchronizeGraphAfterChanges} for
@@ -784,16 +901,17 @@ export function synchronizeGraphDeduped(
   },
   opts: { uncertain?: boolean; forceFull?: boolean } = {}
 ): Promise<SyncReport> {
-  const running = syncInFlight.get(meta.id);
+  const key = dedupKeyFor(meta, changedFiles, codeValidation, opts);
+  const running = syncInFlight.get(key);
   if (running) return running;
   const task = synchronizeGraphAfterChanges(meta, changedFiles, codeValidation, opts);
-  syncInFlight.set(meta.id, task);
+  syncInFlight.set(key, task);
   task.then(
     () => {
-      if (syncInFlight.get(meta.id) === task) syncInFlight.delete(meta.id);
+      if (syncInFlight.get(key) === task) syncInFlight.delete(key);
     },
     () => {
-      if (syncInFlight.get(meta.id) === task) syncInFlight.delete(meta.id);
+      if (syncInFlight.get(key) === task) syncInFlight.delete(key);
     }
   );
   return task;
@@ -822,8 +940,29 @@ export async function ensureFreshIndex(
   index: ProjectIndex | null
 ): Promise<FreshIndexResult> {
   const freshnessBefore = getGraphFreshness(index);
-  if (freshnessBefore === "fresh") {
+  // Crash-recovery: a partial write between meta.json and index.json must
+  // never read as fresh. Force a rebuild when the copies disagree.
+  let persistenceMismatched = false;
+  try {
+    persistenceMismatched = !checkPersistenceConsistency(meta.id).consistent;
+  } catch {
+    persistenceMismatched = false;
+  }
+  if (freshnessBefore === "fresh" && !persistenceMismatched) {
     return { index, freshnessBefore, freshnessAfter: "fresh", refreshOutcome: "not-required" };
+  }
+  // Active-project correctness: never write to a project that was
+  // switched, closed, or deleted after the caller loaded its meta.
+  const identity = verifyProjectIdentity(meta);
+  if (!identity.ok) {
+    const after = loadProjectIndex(meta.id) ?? index;
+    return {
+      index: after,
+      freshnessBefore,
+      freshnessAfter: after ? failureFreshness(meta.id) : "unindexed",
+      refreshOutcome: "refresh-failed",
+      warning: `Graph refresh refused (${identity.reason}); using last-known index.`,
+    };
   }
   try {
     const refreshed = await indexProject(meta);
@@ -1049,7 +1188,13 @@ export async function planCodeTask(
 ): Promise<PlanResult> {
   const task = (input.task || "").trim().slice(0, 4000);
   const understanding = understandTask(task, input.categoryOverride);
-  const freshness = getGraphFreshness(index);
+  // Never plan against a torn snapshot as if it were fresh: validate the
+  // persistence pairing before trusting a `fresh` reading.
+  const rawFreshness = getGraphFreshness(index);
+  const freshness =
+    rawFreshness === "fresh" && !checkPersistenceConsistency(meta.id).consistent
+      ? "stale"
+      : rawFreshness;
 
   let canonicalRoot = meta.canonicalPath;
   try {
@@ -1236,9 +1381,15 @@ export async function runCodeTaskWithAutoSync(
   taskFn: () => Promise<CodeTaskRequest | void> | CodeTaskRequest | void,
   opts: { signal?: AbortSignal } = {}
 ): Promise<CodeTaskOutcome> {
+  // Capture the full registration identity — including the incarnation
+  // token — before running `taskFn`, and carry it through planning,
+  // execution, synchronization, and publication. A delete + re-register
+  // at the same path mints a new incarnation, so this captured identity
+  // no longer verifies and the stale task cannot publish.
   const captured = {
     id: meta.id,
     canonicalPath: meta.canonicalPath,
+    incarnation: typeof meta.incarnation === "string" ? meta.incarnation : null,
     project: { id: meta.id, canonicalPath: meta.canonicalPath },
   };
   let request: CodeTaskRequest = {};
@@ -1262,7 +1413,17 @@ export async function runCodeTaskWithAutoSync(
     }
   }
 
-  const intended: ProjectMeta = { ...meta, id: captured.id, canonicalPath: captured.canonicalPath };
+  const intended: ProjectMeta = {
+    ...meta,
+    id: captured.id,
+    canonicalPath: captured.canonicalPath,
+    incarnation: captured.incarnation,
+  };
+  // An abnormal task end (failure or cancellation) may have left partial
+  // or still-mutating changes (e.g. a surviving detached descendant), so
+  // the change scope is marked uncertain and takes the broader refresh
+  // path. Sync failure still never rewrites the task outcome.
+  const syncUncertain = request.uncertain === true || taskOutcome !== "completed";
   const syncReport = await synchronizeGraphDeduped(
     intended,
     Array.isArray(request.changedFiles) ? (request.changedFiles as string[]) : [],
@@ -1271,23 +1432,74 @@ export async function runCodeTaskWithAutoSync(
       passed: false,
       detail: "no validation detail provided",
     },
-    { uncertain: request.uncertain, forceFull: request.forceFull }
+    { uncertain: syncUncertain, forceFull: request.forceFull }
   );
   return { taskOutcome, taskError, syncReport, project: captured.project };
 }
+
+export type ExternalCommandOutcome = "exited" | "timeout" | "aborted" | "spawn-error";
 
 export interface ExternalCommandResult {
   exitCode: number | null;
   signal: string | null;
   timedOut: boolean;
+  /** True when cancellation was requested (abort signal fired). */
+  aborted: boolean;
+  /** True when the child process could never be started. */
+  spawnFailed: boolean;
+  /** Human-readable spawn/child error, when known. */
+  spawnError?: string;
+  /** Distinct outcome: normal exit, timeout, abort, or spawn failure. */
+  outcome: ExternalCommandOutcome;
+  /** True once process-tree termination was attempted (timeout/abort). */
+  treeKillAttempted: boolean;
+  /**
+   * True after timeout/abort termination was attempted. Termination is
+   * attempted, not guaranteed: a detached descendant that escaped its
+   * process group/session may still be running and modifying files, so
+   * callers must treat freshness after such an outcome as point-in-time
+   * and force a broader, follow-up refresh rather than trusting an
+   * immediately-fresh graph.
+   */
+  descendantsMaySurvive: boolean;
   durationMs: number;
+}
+
+/**
+ * Whether `command` needs shell evaluation for the target platform.
+ * Restricted to Windows `.cmd`/`.bat` batch files only: POSIX never uses
+ * a shell (direct argv, no string evaluation), and `.ps1` scripts are
+ * intentionally NOT auto-elevated — invoke them explicitly via
+ * `powershell -File`. Pure function of (command, platform) so the
+ * Windows branch is unit-testable on any OS.
+ */
+export function needsShellForCommand(
+  command: string,
+  platform: string = process.platform
+): boolean {
+  if (platform !== "win32") return false;
+  return /\.(cmd|bat)$/i.test((command ?? "").trim());
 }
 
 /**
  * Portable subprocess runner for the `kai run` lifecycle wrapper. No shell
  * by default (direct argv, no string evaluation); callers targeting Windows
- * batch files may opt into `shell: true`. Kills the child on timeout or
- * abort so partial changes still reach synchronization via the caller.
+ * batch files may opt into `shell: true` (see `needsShellForCommand`).
+ *
+ * Termination: on timeout or abort the whole process tree is signalled —
+ * the child's process group on POSIX (`detached: true` + negative-pid
+ * kill, so direct descendants die with the parent) and `taskkill /T /F`
+ * on Windows — with SIGTERM first and SIGKILL after a 2 s grace period.
+ * The returned promise resolves on child `close` (reaped) exactly once;
+ * abort, timeout, child error, spawn failure, and normal exit are
+ * distinct, correctly reported outcomes. All timers and listeners are
+ * cleaned up on every exit path.
+ *
+ * Guarantee limit (documented, not eliminated): a descendant that
+ * detaches into its own session/group (double-fork, `setsid`, Windows
+ * `DETACHED_PROCESS`) escapes tree termination and cannot be reaped
+ * here. Such outcomes set `descendantsMaySurvive` and callers must treat
+ * freshness as point-in-time with a follow-up refresh (see `kai run`).
  */
 export function runExternalAgentCommand(
   command: string,
@@ -1301,8 +1513,37 @@ export function runExternalAgentCommand(
   } = {}
 ): Promise<ExternalCommandResult> {
   const started = Date.now();
+  const base = {
+    exitCode: null as number | null,
+    signal: null as string | null,
+    timedOut: false,
+    aborted: false,
+    spawnFailed: false,
+    spawnError: undefined as string | undefined,
+    outcome: "exited" as ExternalCommandOutcome,
+    treeKillAttempted: false,
+    descendantsMaySurvive: false,
+    durationMs: 0,
+  };
+  // An already-aborted signal short-circuits before spawning: no child is
+  // created, so there is nothing to terminate or reap.
+  if (opts.signal?.aborted) {
+    return Promise.resolve({
+      ...base,
+      aborted: true,
+      outcome: "aborted",
+      durationMs: Date.now() - started,
+    });
+  }
   return new Promise((resolve) => {
-    let child;
+    let settled = false;
+    const finish = (patch: Partial<ExternalCommandResult>): void => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve({ ...base, ...patch, durationMs: Date.now() - started });
+    };
+    let child: ReturnType<typeof spawn>;
     try {
       child = spawn(command, args, {
         cwd: opts.cwd,
@@ -1310,58 +1551,166 @@ export function runExternalAgentCommand(
         shell: opts.shell ?? false,
         stdio: "inherit",
         windowsHide: true,
+        // POSIX: lead a fresh process group so tree termination can
+        // signal the child AND its direct descendants via kill(-pid).
+        // Windows uses taskkill /T /F instead (no detached flag, so the
+        // child stays in the caller's console job for ^C propagation).
+        detached: process.platform !== "win32",
       });
     } catch (err) {
       resolve({
-        exitCode: null,
-        signal: null,
-        timedOut: false,
+        ...base,
+        spawnFailed: true,
+        spawnError: err instanceof Error ? err.message : String(err),
+        outcome: "spawn-error",
         durationMs: Date.now() - started,
       });
-      void err;
       return;
     }
     let timedOut = false;
+    let aborted = false;
+    let spawnFailed = false;
+    let spawnError: string | undefined;
+    let treeKillAttempted = false;
     let timeout: NodeJS.Timeout | null = null;
+    let escalateTimer: NodeJS.Timeout | null = null;
+    let abortFallback: NodeJS.Timeout | null = null;
+    const groupSignal = (sig: NodeJS.Signals): void => {
+      const pid = typeof child.pid === "number" ? child.pid : undefined;
+      if (process.platform === "win32") {
+        if (pid !== undefined) {
+          try {
+            spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], {
+              stdio: "ignore",
+              windowsHide: true,
+            });
+          } catch {
+            // fall through to plain kill
+          }
+        }
+        try {
+          child.kill(sig);
+        } catch {
+          // already exited
+        }
+        return;
+      }
+      // POSIX: signal the whole process group first (child + direct
+      // descendants), falling back to the child alone.
+      if (pid !== undefined) {
+        try {
+          process.kill(-pid, sig);
+          return;
+        } catch {
+          // Group kill failed (already reaped or permission): try direct.
+        }
+      }
+      try {
+        child.kill(sig);
+      } catch {
+        // already exited
+      }
+    };
+    const killTree = (): void => {
+      treeKillAttempted = true;
+      groupSignal("SIGTERM");
+      if (escalateTimer) {
+        clearTimeout(escalateTimer);
+        escalateTimer = null;
+      }
+      escalateTimer = setTimeout(() => {
+        escalateTimer = null;
+        groupSignal("SIGKILL");
+      }, 2000);
+      if (typeof (escalateTimer as unknown as { unref?: () => void }).unref === "function") {
+        (escalateTimer as unknown as { unref: () => void }).unref();
+      }
+    };
     const cleanup = (): void => {
       if (timeout) {
         clearTimeout(timeout);
         timeout = null;
       }
+      if (escalateTimer) {
+        clearTimeout(escalateTimer);
+        escalateTimer = null;
+      }
+      if (abortFallback) {
+        clearTimeout(abortFallback);
+        abortFallback = null;
+      }
       opts.signal?.removeEventListener("abort", onAbort);
+      child.removeAllListeners("error");
+      child.removeAllListeners("close");
     };
     const onAbort = (): void => {
-      try {
-        child.kill();
-      } catch {
-        // already exited
+      aborted = true;
+      killTree();
+      // Resolution happens on child `close` (reaped). If the child already
+      // exited, `close` has fired or will fire imminently; the guard below
+      // covers a vanishing child whose `close` never arrives.
+      if (abortFallback) clearTimeout(abortFallback);
+      abortFallback = setTimeout(() => {
+        abortFallback = null;
+        finish({
+          timedOut,
+          aborted,
+          spawnFailed,
+          spawnError,
+          outcome: spawnFailed ? "spawn-error" : timedOut ? "timeout" : "aborted",
+          treeKillAttempted,
+          descendantsMaySurvive: treeKillAttempted,
+        });
+      }, 2500);
+      if (typeof (abortFallback as unknown as { unref?: () => void }).unref === "function") {
+        (abortFallback as unknown as { unref: () => void }).unref();
       }
     };
     if (opts.signal) {
-      if (opts.signal.aborted) onAbort();
-      else opts.signal.addEventListener("abort", onAbort, { once: true });
+      opts.signal.addEventListener("abort", onAbort, { once: true });
     }
     if (opts.timeoutMs && Number.isFinite(opts.timeoutMs) && opts.timeoutMs > 0) {
       timeout = setTimeout(() => {
+        timeout = null;
         timedOut = true;
-        try {
-          child.kill();
-        } catch {
-          // already exited
-        }
+        killTree();
       }, opts.timeoutMs);
+      if (typeof (timeout as unknown as { unref?: () => void }).unref === "function") {
+        (timeout as unknown as { unref: () => void }).unref();
+      }
     }
-    child.on("error", () => {
-      cleanup();
-      resolve({ exitCode: null, signal: null, timedOut, durationMs: Date.now() - started });
+    child.on("error", (err) => {
+      // Spawn failure (ENOENT, EACCES, ...): no child exists to reap.
+      // `close` may still follow — the settled guard keeps this single.
+      spawnFailed = true;
+      spawnError = err instanceof Error ? err.message : String(err);
+      finish({
+        timedOut,
+        aborted,
+        spawnFailed,
+        spawnError,
+        outcome: timedOut ? "timeout" : aborted ? "aborted" : "spawn-error",
+        treeKillAttempted,
+        descendantsMaySurvive: treeKillAttempted,
+      });
     });
     child.on("close", (code, sig) => {
-      cleanup();
-      resolve({
+      finish({
         exitCode: code,
         signal: typeof sig === "string" ? sig : sig ? String(sig) : null,
         timedOut,
-        durationMs: Date.now() - started,
+        aborted,
+        spawnFailed,
+        spawnError,
+        outcome: spawnFailed
+          ? "spawn-error"
+          : timedOut
+            ? "timeout"
+            : aborted
+              ? "aborted"
+              : "exited",
+        treeKillAttempted,
+        descendantsMaySurvive: treeKillAttempted,
       });
     });
   });

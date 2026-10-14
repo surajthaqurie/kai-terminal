@@ -4,6 +4,11 @@
 
 ### Patch Changes
 
+- **Code Mode Task Planning (`kai_plan_task`)**: Structured task planning engine (`planCodeTask`) with selected-file prioritization, dependency/caller/test expansion, freshness-gated context retrieval, and strict token budget enforcement.
+- **Automated Graph Freshness & Lifecycle Sync**: Guaranteed graph synchronization (`runCodeTaskWithAutoSync`, `kai_sync_graph`) on task completion, failure, or cancellation, featuring boundary verification, drift fallback, and concurrent rebuild deduplication with PID locks and generation guards.
+- **External Agent Runner (`kai run`)**: Process execution wrapper for external coding agents (`kai run -- <cmd>`), preserving child exit codes, handling timeout (`124`) and cancellation (`130`), enforcing clean process tree termination (SIGTERM -> 2s -> SIGKILL, `taskkill /PID /T /F` on Windows), and triggering automated post-run graph synchronization.
+- **Crash Consistency & Dual-Copy Verification**: Atomic persistence with sequential write drift detection (`checkPersistenceConsistency`), synchronized status transitions across `meta.json` and `index.json` (`markProjectGraphStatus`), and automatic rebuild recovery.
+- **MCP Freshness Contract & Auto-Refresh**: Graph-dependent reads (`kai_search_code`, `kai_find_symbol`, `kai_get_dependencies`, `kai_get_context`) automatically gate freshness and execute bounded auto-refreshes when stale.
 - **GPU WebGL Terminal Renderer**: Integrated hardware-accelerated WebGL terminal renderer (`@xterm/addon-webgl`) for visible terminal panes, running at 60fps with automatic fallback to DOM rendering on context loss or failure, plus `localStorage.kai_renderer="dom"` opt-out.
 - **High-Throughput PTY Buffering**: Implemented FIFO `TerminalOutputBuffer` replacing O(n²) string concatenations, providing ~1800× higher throughput during large output floods (~10 MB) without freezing the UI. Increased PTY chunk reads to 32 KB.
 - **Auto-Strip AI Co-Authors**: Entering Code Mode (`kai code .`) installs a self-contained, POSIX-compliant `commit-msg` git hook into the target repository to automatically strip `Co-authored-by:` trailers on all future commits while safely preserving pre-existing hooks.

@@ -43,6 +43,8 @@ After installing, the `kai` command is available in your shell:
 ```bash
 kai --version
 kai code .
+kai run -- <agent-command>
+kai graph rebuild .
 kai status
 kai mcp .
 ```
@@ -51,6 +53,7 @@ kai mcp .
 ```bash
 ./bin/kai.js --help
 ./bin/kai.js code .
+./bin/kai.js run -- claude -p "add tests"
 ./bin/kai.js query "Explain architecture"
 ```
 

@@ -192,7 +192,7 @@ pub fn build_cmd_shim(node_exe: &str, cli_js: &Path) -> String {
         node_exe.to_string()
     };
     format!(
-        "@echo off\r\n{node} \"{}\" %*\r\n",
+        "@echo off\r\n{node} -e \"import(require('url').pathToFileURL(process.argv[1])).then(m => (m.runCli ? m.runCli(process.argv) : null)).then(c => {{{{ if (typeof c === 'number') process.exit(c); }}}})\" \"{}\" %*\r\n",
         cli_js.to_string_lossy()
     )
 }
@@ -200,7 +200,7 @@ pub fn build_cmd_shim(node_exe: &str, cli_js: &Path) -> String {
 /// `kai.ps1` shim body (PowerShell callers).
 pub fn build_ps1_shim(node_exe: &str, cli_js: &Path) -> String {
     format!(
-        "& {} \"{}\" @args\r\nexit $LASTEXITCODE\r\n",
+        "& {} -e \"import(require('url').pathToFileURL(process.argv[1])).then(m => (m.runCli ? m.runCli(process.argv) : null)).then(c => {{{{ if (typeof c === 'number') process.exit(c); }}}})\" \"{}\" @args\r\nexit $LASTEXITCODE\r\n",
         node_exe,
         cli_js.to_string_lossy()
     )
@@ -209,7 +209,7 @@ pub fn build_ps1_shim(node_exe: &str, cli_js: &Path) -> String {
 /// POSIX `kai` shim body.
 pub fn build_sh_shim(node_exe: &str, cli_js: &Path) -> String {
     format!(
-        "#!/bin/sh\nexec {} \"{}\" \"$@\"\n",
+        "#!/bin/sh\nexec {} -e 'import(require(\"url\").pathToFileURL(process.argv[1])).then(m => (m.runCli ? m.runCli(process.argv) : null)).then(c => {{ if (typeof c === \"number\") process.exit(c); }})' \"{}\" \"$@\"\n",
         node_exe,
         cli_js.to_string_lossy()
     )

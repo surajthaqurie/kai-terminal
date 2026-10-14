@@ -15,7 +15,6 @@ import {
   FilePlus,
   FileX,
   Trash2,
-  Maximize2,
 } from "lucide-react";
 import {
   GitFileChange,
@@ -244,13 +243,7 @@ export const GitChangesModal: FC<GitChangesModalProps> = ({ dir, onClose }) => {
   const [filterText, setFilterText] = useState("");
   const [confirmDiscardFile, setConfirmDiscardFile] = useState<GitFileChange | null>(null);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
-  // Resizable modal + sidebar (pointer-drag, works on all OSes — no
-  // OS-specific APIs). Defaults match the previous fixed 1200x86vh layout.
-  const [modalSize, setModalSize] = useState<{ w: number; h: number } | null>(null);
   const [sidebarWidth, setSidebarWidth] = useState(320);
-  const resizeRef = useRef<{ startX: number; startY: number; baseW: number; baseH: number } | null>(
-    null
-  );
   const sidebarDragRef = useRef<{ startX: number; baseW: number } | null>(null);
 
   const showStatusBanner = (msg: string) => {
@@ -405,35 +398,6 @@ export const GitChangesModal: FC<GitChangesModalProps> = ({ dir, onClose }) => {
   const filteredUntracked = (summary?.untracked || []).filter(filterMatch);
   const totalCount = summary?.total_changes ?? 0;
 
-  const beginModalResize = (e: React.PointerEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const el = (e.currentTarget as HTMLElement).closest(".git-changes-modal") as HTMLElement | null;
-    const rect = el?.getBoundingClientRect();
-    resizeRef.current = {
-      startX: e.clientX,
-      startY: e.clientY,
-      baseW: rect?.width ?? 1200,
-      baseH: rect?.height ?? 700,
-    };
-    const move = (ev: PointerEvent) => {
-      const r = resizeRef.current;
-      if (!r) return;
-      const vw = window.innerWidth || 1280;
-      const vh = window.innerHeight || 800;
-      const w = Math.min(vw * 0.98, Math.max(720, r.baseW + (ev.clientX - r.startX)));
-      const h = Math.min(vh * 0.96, Math.max(480, r.baseH + (ev.clientY - r.startY)));
-      setModalSize({ w, h });
-    };
-    const up = () => {
-      resizeRef.current = null;
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
-  };
-
   const beginSidebarResize = (e: React.PointerEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -455,21 +419,11 @@ export const GitChangesModal: FC<GitChangesModalProps> = ({ dir, onClose }) => {
   return (
     <div
       className="modal-backdrop git-changes-backdrop"
-      onClick={onClose}
       role="dialog"
       aria-modal="true"
       aria-label={`Source Control and Diff Viewer for ${dir}`}
     >
-      <div
-        className="git-changes-modal git-changes-resizable"
-        onClick={(e) => e.stopPropagation()}
-        role="document"
-        style={
-          modalSize
-            ? { width: `${modalSize.w}px`, height: `${modalSize.h}px`, maxWidth: "98vw" }
-            : undefined
-        }
-      >
+      <div className="git-changes-modal" role="document">
         {/* Header */}
         <div className="git-changes-header">
           <div className="git-changes-title-group">
@@ -992,31 +946,6 @@ export const GitChangesModal: FC<GitChangesModalProps> = ({ dir, onClose }) => {
               </div>
             )}
           </div>
-        </div>
-
-        {/* Footer */}
-        <div className="git-changes-footer">
-          <div className="footer-left">
-            <span className="muted-text">
-              Drag the corner to resize • drag the divider to resize the file list
-            </span>
-          </div>
-          <div className="footer-right">
-            <button type="button" className="btn btn-secondary btn-small" onClick={onClose}>
-              Close
-            </button>
-          </div>
-        </div>
-
-        {/* Corner resize handle (all OSes, pointer-drag) */}
-        <div
-          className="git-changes-resize-handle"
-          role="separator"
-          aria-label="Resize changes window"
-          title="Drag to resize"
-          onPointerDown={beginModalResize}
-        >
-          <Maximize2 size={12} aria-hidden="true" />
         </div>
       </div>
     </div>

@@ -40,7 +40,7 @@ The real PTY integration suite covers 15 scenarios:
 
 ## 3. Project Intelligence & MCP Verification Matrix
 
-The intelligence test suite covers comprehensive automated scenarios across 43 test files and 431 Vitest tests:
+The intelligence test suite covers comprehensive automated scenarios across 46 test files and 504 Vitest tests:
 
 | # | Test Area | Description | Automated Target | Status |
 | :--- | :--- | :--- | :--- | :--- |
@@ -64,6 +64,10 @@ The intelligence test suite covers comprehensive automated scenarios across 43 t
 | **18** | **Symlink Boundaries**| Traversal stops at project boundary; symlinks pointing outside root are rejected | `audit_production_security.test.ts` | **Passed** |
 | **19** | **Retrieval Freshness**| Filter stop words, singular/plural stem matching, and extract constants | `audit_production_security.test.ts` | **Passed** |
 | **20** | **Performance Benchmarks** | Evaluates 4 configurations with sub-10ms latency and ~70% token savings | `performance_benchmarks.test.ts` | **Passed** |
+| **21** | **Auto-Sync Lifecycle** | Post-task sync on success/failure/cancel with workspace switch/close protection | `autoSyncLifecycle.test.ts` | **Passed** |
+| **22** | **Task Planning & Graph Workflow** | Code mode workflow, file prioritization, caller/test expansion, generation guards | `codeModeWorkflow.test.ts` | **Passed** |
+| **23** | **Production Hardening** | Process tree cleanup, timeout/signal exit codes, shell safety, dual-copy crash consistency | `finalHardening.test.ts` | **Passed** |
+| **24** | **Release Hardening & Incarnations** | Incarnation identity tokens, process group termination, persistence boundaries, legacy fallback | `releaseHardening.test.ts` | **Passed** |
 
 ---
 
@@ -72,7 +76,7 @@ The intelligence test suite covers comprehensive automated scenarios across 43 t
 Run all verification checks locally prior to committing:
 
 ```bash
-# 1. Full TypeScript, Formatting & Intelligence Test Suite (Vitest - 43 test files, 431 tests)
+# 1. Full TypeScript, Formatting & Intelligence Test Suite (Vitest - 46 test files, 504 tests)
 npm run check
 
 # 1b. Same gate inside Docker (no host Node/Rust install needed)
@@ -85,6 +89,8 @@ npm run build:cli
 # 3. CLI Smoke & Benchmark Verification
 ./bin/kai.js --help
 ./bin/kai.js code .
+./bin/kai.js run -- node -e "console.log('test')"
+./bin/kai.js graph rebuild .
 ./bin/kai.js status .
 ./bin/kai.js bench .
 

@@ -4,7 +4,7 @@ import os from "os";
 import crypto from "crypto";
 import type { ProjectMeta, ProjectIndex } from "./types";
 
-const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 1;
 
 export function getKaiHomeDir(): string {
   if (process.env.KAI_HOME) {
@@ -86,6 +86,29 @@ export function ensureKaiDirectories(): void {
 
 export function getProjectStorageDir(projectId: string): string {
   return path.join(getProjectsDir(), projectId);
+}
+
+/**
+ * Mint a fresh project-registration incarnation token. Called for every
+ * newly created registration (including re-registration at the same path
+ * after the previous registration was deleted). The stable project id
+ * (hash of the canonical path) is intentionally NOT enough on its own:
+ * without this token an older in-flight task could publish into a newly
+ * registered project at the same path.
+ */
+export function newProjectIncarnation(): string {
+  try {
+    return crypto.randomUUID();
+  } catch {
+    return crypto.randomBytes(16).toString("hex");
+  }
+}
+
+function ensureIncarnation(meta: ProjectMeta): ProjectMeta {
+  if (typeof meta.incarnation !== "string" || !meta.incarnation) {
+    meta.incarnation = newProjectIncarnation();
+  }
+  return meta;
 }
 
 export function getProjectMetaPath(projectId: string): string {
@@ -277,7 +300,16 @@ export function registerProject(projectPath: string): ProjectMeta {
           existing.status = fs.existsSync(indexPath) ? "ready" : "unindexed";
           existing.lastError = null;
         }
+        // Incarnation stability: an idempotent re-lookup of a still-live
+        // registration keeps its token (concurrent MCP reads must not
+        // invalidate each other). A registration created after a delete
+        // takes the fresh-token path below. Legacy metadata without a
+        // token is upgraded here — an old in-flight task captured before
+        // the upgrade carries no token and is rejected by
+        // verifyProjectIdentity, never silently adopted.
+        ensureIncarnation(existing);
         atomicWriteJson(metaPath, existing);
+        cleanupDanglingTempFiles(getProjectStorageDir(id));
         return existing as ProjectMeta;
       }
     } catch {
@@ -297,20 +329,34 @@ export function registerProject(projectPath: string): ProjectMeta {
     fileCount: 0,
     symbolCount: 0,
     lastError: null,
+    // Fresh registration (including re-registration at the same path
+    // after a delete): mint a new incarnation so stale in-flight tasks
+    // captured under the previous registration cannot publish here.
+    incarnation: newProjectIncarnation(),
   };
 
   atomicWriteJson(metaPath, meta);
+  cleanupDanglingTempFiles(getProjectStorageDir(id));
   return meta;
 }
 
-export function cleanupDanglingTempFiles(storageDir: string): void {
+/**
+ * Remove abandoned `*.tmp` files left by an interrupted `atomicWriteJson`.
+ * Only files older than `maxAgeMs` are removed so a concurrent writer's
+ * fresh temp file in another process is never deleted from under it.
+ */
+export function cleanupDanglingTempFiles(storageDir: string, maxAgeMs: number = 60000): void {
   try {
     if (!fs.existsSync(storageDir)) return;
     const entries = fs.readdirSync(storageDir);
+    const now = Date.now();
     for (const file of entries) {
       if (file.endsWith(".tmp")) {
+        const full = path.join(storageDir, file);
         try {
-          fs.rmSync(path.join(storageDir, file), { force: true });
+          const stat = fs.statSync(full);
+          if (Number.isFinite(stat.mtimeMs) && now - stat.mtimeMs < maxAgeMs) continue;
+          fs.rmSync(full, { force: true });
         } catch {
           // ignore
         }
@@ -463,6 +509,20 @@ export function loadProjectIndex(projectId: string): ProjectIndex | null {
 }
 
 export function saveProjectIndex(projectId: string, index: ProjectIndex): void {
+  // Pair both persistence copies with one shared snapshot id before the
+  // two sequential renames: a crash between them leaves mismatched ids
+  // that checkPersistenceConsistency detects. Legacy candidates without
+  // an id are stamped here so the pair always matches after a save.
+  const snapshotId =
+    typeof index.snapshotId === "string" && index.snapshotId
+      ? index.snapshotId
+      : newProjectIncarnation();
+  index.snapshotId = snapshotId;
+  if (!index.meta || typeof index.meta !== "object") {
+    throw new Error("saveProjectIndex refused: candidate has no meta");
+  }
+  index.meta.snapshotId = snapshotId;
+
   const indexPath = getProjectIndexPath(projectId);
   atomicWriteJson(indexPath, index);
 
@@ -474,6 +534,12 @@ export function saveProjectIndex(projectId: string, index: ProjectIndex): void {
     meta.fileCount = Object.keys(index.files).length;
     meta.symbolCount = Object.keys(index.symbolIndex).length;
     meta.lastError = null;
+    meta.snapshotId = snapshotId;
+    if (typeof index.meta.incarnation === "string" && index.meta.incarnation) {
+      meta.incarnation = index.meta.incarnation;
+    } else {
+      ensureIncarnation(meta);
+    }
     atomicWriteJson(getProjectMetaPath(projectId), meta);
   }
 
@@ -523,6 +589,165 @@ export function markProjectGraphStatus(
     }
   } catch {
     // best effort; never throw from status-marking
+  }
+}
+
+/**
+ * Crash-consistency check for the dual-copy persistence (`meta.json` plus
+ * the `meta` embedded in `index.json`). `saveProjectIndex` performs two
+ * sequential atomic renames; a crash between them leaves the copies
+ * disagreeing. Returns inconsistent with a reason when the next refresh
+ * should rebuild; consistent when either copy is missing (nothing to
+ * compare) or they agree. Legacy snapshots without snapshot ids fall back
+ * to the timestamp-skew check and remain loadable.
+ *
+ * Validated, in order: readability of both copies, project id, canonical
+ * path identity, incarnation pairing (when both copies carry one),
+ * schema compatibility, status agreement, shared snapshot agreement
+ * (when present), timestamp sanity and skew cross-checks, and required index
+ * structure. Missing, truncated, or malformed JSON is inconsistent.
+ *
+ * Guarantee: every write is atomic at the single-file level (temp file +
+ * rename), startup never crashes on partial state (`registerProject`
+ * resets a stuck `indexing` status; corrupt JSON is recreated), and any
+ * mismatch detected here forces a safe rebuild on the next refresh rather
+ * than reporting `fresh`. No new storage format was introduced: the
+ * snapshot id is an additive optional field.
+ */
+export function checkPersistenceConsistency(projectId: string): {
+  consistent: boolean;
+  reason?: string;
+} {
+  try {
+    const metaPath = getProjectMetaPath(projectId);
+    const indexPath = getProjectIndexPath(projectId);
+    if (!fs.existsSync(metaPath) || !fs.existsSync(indexPath)) return { consistent: true };
+    let meta: Record<string, unknown>;
+    let index: Record<string, unknown>;
+    try {
+      meta = JSON.parse(fs.readFileSync(metaPath, "utf-8"));
+      index = JSON.parse(fs.readFileSync(indexPath, "utf-8"));
+    } catch {
+      return { consistent: false, reason: "persistence copy is truncated or malformed JSON" };
+    }
+    const embedded = (index as Record<string, unknown>)?.meta as Record<string, unknown> | null;
+    if (!meta || typeof meta !== "object" || !embedded || typeof embedded !== "object") {
+      return { consistent: false, reason: "unreadable persistence copy" };
+    }
+    if (typeof meta.id !== "string" || typeof embedded.id !== "string") {
+      return { consistent: false, reason: "unreadable persistence copy" };
+    }
+    if (meta.id !== embedded.id) {
+      return { consistent: false, reason: "project id mismatch between meta.json and index.json" };
+    }
+    if (projectId !== meta.id) {
+      return {
+        consistent: false,
+        reason: "project id mismatch between storage directory and meta.json",
+      };
+    }
+    // Project identity: both copies must describe the same canonical root.
+    // A same-path re-registration after a delete keeps the path but mints
+    // a new incarnation (checked below), so path equality alone never
+    // validates a pairing — it only catches cross-project corruption.
+    if (typeof meta.canonicalPath === "string" && typeof embedded.canonicalPath === "string") {
+      try {
+        if (
+          normalizePathForIdentity(meta.canonicalPath) !==
+          normalizePathForIdentity(embedded.canonicalPath)
+        ) {
+          return { consistent: false, reason: "canonical path mismatch between copies" };
+        }
+      } catch {
+        return { consistent: false, reason: "unreadable persistence copy" };
+      }
+    }
+    // Incarnation pairing: when both copies carry a token they must agree.
+    // Absent tokens mean a legacy snapshot, which stays loadable via the
+    // fallback checks below (stale-task protection for legacy metadata is
+    // enforced separately by verifyProjectIdentity, not here).
+    const outerInc = meta.incarnation;
+    const innerInc = embedded.incarnation;
+    if (
+      typeof outerInc === "string" &&
+      outerInc &&
+      typeof innerInc === "string" &&
+      innerInc &&
+      outerInc !== innerInc
+    ) {
+      return {
+        consistent: false,
+        reason: "project incarnation mismatch (likely partial write across re-registration)",
+      };
+    }
+    if (typeof meta.schemaVersion === "number" && typeof embedded.schemaVersion === "number") {
+      if (meta.schemaVersion !== embedded.schemaVersion) {
+        return { consistent: false, reason: "schema version mismatch" };
+      }
+    }
+    if (typeof meta.schemaVersion === "number" && meta.schemaVersion !== SCHEMA_VERSION) {
+      return {
+        consistent: false,
+        reason: `unsupported schema version ${String(meta.schemaVersion)}`,
+      };
+    }
+    if (meta.status !== embedded.status) {
+      return { consistent: false, reason: `status mismatch (meta.json=${meta.status})` };
+    }
+    // Shared snapshot agreement: the unambiguous pairing signal. When
+    // neither copy carries one (legacy), fall through to timestamps.
+    const outerSnap = meta.snapshotId;
+    const innerSnap = embedded.snapshotId;
+    const topSnap = (index as Record<string, unknown>)?.snapshotId;
+    const snaps = [outerSnap, innerSnap, topSnap].filter(
+      (s): s is string => typeof s === "string" && s.length > 0
+    );
+    if (snaps.length > 0) {
+      const first = snaps[0];
+      if (!snaps.every((s) => s === first)) {
+        return {
+          consistent: false,
+          reason: "snapshot generation mismatch (likely partial write)",
+        };
+      }
+      // All present ids agree. Timestamps are still cross-checked below as
+      // fail-closed defense in depth: skew can only force an extra safe
+      // rebuild (which converges), never a false `fresh`.
+    }
+    const outerTs = meta.lastIndexedAt as string | null;
+    const innerTs = embedded.lastIndexedAt as string | null;
+    const genTs = (index as Record<string, unknown>)?.generatedAt as string | null;
+    for (const ts of [outerTs, innerTs, genTs]) {
+      if (ts !== null && ts !== undefined && Number.isNaN(Date.parse(ts))) {
+        return { consistent: false, reason: "invalid timestamp in persistence copy" };
+      }
+    }
+    if (outerTs && genTs) {
+      const skew = Math.abs(Date.parse(genTs) - Date.parse(outerTs));
+      if (!Number.isFinite(skew) || skew > 5000) {
+        return {
+          consistent: false,
+          reason: "generation timestamp mismatch (likely partial write)",
+        };
+      }
+    }
+    // Required index structure: a structurally invalid index must never
+    // back a `fresh` report, even when the metadata copies agree.
+    const files = (index as Record<string, unknown>)?.files;
+    const symbolIndex = (index as Record<string, unknown>)?.symbolIndex;
+    if (
+      typeof files !== "object" ||
+      files === null ||
+      Array.isArray(files) ||
+      typeof symbolIndex !== "object" ||
+      symbolIndex === null ||
+      Array.isArray(symbolIndex)
+    ) {
+      return { consistent: false, reason: "index structure invalid" };
+    }
+    return { consistent: true };
+  } catch {
+    return { consistent: false, reason: "persistence read failure" };
   }
 }
 
