@@ -46,7 +46,11 @@ describe("isKaiCliShim (CLI/desktop PATH collision guard, all OS)", () => {
     const target = path.join(dir, "kai.js");
     fs.writeFileSync(target, "cli");
     const link = path.join(dir, "kai");
-    fs.symlinkSync(target, link);
+    try {
+      fs.symlinkSync(target, link);
+    } catch {
+      return; // symlinks not permitted in test environment (Windows without Developer Mode)
+    }
     expect(isKaiCliShim(link)).toBe(true);
   });
 
