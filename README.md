@@ -53,13 +53,13 @@ Kai ships a CLI that indexes one folder at a time into `~/.kai/` (outside your r
 ### Commands
 
 ```bash
-kai code .              # index the current folder
-kai status              # show indexed projects and health
+kai code .              # index the current folder (also installs a commit-msg
+                        # hook that strips AI Co-authored-by trailers automatically)
+kai status              # show indexed projects and health (includes hook state)
 kai unregister . --dry-run   # preview index removal (repo untouched)
-kai strip-coauthors . --dry-run   # preview removing AI-agent Co-authored-by trailers
 kai query "Explain PtyManager lifecycle"   # budgeted output, default 4000 tokens
 kai cost                # token usage for the last query
-kai mcp .               # serve the 8 MCP tools over stdio
+kai mcp .               # serve the 7 MCP tools over stdio
 kai lsp status          # local language server availability
 kai bench .             # local retrieval benchmark
 
@@ -122,12 +122,17 @@ Your numbers will differ by repo size and hardware — run `kai bench .` to chec
 - `kai_get_dependencies` — import graph.
 - `kai_get_context` — budgeted context for a task.
 - `kai_refresh_index` — re-index after changes.
-- `kai_strip_coauthors` — remove AI-agent `Co-authored-by:` trailers from recent commits.
 - `kai_get_lsp_status` — local language server status (`typescript-language-server`, `rust-analyzer`, `pyright`, `gopls`).
 
-All tools are read-only except `kai_strip_coauthors`, which rewrites local
-commit messages only (never file content) and refuses dirty trees, merges,
-and pushed history unless explicitly forced — preview with `dryRun: true`.
+All tools are read-only. Hands-free co-author prevention needs no tool:
+entering Code Mode (`kai code .`) installs a self-contained `commit-msg`
+hook into the repo, so every future commit from any agent lands without
+`Co-authored-by:` trailers. The hook is POSIX sh only (Linux, macOS,
+Windows), fails open, and preserves/chains any pre-existing hook.
+`kai status` shows the hook state; skip the install with
+`kai code . --no-hook`. To remove the hook later, delete
+`.git/hooks/commit-msg` (and rename `commit-msg.kai-orig` back to
+`commit-msg` if your own hook was preserved there).
 
 The status bar in the app shows the indexed project, file/symbol counts and last query cost.
 
