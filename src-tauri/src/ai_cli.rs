@@ -334,7 +334,10 @@ fn is_cli_launcher_candidate(p: &str) -> bool {
             if let Ok(raw) = std::fs::read(path) {
                 if !raw.contains(&0) {
                     let head = String::from_utf8_lossy(&raw);
-                    if head.contains("kai.js") || head.contains("dist/cli/index.js") {
+                    // Normalise separators so Windows shims (`dist\cli\index.js`)
+                    // match on any OS, and compare case-insensitively.
+                    let norm = head.replace('\\', "/").to_lowercase();
+                    if norm.contains("kai.js") || norm.contains("dist/cli/index.js") {
                         return true;
                     }
                 }
@@ -460,6 +463,29 @@ fn is_windows_runnable_binary(p: &str) -> bool {
     }
 }
 
+/// Cross-platform absolute-path check for shim-embedded tokens.
+/// `Path::is_absolute` is platform-specific, so a Windows token like
+/// `C:\app\kai.js` looks relative on Linux/macOS (and vice versa for `/`
+/// on Windows UNC edge cases). Drive-letter (`C:\`, `C:/`), UNC (`\\`, `//`)
+/// and verbatim (`\\?\`, `//?/`) prefixes all count as absolute.
+fn is_absolute_shim_token(t: &str) -> bool {
+    if std::path::Path::new(t).is_absolute() {
+        return true;
+    }
+    let bytes = t.as_bytes();
+    if t.len() >= 3
+        && bytes[1] == b':'
+        && (bytes[2] == b'/' || bytes[2] == b'\\')
+        && (bytes[0] as char).is_ascii_alphabetic()
+    {
+        return true;
+    }
+    if t.starts_with("\\\\") || t.starts_with("//") {
+        return true;
+    }
+    false
+}
+
 /// Extract the kai JS bundle path embedded in a launcher shim
 /// (`kai.cmd`, `kai.ps1`, POSIX `kai` shell script). Returns the resolved,
 /// verbatim-stripped path, or `None` when the file is binary/oversized or
@@ -515,12 +541,17 @@ fn js_from_shim_file(shim_path: &str) -> Option<String> {
         .find(|t| usable(t) && t.to_lowercase().contains("kai"))
         .or_else(|| cands.iter().find(|t| usable(t)));
     let token = pick?;
-    let resolved = if std::path::Path::new(token).is_absolute() {
+    let resolved = if is_absolute_shim_token(token) {
         token.clone()
     } else {
+        // Relative tokens may use Windows separators (`pkg\kai.js`) even when
+        // the test/host OS is Linux/macOS, where `\` is not a separator.
+        // Normalising to `/` keeps the join correct on every platform
+        // (Windows accepts `/` too).
+        let normalised = token.replace('\\', "/");
         std::path::Path::new(shim_path)
             .parent()
-            .map(|d| d.join(token))
+            .map(|d| d.join(normalised))
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|| token.clone())
     };
