@@ -1,8 +1,8 @@
 # Changelog
 
-## 0.2.0
+## 0.1.5
 
-### Minor Changes
+### Patch Changes
 
 - 5619d33: New `kai mcp` command family for the local MCP server and agent wiring
 
