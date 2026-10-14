@@ -1437,8 +1437,10 @@ mod tests {
         assert!(validate_external_url("http://github.com/surajthaqurie/kai-terminal/").is_err());
         assert!(validate_external_url("https://github.com/surajthaqurie/kai-terminal/ x").is_err());
         assert!(validate_external_url("").is_err());
-        assert!(validate_external_url(&"https://github.com/surajthaqurie/kai-terminal/a".repeat(20))
-            .is_err());
+        assert!(validate_external_url(
+            &"https://github.com/surajthaqurie/kai-terminal/a".repeat(20)
+        )
+        .is_err());
     }
 
     #[test]

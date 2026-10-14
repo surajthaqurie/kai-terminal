@@ -491,7 +491,10 @@ pub fn ensure_kai_cli(resource_dir: Option<PathBuf>) -> KaiCliStatus {
             match install_shims(&cli_js) {
                 Some(p) => {
                     shim_path = p;
-                    message = format!("kai CLI launcher installed at {}", shim_path.to_string_lossy());
+                    message = format!(
+                        "kai CLI launcher installed at {}",
+                        shim_path.to_string_lossy()
+                    );
                 }
                 None => {
                     message = format!("Could not write kai launcher into {bin_s}.");
@@ -513,7 +516,9 @@ pub fn ensure_kai_cli(resource_dir: Option<PathBuf>) -> KaiCliStatus {
                 prepend_current_process_path(&bin_dir);
                 if changed {
                     broadcast_env_change();
-                    message.push_str("; added to user PATH — restart the terminal, then run: kai --version");
+                    message.push_str(
+                        "; added to user PATH — restart the terminal, then run: kai --version",
+                    );
                 }
             }
             #[cfg(not(target_os = "windows"))]
@@ -521,11 +526,15 @@ pub fn ensure_kai_cli(resource_dir: Option<PathBuf>) -> KaiCliStatus {
                 let restart = ensure_rc_path(&bin_dir);
                 prepend_current_process_path(&bin_dir);
                 if restart {
-                    message.push_str("; added to PATH — restart the terminal, then run: kai --version");
+                    message.push_str(
+                        "; added to PATH — restart the terminal, then run: kai --version",
+                    );
                 }
             }
             if node.is_none() {
-                message.push_str(" (Node.js 20+ not detected — install Node LTS from https://nodejs.org so the launcher can run.)");
+                message.push_str(
+                    " (Node.js 20+ not detected — install Node LTS from https://nodejs.org so the launcher can run.)",
+                );
             }
             KaiCliStatus {
                 installed: true,
@@ -540,7 +549,8 @@ pub fn ensure_kai_cli(resource_dir: Option<PathBuf>) -> KaiCliStatus {
         None => {
             // No bundled CLI (dev checkout without `npm run build:cli`):
             // leave any npm-installed shim alone and just report.
-            message = "Bundled kai CLI not found (run `npm run build:cli` in dev checkouts).".to_string();
+            message =
+                "Bundled kai CLI not found (run `npm run build:cli` in dev checkouts).".to_string();
             if is_file(&shim_path) {
                 message.push_str(" An existing launcher is already present.");
                 KaiCliStatus {
@@ -553,7 +563,9 @@ pub fn ensure_kai_cli(resource_dir: Option<PathBuf>) -> KaiCliStatus {
                     message,
                 }
             } else {
-                message.push_str(" Install Node.js 20+ and run `npm run setup:cli`, then restart the terminal.");
+                message.push_str(
+                    " Install Node.js 20+ and run `npm run setup:cli`, then restart the terminal.",
+                );
                 KaiCliStatus {
                     installed: false,
                     bin_dir: bin_s,
@@ -576,13 +588,7 @@ pub fn get_kai_cli_status_cmd(app: tauri::AppHandle) -> KaiCliStatus {
         .path()
         .resource_dir()
         .map_err(|_| ())
-        .and_then(|d| {
-            if d.is_dir() {
-                Ok(d)
-            } else {
-                Err(())
-            }
-        })
+        .and_then(|d| if d.is_dir() { Ok(d) } else { Err(()) })
         .ok();
     let bin_dir = kai_bin_dir();
     let shim = bin_dir.join(if cfg!(target_os = "windows") {
