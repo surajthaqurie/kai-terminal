@@ -22,6 +22,8 @@
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+#[cfg(feature = "tauri")]
+use tauri::Manager;
 #[cfg(target_os = "windows")]
 use std::time::{Duration, Instant};
 

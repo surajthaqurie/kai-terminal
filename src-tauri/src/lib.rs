@@ -69,18 +69,6 @@ fn open_external_url_cmd(url: String) -> Result<(), error::TerminalError> {
 
 #[cfg(feature = "tauri")]
 #[tauri::command]
-fn get_kai_cli_status_cmd(app: AppHandle) -> kai_cli::KaiCliStatus {
-    kai_cli::get_kai_cli_status_cmd(app)
-}
-
-#[cfg(feature = "tauri")]
-#[tauri::command]
-fn ensure_kai_cli_cmd(app: AppHandle) -> kai_cli::KaiCliStatus {
-    kai_cli::ensure_kai_cli_cmd(app)
-}
-
-#[cfg(feature = "tauri")]
-#[tauri::command]
 fn get_available_shells() -> Vec<ShellProfile> {
     detect_available_shells()
 }
@@ -376,8 +364,8 @@ pub fn run() {
             list_sessions,
             get_project_intelligence_cmd,
             get_active_project_cmd,
-            get_kai_cli_status_cmd,
-            ensure_kai_cli_cmd
+            kai_cli::get_kai_cli_status_cmd,
+            kai_cli::ensure_kai_cli_cmd
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
