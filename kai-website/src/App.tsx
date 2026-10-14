@@ -7,6 +7,7 @@ import { DownloadPage } from './pages/Download';
 import { ChangelogPage } from './pages/Changelog';
 import { GuidePage } from './pages/Guide';
 import { ManualPage } from './pages/Manual';
+import { DocsIndexPage, DocDetailPage } from './pages/Docs';
 import { FaqPage } from './pages/Faq';
 import { NotFoundPage } from './pages/NotFound';
 import { Footer } from './sections/Footer';
@@ -17,15 +18,18 @@ function Routes() {
   const rel = useLatestRelease();
   useRouteScroll();
   useRouteMeta();
+  const docSlug = path.startsWith('/docs/') ? decodeURIComponent(path.slice('/docs/'.length).split('/')[0]) : null;
   return (
     <div id="top" style={{ backgroundColor: 'var(--bg-canvas)', color: 'var(--text-primary)', minHeight: '100vh' }}>
       <SiteHeader version={rel.tag} />
-      <main key={path}>
+      <main key={docSlug ? `/docs/${docSlug}` : path}>
         {path === '/' ? <HomePage rel={rel} />
           : path === '/download' ? <DownloadPage rel={rel} />
           : path === '/changelog' ? <ChangelogPage />
           : path === '/guide' ? <GuidePage />
           : path === '/manual' ? <ManualPage />
+          : path === '/docs' ? <DocsIndexPage />
+          : docSlug ? <DocDetailPage slug={docSlug} />
           : path === '/faq' ? <FaqPage />
           : <NotFoundPage />}
       </main>

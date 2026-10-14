@@ -6,18 +6,6 @@ import { REPO_URL } from '../data/site';
 import type { LatestRelease } from '../hooks/useRepo';
 
 export function Hero({ tag, short, version, rel }: { tag: string; short: string; version: string; rel?: LatestRelease }) {
-  const stats: Array<[string, string]> = [
-    ['~30MB', 'idle, one tab open'],
-    [tag, 'current release'],
-    ['MIT', 'license'],
-    ['3', 'installers: macOS, Linux, Windows'],
-  ];
-
-  const macUrl = rel?.asset((n) => n.toLowerCase().endsWith('.dmg'), `kai_${short}_aarch64.dmg`) ?? `${REPO_URL}/releases/download/${tag}/kai_${short}_aarch64.dmg`;
-  const linuxDeb = rel?.asset((n) => n.toLowerCase().includes('amd64') && n.toLowerCase().endsWith('.deb'), `kai_${short}_amd64.deb`) ?? `${REPO_URL}/releases/download/${tag}/kai_${short}_amd64.deb`;
-  const linuxApp = rel?.asset((n) => n.toLowerCase().includes('amd64') && n.toLowerCase().endsWith('.appimage'), `kai_${short}_amd64.AppImage`) ?? `${REPO_URL}/releases/download/${tag}/kai_${short}_amd64.AppImage`;
-  const winExe = rel?.asset((n) => n.toLowerCase().endsWith('setup.exe'), `kai_${short}_x64-setup.exe`) ?? `${REPO_URL}/releases/download/${tag}/kai_${short}_x64-setup.exe`;
-  const winMsi = rel?.asset((n) => n.toLowerCase().endsWith('.msi'), `kai_${short}_x64_en-US.msi`) ?? `${REPO_URL}/releases/download/${tag}/kai_${short}_x64_en-US.msi`;
 
   return (
     <section className="t-hero">
@@ -33,12 +21,11 @@ export function Hero({ tag, short, version, rel }: { tag: string; short: string;
         </h1>
 
         <p className="t-hero-sub t-enter" style={{ animationDelay: '140ms' }}>
-          Kai is a desktop terminal for macOS, Linux and Windows. Same tabs and shortcuts on all three.
-          Pick the file for your system below — every installer is published on GitHub Releases.
+          Kai is a fast, GPU-accelerated desktop terminal with an embedded local project intelligence engine for AI coding agents. Native PTY, WebGL 60fps rendering, and zero-remount split panes on macOS, Linux, and Windows.
         </p>
 
         <p className="t-hero-reassure t-enter" style={{ animationDelay: '190ms' }}>
-          <span>{tag} is an early release. If something breaks, check the changelog or open an issue on GitHub.</span>
+          <span>Free and open source under the MIT license. Zero telemetry, zero accounts.</span>
         </p>
 
         <div className="t-enter" style={{ animationDelay: '230ms' }}>

@@ -25,27 +25,30 @@ export function Faq() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: '.9rem' }}>
           {FAQ_ITEMS.map((item, idx) => {
             const open = activeFaq === idx;
+            const panelId = `faq-panel-${idx}`;
+            const btnId = `faq-btn-${idx}`;
             return (
               <div
                 key={idx}
-                role="button"
-                tabIndex={0}
-                aria-expanded={open}
-                onClick={() => setActiveFaq(open ? null : idx)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    setActiveFaq(open ? null : idx);
-                  }
-                }}
                 className="t-faq-item"
                 data-open={open}
               >
                 <div className="t-faq-q">
-                  <h3>{item.q}</h3>
+                  <h3 style={{ margin: 0 }}>
+                    <button
+                      type="button"
+                      id={btnId}
+                      aria-expanded={open}
+                      aria-controls={panelId}
+                      onClick={() => setActiveFaq(open ? null : idx)}
+                      style={{ all: 'unset', cursor: 'pointer', display: 'block', width: '100%', font: 'inherit', fontWeight: 700 }}
+                    >
+                      {item.q}
+                    </button>
+                  </h3>
                   <span className="t-faq-plus" style={{ transform: open ? 'rotate(45deg)' : 'rotate(0deg)' }} aria-hidden="true">+</span>
                 </div>
-                <div className="t-faq-a" aria-hidden={!open}>
+                <div className="t-faq-a" id={panelId} role="region" aria-labelledby={btnId} hidden={!open}>
                   <div className="t-faq-a-inner"><p>{item.a}</p></div>
                 </div>
               </div>

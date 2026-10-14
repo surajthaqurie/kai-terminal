@@ -26,8 +26,8 @@ function installTabs(short: string): InstallTab[] {
     {
       id: 'windows',
       label: 'Windows',
-      note: 'For Windows 10 / 11 (64-bit). Prefer one click? Use the direct .exe download above.',
-      code: `# Windows 10 / 11 — paste in PowerShell or CMD\nwinget install Kai-terminal --source github`,
+      note: 'For Windows 10 / 11 (64-bit). No winget package yet — download the .exe below, then run it. Needs WebView2 (preinstalled on most Windows 11 PCs).',
+      code: `# Windows 10 / 11 (64-bit) — download first, then run\n# 1 · download kai_${v}_x64-setup.exe from GitHub Releases (button above)\n# 2 · double-click the .exe and follow the steps`,
     },
     {
       id: 'source',

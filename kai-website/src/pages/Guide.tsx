@@ -1,93 +1,155 @@
-import { BookOpen, FileText, Info, ArrowRight } from 'lucide-react';
+import { BookOpen, Terminal, ArrowRight } from 'lucide-react';
 import { PageHero } from '../components/PageHero';
-import { Quickstart } from '../sections/Quickstart';
-import { Container, Reveal } from '../components/ui';
+import { Container, Reveal, Badge } from '../components/ui';
 import { SHORTCUTS } from '../data/site';
+import { CopyBtn } from '../components/CopyBtn';
 import { CtaBanner } from '../components/CtaBanner';
 import { Link } from '../router';
 
-const CLI_ROWS: Array<[string, string]> = [
-  ['kai open [path]', 'Launch or focus Kai Terminal desktop app itself (optional path defaults to current dir)'],
-  ['kai close', 'Close running Kai Terminal desktop application instances'],
-  ['kai <agent> [path]', 'Launch AI agent with auto MCP wiring, Code Mode, and graph auto-sync'],
-  ['kai list -a', 'List installed AI coding agents and their Kai MCP wiring status'],
-  ['kai list -i', 'List registered project indexes, status, symbol counts, and freshness'],
-  ['kai setup <agent|all>', 'Auto-wire Kai MCP server directly into agent configurations'],
-  ['kai remove -i [path]', 'Safely delete project AST index (source code is never touched)'],
-  ['kai remove -a <agent>', 'Remove Kai MCP configuration from the specified agent'],
-  ['kai graph init [path]', 'Initialize AST symbol index and dependency graph for project'],
-  ['kai graph update [path]', 'Force rebuild and update of the AST symbol database'],
-  ['kai status [path]', 'Display project health, freshness, commit hook, and LSP state'],
-  ['kai stop', 'Clear Code Mode active project state and return to plain terminal'],
-  ['kai doctor', 'Audit desktop binary, install directories, and desktop drawer entries'],
-  ['kai lsp', 'Probe local Language Server Protocol servers (TS, Python, Rust, Go, etc.)'],
-  ['kai metrics', 'Display local privacy-safe performance latency metrics and heuristics'],
-];
-
-/* Guide page: quickstart + command cheatsheet + keyboard reference. */
 export function GuidePage() {
   return (
     <>
       <PageHero
-        badge={<><BookOpen size={14} /> Guide</>}
-        title="Setup guide"
-        sub="Install the desktop app, open your project, and launch any external AI coding agent."
+        badge={<><BookOpen size={14} /> Getting Started</>}
+        title="Developer Setup Guide"
+        sub="A straightforward guide to installing Kai, starting your first session, and connecting external AI coding agents."
       />
 
-      <section className="t-section" style={{ paddingBottom: '1rem', paddingTop: '1rem' }}>
+      <section className="t-section" style={{ paddingTop: '1rem', paddingBottom: '3.5rem' }}>
         <Container narrow>
-          <div className="t-guide-callout" style={{ justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap' }}>
-            <div style={{ display: 'flex', gap: '0.9rem', alignItems: 'center' }}>
-              <FileText size={20} style={{ color: 'var(--accent-cyan-fg)' }} />
-              <div>
-                <strong>Need the complete reference manual?</strong>
-                <p style={{ margin: 0, fontSize: '0.86rem', color: 'var(--text-secondary)' }}>
-                  Read our full User Manual covering environment boundaries, options, sample outputs, and cheatsheet.
+          {/* Quick Step 1: Installation */}
+          <Reveal>
+            <div className="t-manual-card">
+              <div className="t-manual-card-header">
+                <div>
+                  <Badge tone="cyan">Step 01</Badge>
+                  <h2 style={{ fontSize: '1.35rem', fontWeight: 800 }}>Install Kai Terminal</h2>
+                </div>
+              </div>
+              <p style={{ color: 'var(--text-secondary)', lineHeight: 1.65, marginBottom: '1.25rem' }}>
+                Kai is distributed as a standalone, native desktop application for macOS, Linux, and Windows. No account registration or cloud sign-up is required.
+              </p>
+
+              <div className="t-grid-3" style={{ gap: '1rem', marginBottom: '1.5rem' }}>
+                <div className="t-card" style={{ padding: '1.25rem' }}>
+                  <h3 style={{ fontSize: '1rem', marginBottom: '0.4rem' }}>macOS</h3>
+                  <p style={{ fontSize: '0.84rem', color: 'var(--text-secondary)', margin: 0 }}>
+                    Apple Silicon (M1–M4) disk image (<code>.dmg</code>). Drag into Applications.
+                  </p>
+                </div>
+                <div className="t-card" style={{ padding: '1.25rem' }}>
+                  <h3 style={{ fontSize: '1rem', marginBottom: '0.4rem' }}>Linux</h3>
+                  <p style={{ fontSize: '0.84rem', color: 'var(--text-secondary)', margin: 0 }}>
+                    Debian/Ubuntu package (<code>.deb</code>) or portable <code>.AppImage</code> for x86_64 and ARM64.
+                  </p>
+                </div>
+                <div className="t-card" style={{ padding: '1.25rem' }}>
+                  <h3 style={{ fontSize: '1rem', marginBottom: '0.4rem' }}>Windows</h3>
+                  <p style={{ fontSize: '0.84rem', color: 'var(--text-secondary)', margin: 0 }}>
+                    Standard Windows installer (<code>.exe</code>) or system package (<code>.msi</code>).
+                  </p>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem' }}>
+                <span style={{ fontSize: '0.88rem', color: 'var(--text-secondary)' }}>
+                  Ready to download the binary for your operating system?
+                </span>
+                <Link to="/download" className="t-btn t-btn--primary t-btn--sm">
+                  View Downloads <ArrowRight size={14} />
+                </Link>
+              </div>
+            </div>
+          </Reveal>
+
+          {/* Quick Step 2: First Launch */}
+          <Reveal>
+            <div className="t-manual-card">
+              <div className="t-manual-card-header">
+                <div>
+                  <Badge tone="purple">Step 02</Badge>
+                  <h2 style={{ fontSize: '1.35rem', fontWeight: 800 }}>Launch Kai Terminal</h2>
+                </div>
+              </div>
+              <p style={{ color: 'var(--text-secondary)', lineHeight: 1.65, marginBottom: '1rem' }}>
+                From any standard shell (Bash, Zsh, or PowerShell), run <code>kai open</code> to launch the Kai Terminal desktop application. Kai starts the hardware-accelerated UI and registers your project workspace in <code>~/.kai/</code>.
+              </p>
+
+              <div className="t-panel" style={{ padding: '0.85rem 1.25rem', marginBottom: '0.75rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <code style={{ fontSize: '0.86rem', color: 'var(--accent-cyan-fg)' }}>kai open</code>
+                  <CopyBtn text="kai open" />
+                </div>
+              </div>
+
+              <p style={{ fontSize: '0.84rem', color: 'var(--text-tertiary)', margin: '0.5rem 0 0' }}>
+                To open a specific project folder instead of the current directory, specify the target directory: <code>kai open /path/to/project</code>.
+              </p>
+            </div>
+          </Reveal>
+
+          {/* Quick Step 3: Run AI Agent */}
+          <Reveal>
+            <div className="t-manual-card">
+              <div className="t-manual-card-header">
+                <div>
+                  <Badge tone="green">Step 03</Badge>
+                  <h2 style={{ fontSize: '1.35rem', fontWeight: 800 }}>Run Your AI Coding Agent</h2>
+                </div>
+              </div>
+              <p style={{ color: 'var(--text-secondary)', lineHeight: 1.65, marginBottom: '1rem' }}>
+                Inside Kai Terminal, launch your preferred coding agent. Kai automatically wires its local Model Context Protocol (MCP) server, primes the AST code graph, and activates git commit hooks to strip AI co-author trailers.
+              </p>
+
+              <div className="t-panel" style={{ padding: '0.85rem 1.25rem', marginBottom: '0.75rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <code style={{ fontSize: '0.86rem', color: 'var(--accent-cyan-fg)' }}>kai claude .</code>
+                  <CopyBtn text="kai claude ." />
+                </div>
+              </div>
+
+              <div style={{ marginTop: '1.25rem', paddingTop: '1rem', borderTop: '1px solid var(--border-subtle)' }}>
+                <p style={{ fontSize: '0.86rem', color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>
+                  <strong>Supported agents:</strong> <code>claude</code>, <code>cursor</code>, <code>codex</code>, <code>gemini</code>, <code>opencode</code>, <code>aider</code>, <code>windsurf</code>, <code>cline</code>, <code>copilot</code>, and <code>agy</code>.
+                </p>
+                <p style={{ fontSize: '0.84rem', color: 'var(--text-tertiary)', margin: 0 }}>
+                  You can also run <code>kai setup all</code> inside Kai Terminal to configure all detected agents at once.
                 </p>
               </div>
             </div>
-            <Link to="/manual" className="t-btn t-btn--secondary t-btn--sm" style={{ marginTop: '0.5rem' }}>
-              Open User Manual <ArrowRight size={14} />
-            </Link>
-          </div>
-        </Container>
-      </section>
+          </Reveal>
 
-      <Quickstart />
-
-      <section className="t-section" id="cli-reference">
-        <Container narrow>
+          {/* Dedicated Manual Callout */}
           <Reveal>
-            <h2 className="t-section-title" style={{ fontSize: '1.5rem', marginBottom: '1.25rem' }}>Core CLI reference</h2>
-            <div className="t-guide-callout">
-              <Info size={18} />
-              <span>
-                Use <code>kai open [path]</code> from your external shell to launch Kai Terminal. Inside Kai Terminal tabs, run agent workflows (e.g. <code>kai claude .</code>).
-              </span>
-            </div>
-            <div className="t-panel" style={{ marginBottom: '2.5rem' }}>
-              <div className="t-probe-head"><span>$ kai --help</span><span className="t-pill">CLI commands</span></div>
-              <ul className="t-keys">
-                {CLI_ROWS.map(([cmd, desc]) => (
-                  <li key={cmd}>
-                    <span className="t-kbd" style={{ fontSize: '0.78rem' }}>{cmd}</span>
-                    <span className="t-keys-desc">{desc}</span>
-                  </li>
-                ))}
-              </ul>
-              <div style={{ marginTop: '1.25rem', paddingTop: '1rem', borderTop: '1px solid var(--border-subtle)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
-                <p className="t-micro" style={{ margin: 0 }}>Data stored in ~/.kai/. Repositories are never modified.</p>
-                <Link to="/manual" className="t-link" style={{ fontSize: '0.85rem' }}>View complete manual & options →</Link>
+            <div className="t-guide-callout" style={{ justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', padding: '1.5rem' }}>
+              <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+                <Terminal size={24} style={{ color: 'var(--accent-cyan-fg)', flexShrink: 0 }} />
+                <div>
+                  <strong style={{ fontSize: '1rem' }}>Looking for the complete command reference?</strong>
+                  <p style={{ margin: '0.2rem 0 0', fontSize: '0.88rem', color: 'var(--text-secondary)' }}>
+                    Detailed options, environment boundaries, diagnostics, and the searchable cheatsheet live in our dedicated User Manual.
+                  </p>
+                </div>
               </div>
+              <Link to="/manual" className="t-btn t-btn--primary t-btn--sm" style={{ marginTop: '0.5rem' }}>
+                Open User Manual & Cheatsheet <ArrowRight size={14} />
+              </Link>
             </div>
           </Reveal>
         </Container>
       </section>
+
+      {/* Keyboard Shortcuts Section */}
       <section className="t-section t-section-alt" id="shortcuts">
         <Container narrow>
           <Reveal>
+            <div className="t-section-head">
+              <Badge tone="neutral">Productivity</Badge>
+              <h2 className="t-section-title">Essential Shortcuts</h2>
+              <p className="t-section-sub">Default key combinations. Remappable anytime in Settings.</p>
+            </div>
             <div className="t-panel">
-              <div className="t-probe-head"><span>$ keyboard-first</span><span className="t-pill">remappable</span></div>
+              <div className="t-probe-head"><span>Terminal Shortcuts</span><span className="t-pill">Ctrl / Cmd</span></div>
               <ul className="t-keys">
                 {SHORTCUTS.map((s) => (
                   <li key={s.label}>
@@ -98,11 +160,12 @@ export function GuidePage() {
                   </li>
                 ))}
               </ul>
-              <p className="t-micro">Shortcuts show Ctrl — use Cmd on macOS. Remappable in Settings.</p>
+              <p className="t-micro">Keys show Ctrl on Linux/Windows — use Cmd (⌘) on macOS.</p>
             </div>
           </Reveal>
         </Container>
       </section>
+
       <CtaBanner />
     </>
   );

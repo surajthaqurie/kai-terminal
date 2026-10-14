@@ -470,7 +470,7 @@ kai metrics clear
 
 | Command | Environment | Description |
 | :--- | :--- | :--- |
-| `kai open [path]` | External / Any | Opens or focuses Kai Terminal desktop application |
+| `kai open [path]` | External / Any | Launches or focuses Kai Terminal desktop app itself (optional path) |
 | `kai close` | External / Any | Closes running Kai Terminal instances |
 | `kai <agent> [path]` | Internal | Launches agent with auto-MCP wiring, Code Mode, and graph auto-sync |
 | `kai list` / `kai list -a` | Internal | Lists installed AI agents and Kai MCP wiring status |

@@ -4,9 +4,9 @@
   "version": "0.1.1",
   "type": "module",
   "scripts": {
-    "predev": "node scripts/sync-changesets.mjs",
+    "predev": "node scripts/sync-changesets.mjs && node scripts/sync-docs.mjs",
     "dev": "vite",
-    "prebuild": "node scripts/sync-changesets.mjs",
+    "prebuild": "node scripts/sync-changesets.mjs && node scripts/sync-docs.mjs",
     "build": "tsc && vite build",
     "preview": "vite preview"
   },

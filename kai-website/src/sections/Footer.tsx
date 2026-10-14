@@ -16,8 +16,18 @@ const COLS: Array<{ head: string; links: Array<[string, string, boolean?]> }> = 
     links: [
       ['/guide', 'Guide'],
       ['/manual', 'User Manual'],
+      ['/docs', 'Docs'],
       ['/faq', 'FAQ'],
-      [`${REPO_URL}/blob/main/DEVELOPMENT.md`, 'Development', true],
+    ],
+  },
+  {
+    head: 'Docs (GitHub source)',
+    links: [
+      ['/docs/install', 'Install'],
+      ['/docs/architecture', 'Architecture'],
+      ['/docs/development', 'Development'],
+      ['/docs/security', 'Security'],
+      ['/docs/limitations', 'Limitations'],
     ],
   },
   {

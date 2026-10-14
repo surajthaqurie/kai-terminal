@@ -6,14 +6,13 @@ export function AiCli() {
     <Section id="ai-cli" alt>
       <div className="t-split">
         <div>
-          <Badge tone="purple"><Bot size={14} /> Local context for AI tools</Badge>
-          <h2 className="t-section-title" style={{ textAlign: 'left' }}>Context from your repo, on your machine</h2>
+          <Badge tone="purple"><Bot size={14} /> Agent Intelligence</Badge>
+          <h2 className="t-section-title" style={{ textAlign: 'left' }}>Rich Code Intelligence for External AI Agents</h2>
           <p style={{ color: 'var(--text-secondary)', fontSize: '1.02rem', lineHeight: 1.65, marginBottom: '1rem' }}>
-            Kai indexes the folder you point it at and serves file snippets over a local MCP bridge.
-            No cloud, no account. Indexes live in ~/.kai/.
+            Kai indexes your repository locally using Tree-sitter AST parsing and serves ranked semantic context directly over Model Context Protocol (MCP) stdio. Zero accounts, zero cloud dependencies.
           </p>
           <p style={{ color: 'var(--text-tertiary)', fontSize: '0.88rem', lineHeight: 1.6, marginBottom: '1.5rem' }}>
-            Start with one tool. The config paths differ per tool — Kai writes them for you.
+            Kai automatically configures MCP paths for your installed tools, keeping their native configurations backed up and intact.
           </p>
           <ul className="t-check-list">
             <li><CheckCircle2 size={18} color="var(--accent-purple-fg)" /><span><strong>10 coding agents supported</strong> — Claude, Cursor, Codex, Gemini, OpenCode, Aider, Windsurf, Cline, Copilot, Antigravity.</span></li>

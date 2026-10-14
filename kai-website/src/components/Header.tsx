@@ -25,6 +25,7 @@ export function ThemeToggle() {
 const NAV = [
   ['/guide', 'Guide'],
   ['/manual', 'Manual'],
+  ['/docs', 'Docs'],
   ['/download', 'Download'],
   ['/changelog', 'Changelog'],
   ['/faq', 'FAQ'],

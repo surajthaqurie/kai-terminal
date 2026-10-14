@@ -31,7 +31,7 @@ export function Workflow() {
     <Section id="how-it-works">
       <SectionHead
         title="How it works"
-        sub="Three commands. Everything stays on your machine."
+        sub="From installation to your first agent workflow in seconds."
       />
       <div className="t-grid-3">
         {STEPS.map((s) => (
@@ -59,7 +59,7 @@ export function Workflow() {
         ))}
       </div>
       <p className="t-micro" style={{ textAlign: 'center', marginTop: '1.5rem' }}>
-        Full flags and edge cases are in the Guide and README — this is the short version.
+        Looking for all CLI options and flags? See the <a href="/manual" style={{ color: 'var(--accent-cyan-fg)', textDecoration: 'underline' }}>User Manual</a>.
       </p>
     </Section>
   );

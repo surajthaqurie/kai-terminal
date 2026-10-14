@@ -130,9 +130,9 @@ export function Downloads({ rel }: { rel: LatestRelease }) {
           desc: 'For office or silent installs.',
         },
       ],
-      cmd: `winget install Kai-terminal --source github`,
-      cmdLabel: 'Or install with one command',
-      note: 'Needs WebView2, which is already on most Windows 11 PCs.',
+      cmd: `kai_${rel.short}_x64-setup.exe`,
+      cmdLabel: 'File to download',
+      note: 'No winget package yet — download the .exe above and double-click it. Needs WebView2, which is already on most Windows 11 PCs.',
     },
   ];
 
