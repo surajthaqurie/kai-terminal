@@ -28,7 +28,7 @@ export function getCacheDir(): string {
   return path.join(getKaiHomeDir(), "cache");
 }
 
-export function normalizePathForIdentity(targetPath: string): string {
+export function normalizePathForIdentity(targetPath: string, platform?: string): string {
   let resolved = resolveCanonicalPath(targetPath);
   if (resolved.startsWith("\\\\?\\UNC\\")) {
     resolved = "\\\\" + resolved.slice(8);
@@ -39,7 +39,8 @@ export function normalizePathForIdentity(targetPath: string): string {
   while (resolved.length > 1 && resolved.endsWith("/")) {
     resolved = resolved.slice(0, -1);
   }
-  if (process.platform === "win32" || process.platform === "darwin") {
+  const effectivePlatform = platform ?? process.platform;
+  if (effectivePlatform === "win32" || effectivePlatform === "darwin") {
     resolved = resolved.toLowerCase();
   }
   return resolved;
@@ -49,14 +50,18 @@ export function computeLegacyProjectId(canonicalPath: string): string {
   return crypto.createHash("sha256").update(canonicalPath).digest("hex").slice(0, 16);
 }
 
-export function computeProjectId(canonicalPath: string): string {
-  const normalized = normalizePathForIdentity(canonicalPath);
+export function computeProjectId(canonicalPath: string, platform?: string): string {
+  const normalized = normalizePathForIdentity(canonicalPath, platform);
   return crypto.createHash("sha256").update(normalized).digest("hex").slice(0, 16);
 }
 
-export function isWithinProjectBoundary(targetPath: string, rootPath: string): boolean {
-  const normTarget = normalizePathForIdentity(targetPath);
-  const normRoot = normalizePathForIdentity(rootPath);
+export function isWithinProjectBoundary(
+  targetPath: string,
+  rootPath: string,
+  platform?: string
+): boolean {
+  const normTarget = normalizePathForIdentity(targetPath, platform);
+  const normRoot = normalizePathForIdentity(rootPath, platform);
   if (normTarget === normRoot) return true;
   return normTarget.startsWith(normRoot + "/");
 }
@@ -473,6 +478,52 @@ export function saveProjectIndex(projectId: string, index: ProjectIndex): void {
   }
 
   cleanupDanglingTempFiles(getProjectStorageDir(projectId));
+}
+
+/**
+ * Best-effort status transition applied to BOTH metadata copies: the
+ * standalone `meta.json` and the `meta` embedded in `index.json`. Readers
+ * use either copy (`getProjectMeta` vs `loadProjectIndex`), so updating only
+ * one leaves freshness reporting inconsistent (e.g. meta.json says `stale`
+ * while the loaded index still reports `fresh`). Both writes are atomic;
+ * failures are swallowed so stale-marking never throws.
+ */
+export function markProjectGraphStatus(
+  projectId: string,
+  status: "stale" | "failed",
+  lastError?: string
+): void {
+  try {
+    const metaPath = getProjectMetaPath(projectId);
+    const raw = fs.readFileSync(metaPath, "utf-8");
+    const meta = JSON.parse(raw);
+    if (typeof meta === "object" && meta !== null) {
+      meta.status = status;
+      if (lastError !== undefined) meta.lastError = lastError;
+      atomicWriteJson(metaPath, meta);
+    }
+  } catch {
+    // best effort; never throw from status-marking
+  }
+  try {
+    const indexPath = getProjectIndexPath(projectId);
+    if (!fs.existsSync(indexPath)) return;
+    const raw = fs.readFileSync(indexPath, "utf-8");
+    const index = JSON.parse(raw);
+    if (typeof index !== "object" || index === null) return;
+    if (typeof index.meta !== "object" || index.meta === null) return;
+    index.meta.status = status;
+    if (lastError !== undefined) index.meta.lastError = lastError;
+    try {
+      atomicWriteJson(indexPath, index);
+    } catch {
+      // Transient write failure (e.g. file-table pressure under parallel
+      // load): one immediate retry before giving up best-effort.
+      atomicWriteJson(indexPath, index);
+    }
+  } catch {
+    // best effort; never throw from status-marking
+  }
 }
 
 export function deleteProjectData(projectId: string): { success: boolean; error?: string } {

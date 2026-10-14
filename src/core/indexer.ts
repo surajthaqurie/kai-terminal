@@ -16,6 +16,7 @@ import {
   resolveCanonicalPath,
   getProjectMetaPath,
   atomicWriteJson,
+  markProjectGraphStatus,
   isWithinProjectBoundary,
   normalizePathForIdentity,
 } from "./registry";
@@ -667,22 +668,24 @@ export function detectStaleIndexEntries(index: ProjectIndex): {
  */
 export async function indexProject(
   meta: ProjectMeta,
-  options: { forceRebuild?: boolean; excludePatterns?: string[] } = {}
+  options: { forceRebuild?: boolean; excludePatterns?: string[]; dryRun?: boolean } = {}
 ): Promise<ProjectIndex> {
   const lock = new ProjectLock(meta.id);
   if (!lock.acquire(6000)) {
     throw new Error(`Could not acquire index lock for project ${meta.name} (id: ${meta.id})`);
   }
 
-  // Update status to indexing
-  const indexingMeta: ProjectMeta = {
-    ...meta,
-    status: "indexing",
-    lastError: null,
-  };
-  atomicWriteJson(getProjectMetaPath(meta.id), indexingMeta);
-
   try {
+    // Update status to indexing (inside try so a write failure here still
+    // releases the lock via finally instead of wedging later acquisitions).
+    const indexingMeta: ProjectMeta = {
+      ...meta,
+      status: "indexing",
+      lastError: null,
+    };
+    if (!options.dryRun) {
+      atomicWriteJson(getProjectMetaPath(meta.id), indexingMeta);
+    }
     const canonicalRoot = resolveCanonicalPath(meta.canonicalPath);
     const existingIndex = options.forceRebuild ? null : loadProjectIndex(meta.id);
     // Normalize legacy keys: indexes written on Windows used backslash
@@ -938,19 +941,20 @@ export async function indexProject(
       changes,
     };
 
-    saveProjectIndex(meta.id, projectIndex);
+    // A dry-run build is a validation candidate only: it must never become
+    // the active graph before the caller validates it. Skip persistence so
+    // an invalid candidate can never be observed by concurrent readers or
+    // survive a crash between save and validation.
+    if (!options.dryRun) {
+      saveProjectIndex(meta.id, projectIndex);
+    }
     return projectIndex;
   } catch (err: unknown) {
     const errMsg = err instanceof Error ? err.message : String(err);
-    const failedMeta: ProjectMeta = {
-      ...meta,
-      status: "failed",
-      lastError: errMsg,
-    };
-    try {
-      atomicWriteJson(getProjectMetaPath(meta.id), failedMeta);
-    } catch {
-      // Ignore meta write failure on crash
+    if (!options.dryRun) {
+      // Dual-copy status update (meta.json + embedded index meta) so
+      // freshness readers never disagree after a failure.
+      markProjectGraphStatus(meta.id, "failed", errMsg);
     }
     throw err;
   } finally {

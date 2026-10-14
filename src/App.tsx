@@ -71,6 +71,7 @@ import {
 } from "./services/paneLayout";
 import {
   APP_VERSION_FALLBACK,
+  RELEASES_PAGE_URL,
   UPDATE_PERIODIC_MS,
   UpdateCheckResult,
   checkForUpdates,
@@ -183,6 +184,13 @@ function loadPersistedLayout(): PersistedTab[] | null {
  */
 async function closeAppWindow(): Promise<boolean> {
   if (!isTauriAvailable()) return false;
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("close_app_window");
+    return true;
+  } catch (err) {
+    console.warn("Failed to close app window via invoke close_app_window:", err);
+  }
   try {
     const { getCurrentWindow } = await import("@tauri-apps/api/window");
     await getCurrentWindow().close();
@@ -1102,7 +1110,7 @@ export function App() {
     );
   }, [activeTabId]);
 
-  const handleSessionExit = useCallback((tabId: string, paneId: string, _exitCode: number) => {
+  const handleSessionExit = useCallback((tabId: string, paneId: string, exitCode?: number) => {
     // Any shell exit (`exit`, `logout`, Ctrl+D, kill) closes the pane/tab.
     // Previous behavior only closed on exit code 0, which made `exit`
     // appear broken whenever the shell reported a non-zero status.
@@ -1126,9 +1134,7 @@ export function App() {
     // ("trying to reopen"). 3+ deaths inside 10 s parks the tab in `error`
     // with an actionable banner instead — on every OS.
     const now = Date.now();
-    const recent = exitTimesRef.current.filter((t) => now - t < 10_000);
-    recent.push(now);
-    exitTimesRef.current = recent;
+    const isCleanExit = exitCode === 0;
 
     const parkAsFault = (message: string) => {
       exitTimesRef.current = [];
@@ -1150,12 +1156,18 @@ export function App() {
       );
     };
 
-    if (recent.length >= 3) {
-      parkAsFault(
-        "Shell keeps exiting immediately (3 times in 10 s). The configured shell binary is " +
-          "likely missing or not runnable. Pick another shell in Settings, then press Retry."
-      );
-      return;
+    if (!isCleanExit) {
+      const recent = exitTimesRef.current.filter((t) => now - t < 10_000);
+      recent.push(now);
+      exitTimesRef.current = recent;
+
+      if (recent.length >= 3) {
+        parkAsFault(
+          "Shell keeps exiting immediately (3 times in 10 s). The configured shell binary is " +
+            "likely missing or not runnable. Pick another shell in Settings, then press Retry."
+        );
+        return;
+      }
     }
 
     if (targetTab.panes.length > 1) {
@@ -1188,12 +1200,12 @@ export function App() {
     // (`exit` in the only session closes Kai, like a regular terminal).
     // Browser/mock fallback recycles a fresh tab so the window never ends
     // up empty/disconnected.
-    // Instant-death exception (all OSes): when the session died within 4 s
-    // of the tab's creation the shell never actually ran (broken binary or
+    // Instant-death exception (all OSes): when the session died with a failure
+    // within 4 s of the tab's creation the shell never actually ran (broken binary or
     // bad cwd) — quitting here would make a release launch vanish with no
-    // explanation. Keep the window open with the fault banner instead.
+    // explanation. Clean exits (exitCode === 0) indicate intentional `exit`.
     const bornAt = tabBornRef.current[tabId] ?? 0;
-    if (bornAt > 0 && now - bornAt < 4000) {
+    if (!isCleanExit && bornAt > 0 && now - bornAt < 4000) {
       parkAsFault(
         "Shell exited right after opening — it likely failed to start (bad shell binary or " +
           "working directory). The window was kept open so you can fix it: pick another shell " +
@@ -1327,6 +1339,10 @@ export function App() {
           // Respect a previous dismiss unless this is a manual re-check.
           if (manual || !isDismissed(result.latestVersion)) {
             setUpdateBannerVisible(true);
+          }
+          if (manual) {
+            // Manual check (via settings or footer): automatically open release to update
+            void openReleasePage(result.releaseUrl || RELEASES_PAGE_URL);
           }
         } else if (manual && !result.updateAvailable && !result.error) {
           setLastError(null);

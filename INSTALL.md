@@ -64,19 +64,19 @@ kai mcp .
 1. Download the `.deb` package from [GitHub Releases](https://github.com/surajthaqurie/kai-terminal/releases/latest).
 2. Install via terminal:
    ```bash
-   sudo apt install ./kai_0.1.0_amd64.deb
+   sudo apt install ./kai_0.1.4_amd64.deb
    ```
-   *(Or using dpkg: `sudo dpkg -i ./kai_0.1.0_amd64.deb && sudo apt-get install -f`)*
+   *(Or using dpkg: `sudo dpkg -i ./kai_0.1.4_amd64.deb && sudo apt-get install -f`)*
 3. Launch **Kai Terminal** from your application menu.
 
 #### Option 2: AppImage
 1. Download the `.AppImage` file.
 2. Make it executable and run:
    ```bash
-   chmod +x ./kai_0.1.0_amd64.AppImage
-   ./kai_0.1.0_amd64.AppImage
+   chmod +x ./kai_0.1.4_amd64.AppImage
+   ./kai_0.1.4_amd64.AppImage
    ```
-   *(If FUSE is not installed on your system, extract and run: `./kai_0.1.0_amd64.AppImage --appimage-extract && ./squashfs-root/AppRun`)*
+   *(If FUSE is not installed on your system, extract and run: `./kai_0.1.4_amd64.AppImage --appimage-extract && ./squashfs-root/AppRun`)*
 
 #### Other Linux Packaging Templates
 Templates for building non-Debian formats are located in the `packaging/` folder:
@@ -150,7 +150,7 @@ xcode-select --install
 ```bash
 # Clone repository
 git clone https://github.com/surajthaqurie/kai-terminal.git
-cd kai
+cd kai-terminal
 
 # Install frontend packages
 npm install
@@ -226,7 +226,7 @@ To generate and attach build artifacts to a GitHub Release:
    ```
 2. Tag a release version and push to GitHub:
    ```bash
-   git tag v0.1.0
-   git push origin v0.1.0
+   git tag v0.1.4
+   git push origin v0.1.4
    ```
 3. GitHub Actions will automatically compile `.deb`, `.AppImage`, `.exe`, `.msi`, and `.dmg` installers and publish them to the release page.

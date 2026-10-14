@@ -40,7 +40,7 @@ The real PTY integration suite covers 15 scenarios:
 
 ## 3. Project Intelligence & MCP Verification Matrix
 
-The intelligence test suite (`src/__tests__/intelligence.test.ts`, `src/__tests__/mcp_security.test.ts`, `src/__tests__/audit_production_security.test.ts`, and `src/__tests__/performance_benchmarks.test.ts`) covers comprehensive automated scenarios across 109 Vitest tests:
+The intelligence test suite covers comprehensive automated scenarios across 43 test files and 431 Vitest tests:
 
 | # | Test Area | Description | Automated Target | Status |
 | :--- | :--- | :--- | :--- | :--- |
@@ -53,7 +53,7 @@ The intelligence test suite (`src/__tests__/intelligence.test.ts`, `src/__tests_
 | **7** | **Skill Matching** | On-demand skill selection based on category, language, and keywords | `intelligence.test.ts` | **Passed** |
 | **8** | **Skill Safety** | Strict size bounding and non-execution of skill content | `intelligence.test.ts` | **Passed** |
 | **9** | **MCP Handshake** | Valid `initialize` JSON-RPC response with protocol version and server info | `mcp_security.test.ts` | **Passed** |
-| **10** | **MCP Tool Discovery**| `tools/list` exposes all 7 intelligence tools with valid JSON schemas | `mcp_security.test.ts` | **Passed** |
+| **10** | **MCP Tool Discovery**| `tools/list` exposes project intelligence and workflow tools with valid JSON schemas | `mcp_security.test.ts` | **Passed** |
 | **11** | **MCP Argument Guard**| Unknown tools or missing parameters return structured JSON-RPC error codes | `mcp_security.test.ts` | **Passed** |
 | **12** | **MCP Workspace Confinement** | Tools reject file paths outside authorized project boundary | `mcp_security.test.ts` | **Passed** |
 | **13** | **Secret Scrubbing** | Built-in patterns exclude `.env*`, `id_rsa*`, PKCS#8 keys, and API tokens | `audit_production_security.test.ts` | **Passed** |
@@ -72,7 +72,7 @@ The intelligence test suite (`src/__tests__/intelligence.test.ts`, `src/__tests_
 Run all verification checks locally prior to committing:
 
 ```bash
-# 1. Full TypeScript, Formatting & Intelligence Test Suite (Vitest - 16 test files, 109 tests)
+# 1. Full TypeScript, Formatting & Intelligence Test Suite (Vitest - 43 test files, 431 tests)
 npm run check
 
 # 1b. Same gate inside Docker (no host Node/Rust install needed)
@@ -94,7 +94,7 @@ cargo fmt --manifest-path src-tauri/Cargo.toml --check
 # 5. Rust Backend Linter Check
 cargo clippy --no-default-features --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 
-# 6. Rust Backend Unit Tests (40 tests)
+# 6. Rust Backend Unit Tests (110 tests)
 cargo test --no-default-features --manifest-path src-tauri/Cargo.toml --lib
 
 # 7. Real PTY Integration Tests (15 tests)

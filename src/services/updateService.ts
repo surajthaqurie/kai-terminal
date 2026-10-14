@@ -8,7 +8,7 @@
  * resolve to "no update" so the UI never blocks on this.
  */
 
-export const APP_VERSION_FALLBACK = "0.1.3";
+export const APP_VERSION_FALLBACK = "0.1.4";
 export const GITHUB_REPO = "surajthaqurie/kai-terminal";
 /** Repo owner shown as the release author fallback ("by surajthaqurie"). */
 export const GITHUB_OWNER = GITHUB_REPO.split("/")[0] || "surajthaqurie";

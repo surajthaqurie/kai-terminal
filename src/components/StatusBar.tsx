@@ -257,8 +257,8 @@ export const StatusBar: FC<StatusBarProps> = ({
             type="button"
             className="status-update-available"
             onClick={onViewUpdate}
-            title={`Update available: v${appVersion} → v${latestVersion}. Click to view release.`}
-            aria-label={`Update available, version ${latestVersion}. View release.`}
+            title={`Update available: v${appVersion} → v${latestVersion}. Click to update now.`}
+            aria-label={`Update available, version ${latestVersion}. Update now.`}
           >
             <ArrowUpCircle size={13} aria-hidden="true" />
             <span>

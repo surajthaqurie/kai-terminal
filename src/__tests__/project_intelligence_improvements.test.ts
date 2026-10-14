@@ -412,6 +412,29 @@ describe("Project Intelligence Comprehensive Improvements", () => {
       const normVerbatim = normalizePathForIdentity("\\\\?\\C:\\repo\\project\\");
       expect(normVerbatim.startsWith("\\\\?\\")).toBe(false);
     });
+
+    it("folds letter-casing on win32/darwin so the same directory registers once", () => {
+      const lower = normalizePathForIdentity("/Users/Dev/MyProject", "darwin");
+      const upper = normalizePathForIdentity("/Users/DEV/myproject", "darwin");
+      expect(lower).toBe(upper);
+
+      const winLower = normalizePathForIdentity("C:\\Repo\\Project", "win32");
+      const winUpper = normalizePathForIdentity("c:\\REPO\\project", "win32");
+      expect(winLower).toBe(winUpper);
+
+      expect(computeProjectId("/Users/Dev/MyProject", "darwin")).toBe(
+        computeProjectId("/Users/DEV/myproject", "darwin")
+      );
+      expect(
+        isWithinProjectBoundary("/Users/DEV/myproject/src/a.ts", "/users/dev/myproject", "darwin")
+      ).toBe(true);
+    });
+
+    it("keeps letter-casing significant on case-sensitive linux", () => {
+      expect(computeProjectId("/repo/Project", "linux")).not.toBe(
+        computeProjectId("/repo/project", "linux")
+      );
+    });
   });
 
   describe("9. Degraded-Mode LSP Reporting", () => {

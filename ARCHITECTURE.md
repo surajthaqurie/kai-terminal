@@ -20,6 +20,9 @@ flowchart TD
         CP["Copilot / VS Code"]
         WS["Windsurf"]
         CN["Cline"]
+        OC["opencode"]
+        AI["Aider"]
+        AG["Antigravity (agy)"]
     end
 
     subgraph Intelligence["Project Intelligence & MCP Layer (Node / TS)"]
@@ -39,7 +42,7 @@ flowchart TD
     end
 
     subgraph DesktopApp["Desktop Terminal Application"]
-        UI["React Frontend (Tabs, Split Panes, xterm.js)"]
+        UI["React Frontend (Tabs, Split Panes, xterm.js WebGL)"]
         TAURI["Tauri 2 IPC Boundary"]
         RUST["Rust Native Backend (PtyManager, Shell Auto-Detect)"]
     end
@@ -51,6 +54,9 @@ flowchart TD
     CP <-->|stdio JSON-RPC| MCP
     WS <-->|stdio JSON-RPC| MCP
     CN <-->|stdio JSON-RPC| MCP
+    OC <-->|stdio JSON-RPC| MCP
+    AI <-->|stdio JSON-RPC| MCP
+    AG <-->|stdio JSON-RPC| MCP
     CLI --> MCP
     CLI --> CLASS
     CLASS --> RET
@@ -68,11 +74,11 @@ flowchart TD
 
 ### 2.1 Frontend Layer (`src/`)
 
-- **`src/components/TerminalView.tsx`**: Manages the xterm.js instance lifecycle, canvas sizing using `@xterm/addon-fit`, user keyboard input forwarding, custom selection copy/paste (`Ctrl+Shift+C`/`Cmd+C` copy, `Ctrl+Shift+V`/`Cmd+V` paste), and listens for `pty-output` and `pty-exit` IPC events.
-- **`src/components/TabBar.tsx` & `Toolbar.tsx`**: Renders multi-tab interface with double-click inline tab title editing, shell selection dropdown with WSL badges, initial directory selector, git branch badge, and settings toggles.
+- **`src/components/TerminalView.tsx`**: Manages the xterm.js instance lifecycle with hardware-accelerated GPU WebGL rendering (`@xterm/addon-webgl`) and automatic fallback to DOM rendering when WebGL is unavailable or when opted out via `localStorage.kai_renderer="dom"`. Handles canvas sizing using `@xterm/addon-fit`, user keyboard input forwarding, custom selection copy/paste (`Ctrl+Shift+C`/`Cmd+C` copy, `Ctrl+Shift+V`/`Cmd+V` paste), and listens for `pty-output` and `pty-exit` IPC events. Output is buffered in a high-performance FIFO (`TerminalOutputBuffer`) to eliminate O(n²) string slicing under high-volume floods.
+- **`src/components/TabBar.tsx` & `Toolbar.tsx`**: Renders multi-tab interface with pointer-capture drag-to-reorder, double-click inline tab title editing, shell selection dropdown with WSL badges, initial directory selector, git branch badge, and settings toggles.
 - **`src/components/WorkspaceModal.tsx`**: Renders workspace management modal for creating, renaming, deleting, saving, and restoring named workspaces.
 - **`src/services/ptyService.ts`**: Provides the `IPtyService` interface abstraction, handling native Tauri IPC calls when running inside desktop app and fallback mock PTY behavior during browser previews.
-- **`src/services/paneLayout.ts`**: Handles split-pane calculations (up to 4 panes per tab, horizontal/vertical splits, fraction clamping). Each pane runs an independent backend PTY session ID.
+- **`src/services/paneLayout.ts`**: Handles split-pane calculations (up to 4 panes per tab, horizontal/vertical splits, fraction clamping). Panes render as a flat list of absolutely-positioned siblings with stable keys, ensuring splitting, closing, and divider dragging never remounts or drops an active terminal session. Each pane runs an independent backend PTY session ID.
 - **`src/services/workspaces.ts`**: Manages workspace configuration storage (`kai_workspaces_v1`), layout restoration with restore-time revalidation, tab renaming, and safe legacy schema migration (`terminal_workspaces_v1`, `terminal_tab_layout_v1`).
 - **`src/services/shortcuts.ts`**: Centralized keybinding registry for custom keyboard shortcuts (including tab/pane navigation `nextTab`, `prevTab`, `nextPane`) with conflict detection and macOS key label translation.
 - **`src/services/aiCliService.ts` & `projectService.ts`**: Clients for local AI CLI discovery/version/config-presence diagnostics (passive, local, non-billable; version/config never prove sign-in) and git status caching with invalidation on mutating actions.
@@ -81,17 +87,34 @@ flowchart TD
 
 - **Security Sandboxing:** IPC permissions are declared in `capabilities/default.json` giving minimum necessary privileges (`core:default`).
 - **Content Security Policy:** Declared in `tauri.conf.json`:
-  `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:;`
+  `default-src 'self'; connect-src 'self' ipc: http://ipc.localhost https://api.github.com; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:`
 
 #### Native IPC Commands:
 - `create_pty(options)`: Spawns a shell process attached to a native PTY master/slave pair.
 - `write_to_pty(id, data)`: Streams input bytes from frontend to the target PTY master writer.
 - `resize_pty(id, cols, rows)`: Updates PTY window dimensions to match xterm.js layout.
 - `close_pty(id)`: Kills the target shell process and cleans up session handles.
+- `get_pty_cwd(id)`: Reads working directory of the running child process.
 - `get_available_shells()`: Scans host system for installed shell binaries.
 - `get_ai_cli_status()` / `get_ai_cli_details()`: Scans local PATH for AI CLI presence without making network calls.
+- `check_ai_cli_path(customPath)`: Validates user-specified custom AI tool executable paths.
+- `get_kai_cli_launch_cmd()`: Resolves executable path to the bundled or user-installed Kai CLI.
+- `setup_agent_mcp_cmd(provider, projectDir)`: Safely auto-configures MCP wiring in agent config files.
+- `get_agent_setup_snippet_cmd(provider, projectDir)`: Returns verified MCP configuration snippet for manual setup.
 - `get_git_info_cmd(cwd)`: Inspects branch and dirty state for a target directory using system `git`.
+- `run_git_action_cmd(cwd, action)`: Runs git operations (commit, push, pull, stash).
+- `get_git_changes_cmd(cwd)` / `get_git_diff_cmd(cwd, file)`: Fetches file diffs and unstaged/staged status.
+- `stage_git_file_cmd(cwd, file)` / `unstage_git_file_cmd(cwd, file)` / `discard_git_file_cmd(cwd, file)`: Stages, unstages, or discards file changes.
+- `open_project_in_editor(editor, path)`: Opens current project in detected external editor.
+- `detect_installed_editors_cmd()`: Detects available code editors on system.
+- `open_external_url_cmd(url)`: Safely opens validated URLs (such as GitHub releases) in default browser.
 - `get_diagnostics()`: Generates a secret-free environment summary.
+- `get_system_terminal_config()`: Detects OS-specific terminal defaults (default shell, theme).
+- `get_app_version()`: Returns current application version.
+- `get_autostart_enabled()` / `set_autostart_enabled(enabled)`: Inspects and toggles OS login autostart.
+- `get_session_info(id)` / `list_sessions()`: Returns active PTY session statistics.
+- `get_project_intelligence_cmd(path)` / `get_active_project_cmd()`: Queries project indexing and Code Mode state.
+- `get_kai_cli_status_cmd()` / `ensure_kai_cli_cmd()`: Verifies and installs Kai CLI launcher on first startup.
 
 #### Asynchronous IPC Events:
 - `pty-output`: Emitted by background reader threads whenever stdout/stderr output is read.
@@ -99,10 +122,12 @@ flowchart TD
 
 ### 2.3 Rust Backend Layer (`src-tauri/src/`)
 
-- **`pty.rs` (`PtyManager`)**: Manages session handles (`HashMap<String, PtySessionHandle>`) wrapped in thread-safe locks. Handles PTY spawning, chunked byte writing (`write_bytes_chunked`), and cleanup.
+- **`pty.rs` (`PtyManager`)**: Manages session handles (`HashMap<String, PtySessionHandle>`) wrapped in thread-safe locks. Handles PTY spawning, 32 KiB chunked byte writing (`write_bytes_chunked`), and cleanup.
 - **`shell.rs`**: Cross-platform shell discovery logic for Windows (PowerShell Core, Windows PowerShell, CMD, WSL), Linux (`$SHELL`, bash, zsh, fish, sh), and macOS (`$SHELL`, zsh, Homebrew shells, bash, fish). Includes Windows build version gate checking (minimum build 17763).
 - **`ai_cli.rs`**: Checks local PATH presence and config-file presence (existence only, never credential validity) for 10 catalogued AI tools (`codex`, `claude`, `gemini`, `opencode`, `copilot`, `aider`, `cursor`, `windsurf`, `cline`, `agy`), running safe, bounded `--version` checks (5 s timeout, kill+reap, no shell, no network, nothing secret logged). Version success never implies authentication.
 - **`git.rs`**: Reads branch/dirty state using local system `git` plumbing (no shell, 8 s timeout per invocation, kill+reap, stderr discarded). Reports detached HEAD, unborn branches, untracked/modified/deleted files; worktrees, nested repos, and unusual paths; graceful taxonomy for missing git / bad dirs.
+- **`kai_cli.rs`**: Auto-installs and self-repairs `kai` CLI user PATH integration on first launch across Windows, macOS, and Linux.
+- **`cli_guard.rs`**: Desktop/CLI collision prevention redirecting terminal-style subcommands (`code`, `status`, `query`, `agent setup`, etc.) from desktop GUI binary to Node CLI.
 - **`error.rs`**: Strongly typed Rust error definitions returned via IPC.
 
 ### 2.4 Project Intelligence & MCP Layer (`src/core/`, `src/cli/`, `bin/kai.js`)
@@ -115,7 +140,7 @@ flowchart TD
 - **`src/core/retrieval.ts`**: Deterministic relevance search prioritizing exact symbol matches (10.0), filename matches (5.0), and dependencies. Extracts focused line ranges (-15 to +45 lines) around symbols and validates live on-disk file SHA-256 digests against index snapshots to flag stale files.
 - **`src/core/contextAssembler.ts`**: Orchestrates classification, freshness checks, rule extraction, retrieval, and skills into a structured `ContextPackage`. Enforces the token budget as a hard guarantee on the rendered prompt (drops skills, lowest-scored sources, then rules; hard-truncates only as a last resort — the verbatim task section leads so it survives).
 - **`src/core/tokenCounter.ts`**: Deterministic `cl100k` token estimation distinguishing estimates from exact tokenizer measurements.
-- **`src/core/mcp.ts`**: Standard Model Context Protocol (MCP) server communicating over `stdio` JSON-RPC with stream-level 10 MB line limits (`BoundedLineTransform`) and strict workspace boundary confinement. Exposes 7 read-only tools: `kai_project_info`, `kai_search_code`, `kai_find_symbol`, `kai_get_dependencies`, `kai_get_context`, `kai_refresh_index`, and `kai_get_lsp_status`.
+- **`src/core/mcp.ts`**: Standard Model Context Protocol (MCP) server communicating over `stdio` JSON-RPC with stream-level 10 MB line limits (`BoundedLineTransform`) and strict workspace boundary confinement. Exposes read-only tools on project sources: `kai_project_info`, `kai_search_code`, `kai_find_symbol`, `kai_get_dependencies`, `kai_get_context`, `kai_refresh_index`, `kai_get_lsp_status`, `kai_plan_task`, and `kai_sync_graph`.
 - **`src/cli/index.ts` & `bin/kai.js`**: Unified CLI dispatcher providing terminal commands for project registration, status inspection, unregistration (`unregister` deletes only Kai-owned data under `~/.kai/projects/` by path or 16-hex ID), querying, benchmarking, and automated agent setup (`kai agent setup <agent|all>` writes kai MCP wiring into agent configs with backup; `kai agent list` shows live install + wiring state).
 
 ---

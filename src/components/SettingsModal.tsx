@@ -148,7 +148,7 @@ export const SettingsModal: FC<SettingsModalProps> = ({
   settings,
   onSaveSettings,
   shells,
-  appVersion = "0.1.3",
+  appVersion = "0.1.4",
   updateInfo = null,
   isCheckingUpdates = false,
   onCheckUpdates,
@@ -718,53 +718,59 @@ export const SettingsModal: FC<SettingsModalProps> = ({
           {activeTab === "updates" && (
             <div className="settings-tab-panel">
               <div className="setting-field">
-                <label>Application Version</label>
-                <div className="update-version-row">
-                  <span className="status-version" title={`Kai Terminal v${appVersion}`}>
-                    v{appVersion}
-                  </span>
-                  {updateInfo?.latestVersion ? (
-                    <span className="muted-text">Latest: v{updateInfo.latestVersion}</span>
-                  ) : (
-                    <span className="muted-text">Latest: —</span>
-                  )}
-                  {updateInfo?.latestVersion && updateInfo?.releaseAuthor && (
-                    <span className="muted-text">by {updateInfo.releaseAuthor}</span>
-                  )}
+                <label>Application Information</label>
+                <div className="update-details-list">
+                  <div className="update-detail-row">
+                    <span className="update-detail-label">• Application:</span>
+                    <span className="update-detail-value">
+                      v{appVersion}
+                      {updateInfo?.latestVersion &&
+                        !updateInfo.updateAvailable &&
+                        !updateInfo.error && <span className="update-latest-badge"> (latest)</span>}
+                    </span>
+                  </div>
+
+                  <div className="update-detail-row">
+                    <span className="update-detail-label">• Author:</span>
+                    <span className="update-detail-value">
+                      {updateInfo?.releaseAuthor || "surajthaqurie"}
+                    </span>
+                  </div>
+
+                  <div className="update-detail-row">
+                    <span className="update-detail-label">• Published:</span>
+                    <span className="update-detail-value">
+                      {updateInfo?.publishedAt && !updateInfo?.error
+                        ? new Date(updateInfo.publishedAt).toLocaleDateString(undefined, {
+                            year: "numeric",
+                            month: "short",
+                            day: "numeric",
+                          })
+                        : "—"}
+                    </span>
+                  </div>
+
+                  <div className="update-detail-row">
+                    <span className="update-detail-label">• Status:</span>
+                    <span className="update-detail-value">
+                      {updateInfo?.updateAvailable && updateInfo.latestVersion ? (
+                        <span className="update-available-text" role="status">
+                          Update available: v{appVersion} → v{updateInfo.latestVersion}
+                        </span>
+                      ) : updateInfo && !updateInfo.error && updateInfo.latestVersion ? (
+                        <span className="update-uptodate-text" role="status">
+                          You&apos;re up to date — you are running the latest version.
+                        </span>
+                      ) : updateInfo?.error ? (
+                        <span className="update-error-text" role="status">
+                          Check failed: {updateInfo.error}
+                        </span>
+                      ) : (
+                        <span className="muted-text">Not checked yet in this session.</span>
+                      )}
+                    </span>
+                  </div>
                 </div>
-                {updateInfo?.releaseName &&
-                updateInfo.latestVersion &&
-                updateInfo.releaseName !== `v${updateInfo.latestVersion}` &&
-                updateInfo.releaseName !== updateInfo.latestVersion ? (
-                  <p className="muted-text">Release: {updateInfo.releaseName}</p>
-                ) : null}
-                {updateInfo?.publishedAt && updateInfo?.latestVersion && !updateInfo?.error ? (
-                  <p className="muted-text">
-                    Published: {new Date(updateInfo.publishedAt).toLocaleDateString()}
-                  </p>
-                ) : null}
-                {updateInfo?.updateAvailable && updateInfo.latestVersion ? (
-                  <p className="update-available-text" role="status">
-                    Update available: v{appVersion} → v{updateInfo.latestVersion}
-                    {updateInfo.releaseName ? ` (${updateInfo.releaseName})` : ""}
-                  </p>
-                ) : updateInfo && !updateInfo.error && updateInfo.latestVersion ? (
-                  <p className="muted-text" role="status">
-                    You&apos;re up to date — you are running the latest version.
-                  </p>
-                ) : null}
-                {updateInfo?.error && (
-                  <p className="muted-text" role="status">
-                    Last check: {updateInfo.error}
-                  </p>
-                )}
-                {updateInfo?.checkedAt ? (
-                  <p className="muted-text">
-                    Last checked: {new Date(updateInfo.checkedAt).toLocaleString()}
-                  </p>
-                ) : (
-                  <p className="muted-text">Not checked yet in this session.</p>
-                )}
               </div>
 
               <div className="setting-field">
@@ -778,20 +784,20 @@ export const SettingsModal: FC<SettingsModalProps> = ({
                     <ArrowUpCircle size={14} />
                     <span>{isCheckingUpdates ? "Checking…" : "Check for Updates"}</span>
                   </button>
-                  {updateInfo?.updateAvailable && updateInfo.releaseUrl && onViewUpdate && (
+                  {updateInfo?.updateAvailable && updateInfo.latestVersion && onViewUpdate && (
                     <button
                       type="button"
                       className="btn btn-secondary btn-small"
                       onClick={onViewUpdate}
-                      title="Open the GitHub release page to see what's changed"
+                      title="Update now to the latest version"
                     >
-                      <span>See what&apos;s new on GitHub</span>
+                      <span>Update to v{updateInfo.latestVersion}</span>
                     </button>
                   )}
                 </div>
                 <p className="muted-text">
-                  Checks the public GitHub releases page for a newer version. Failures (offline,
-                  rate-limited) never block the app.
+                  Checks the public GitHub releases page for a newer version. If an update is
+                  available, checking will automatically update to the latest version.
                 </p>
               </div>
 

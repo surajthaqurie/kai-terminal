@@ -25,7 +25,7 @@ This guide details how to set up your environment, run the codebase locally, ver
 
 ### Step 1: Install Dependencies
 ```bash
-cd terminal
+cd kai-terminal
 npm install
 ```
 
@@ -56,7 +56,7 @@ See `docker-compose.test.yml`, `Dockerfile.test`, `scripts/docker-test.sh`.
 ## 3. Project Structure
 
 ```text
-terminal/
+kai-terminal/
 ├── bin/
 │   └── kai.js                # Executable Node CLI entrypoint
 ├── package.json              # Dependencies, bin link, and scripts

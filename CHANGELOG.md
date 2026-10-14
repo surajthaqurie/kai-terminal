@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.1.4
+
+### Patch Changes
+
+- **GPU WebGL Terminal Renderer**: Integrated hardware-accelerated WebGL terminal renderer (`@xterm/addon-webgl`) for visible terminal panes, running at 60fps with automatic fallback to DOM rendering on context loss or failure, plus `localStorage.kai_renderer="dom"` opt-out.
+- **High-Throughput PTY Buffering**: Implemented FIFO `TerminalOutputBuffer` replacing O(n²) string concatenations, providing ~1800× higher throughput during large output floods (~10 MB) without freezing the UI. Increased PTY chunk reads to 32 KB.
+- **Auto-Strip AI Co-Authors**: Entering Code Mode (`kai code .`) installs a self-contained, POSIX-compliant `commit-msg` git hook into the target repository to automatically strip `Co-authored-by:` trailers on all future commits while safely preserving pre-existing hooks.
+- **Expanded Agent MCP Support (10 Agents)**: Added Antigravity CLI (`agy`) support to the shared agent registry (`src/core/agents.ts`), providing automated MCP wiring (`kai agent setup agy`) and dynamic PATH detection (`kai agent list`).
+- **Cross-Platform Path & Shim Hardening**: Windows `.cmd`/`.ps1` shims now resolve to the underlying executable bundle path instead of raw shim tokens; letter-casing path folding on Windows and macOS ensures identical project directories register once; symlink tests skip gracefully in locked-down environments.
+- **Zero-Remount Flat Grid Split Panes**: Panes render as absolutely-positioned siblings with stable keys, completely preventing live terminals from unmounting or losing state when opening, closing, or resizing splits.
+- **Split Divider Visibility**: High-contrast border-strong tokens ensure split divider lines are clearly visible across all 8 dark and light themes (including Kali theme).
+- **Pointer-Based Tab Drag Reorder**: Cross-platform tab drag-and-drop using pointer capture, edge auto-scrolling, midpoint insertion preview, and accidental-click suppression.
+- **LSP Framing & Telemetry Rotation**: Byte-accurate `Content-Length` framing in LSP bridge with 8 MB cap; local telemetry (`metrics.jsonl`) automatically rotates at 5 MB.
+
+## 0.1.3
+
+### Patch Changes
+
+- **Windows Agent Detection & PATHEXT Resolution**: Probes PATH using `PATHEXT` to locate `.cmd`/`.bat` binaries, executing version probes cleanly through `cmd /c` without flashing console windows; GUI-based agents safely skip version checks.
+- **Status Bar & Code Mode Synchronization**: Real-time git status refresh button in footer; immediate Code Mode status sync upon terminal command execution; compact path display with copy button; footer jump button when Code Mode is active in another directory.
+- **Desktop First-Launch CLI Integration**: Desktop installers automatically configure and add the user-level `kai` launcher to user PATH on first startup.
+- **CSP & Update Fixes**: Added `connect-src` (`https://api.github.com`, `ipc:`, `http://ipc.localhost`) and `img-src data:` to Content Security Policy in `tauri.conf.json`; release links open in external OS browser.
+- **Default Theme & Tab Color Polish**: Resolved tab accent glow obscuring custom tab colors; synchronized Kali theme as default across frontend and backend; added `kai doctor` to audit Linux `.desktop` launcher entries.
+
 ## 0.1.2
 
 ### Patch Changes

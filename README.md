@@ -6,11 +6,11 @@
 [![Website](https://img.shields.io/badge/site-kai--terminal.vercel.app-06b6d4)](https://kai-terminal.vercel.app/)
 
 Desktop terminal for **Windows · Linux · macOS**, plus a local CLI for AI context.
-Tauri 2 + Rust (`portable-pty`) + `xterm.js`. MIT licensed, no account.
+Tauri 2 + Rust (`portable-pty`) + WebGL GPU terminal renderer (`xterm.js`). MIT licensed, no account.
 
 Live site: **https://kai-terminal.vercel.app/** · Releases: [latest](https://github.com/surajthaqurie/kai-terminal/releases/latest)
 
-> Status: v0.1.0 is an early release. If something breaks, please open an issue with OS, version and steps to reproduce.
+> Status: v0.1.4 is an active release. If something breaks, please open an issue with OS, version and steps to reproduce.
 
 [![kai hero](docs/screenshot.png)](https://kai-terminal.vercel.app/)
 
@@ -20,12 +20,12 @@ No auto-detection here. All installers are published on [GitHub Releases](https:
 
 | OS                  | File                                | Install                                            |
 | ------------------- | ----------------------------------- | -------------------------------------------------- |
-| macOS 12+ (M1–M4)   | `kai_0.1.0_aarch64.dmg`             | Open the `.dmg`, drag `Kai.app` to `/Applications` |
-| Linux x64           | `kai_0.1.0_amd64.deb`               | `sudo dpkg -i kai_0.1.0_amd64.deb`                 |
-| Linux (any distro)  | `kai_0.1.0_amd64.AppImage`          | `chmod +x kai_*.AppImage && ./kai_*.AppImage`      |
-| Linux ARM64         | `kai_0.1.0_arm64.deb` / `.AppImage` | Same as above, ARM build                           |
-| Windows 10/11 x64   | `kai_0.1.0_x64-setup.exe`           | Download and run                                   |
-| Windows x64 (admin) | `kai_0.1.0_x64_en-US.msi`           | For silent/admin installs                          |
+| macOS 12+ (M1–M4)   | `kai_0.1.4_aarch64.dmg`             | Open the `.dmg`, drag `Kai.app` to `/Applications` |
+| Linux x64           | `kai_0.1.4_amd64.deb`               | `sudo dpkg -i kai_0.1.4_amd64.deb`                 |
+| Linux (any distro)  | `kai_0.1.4_amd64.AppImage`          | `chmod +x kai_*.AppImage && ./kai_*.AppImage`      |
+| Linux ARM64         | `kai_0.1.4_arm64.deb` / `.AppImage` | Same as above, ARM build                           |
+| Windows 10/11 x64   | `kai_0.1.4_x64-setup.exe`           | Download and run                                   |
+| Windows x64 (admin) | `kai_0.1.4_x64_en-US.msi`           | For silent/admin installs                          |
 
 The website lists the same files and does not choose for you. If your browser guessed wrong, just click another tab — nothing is locked in.
 
@@ -59,7 +59,7 @@ kai status              # show indexed projects and health (includes hook state)
 kai unregister . --dry-run   # preview index removal (repo untouched)
 kai query "Explain PtyManager lifecycle"   # budgeted output, default 4000 tokens
 kai cost                # token usage for the last query
-kai mcp .               # serve the 7 MCP tools over stdio
+kai mcp .               # serve the MCP tools over stdio
 kai lsp status          # local language server availability
 kai bench .             # local retrieval benchmark
 
@@ -72,6 +72,7 @@ kai agent setup windsurf  # install wiring into ~/.codeium/windsurf/mcp_config.j
 kai agent setup cline     # install wiring into Cline's VS Code storage
 kai agent setup opencode  # install wiring into ~/.config/opencode/opencode.json
 kai agent setup aider     # install wiring into ~/.config/aider/mcp.json
+kai agent setup agy       # install wiring into ~/.gemini/antigravity-cli/settings.json
 kai agent setup all       # auto-wire every agent installed on this system
 kai agent list            # dynamically detect installs + kai wiring state
 # flags: --print (snippet only), --dry-run (preview), --force (refresh),
@@ -95,15 +96,16 @@ oversized configs are left alone with manual merge instructions.
 | Cline             | VS Code global storage `cline_mcp_settings.json`              | skipped with manual steps when VS Code is absent |
 | opencode          | `~/.config/opencode/opencode.json`                            | `mcp.kai` with `"type": "local"`                 |
 | Aider             | `~/.config/aider/mcp.json`                                    | `mcpServers.kai` stdio entry                     |
+| Antigravity (agy) | `~/.gemini/antigravity-cli/settings.json`                     | `mcpServers.kai` stdio entry                     |
 
 Agent detection is dynamic: `kai agent list` probes the live system
 PATH plus known config files at runtime, so newly installed agents show
-up without any code changes. All nine agents share one registry
+up without any code changes. All 10 agents share one registry
 (`src/core/agents.ts`).
 
 The desktop app also lists locally installed CLIs
 (`codex`, `claude`, `gemini`, `opencode`, `copilot`, `aider`, `cursor`,
-`windsurf`, `cline`) without
+`windsurf`, `cline`, `agy`) without
 running them — missing tools report `available: false`. Each provider row
 shows its kai wiring state and offers one-click **Auto-wire Kai MCP** for
 system-installed tools.
@@ -123,8 +125,10 @@ Your numbers will differ by repo size and hardware — run `kai bench .` to chec
 - `kai_get_context` — budgeted context for a task.
 - `kai_refresh_index` — re-index after changes.
 - `kai_get_lsp_status` — local language server status (`typescript-language-server`, `rust-analyzer`, `pyright`, `gopls`).
+- `kai_plan_task` — Code Mode task planning with project context and prompt options.
+- `kai_sync_graph` — guarded post-change graph validation and freshness sync.
 
-All tools are read-only. Hands-free co-author prevention needs no tool:
+All tools are read-only on project sources. Hands-free co-author prevention needs no tool:
 entering Code Mode (`kai code .`) installs a self-contained `commit-msg`
 hook into the repo, so every future commit from any agent lands without
 `Co-authored-by:` trailers. The hook is POSIX sh only (Linux, macOS,
@@ -145,7 +149,7 @@ The status bar in the app shows the indexed project, file/symbol counts and last
 - Indexes live in `~/.kai/`; `kai unregister` deletes them.
 - Local diagnostics go to `~/.kai/metrics.jsonl`. No account, no telemetry in the app.
 
-See [KNOWN_LIMITATIONS](KNOWN_LIMITATIONS.md) for what v0.1.0 does not do yet.
+See [KNOWN_LIMITATIONS](KNOWN_LIMITATIONS.md) for what v0.1.4 does not do yet.
 
 ## Docs
 

@@ -16,8 +16,8 @@ This document describes process execution controls, IPC capabilities, permission
 
 - **Minimal Capability Permissions:** Tauri capabilities (`src-tauri/capabilities/default.json`) restrict IPC commands exclusively to the main application window with `core:default` minimal permissions.
 - **Content Security Policy (CSP):** Enforced in `tauri.conf.json`:
-  `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:;`
-- **Exposed IPC Commands:** `create_pty`, `write_to_pty`, `resize_pty`, `close_pty`, `get_pty_cwd`, `get_session_info`, `list_sessions`, `get_available_shells`, `get_system_terminal_config`, `get_app_version`, `get_autostart_enabled`, `set_autostart_enabled`, `get_ai_cli_status`, `get_ai_cli_details`, `check_ai_cli_path`, `get_kai_cli_launch_cmd`, `setup_agent_mcp_cmd`, `get_git_info_cmd`, `run_git_action_cmd`, `get_git_changes_cmd`, `get_git_diff_cmd`, `stage_git_file_cmd`, `unstage_git_file_cmd`, `discard_git_file_cmd`, `open_project_in_editor`, `detect_installed_editors_cmd`, `get_project_intelligence_cmd`, `get_active_project_cmd`, `get_diagnostics`. No remote code execution interfaces exist.
+  `default-src 'self'; connect-src 'self' ipc: http://ipc.localhost https://api.github.com; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:`
+- **Exposed IPC Commands:** `create_pty`, `write_to_pty`, `resize_pty`, `close_pty`, `get_pty_cwd`, `get_session_info`, `list_sessions`, `get_available_shells`, `get_system_terminal_config`, `get_app_version`, `get_autostart_enabled`, `set_autostart_enabled`, `get_ai_cli_status`, `get_ai_cli_details`, `check_ai_cli_path`, `get_kai_cli_launch_cmd`, `setup_agent_mcp_cmd`, `get_agent_setup_snippet_cmd`, `get_git_info_cmd`, `run_git_action_cmd`, `get_git_changes_cmd`, `get_git_diff_cmd`, `stage_git_file_cmd`, `unstage_git_file_cmd`, `discard_git_file_cmd`, `open_project_in_editor`, `detect_installed_editors_cmd`, `open_external_url_cmd`, `get_project_intelligence_cmd`, `get_active_project_cmd`, `get_kai_cli_status_cmd`, `ensure_kai_cli_cmd`, `get_diagnostics`. No remote code execution interfaces exist.
 - **Git Command Boundaries:** Git actions validate relative repository paths against null bytes, path traversal (`..`), leading slashes, and Windows drive letters. Symlinks escaping the repository root are strictly resolved and rejected. Git processes are bounded by an 8-second execution deadline with background stdout draining and child process reaping on timeout.
 - **Agent Auto-Wire Safety:** `setup_agent_mcp_cmd` only accepts built-in provider ids (never paths); the launcher binary must exist on PATH or as a file; configs over 1 MB or with invalid JSON/TOML are never rewritten; existing files are backed up to `<file>.kai.bak` and replaced atomically (temp file + rename).
 
@@ -67,5 +67,6 @@ This document describes process execution controls, IPC capabilities, permission
   - Storage deletion in `kai unregister` validates input project paths and supports clean deletion of orphaned storage by 16-character hexadecimal ID when `meta.json` is missing or corrupted.
 - **Privacy-Safe Telemetry:**
   - Local diagnostic metrics are appended to `~/.kai/metrics.jsonl` tracking only execution latencies, token counts, and error codes.
+  - The telemetry file automatically rotates at 5 MB (retaining one `.1` generation) to prevent unbounded disk growth.
   - User prompts, indexed source contents, and secret keys are never persisted to metrics logs.
 

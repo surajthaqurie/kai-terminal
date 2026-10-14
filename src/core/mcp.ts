@@ -13,6 +13,13 @@ import { assembleContext } from "./contextAssembler";
 import { retrieveContext } from "./retrieval";
 import { recordMetric } from "./telemetry";
 import { detectInstalledLspServers } from "./lspBridge";
+import {
+  isCodeMode,
+  understandTask,
+  buildPromptOptions,
+  getGraphFreshness,
+  synchronizeGraphAfterChanges,
+} from "./codeModeWorkflow";
 import type { TaskCategory } from "./types";
 import packageJson from "../../package.json";
 
@@ -139,6 +146,79 @@ export const MCP_TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
+        projectPath: { type: "string", description: "Optional project root path." },
+      },
+    },
+  },
+  {
+    name: "kai_plan_task",
+    description:
+      "Code Mode only: classify a task with project-graph context and return at most two prompt options (recommended + alternative). Simple tasks return zero options for direct execution.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        task: { type: "string", description: "Task description from the user." },
+        mode: {
+          type: "string",
+          description: "Execution mode. Prompt options are only returned when mode is 'code'.",
+        },
+        categoryOverride: {
+          type: "string",
+          enum: [
+            "explain",
+            "implement",
+            "debug",
+            "refactor",
+            "test",
+            "review",
+            "architecture",
+            "documentation",
+          ],
+          description: "Optional explicit task category override.",
+        },
+        projectPath: { type: "string", description: "Optional project root path." },
+      },
+      required: ["task"],
+    },
+  },
+  {
+    name: "kai_sync_graph",
+    description:
+      "Code Mode only: safely synchronize the project graph after validated code changes. Validates the candidate before persisting and preserves the last-known-good graph on failure.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        mode: {
+          type: "string",
+          description: "Execution mode. Synchronization only runs when mode is 'code'.",
+        },
+        changedFiles: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "Caller-reported relative paths changed by the coding task (not independently verified; empty skips rebuild).",
+        },
+        forceFull: {
+          type: "boolean",
+          description: "Force a validated full rebuild instead of incremental sync.",
+        },
+        uncertain: {
+          type: "boolean",
+          description: "Set true when change impact is uncertain; forces a full rebuild path.",
+        },
+        codeValidationRan: {
+          type: "boolean",
+          description: "Whether code validation (tests/checks) ran after the change.",
+        },
+        codeValidationPassed: {
+          type: "boolean",
+          description:
+            "Whether code validation passed. Report only what actually ran; omit (defaults to false) when unknown.",
+        },
+        codeValidationDetail: {
+          type: "string",
+          description: "Which checks ran and their outcome (do not claim unrun proofs).",
+        },
         projectPath: { type: "string", description: "Optional project root path." },
       },
     },
@@ -773,6 +853,166 @@ export async function handleMcpMessage(
                 ),
               },
             ],
+          },
+        };
+      }
+
+      if (toolName === "kai_plan_task") {
+        const mode = typeof args.mode === "string" ? args.mode : "code";
+        if (typeof args.task !== "string" || !args.task.trim()) {
+          return {
+            jsonrpc: "2.0",
+            id: reqId,
+            error: {
+              code: -32602,
+              message: "task parameter is required and must be a non-empty string",
+            },
+          };
+        }
+        // Mode isolation: other modes retain existing behavior (no options).
+        if (!isCodeMode(mode)) {
+          return {
+            jsonrpc: "2.0",
+            id: reqId,
+            result: {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify(
+                    {
+                      mode,
+                      options: [],
+                      modePreserved: true,
+                      reason: "prompt options are Code Mode only",
+                    },
+                    null,
+                    2
+                  ),
+                },
+              ],
+            },
+          };
+        }
+        const task = args.task.trim().slice(0, 4000);
+        const VALID_CATEGORIES = new Set([
+          "explain",
+          "implement",
+          "debug",
+          "refactor",
+          "test",
+          "review",
+          "architecture",
+          "documentation",
+          "unknown",
+        ]);
+        const categoryOverride = (
+          typeof args.categoryOverride === "string" && VALID_CATEGORIES.has(args.categoryOverride)
+            ? args.categoryOverride
+            : undefined
+        ) as TaskCategory | undefined;
+        const understanding = understandTask(task, categoryOverride);
+        const freshness = getGraphFreshness(index);
+        // Token-efficient: only task-relevant sections, never full-graph serialization.
+        let relevantFiles: string[] = [];
+        if (understanding.needsGraph && freshness !== "unindexed" && freshness !== "unknown") {
+          try {
+            const retrieved = retrieveContext(index, task, { fileBudget: 3, tokenBudget: 1200 });
+            relevantFiles = retrieved.matchedFiles.map((m) => m.file.relativePath).slice(0, 3);
+          } catch {
+            relevantFiles = [];
+          }
+        }
+        const options = buildPromptOptions(task, understanding, relevantFiles);
+        recordMetric({
+          projectId: meta.id,
+          operation: "mcp_call",
+          latencyMs: Date.now() - start,
+          tokensEstimated: 200,
+          success: true,
+        });
+        return {
+          jsonrpc: "2.0",
+          id: reqId,
+          result: {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(
+                  {
+                    mode: "code",
+                    category: understanding.category,
+                    confidence: understanding.confidence,
+                    freshness,
+                    relevantFiles,
+                    options,
+                    defaultOption: options[0]?.id ?? null,
+                    note:
+                      options.length === 0
+                        ? "Simple task: execute directly without prompt options."
+                        : "If the user continues without choosing and continuation is clear, use option1.",
+                  },
+                  null,
+                  2
+                ),
+              },
+            ],
+          },
+        };
+      }
+
+      if (toolName === "kai_sync_graph") {
+        const mode = typeof args.mode === "string" ? args.mode : "code";
+        if (!isCodeMode(mode)) {
+          return {
+            jsonrpc: "2.0",
+            id: reqId,
+            result: {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify(
+                    {
+                      mode,
+                      synced: false,
+                      modePreserved: true,
+                      reason: "graph sync is Code Mode only",
+                    },
+                    null,
+                    2
+                  ),
+                },
+              ],
+            },
+          };
+        }
+        const changedFiles = Array.isArray(args.changedFiles)
+          ? (args.changedFiles as unknown[])
+              .filter((f): f is string => typeof f === "string")
+              .slice(0, 50)
+          : [];
+        const report = await synchronizeGraphAfterChanges(
+          meta,
+          changedFiles,
+          {
+            ran: typeof args.codeValidationRan === "boolean" ? args.codeValidationRan : false,
+            // Fail-closed: an omitted outcome must never be reported as passed.
+            passed:
+              typeof args.codeValidationPassed === "boolean" ? args.codeValidationPassed : false,
+            detail:
+              typeof args.codeValidationDetail === "string"
+                ? args.codeValidationDetail.slice(0, 500)
+                : "no validation detail provided",
+          },
+          {
+            uncertain: typeof args.uncertain === "boolean" ? args.uncertain : false,
+            forceFull: typeof args.forceFull === "boolean" ? args.forceFull : false,
+          }
+        );
+        return {
+          jsonrpc: "2.0",
+          id: reqId,
+          result: {
+            content: [{ type: "text", text: JSON.stringify(report, null, 2) }],
           },
         };
       }

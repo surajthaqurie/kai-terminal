@@ -63,6 +63,18 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 #[cfg(feature = "tauri")]
 #[tauri::command]
+fn close_app_window(app_handle: AppHandle) {
+    let state: State<'_, PtyManager> = app_handle.state();
+    state.close_all();
+    if let Some(window) = app_handle.get_webview_window("main") {
+        let _ = window.close();
+    }
+    app_handle.exit(0);
+    std::process::exit(0);
+}
+
+#[cfg(feature = "tauri")]
+#[tauri::command]
 fn open_external_url_cmd(url: String) -> Result<(), error::TerminalError> {
     shell::open_external_url(&url)
 }
@@ -320,6 +332,10 @@ pub fn run() {
                     // Code Mode state (covers `kai code` written externally).
                     let _ = window.emit("kai-open-project", serde_json::json!({}));
                 }
+            } else {
+                // If there is no main window (e.g. stale/zombie process), terminate
+                // so the new instance can start cleanly.
+                std::process::exit(0);
             }
         }))
         .setup(|app| {
@@ -338,9 +354,12 @@ pub fn run() {
                 // Reap all active PTY child processes when window is closed
                 let state: State<'_, PtyManager> = window.state();
                 state.close_all();
+                window.app_handle().exit(0);
+                std::process::exit(0);
             }
         })
         .invoke_handler(tauri::generate_handler![
+            close_app_window,
             get_available_shells,
             get_ai_cli_status,
             get_ai_cli_details,
@@ -382,6 +401,7 @@ pub fn run() {
                 // Reap all active PTY child processes on application shutdown
                 let state: State<'_, PtyManager> = app_handle.state();
                 state.close_all();
+                std::process::exit(0);
             }
         });
 }
