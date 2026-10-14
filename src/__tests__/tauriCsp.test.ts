@@ -36,6 +36,15 @@ describe("tauri.conf.json Content Security Policy", () => {
     expect(csp).toMatch(/img-src[^;]*data:/);
   });
 
+  it("allows the GitHub Releases API (update checks run in the WebView)", () => {
+    // The update check is a frontend `fetch` to api.github.com. Without an
+    // explicit allow-list entry the WebView blocks it on every OS and the
+    // check silently resolves to "no update" — the "check for updates does
+    // nothing in the installed app" report.
+    const connectSrc = csp.match(/connect-src([^;]*)/)?.[1] ?? "";
+    expect(connectSrc).toContain("https://api.github.com");
+  });
+
   it("keeps scripts locked down (no wildcards, no unsafe-inline)", () => {
     const scriptSrc = csp.match(/script-src([^;]*)/)?.[1] ?? "";
     expect(scriptSrc).not.toContain("*");

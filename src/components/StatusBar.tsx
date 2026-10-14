@@ -13,6 +13,7 @@ import {
   RefreshCw,
   GitCompare,
 } from "lucide-react";
+import { formatFooterPath } from "../services/projectService";
 
 interface StatusBarProps {
   gitBranch: string | null;
@@ -58,6 +59,7 @@ export const StatusBar: FC<StatusBarProps> = ({
 }) => {
   const [gitMenuOpen, setGitMenuOpen] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [copiedPath, setCopiedPath] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -81,6 +83,21 @@ export const StatusBar: FC<StatusBarProps> = ({
   const repoName = gitRepoRoot
     ? gitRepoRoot.split(/[/\\]/).filter(Boolean).pop() || gitRepoRoot
     : null;
+
+  // Compact display (`C:\…\repo\src`) so long Windows paths never push the
+  // git + version pills out of view; the full path stays one click away.
+  const dirDisplay = projectDir ? formatFooterPath(projectDir) : "";
+
+  const handleCopyPath = async () => {
+    if (!projectDir) return;
+    try {
+      await navigator.clipboard.writeText(projectDir);
+      setCopiedPath(true);
+      setTimeout(() => setCopiedPath(false), 1500);
+    } catch {
+      // clipboard unavailable: tooltip still shows the full path
+    }
+  };
 
   const handleCopyBranch = async () => {
     if (!gitBranch) return;
@@ -224,14 +241,16 @@ export const StatusBar: FC<StatusBarProps> = ({
           </span>
         )}
         {projectDir && (
-          <span
-            className="status-dir"
-            title={projectDir}
-            aria-label={`Current directory: ${projectDir}`}
+          <button
+            type="button"
+            className="status-dir status-dir-btn"
+            title={`${projectDir}${copiedPath ? "\nCopied!" : "\nClick to copy full path"}`}
+            aria-label={`Current directory: ${projectDir}. Activate to copy the full path.`}
+            onClick={handleCopyPath}
           >
             <Folder size={12} aria-hidden="true" />
-            <span className="status-dir-text">{projectDir}</span>
-          </span>
+            <span className="status-dir-text">{dirDisplay}</span>
+          </button>
         )}
       </div>
 

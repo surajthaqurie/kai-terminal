@@ -1019,6 +1019,74 @@ pub fn open_in_editor(requested_editor: Option<&str>, cwd: &str) -> Result<Strin
     Ok(editor_bin)
 }
 
+/// Allow-listed base for external URLs opened from the UI.
+///
+/// `window.open` cannot reach the OS browser from the Tauri WebView (no
+/// opener plugin shipped), so "View release" and friends go through this
+/// backend command instead. Only our own releases page (and release URLs
+/// under it) may be opened — never arbitrary user input.
+pub const EXTERNAL_URL_BASE: &str = "https://github.com/surajthaqurie/kai-terminal/";
+pub const EXTERNAL_URL_FALLBACK: &str =
+    "https://github.com/surajthaqurie/kai-terminal/releases/latest";
+
+/// Pure validation for external URLs (unit-tested; no process is spawned).
+pub fn validate_external_url(url: &str) -> Result<(), TerminalError> {
+    if url.is_empty() || url.len() > 512 {
+        return Err(TerminalError::IoError(
+            "Refusing to open an invalid URL.".to_string(),
+        ));
+    }
+    if url.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return Err(TerminalError::IoError(
+            "Refusing to open a URL with whitespace or control characters.".to_string(),
+        ));
+    }
+    if !(url == EXTERNAL_URL_FALLBACK || url.starts_with(EXTERNAL_URL_BASE)) {
+        return Err(TerminalError::IoError(
+            "Refusing to open a URL outside the Kai Terminal releases page.".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+/// Open an allow-listed https URL in the OS default browser (all OSes).
+///
+/// Detached spawn: returns once the launcher starts, never blocks the UI
+/// thread. Validation runs first — the URL reaches a native launcher, so
+/// arbitrary input must never get here.
+pub fn open_external_url(url: &str) -> Result<(), TerminalError> {
+    validate_external_url(url)?;
+    #[cfg(target_os = "windows")]
+    {
+        let mut c = std::process::Command::new("cmd");
+        // `start` treats the first quoted arg as a window title: the empty
+        // `""` keeps the URL in the right slot. Argv-only, no shell string.
+        c.args(["/c", "start", "", url]);
+        hide_console(&mut c);
+        c.spawn()
+            .map_err(|e| TerminalError::IoError(format!("Failed to open URL: {e}")))?;
+        return Ok(());
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(url)
+            .spawn()
+            .map_err(|e| TerminalError::IoError(format!("Failed to open URL: {e}")))?;
+        return Ok(());
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(url)
+            .spawn()
+            .map_err(|e| {
+                TerminalError::IoError(format!("Failed to open URL (is xdg-open installed?): {e}"))
+            })?;
+        return Ok(());
+    }
+}
+
 /// Returns true for Windows script shims that `CreateProcess` cannot run
 /// directly (`.cmd`, `.bat`, `.ps1` — e.g. VS Code's `code.cmd` on PATH).
 #[cfg(target_os = "windows")]
@@ -1146,7 +1214,11 @@ pub fn detect_system_terminal_config() -> SystemTerminalConfig {
     #[cfg(target_os = "macos")]
     let (font_family, theme, cursor_blink, cursor_style, opacity) = (
         "Menlo, Monaco, 'Courier New', monospace".to_string(),
-        "one-dark".to_string(),
+        // Must match the frontend DEFAULT_SETTINGS.theme ("Kali (Default)"):
+        // the app applies host sync on top of an untouched default, so any
+        // other value here silently unselects the default appearance on
+        // fresh installs.
+        "kali".to_string(),
         false,
         "block".to_string(),
         1.0f64,
@@ -1155,7 +1227,8 @@ pub fn detect_system_terminal_config() -> SystemTerminalConfig {
     #[cfg(target_os = "windows")]
     let (font_family, theme, cursor_blink, cursor_style, opacity) = (
         "Consolas, 'Cascadia Code', 'Lucida Console', monospace".to_string(),
-        "one-dark".to_string(),
+        // Same contract as macOS above: keep the frontend default selected.
+        "kali".to_string(),
         false,
         "block".to_string(),
         1.0f64,
@@ -1319,6 +1392,53 @@ mod tests {
         assert!(open_in_editor(Some("/non_existent_editor_xyz_99"), "/tmp").is_err());
         assert!(open_in_editor(Some("invalid\0editor"), "/tmp").is_err());
         assert!(open_in_editor(Some(""), "/tmp").is_err());
+    }
+
+    #[test]
+    fn test_system_terminal_config_theme_is_a_known_id() {
+        // The frontend applies host sync over an untouched default and the
+        // Appearance panel only marks known ids selected: an unknown default
+        // here would leave "no appearance selected" on fresh installs.
+        // Must mirror `ThemeName` in src/types/terminal.ts.
+        const KNOWN: &[&str] = &[
+            "kali",
+            "catppuccin-mocha",
+            "one-dark",
+            "dracula",
+            "solarized-dark",
+            "solarized-light",
+            "nord",
+            "tokyo-night",
+        ];
+        let cfg = detect_system_terminal_config();
+        assert!(
+            KNOWN.contains(&cfg.theme.as_str()),
+            "unknown default theme from host sync: {}",
+            cfg.theme
+        );
+        assert!(!cfg.font_family.trim().is_empty());
+        // Fresh-install contract: Windows/macOS keep the frontend default.
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        assert_eq!(cfg.theme, "kali");
+    }
+
+    #[test]
+    fn test_validate_external_url_allowlists_releases_only() {
+        // Our own releases page and children pass (spawn is NOT tested here).
+        assert!(validate_external_url(EXTERNAL_URL_FALLBACK).is_ok());
+        assert!(validate_external_url(
+            "https://github.com/surajthaqurie/kai-terminal/releases/tag/v0.1.3"
+        )
+        .is_ok());
+        // Everything else is refused: other hosts, other repos, non-https,
+        // whitespace/control smuggling, empty, oversized.
+        assert!(validate_external_url("https://github.com/other/repo/releases").is_err());
+        assert!(validate_external_url("https://example.com/").is_err());
+        assert!(validate_external_url("http://github.com/surajthaqurie/kai-terminal/").is_err());
+        assert!(validate_external_url("https://github.com/surajthaqurie/kai-terminal/ x").is_err());
+        assert!(validate_external_url("").is_err());
+        assert!(validate_external_url(&"https://github.com/surajthaqurie/kai-terminal/a".repeat(20))
+            .is_err());
     }
 
     #[test]

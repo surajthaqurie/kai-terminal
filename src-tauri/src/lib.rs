@@ -6,6 +6,7 @@ pub mod diagnostics;
 pub mod error;
 pub mod git;
 pub mod intelligence;
+pub mod kai_cli;
 pub mod pty;
 pub mod shell;
 
@@ -59,6 +60,24 @@ use shell::{
 };
 #[cfg(feature = "tauri")]
 use tauri::{AppHandle, Emitter, Manager, State};
+
+#[cfg(feature = "tauri")]
+#[tauri::command]
+fn open_external_url_cmd(url: String) -> Result<(), error::TerminalError> {
+    shell::open_external_url(&url)
+}
+
+#[cfg(feature = "tauri")]
+#[tauri::command]
+fn get_kai_cli_status_cmd(app: AppHandle) -> kai_cli::KaiCliStatus {
+    kai_cli::get_kai_cli_status_cmd(app)
+}
+
+#[cfg(feature = "tauri")]
+#[tauri::command]
+fn ensure_kai_cli_cmd(app: AppHandle) -> kai_cli::KaiCliStatus {
+    kai_cli::ensure_kai_cli_cmd(app)
+}
 
 #[cfg(feature = "tauri")]
 #[tauri::command]
@@ -308,6 +327,17 @@ pub fn run() {
                 }
             }
         }))
+        .setup(|app| {
+            // First-run repair: installer-only users have no `kai` on PATH.
+            // Off the UI thread so a slow PowerShell cold start can never
+            // stall the first PTY spawn ("Not Responding on launch").
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
+                let resource_dir = handle.path().resource_dir().ok();
+                let _ = kai_cli::ensure_kai_cli(resource_dir);
+            });
+            Ok(())
+        })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { .. } = event {
                 // Reap all active PTY child processes when window is closed
@@ -331,6 +361,7 @@ pub fn run() {
             discard_git_file_cmd,
             open_project_in_editor,
             detect_installed_editors_cmd,
+            open_external_url_cmd,
             get_diagnostics,
             create_pty,
             write_to_pty,
@@ -344,7 +375,9 @@ pub fn run() {
             get_session_info,
             list_sessions,
             get_project_intelligence_cmd,
-            get_active_project_cmd
+            get_active_project_cmd,
+            get_kai_cli_status_cmd,
+            ensure_kai_cli_cmd
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

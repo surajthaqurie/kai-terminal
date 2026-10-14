@@ -216,13 +216,30 @@ export function isDismissed(version: string | null): boolean {
   return getDismissedVersion() === normalizeVersion(version);
 }
 
-/** Opens the release page in a new tab (browser) or OS browser (desktop). */
+/** Opens the release page in the OS browser (desktop) or a new tab (web).
+ *
+ * Desktop note: the app ships no opener plugin, so `window.open` cannot
+ * reach the system browser from the Tauri WebView — the "View release"
+ * button silently did nothing on every OS. Inside Tauri this goes through
+ * the allow-listed `open_external_url_cmd` backend command instead.
+ */
 export async function openReleasePage(url: string): Promise<void> {
   const target = url || RELEASES_PAGE_URL;
-  // NOTE: intentionally no @tauri-apps/plugin-opener dependency — the app
-  // does not ship the opener plugin. `window.open` works in browser builds;
-  // in Tauri it falls back to a same-window navigation which the user can
-  // reach via the external browser anyway. Keep this dependency-free.
+  try {
+    const { isTauriAvailable } = await import("./ptyService");
+    if (isTauriAvailable()) {
+      try {
+        const { invoke } = await import("@tauri-apps/api/core");
+        await invoke("open_external_url_cmd", { url: target });
+        return;
+      } catch {
+        // Backend refused/failed (e.g. non-allow-listed URL in tests):
+        // fall through to window.open below.
+      }
+    }
+  } catch {
+    // Browser/mock: fall through to window.open below.
+  }
   try {
     const opened = window.open(target, "_blank", "noopener,noreferrer");
     if (opened) return;

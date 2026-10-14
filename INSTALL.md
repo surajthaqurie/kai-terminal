@@ -90,7 +90,18 @@ Templates for building non-Debian formats are located in the `packaging/` folder
 
 1. Download the `.exe` (per-user installer) or `.msi` package from [GitHub Releases](https://github.com/surajthaqurie/kai-terminal/releases/latest).
 2. Double-click the installer and follow the setup wizard.
-3. Windows 11 includes the required WebView2 runtime by default. On Windows 10, if prompted, install Microsoft WebView2 Runtime.
+3. Launch **Kai Terminal** once: on first startup it auto-installs the `kai`
+   CLI launcher (`%USERPROFILE%\.kai\bin\kai.cmd` + `kai.ps1`, backed by the
+   CLI bundle shipped inside the installer) and adds that folder to your
+   **user PATH automatically** — no manual `setx` step.
+4. Open a **new** terminal window (PATH is read at shell startup) and verify:
+   ```powershell
+   kai --version
+   ```
+   The launcher needs Node.js 20+ at call time. If `kai --version` reports
+   Node is missing, install Node LTS from https://nodejs.org, then run
+   `kai --version` again in a new terminal.
+5. Windows 11 includes the required WebView2 runtime by default. On Windows 10, if prompted, install Microsoft WebView2 Runtime.
 
 ---
 
@@ -157,8 +168,10 @@ npm run tauri build
 
 | Problem | Cause / Solution |
 | :--- | :--- |
-| **`kai: command not found` after installing the desktop app** | The Tauri `.exe`/`.msi`/`.deb`/`.dmg` installer ships the terminal UI only — it never puts the Node `kai` CLI on PATH. Fix: `npm install && npm run setup:cli`, **restart the terminal**, then `kai --version`. |
+| **`kai: command not found` after installing the desktop app** | Recent builds self-repair on first launch: Kai installs a `kai` launcher from its bundled CLI and adds it to your user PATH automatically — launch Kai once, open a **new** terminal, then `kai --version`. If `kai` instead opens a window, see the name-collision row below. |
 | **`kai code .` / `kai agent setup ...` opens a NEW Kai window (or new terminal) instead of running in this terminal** | `kai` on PATH resolves to the **desktop GUI binary**, not the Node CLI — both share the name `kai` on every OS (Linux: `/usr/bin/kai` vs `~/.local/bin/kai`; macOS: `Kai Terminal.app/.../kai` vs `~/.local/bin/kai`; Windows: `KaiTerminal\kai.exe` vs `.kai\bin\kai.cmd`). Fix: `npm run setup:cli` (backs up the collision to `~/.local/bin/kai.desktop-bak` on Linux/macOS), **restart the terminal**, then `kai --version` must print `kai v...` and exit instantly. If it opens a window, `which kai` / `where kai` still hits the desktop first — put `~/.local/bin` (Linux/macOS) or `%USERPROFILE%\.kai\bin` (Windows) FIRST on PATH. New desktop builds also refuse CLI args with a pointer instead of opening a duplicate window; only `kai code` (CLI) ever launches/focuses the GUI — `agent setup`, `status`, `query`, etc. never open anything. |
+| **Check-for-updates / "View release" does nothing in the installed app** | Fixed: the WebView CSP now allows `https://api.github.com`, and release links open via the OS browser on all three OSes (`xdg-open` / `open` / `start`). If the button still fails on Linux, make sure `xdg-open` exists (`which xdg-open`) and a default browser is set. |
+| **Linux app-drawer entry has the wrong icon/name, or clicking it does nothing** | Run `kai doctor` (or `./bin/kai.js doctor`) — it audits every kai `.desktop` entry (Name/Exec target/Icon) and tells you exactly which part is broken. Also try: `grep -ril kai /usr/share/applications ~/.local/share/applications`, then run the `Exec=` binary directly in a terminal to see the real error (often a missing WebKit/GTK lib — fix with `sudo apt-get install -f`). |
 | **`npm run setup:cli` hangs on Windows (no output, looks frozen)** | `powershell` first launch (`.NET` JIT) or the first `vite` build can stall under antivirus/OneDrive locks. Wait up to a minute; the script now prints build timing and caps PowerShell probes at 15–20 s before printing manual `setx` steps instead of hanging. Re-run with `node scripts/setup-cli.cjs --skip-build` to skip a finished build. |
 | **`kai` still not found right after `setup:cli`** | PATH is read when a shell starts. Open a **new** terminal window (or restart the IDE terminal) — no reinstall needed. |
 | **Manual PATH fallback (Windows)** | If auto-update failed, run once in PowerShell: `powershell -NoProfile -Command "[Environment]::SetEnvironmentVariable('Path', ([Environment]::GetEnvironmentVariable('Path','User').TrimEnd(';') + ';%USERPROFILE%\.kai\bin'), 'User')"`, then open a **new** terminal. Do NOT use `setx PATH "%PATH%;..."` — setx silently truncates values over 1024 chars and can corrupt PATH. |

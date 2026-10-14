@@ -586,6 +586,14 @@ html,
   box-shadow: 0 0 8px var(--accent-glow);
 }
 
+/* Custom tab color wins over the default accent pill: without this the
+   ::after overlay buries the user's 2px borderTop, so picking a color
+   appears to do nothing ("tab color not working"). */
+.tab-item.has-color.active::after {
+  background: var(--tab-color);
+  box-shadow: 0 0 8px var(--tab-color);
+}
+
 .tab-icon {
   opacity: 0.7;
   color: var(--accent-primary);
@@ -2404,6 +2412,17 @@ select.modal-input {
   font-family: var(--font-mono);
   user-select: text;
   cursor: text;
+}
+
+/* Footer path is a button (click-to-copy) styled as plain status text. */
+.status-dir-btn {
+  border: none;
+  font: inherit;
+  cursor: pointer;
+}
+
+.status-dir-btn:hover .status-dir-text {
+  color: var(--accent-primary);
 }
 
 .status-right {

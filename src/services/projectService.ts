@@ -208,6 +208,103 @@ function normalizeCodeModePath(p: string): string {
 }
 
 /**
+ * Normalized form of a shell-reported cwd for *comparison* only.
+ *
+ * The same directory arrives in different textual forms depending on the
+ * reporter (OSC 7 `file://`, OSC 9;9, backend `getPtyCwd`, `\\?\`-prefixed
+ * verbatim paths on Windows). Comparing raw strings treats those as a
+ * directory *change*, which rewrote tab state, touched localStorage,
+ * invalidated the git cache, and re-spawned `git` on nearly every prompt —
+ * the footer flicker/blanking seen while typing. Compare with this instead.
+ */
+export function normalizeCwdForCompare(p: string): string {
+  return normalizeCodeModePath(p);
+}
+
+/**
+ * Cleaned cwd for *storing* in tab/pane state: drops the Win32 verbatim
+ * `\\?\` prefix and trailing slashes but keeps native separators so the
+ * footer displays a familiar path.
+ */
+export function cleanCwdForStore(p: string): string {
+  let s = p.trim();
+  s = s.replace(/^\\\\\?\\UNC\\/i, "\\\\");
+  s = s.replace(/^\\\\\?\\/, "");
+  // Never strip a filesystem root (`C:\`, `/`).
+  const isRoot = /^[a-zA-Z]:[/\\]?$/.test(s) || /^[/\\]+$/.test(s);
+  if (!isRoot) {
+    const stripped = s.replace(/[/\\]+$/, "");
+    s = stripped || s;
+  }
+  return s;
+}
+
+/** Shorten a home-prefixed path (`C:\Users\ann\...` → `~\...`). */
+function withHomeTilde(p: string): string {
+  try {
+    const home =
+      typeof process !== "undefined" && process.env && (process.env.HOME || process.env.USERPROFILE)
+        ? String(process.env.HOME || process.env.USERPROFILE)
+        : "";
+    if (home) {
+      const normP = p.replace(/\\/g, "/").replace(/\/+$/, "");
+      const normH = home.replace(/\\/g, "/").replace(/\/+$/, "");
+      const win = /^[a-zA-Z]:\//.test(normH);
+      const eq = win
+        ? normP.toLowerCase() === normH.toLowerCase() ||
+          normP.toLowerCase().startsWith(normH.toLowerCase() + "/")
+        : normP === normH || normP.startsWith(normH + "/");
+      if (eq) {
+        const rest = p.slice(home.length).replace(/^[/\\]+/, "");
+        return rest ? `~${p.includes("\\") && !p.includes("/") ? "\\" : "/"}${rest}` : "~";
+      }
+    }
+  } catch {
+    // fall through without tilde
+  }
+  // Browser (no process.env): try a leading /home/<user> or /Users/<user>.
+  const m = p.match(/^(\/home\/[^/\\]+|\/Users\/[^/\\]+)([/\\]|$)/);
+  if (m) return `~${p.slice(m[1].length) || ""}` || "~";
+  return p;
+}
+
+/**
+ * Compact footer display for a full directory path: `~` for home plus a
+ * middle ellipsis (`C:\…\repo\src`) when longer than `maxLen`. The full
+ * path stays available via the footer's tooltip / click-to-copy — the text
+ * itself must never push the git + version pills out of view.
+ */
+export function formatFooterPath(fullPath: string, maxLen = 48): string {
+  if (!fullPath) return "";
+  const s = fullPath.trim();
+  // Fits as-is: show everything, never shorten a readable path.
+  if (s.length <= maxLen) return s;
+  // Try home-tilde first (lossless for the user: `~` is unambiguous).
+  const t = withHomeTilde(s);
+  if (t.length <= maxLen) return t;
+  const sep = t.includes("\\") && !t.includes("/") ? "\\" : "/";
+  const parts = t.split(/[/\\]/).filter(Boolean);
+  if (parts.length <= 2) return "…" + t.slice(-(maxLen - 1));
+  const first = parts[0] ?? "";
+  const drive = /^[a-zA-Z]:$/.test(first) || first === "~" ? first : "";
+  // Grow the tail (last segments) while `drive/…/tail` still fits.
+  let tail = parts[parts.length - 1] ?? "";
+  for (let i = parts.length - 2; i >= 1; i--) {
+    const candidate = `${parts[i]}${sep}${tail}`;
+    const compact = drive ? `${drive}${sep}…${sep}${candidate}` : `…${sep}${candidate}`;
+    if (compact.length > maxLen) break;
+    tail = candidate;
+  }
+  const compact = drive ? `${drive}${sep}…${sep}${tail}` : `…${sep}${tail}`;
+  if (compact.length > maxLen) {
+    // Last resort: hard cut with a leading ellipsis (the end stays
+    // readable — the repo/project name is what matters).
+    return "…" + t.slice(-(maxLen - 1));
+  }
+  return compact;
+}
+
+/**
  * Strips the macOS `/private` alias (`/tmp` -> `/private/tmp`): the CLI
  * canonicalizes with `realpath` (yielding `/private/...`) while shells
  * usually report the logical `$PWD` (`/...`). Applied to BOTH sides before
@@ -314,7 +411,10 @@ export const GIT_CACHE_TTL_MS = 30000;
 const gitInflight = new Map<string, Promise<GitInfo>>();
 
 export function gitCacheKey(cwd: string): string {
-  return cwd.trim();
+  // Normalized: verbatim prefixes / separators / case must not fork the
+  // cache (or the footer refetches the same repo under two keys).
+  const n = normalizeCwdForCompare(cwd);
+  return n || cwd.trim();
 }
 
 export function getCachedGitInfo(cwd: string, now = Date.now()): GitInfo | null {

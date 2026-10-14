@@ -46,6 +46,29 @@ const PROJECT_SETTINGS_PREFIX = "kai_project_settings_";
 const LEGACY_PROJECT_SETTINGS_PREFIX = "terminal_project_settings_";
 const SETTINGS_VERSION = 1;
 
+/** Theme ids the Appearance panel can mark selected. Single source of truth. */
+export const KNOWN_THEME_IDS: ReadonlyArray<ThemeName> = [
+  "kali",
+  "catppuccin-mocha",
+  "one-dark",
+  "dracula",
+  "solarized-dark",
+  "solarized-light",
+  "nord",
+  "tokyo-night",
+];
+
+/**
+ * Coerce any input to a known theme id. Unknown/missing values recover to
+ * the default ("Kali (Default)") so the Appearance panel never renders with
+ * nothing selected.
+ */
+export function normalizeThemeId(input: unknown): ThemeName {
+  return typeof input === "string" && (KNOWN_THEME_IDS as ReadonlyArray<string>).includes(input)
+    ? (input as ThemeName)
+    : DEFAULT_SETTINGS.theme;
+}
+
 export class SettingsService {
   /** Validates and clamps settings; always recovers to safe defaults. */
   static normalize(input: Partial<UserSettings>): UserSettings {
@@ -73,17 +96,7 @@ export class SettingsService {
         kb[key] = v.trim().slice(0, 32);
       }
     }
-    const themes: Array<UserSettings["theme"]> = [
-      "kali",
-      "catppuccin-mocha",
-      "one-dark",
-      "dracula",
-      "solarized-dark",
-      "solarized-light",
-      "nord",
-      "tokyo-night",
-    ];
-    if (!themes.includes(merged.theme)) merged.theme = DEFAULT_SETTINGS.theme;
+    merged.theme = normalizeThemeId(merged.theme);
 
     const cursorStyles: Array<NonNullable<UserSettings["cursorStyle"]>> = [
       "block",
@@ -166,7 +179,7 @@ export class SettingsService {
     return {
       fontFamily: config.font_family || DEFAULT_SETTINGS.fontFamily,
       fontSize: 12, // Always ensure default font size is 12
-      theme: (config.theme as ThemeName) || "kali",
+      theme: normalizeThemeId(config.theme),
       cursorBlink: config.cursor_blink ?? false,
       cursorStyle: (config.cursor_style as CursorStyle) || "block",
       opacity: config.opacity ?? 1.0,

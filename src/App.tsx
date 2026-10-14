@@ -33,10 +33,13 @@ import { SettingsService, DEFAULT_SETTINGS } from "./services/settingsService";
 import {
   getActiveProject,
   getActiveProjectState,
+  getCachedGitInfo,
   getGitInfoCached,
+  cleanCwdForStore,
   invalidateGitCache,
   isCodeModeActiveForDir,
   loadRecentProjects,
+  normalizeCwdForCompare,
   recordRecentProject,
   openProjectInEditor,
   runGitAction,
@@ -432,9 +435,11 @@ export function App() {
   const syncCodeModeState = useCallback(() => {
     if (typeof document !== "undefined" && document.hidden) return;
     // Authoritative async state (backend file + launch env, then explicit
-    // localStorage). Never resolves recent history to code.
+    // localStorage). Never resolves recent history to code. Equality-guarded
+    // so idle syncs never re-render the footer (flicker fix).
     void getActiveProjectState().then((s) => {
-      setCodeModeProject(s.mode === "code" ? s.path : null);
+      const next = s.mode === "code" ? s.path : null;
+      setCodeModeProject((prev) => (prev === next ? prev : next));
     });
   }, []);
   useEffect(() => {
@@ -475,6 +480,17 @@ export function App() {
       if (unlistenSingle) unlistenSingle();
     };
   }, [syncCodeModeState]);
+  // Real-time Code Mode for EXTERNAL `kai code .` runs while Kai stays
+  // visible (side-by-side terminal, no focus change to observe): a 4 s
+  // visible-only poll of the cheap state-file IPC. Skipped while hidden so
+  // background polls never compete with the foreground app.
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      syncCodeModeState();
+    }, 4000);
+    return () => clearInterval(timer);
+  }, [syncCodeModeState]);
   /** Fired by TerminalView on every submitted line (Enter) in any pane. */
   const handleCommandSubmitted = useCallback(() => {
     syncCodeModeState();
@@ -502,10 +518,7 @@ export function App() {
           setGitRepoRoot(info.repo_root ?? null);
         },
         () => {
-          setGitInfoByDir((prev) => ({ ...prev, [dir]: null }));
-          setGitBranch(null);
-          setGitDirty(false);
-          setGitRepoRoot(null);
+          // Refresh failed: keep the last good badge (spinner stops below).
         }
       )
       .finally(() => setIsRefreshingGit(false));
@@ -772,6 +785,16 @@ export function App() {
     [codeModeProject]
   );
 
+  // Stable footer pill: derived inline, the badge flapped between "Terminal"
+  // and nothing whenever the effective dir was momentarily empty (cwd still
+  // resolving) — one more source of footer blanking while typing. Unknown
+  // dir keeps the last pill instead of flashing.
+  const [modeDisplay, setModeDisplay] = useState<"code" | "terminal">("terminal");
+  useEffect(() => {
+    if (!effectiveProjectDir) return;
+    setModeDisplay(isCodeModeForDir(effectiveProjectDir) ? "code" : "terminal");
+  }, [effectiveProjectDir, isCodeModeForDir]);
+
   // Per-tab flat-grid geometry, memoized on the tabs array: `resolveTabLayout`
   // can synthesize a fallback tree (fresh split ids) for stale layouts, and
   // recomputing it on every render would churn divider keys. Memoizing keeps
@@ -846,8 +869,8 @@ export function App() {
             }
           },
           () => {
-            if (cancelled) return;
-            setGitInfoByDir((prev) => ({ ...prev, [dir]: null }));
+            // Probe failure: keep the last good badge — a failed `git`
+            // spawn must never blank the footer while typing.
           }
         );
       }
@@ -877,6 +900,17 @@ export function App() {
       setGitDirty(cached?.dirty ?? false);
       setGitRepoRoot(cached?.repo_root ?? null);
     }
+    // Cache-first: the module cache is keyed normalized, so a repeat visit
+    // (or a `\\?\`-prefixed twin of the same dir) applies synchronously
+    // with zero IPC — no "No git repo" flash frame while typing.
+    const syncHit = getCachedGitInfo(effectiveProjectDir);
+    if (syncHit && cached === undefined) {
+      setGitInfoByDir((prev) => ({ ...prev, [effectiveProjectDir]: syncHit }));
+      setGitBranch(syncHit.branch);
+      setGitDirty(syncHit.dirty);
+      setGitRepoRoot(syncHit.repo_root ?? null);
+      return;
+    }
     let cancelled = false;
     void getGitInfoCached(effectiveProjectDir).then(
       (info) => {
@@ -887,11 +921,7 @@ export function App() {
         setGitRepoRoot(info.repo_root ?? null);
       },
       () => {
-        if (cancelled) return;
-        setGitInfoByDir((prev) => ({ ...prev, [effectiveProjectDir]: null }));
-        setGitBranch(null);
-        setGitDirty(false);
-        setGitRepoRoot(null);
+        // Probe failure: keep the last good badge — never blank the footer.
       }
     );
     return () => {
@@ -911,12 +941,14 @@ export function App() {
       // profile path (the "binary not runnable" mismatch).
       const base = shells.find((s) => s.id === selectedShellId);
       const custom = userSettings.customShellPath?.trim();
-      const effName = custom ? `${base?.name ?? "Custom Shell"} (custom)` : base?.name;
       const effPath = custom || base?.path;
-      // Number from live tabs (not a stale closure) so spam-clicking the
-      // top "+" like PowerShell never yields duplicate "Terminal N" titles.
-      const n = tabsRef.current.length + 1;
-      const title = `${effName || "Terminal"} ${n}`;
+      // Titles are always "Terminal N". Number from live tabs (not a stale
+      // closure) plus a collision skip, so spam-clicking "+" and closing
+      // tabs never yields duplicate titles.
+      const usedTitles = new Set(tabsRef.current.map((t) => t.title));
+      let n = tabsRef.current.length + 1;
+      while (usedTitles.has(`Terminal ${n}`)) n += 1;
+      const title = `Terminal ${n}`;
       const newTab = createDefaultTab(title, effPath, dir);
       setTabs((prev) => [...prev, newTab]);
       setActiveTabId(newTab.id);
@@ -1090,7 +1122,7 @@ export function App() {
       const liveCwd = cwdRef.current;
       const selectedShell = liveShells.find((s) => s.id === liveSelectedId);
       const fresh = createDefaultTab(
-        `${selectedShell?.name || "Terminal"} 1`,
+        "Terminal 1",
         selectedShell?.path,
         liveCwd.trim() || undefined
       );
@@ -1244,19 +1276,29 @@ export function App() {
     // (a classic "Not Responding on launch" trigger). Honors the user's
     // "automatically check for updates" preference: previously the toggle
     // was saved but never read here, so disabling it changed nothing.
+    // The first check waits ~45 s (idle-friendly: skipped while the window
+    // is hidden, retried up to 3× a minute later), so GitHub is only hit
+    // after the user has settled in — never during launch.
     const autoCheck = userSettings.autoCheckUpdates !== false;
-    const initialCheckTimer = setTimeout(() => {
+    const retryTimers: ReturnType<typeof setTimeout>[] = [];
+    const initialCheckTimer = setTimeout(function kick() {
+      if (typeof document !== "undefined" && document.hidden) {
+        if (retryTimers.length < 3) retryTimers.push(setTimeout(kick, 60_000));
+        return;
+      }
       if (autoCheck && shouldAutoCheck()) {
         void handleCheckUpdates(false);
       }
-    }, 8000);
+    }, 45_000);
     const interval = setInterval(() => {
+      if (typeof document !== "undefined" && document.hidden) return;
       if (userSettings.autoCheckUpdates !== false) {
         void handleCheckUpdates(false);
       }
     }, UPDATE_PERIODIC_MS);
     return () => {
       clearTimeout(initialCheckTimer);
+      for (const t of retryTimers) clearTimeout(t);
       clearInterval(interval);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1897,81 +1939,87 @@ export function App() {
                   onFocus={focusPane}
                   onCommandSubmitted={handleCommandSubmitted}
                   onCwdResolved={(resolved) => {
-                    if (resolved) {
-                      // No-op probes (cwd unchanged) skip the whole cascade:
-                      // previously every probe rewrote tab state, touched
-                      // localStorage, invalidated the git cache, and spawned
-                      // `git` — per Enter, ×3. Unchanged dirs refresh the
-                      // badge from cache only (no spawn unless the TTL
-                      // expired), so `git commit` still updates the badge.
-                      const live = tabsRef.current.find((t) => t.id === tab.id);
-                      const livePane = live?.panes.find((p) => p.id === pane.id);
-                      if ((livePane?.cwd || live?.cwd || cwdRef.current) === resolved) {
-                        if (
-                          activeTabIdRef.current === tab.id &&
-                          (live?.activePaneId === pane.id || (live?.panes.length ?? 0) <= 1)
-                        ) {
-                          void getGitInfoCached(resolved).then(
-                            (info) => {
-                              setGitInfoByDir((prev) =>
-                                prev[resolved]?.branch === info.branch &&
-                                prev[resolved]?.dirty === info.dirty &&
-                                prev[resolved]?.repo_root === info.repo_root
-                                  ? prev
-                                  : { ...prev, [resolved]: info }
-                              );
-                              setGitBranch(info.branch);
-                              setGitDirty(info.dirty);
-                              setGitRepoRoot(info.repo_root ?? null);
-                            },
-                            () => {
-                              setGitInfoByDir((prev) => ({ ...prev, [resolved]: null }));
-                              setGitBranch(null);
-                              setGitDirty(false);
-                              setGitRepoRoot(null);
-                            }
-                          );
-                        }
-                        return;
-                      }
-                      setTabs((prev) =>
-                        prev.map((t) =>
-                          t.id === tab.id
-                            ? {
-                                ...t,
-                                cwd:
-                                  t.activePaneId === pane.id || t.panes.length === 1
-                                    ? resolved
-                                    : t.cwd,
-                                panes: t.panes.map((p) =>
-                                  p.id === pane.id ? { ...p, cwd: resolved } : p
-                                ),
-                              }
-                            : t
-                        )
-                      );
+                    if (!resolved) return;
+                    // Normalize BEFORE comparing: OSC 7 / OSC 9;9 / backend
+                    // `getPtyCwd` report the same directory in different
+                    // textual forms (`C:\x` vs `C:/x` vs `\\?\C:\x`). A raw
+                    // `===` treated every prompt as a directory *change* —
+                    // rewriting tab state, touching localStorage, and
+                    // re-spawning `git`, which blanked the footer while
+                    // typing. Store the cleaned form so it never flaps.
+                    const cleaned = cleanCwdForStore(resolved);
+                    if (!cleaned) return;
+                    // No-op probes (cwd unchanged) skip the whole cascade:
+                    // previously every probe rewrote tab state, touched
+                    // localStorage, invalidated the git cache, and spawned
+                    // `git` — per Enter, ×3. Unchanged dirs refresh the
+                    // badge from cache only (no spawn unless the TTL
+                    // expired), so `git commit` still updates the badge.
+                    const live = tabsRef.current.find((t) => t.id === tab.id);
+                    const livePane = live?.panes.find((p) => p.id === pane.id);
+                    const current = livePane?.cwd || live?.cwd || cwdRef.current;
+                    if (
+                      current &&
+                      normalizeCwdForCompare(current) === normalizeCwdForCompare(cleaned)
+                    ) {
                       if (
-                        tab.id === activeTabId &&
-                        (tab.activePaneId === pane.id || tab.panes.length === 1)
+                        activeTabIdRef.current === tab.id &&
+                        (live?.activePaneId === pane.id || (live?.panes.length ?? 0) <= 1)
                       ) {
-                        setCwd(resolved);
-                        setRecentProjects(recordRecentProject(resolved));
-                        invalidateGitCache(resolved);
-                        void getGitInfoCached(resolved).then(
+                        void getGitInfoCached(cleaned).then(
                           (info) => {
-                            setGitInfoByDir((prev) => ({ ...prev, [resolved]: info }));
+                            setGitInfoByDir((prev) =>
+                              prev[cleaned]?.branch === info.branch &&
+                              prev[cleaned]?.dirty === info.dirty &&
+                              prev[cleaned]?.repo_root === info.repo_root
+                                ? prev
+                                : { ...prev, [cleaned]: info }
+                            );
                             setGitBranch(info.branch);
                             setGitDirty(info.dirty);
                             setGitRepoRoot(info.repo_root ?? null);
                           },
                           () => {
-                            setGitInfoByDir((prev) => ({ ...prev, [resolved]: null }));
-                            setGitBranch(null);
-                            setGitDirty(false);
-                            setGitRepoRoot(null);
+                            // Keep the last good badge on probe failure.
                           }
                         );
                       }
+                      return;
+                    }
+                    setTabs((prev) =>
+                      prev.map((t) =>
+                        t.id === tab.id
+                          ? {
+                              ...t,
+                              cwd:
+                                t.activePaneId === pane.id || t.panes.length === 1
+                                  ? cleaned
+                                  : t.cwd,
+                              panes: t.panes.map((p) =>
+                                p.id === pane.id ? { ...p, cwd: cleaned } : p
+                              ),
+                            }
+                          : t
+                      )
+                    );
+                    if (
+                      tab.id === activeTabId &&
+                      (tab.activePaneId === pane.id || tab.panes.length === 1)
+                    ) {
+                      setCwd(cleaned);
+                      setRecentProjects(recordRecentProject(cleaned));
+                      invalidateGitCache(cleaned);
+                      void getGitInfoCached(cleaned).then(
+                        (info) => {
+                          setGitInfoByDir((prev) => ({ ...prev, [cleaned]: info }));
+                          setGitBranch(info.branch);
+                          setGitDirty(info.dirty);
+                          setGitRepoRoot(info.repo_root ?? null);
+                        },
+                        () => {
+                          // Keep the last good badge on probe failure.
+                        }
+                      );
                     }
                   }}
                   onExit={(exitCode) => {
@@ -2219,7 +2267,7 @@ export function App() {
         onGitAction={(action) => void handleGitActionRun(action)}
         onRefreshGit={handleRefreshGit}
         isRefreshingGit={isRefreshingGit}
-        mode={isCodeModeForDir(effectiveProjectDir) ? "code" : "terminal"}
+        mode={modeDisplay}
       />
     </div>
   );

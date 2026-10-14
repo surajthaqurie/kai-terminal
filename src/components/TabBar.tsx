@@ -1,4 +1,4 @@
-import { FC, useEffect, useRef, useState } from "react";
+import { CSSProperties, FC, useEffect, useRef, useState } from "react";
 import { TerminalTab } from "../types/terminal";
 import { X, Plus, Terminal as TerminalIcon } from "lucide-react";
 
@@ -134,8 +134,17 @@ export const TabBar: FC<TabBarProps> = ({
               aria-selected={isActive}
               aria-label={`${tab.title}, ${tab.status}`}
               tabIndex={isActive ? 0 : -1}
-              className={`tab-item ${isActive ? "active" : ""} status-${tab.status}`}
-              style={tab.color ? { borderTop: `2px solid ${tab.color}` } : undefined}
+              className={`tab-item ${isActive ? "active" : ""} status-${tab.status}${
+                tab.color ? " has-color" : ""
+              }`}
+              style={
+                tab.color
+                  ? ({
+                      borderTop: `2px solid ${tab.color}`,
+                      "--tab-color": tab.color,
+                    } as CSSProperties)
+                  : undefined
+              }
               draggable={!isEditing}
               onDragStart={(e) => {
                 dragIdRef.current = tab.id;

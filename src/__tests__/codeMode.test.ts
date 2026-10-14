@@ -133,4 +133,19 @@ describe("kai code end-to-end state file", () => {
       fs.rmSync(projDir, { recursive: true, force: true });
     }
   });
+
+  it("plain kai stop (no arg) also clears Code Mode state", async () => {
+    const { runCli } = await import("../cli/index");
+    const projDir = fs.mkdtempSync(path.join(os.tmpdir(), "kai-codemode-proj-"));
+    fs.writeFileSync(path.join(projDir, "a.txt"), "hello\n");
+    try {
+      expect(await runCli(["node", "kai", "code", projDir])).toBe(0);
+      expect(await runCli(["node", "kai", "stop"])).toBe(0);
+      expect(fs.existsSync(path.join(process.env.KAI_HOME as string, "active_project.json"))).toBe(
+        false
+      );
+    } finally {
+      fs.rmSync(projDir, { recursive: true, force: true });
+    }
+  });
 });

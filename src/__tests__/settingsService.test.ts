@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach } from "vitest";
-import { SettingsService, DEFAULT_SETTINGS } from "../services/settingsService";
+import { SettingsService, DEFAULT_SETTINGS, normalizeThemeId } from "../services/settingsService";
 
 describe("SettingsService", () => {
   beforeEach(() => {
@@ -115,5 +115,15 @@ describe("SettingsService", () => {
   it("should safely handle loadSystemDefaults", async () => {
     const defaults = await SettingsService.loadSystemDefaults();
     expect(defaults).toBeDefined();
+  });
+
+  it("should recover unknown theme ids to the Kali default", () => {
+    expect(normalizeThemeId("one-dark")).toBe("one-dark");
+    expect(normalizeThemeId("kali")).toBe("kali");
+    expect(normalizeThemeId("Kali-Dark")).toBe("kali");
+    expect(normalizeThemeId("")).toBe("kali");
+    expect(normalizeThemeId(undefined)).toBe("kali");
+    expect(normalizeThemeId(null)).toBe("kali");
+    expect(SettingsService.normalize({ theme: "no-such-theme" as never }).theme).toBe("kali");
   });
 });
