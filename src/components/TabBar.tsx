@@ -1,4 +1,4 @@
-import { CSSProperties, FC, useEffect, useRef, useState } from "react";
+import { CSSProperties, FC, useCallback, useEffect, useRef, useState } from "react";
 import { TerminalTab } from "../types/terminal";
 import { X, Plus, Terminal as TerminalIcon } from "lucide-react";
 
@@ -11,6 +11,8 @@ interface TabBarProps {
   onRenameTab?: (id: string, title: string) => void;
   onMoveTab?: (id: string, dir: -1 | 1) => void;
   onReorderTabs?: (fromId: string, toId: string) => void;
+  /** Preferred reorder path: move tab to an absolute index. Works on all OSes. */
+  onMoveTabToIndex?: (id: string, toIndex: number) => void;
   onSetTabColor?: (id: string, color: string | undefined) => void;
 }
 
@@ -31,6 +33,8 @@ interface MenuState {
   y: number;
 }
 
+const DRAG_THRESHOLD_PX = 6;
+
 export const TabBar: FC<TabBarProps> = ({
   tabs,
   activeTabId,
@@ -40,13 +44,146 @@ export const TabBar: FC<TabBarProps> = ({
   onRenameTab,
   onMoveTab,
   onReorderTabs,
+  onMoveTabToIndex,
   onSetTabColor,
 }) => {
   const [editingTabId, setEditingTabId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
   const [menu, setMenu] = useState<MenuState | null>(null);
-  const dragIdRef = useRef<string | null>(null);
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [dropIndex, setDropIndex] = useState<number | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const pendingRef = useRef<{
+    id: string;
+    startX: number;
+    startY: number;
+    pointerId: number;
+  } | null>(null);
+  const dragIdRef = useRef<string | null>(null);
+  const dropIndexRef = useRef<number | null>(null);
+  const suppressClickRef = useRef(false);
+  // Tabs snapshot for pointer handlers (avoids stale closures on window listeners).
+  const tabsRef = useRef(tabs);
+  tabsRef.current = tabs;
+
+  const cancelDrag = useCallback(() => {
+    pendingRef.current = null;
+    dragIdRef.current = null;
+    dropIndexRef.current = null;
+    setDragId(null);
+    setDropIndex(null);
+    document.body.classList.remove("tab-dragging");
+  }, []);
+
+  const computeDropIndex = useCallback((clientX: number): number => {
+    const container = containerRef.current;
+    const currentTabs = tabsRef.current;
+    if (!container) return currentTabs.length;
+    const items = Array.from(container.querySelectorAll<HTMLElement>("[data-tab-id]"));
+    for (let i = 0; i < currentTabs.length; i++) {
+      const el = items.find((n) => n.getAttribute("data-tab-id") === currentTabs[i].id);
+      if (!el) continue;
+      const rect = el.getBoundingClientRect();
+      if (clientX < rect.left + rect.width / 2) return i;
+    }
+    return currentTabs.length;
+  }, []);
+
+  const commitDrag = useCallback(() => {
+    const fromId = dragIdRef.current;
+    const target = dropIndexRef.current;
+    const currentTabs = tabsRef.current;
+    if (!fromId || target == null) {
+      cancelDrag();
+      return;
+    }
+    const fromIdx = currentTabs.findIndex((t) => t.id === fromId);
+    if (fromIdx < 0) {
+      cancelDrag();
+      return;
+    }
+    // dropIndex is measured against the pre-drag order (dragged tab still in place).
+    let adjusted = target;
+    if (fromIdx < target) adjusted = target - 1;
+    adjusted = Math.max(0, Math.min(currentTabs.length - 1, adjusted));
+    if (adjusted !== fromIdx) {
+      if (onMoveTabToIndex) {
+        onMoveTabToIndex(fromId, adjusted);
+      } else if (onReorderTabs) {
+        const toId = currentTabs[adjusted]?.id;
+        if (toId && toId !== fromId) onReorderTabs(fromId, toId);
+      }
+      // A real reorder happened: swallow the click that pointer-up would fire.
+      suppressClickRef.current = true;
+    }
+    cancelDrag();
+  }, [cancelDrag, onMoveTabToIndex, onReorderTabs]);
+
+  // Window-level pointer tracking: started on tab pointer-down, so dragging
+  // keeps working even when the cursor leaves the tab bar. This is what makes
+  // reordering reliable on Windows (WebView2), macOS (WKWebView) and Linux
+  // (WebKitGTK), where native HTML5 drag-and-drop is flaky and shows a
+  // "not-allowed" cursor.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onMove = (e: PointerEvent) => {
+      const pending = pendingRef.current;
+      if (!pending) return;
+      if (e.pointerId !== pending.pointerId && e.pointerType !== "touch") return;
+      const dx = e.clientX - pending.startX;
+      const dy = e.clientY - pending.startY;
+      if (!dragIdRef.current) {
+        if (Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) return;
+        // Don't start a drag while renaming.
+        const tabEl = containerRef.current?.querySelector(`[data-tab-id="${pending.id}"] input`);
+        if (tabEl) {
+          pendingRef.current = null;
+          return;
+        }
+        dragIdRef.current = pending.id;
+        setDragId(pending.id);
+        document.body.classList.add("tab-dragging");
+      }
+      const idx = computeDropIndex(e.clientX);
+      dropIndexRef.current = idx;
+      setDropIndex(idx);
+      // Auto-scroll the strip when hovering near its edges.
+      const container = containerRef.current;
+      if (container) {
+        const rect = container.getBoundingClientRect();
+        const EDGE = 28;
+        const SPEED = 12;
+        if (e.clientX < rect.left + EDGE) container.scrollLeft -= SPEED;
+        else if (e.clientX > rect.right - EDGE) container.scrollLeft += SPEED;
+      }
+    };
+    const onUp = (e: PointerEvent) => {
+      const pending = pendingRef.current;
+      if (!pending) return;
+      if (e.pointerId !== pending.pointerId && e.type !== "pointercancel") return;
+      if (dragIdRef.current) {
+        // Refresh the target from the release point before committing.
+        dropIndexRef.current = computeDropIndex(e.clientX);
+        commitDrag();
+      } else {
+        pendingRef.current = null;
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") cancelDrag();
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [cancelDrag, commitDrag, computeDropIndex]);
 
   useEffect(() => {
     if (!menu) return;
@@ -63,6 +200,9 @@ export const TabBar: FC<TabBarProps> = ({
       window.removeEventListener("keydown", onKey);
     };
   }, [menu]);
+
+  // Clear drag state if tabs unmount mid-drag.
+  useEffect(() => cancelDrag, [cancelDrag]);
 
   const focusTab = (id: string) => {
     // Roving focus follows keyboard selection between tabs.
@@ -98,6 +238,7 @@ export const TabBar: FC<TabBarProps> = ({
   };
 
   const startEditing = (tab: TerminalTab) => {
+    cancelDrag();
     setEditingTabId(tab.id);
     setEditTitle(tab.title);
   };
@@ -112,9 +253,38 @@ export const TabBar: FC<TabBarProps> = ({
   const openMenu = (e: React.MouseEvent, tab: TerminalTab) => {
     e.preventDefault();
     e.stopPropagation();
+    cancelDrag();
     const menuWidth = 210;
     const x = Math.min(e.clientX, window.innerWidth - menuWidth - 8);
     setMenu({ tabId: tab.id, x: Math.max(8, x), y: e.clientY });
+  };
+
+  const beginPotentialDrag = (e: React.PointerEvent, tab: TerminalTab) => {
+    // Only the primary button starts a drag. Right/middle clicks, the close
+    // button, and the rename input must never start one.
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    if (editingTabId === tab.id) return;
+    const target = e.target as HTMLElement | null;
+    if (target?.closest?.(".tab-close-btn, input, button")) {
+      // Close/add buttons handle their own clicks; still allow drag when the
+      // press starts on the tab body itself.
+      if (target.closest(".tab-close-btn")) return;
+    }
+    pendingRef.current = {
+      id: tab.id,
+      startX: e.clientX,
+      startY: e.clientY,
+      pointerId: e.pointerId,
+    };
+  };
+
+  const handleTabClick = (tabId: string) => {
+    if (suppressClickRef.current) {
+      suppressClickRef.current = false;
+      return;
+    }
+    if (dragIdRef.current) return;
+    onSelectTab(tabId);
   };
 
   const menuTab = menu ? tabs.find((t) => t.id === menu.tabId) : undefined;
@@ -122,116 +292,110 @@ export const TabBar: FC<TabBarProps> = ({
 
   return (
     <div className="tab-bar">
-      <div className="tabs-container" role="tablist" aria-label="Terminal sessions">
+      <div
+        ref={containerRef}
+        className={`tabs-container${dragId ? " dragging" : ""}`}
+        role="tablist"
+        aria-label="Terminal sessions"
+      >
         {tabs.map((tab, index) => {
           const isActive = tab.id === activeTabId;
           const isEditing = editingTabId === tab.id;
+          const isDragging = dragId === tab.id;
           return (
-            <div
-              key={tab.id}
-              data-tab-id={tab.id}
-              role="tab"
-              aria-selected={isActive}
-              aria-label={`${tab.title}, ${tab.status}`}
-              tabIndex={isActive ? 0 : -1}
-              className={`tab-item ${isActive ? "active" : ""} status-${tab.status}${
-                tab.color ? " has-color" : ""
-              }`}
-              style={
-                tab.color
-                  ? ({
-                      borderTop: `2px solid ${tab.color}`,
-                      "--tab-color": tab.color,
-                    } as CSSProperties)
-                  : undefined
-              }
-              draggable={!isEditing}
-              onDragStart={(e) => {
-                dragIdRef.current = tab.id;
-                e.dataTransfer.effectAllowed = "move";
-                try {
-                  e.dataTransfer.setData("text/plain", tab.id);
-                } catch {
-                  // some browsers restrict dataTransfer payloads; ref fallback covers it
+            <div key={tab.id} style={{ display: "contents" }}>
+              {dragId && dropIndex === index && (
+                <div className="tab-drop-indicator" aria-hidden="true" />
+              )}
+              <div
+                data-tab-id={tab.id}
+                role="tab"
+                aria-selected={isActive}
+                aria-label={`${tab.title}, ${tab.status}`}
+                tabIndex={isActive ? 0 : -1}
+                className={`tab-item ${isActive ? "active" : ""} status-${tab.status}${
+                  tab.color ? " has-color" : ""
+                }${isDragging ? " dragging" : ""}`}
+                style={
+                  tab.color
+                    ? ({
+                        borderTop: `2px solid ${tab.color}`,
+                        "--tab-color": tab.color,
+                      } as CSSProperties)
+                    : undefined
                 }
-              }}
-              onDragOver={(e) => {
-                e.preventDefault();
-                e.dataTransfer.dropEffect = "move";
-              }}
-              onDrop={(e) => {
-                e.preventDefault();
-                const fromId = dragIdRef.current || e.dataTransfer.getData("text/plain");
-                dragIdRef.current = null;
-                if (fromId) onReorderTabs?.(fromId, tab.id);
-              }}
-              onDragEnd={() => {
-                dragIdRef.current = null;
-              }}
-              onClick={() => onSelectTab(tab.id)}
-              onContextMenu={(e) => openMenu(e, tab)}
-              onKeyDown={(e) => handleTabKeyDown(e, index)}
-            >
-              <TerminalIcon size={14} className="tab-icon" />
-              {tab.color && (
-                <span
-                  className="tab-color-dot"
-                  style={{ backgroundColor: tab.color }}
-                  aria-hidden="true"
-                />
-              )}
-              {isEditing ? (
-                <input
-                  type="text"
-                  className="text-input"
-                  style={{ height: "20px", fontSize: "11px", padding: "0 4px" }}
-                  value={editTitle}
-                  autoFocus
-                  maxLength={80}
-                  onChange={(e) => setEditTitle(e.target.value)}
-                  onBlur={() => finishEditing(tab.id)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      finishEditing(tab.id);
-                    } else if (e.key === "Escape") {
-                      setEditingTabId(null);
-                    }
-                  }}
-                  onClick={(e) => e.stopPropagation()}
-                  aria-label="Tab title"
-                />
-              ) : (
-                <span
-                  className="tab-title"
-                  onDoubleClick={(e) => {
-                    e.stopPropagation();
-                    startEditing(tab);
-                  }}
-                  title="Double-click or right-click to rename"
-                >
-                  {tab.title}
-                </span>
-              )}
-              {tabs.length > 1 && (
-                <button
-                  className="tab-close-btn"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onCloseTab(tab.id);
-                  }}
-                  title="Close Session"
-                  aria-label={`Close ${tab.title}`}
-                >
-                  <X size={12} />
-                </button>
-              )}
+                onPointerDown={(e) => beginPotentialDrag(e, tab)}
+                onContextMenu={(e) => openMenu(e, tab)}
+                onClick={() => handleTabClick(tab.id)}
+                onKeyDown={(e) => handleTabKeyDown(e, index)}
+              >
+                <TerminalIcon size={14} className="tab-icon" />
+                {tab.color && (
+                  <span
+                    className="tab-color-dot"
+                    style={{ backgroundColor: tab.color }}
+                    aria-hidden="true"
+                  />
+                )}
+                {isEditing ? (
+                  <input
+                    type="text"
+                    className="text-input"
+                    style={{ height: "20px", fontSize: "11px", padding: "0 4px" }}
+                    value={editTitle}
+                    autoFocus
+                    maxLength={80}
+                    onChange={(e) => setEditTitle(e.target.value)}
+                    onBlur={() => finishEditing(tab.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        finishEditing(tab.id);
+                      } else if (e.key === "Escape") {
+                        setEditingTabId(null);
+                      }
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    aria-label="Tab title"
+                  />
+                ) : (
+                  <span
+                    className="tab-title"
+                    onDoubleClick={(e) => {
+                      e.stopPropagation();
+                      startEditing(tab);
+                    }}
+                    title="Double-click or right-click to rename — drag to reorder"
+                  >
+                    {tab.title}
+                  </span>
+                )}
+                {tabs.length > 1 && (
+                  <button
+                    className="tab-close-btn"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onCloseTab(tab.id);
+                    }}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    title="Close Session"
+                    aria-label={`Close ${tab.title}`}
+                  >
+                    <X size={12} />
+                  </button>
+                )}
+              </div>
             </div>
           );
         })}
+        {dragId && dropIndex === tabs.length && (
+          <div className="tab-drop-indicator" aria-hidden="true" />
+        )}
         <button
           type="button"
           className="tab-add-btn"
           onClick={onNewTab}
+          onPointerDown={(e) => e.stopPropagation()}
           title="New Tab (Ctrl+T / Cmd+T — works on Windows, Linux and macOS)"
           aria-label="New terminal tab"
         >

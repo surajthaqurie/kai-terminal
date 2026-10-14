@@ -547,7 +547,7 @@ html,
   font-size: var(--text-sm);
   font-weight: 500;
   border-radius: var(--radius-md) var(--radius-md) 0 0;
-  cursor: pointer;
+  cursor: grab;
   border: 1px solid var(--border-subtle);
   border-bottom: none;
   position: relative;
@@ -557,6 +557,39 @@ html,
     border-color var(--transition-fast);
   height: 32px;
   box-sizing: border-box;
+  touch-action: pan-x pan-y;
+}
+
+/* Pointer-based tab dragging (works on Windows/macOS/Linux WebViews where
+   native HTML5 DnD shows a not-allowed cursor). */
+.tab-item.dragging {
+  opacity: 0.45;
+  cursor: grabbing;
+}
+
+.tabs-container.dragging {
+  cursor: grabbing;
+  touch-action: none;
+}
+
+.tabs-container.dragging .tab-item {
+  cursor: grabbing;
+}
+
+.tab-drop-indicator {
+  width: 2px;
+  align-self: stretch;
+  margin: 5px -2px;
+  background: var(--accent-primary);
+  border-radius: 2px;
+  box-shadow: 0 0 6px var(--accent-glow);
+  pointer-events: none;
+  flex: 0 0 auto;
+}
+
+body.tab-dragging,
+body.tab-dragging * {
+  cursor: grabbing !important;
 }
 
 .tab-item:hover {

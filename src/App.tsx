@@ -775,6 +775,19 @@ export function App() {
     });
   }, []);
 
+  const handleMoveTabToIndex = useCallback((id: string, toIndex: number) => {
+    setTabs((prev) => {
+      const fromIdx = prev.findIndex((t) => t.id === id);
+      if (fromIdx < 0) return prev;
+      const clamped = Math.max(0, Math.min(prev.length - 1, toIndex));
+      if (clamped === fromIdx) return prev;
+      const next = [...prev];
+      const [moved] = next.splice(fromIdx, 1);
+      next.splice(clamped, 0, moved);
+      return next;
+    });
+  }, []);
+
   const handleSetTabColor = useCallback((id: string, color: string | undefined) => {
     setTabs((prev) => prev.map((t) => (t.id === id ? { ...t, color } : t)));
   }, []);
@@ -1778,6 +1791,7 @@ export function App() {
           onRenameTab={handleRenameTab}
           onMoveTab={handleMoveTab}
           onReorderTabs={handleReorderTabs}
+          onMoveTabToIndex={handleMoveTabToIndex}
           onSetTabColor={handleSetTabColor}
         />
         <Toolbar
