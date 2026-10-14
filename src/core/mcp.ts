@@ -15,10 +15,10 @@ import { recordMetric } from "./telemetry";
 import { detectInstalledLspServers } from "./lspBridge";
 import {
   isCodeMode,
-  understandTask,
-  buildPromptOptions,
   getGraphFreshness,
-  synchronizeGraphAfterChanges,
+  synchronizeGraphDeduped,
+  ensureFreshIndex,
+  planCodeTask,
 } from "./codeModeWorkflow";
 import type { TaskCategory } from "./types";
 import packageJson from "../../package.json";
@@ -177,6 +177,16 @@ export const MCP_TOOLS = [
           description: "Optional explicit task category override.",
         },
         projectPath: { type: "string", description: "Optional project root path." },
+        selectedFiles: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "Optional user-selected or explicitly mentioned files (project-relative). Treated as primary planning targets.",
+        },
+        selectedFile: {
+          type: "string",
+          description: "Single-file convenience alias for selectedFiles.",
+        },
       },
       required: ["task"],
     },
@@ -473,6 +483,33 @@ export async function handleMcpMessage(
         index = await indexProject(meta);
       }
 
+      // Automatic synchronization gate for graph-dependent reads. External
+      // agents edit files directly and may never call kai_sync_graph, so
+      // before relying on the graph, reconcile on-disk drift with a single
+      // bounded incremental refresh. kai_plan_task runs its own gate inside
+      // planCodeTask; kai_sync_graph and kai_refresh_index manage indexing
+      // themselves. Never throws: falls back to the stale index truthfully.
+      let autoFreshness = getGraphFreshness(index);
+      let autoRefreshOutcome: "not-required" | "refreshed" | "refresh-failed" = "not-required";
+      let autoRefreshWarning: string | undefined;
+      if (
+        toolName === "kai_search_code" ||
+        toolName === "kai_find_symbol" ||
+        toolName === "kai_get_dependencies" ||
+        toolName === "kai_get_context"
+      ) {
+        try {
+          const ensured = await ensureFreshIndex(meta, index);
+          if (ensured.index) index = ensured.index;
+          autoFreshness = ensured.freshnessAfter;
+          autoRefreshOutcome = ensured.refreshOutcome;
+          autoRefreshWarning = ensured.warning;
+        } catch {
+          autoRefreshOutcome = "refresh-failed";
+          autoRefreshWarning = "Automatic graph refresh failed; results use the last-known index.";
+        }
+      }
+
       const start = Date.now();
 
       // Tool dispatch
@@ -562,6 +599,9 @@ export async function handleMcpMessage(
                 text: JSON.stringify(
                   {
                     query,
+                    freshness: autoFreshness,
+                    refreshOutcome: autoRefreshOutcome,
+                    ...(autoRefreshWarning ? { refreshWarning: autoRefreshWarning } : {}),
                     matchesCount: retrieved.matchedFiles.length,
                     files: retrieved.matchedFiles.map((m) => ({
                       relativePath: m.file.relativePath,
@@ -616,6 +656,9 @@ export async function handleMcpMessage(
                 text: JSON.stringify(
                   {
                     symbolName: name,
+                    freshness: autoFreshness,
+                    refreshOutcome: autoRefreshOutcome,
+                    ...(autoRefreshWarning ? { refreshWarning: autoRefreshWarning } : {}),
                     foundCount: found.length,
                     symbols: found,
                   },
@@ -720,6 +763,9 @@ export async function handleMcpMessage(
                 text: JSON.stringify(
                   {
                     filePath: targetRel,
+                    freshness: autoFreshness,
+                    refreshOutcome: autoRefreshOutcome,
+                    ...(autoRefreshWarning ? { refreshWarning: autoRefreshWarning } : {}),
                     dependenciesCount: file.dependencies.length,
                     dependencies: file.dependencies,
                   },
@@ -910,19 +956,19 @@ export async function handleMcpMessage(
             ? args.categoryOverride
             : undefined
         ) as TaskCategory | undefined;
-        const understanding = understandTask(task, categoryOverride);
-        const freshness = getGraphFreshness(index);
-        // Token-efficient: only task-relevant sections, never full-graph serialization.
-        let relevantFiles: string[] = [];
-        if (understanding.needsGraph && freshness !== "unindexed" && freshness !== "unknown") {
-          try {
-            const retrieved = retrieveContext(index, task, { fileBudget: 3, tokenBudget: 1200 });
-            relevantFiles = retrieved.matchedFiles.map((m) => m.file.relativePath).slice(0, 3);
-          } catch {
-            relevantFiles = [];
-          }
-        }
-        const options = buildPromptOptions(task, understanding, relevantFiles);
+        // Backward-compatible selected files: array form preferred, single
+        // string alias accepted, absent when the task names no files.
+        const rawSelected =
+          args.selectedFiles !== undefined
+            ? args.selectedFiles
+            : args.selectedFile !== undefined
+              ? args.selectedFile
+              : undefined;
+        const plan = await planCodeTask(meta, index, {
+          task,
+          categoryOverride,
+          selectedFiles: rawSelected,
+        });
         recordMetric({
           projectId: meta.id,
           operation: "mcp_call",
@@ -937,23 +983,7 @@ export async function handleMcpMessage(
             content: [
               {
                 type: "text",
-                text: JSON.stringify(
-                  {
-                    mode: "code",
-                    category: understanding.category,
-                    confidence: understanding.confidence,
-                    freshness,
-                    relevantFiles,
-                    options,
-                    defaultOption: options[0]?.id ?? null,
-                    note:
-                      options.length === 0
-                        ? "Simple task: execute directly without prompt options."
-                        : "If the user continues without choosing and continuation is clear, use option1.",
-                  },
-                  null,
-                  2
-                ),
+                text: JSON.stringify(plan, null, 2),
               },
             ],
           },
@@ -990,7 +1020,9 @@ export async function handleMcpMessage(
               .filter((f): f is string => typeof f === "string")
               .slice(0, 50)
           : [];
-        const report = await synchronizeGraphAfterChanges(
+        // Deduped: duplicate completion callbacks share one rebuild instead
+        // of racing; project identity is verified before publishing.
+        const report = await synchronizeGraphDeduped(
           meta,
           changedFiles,
           {

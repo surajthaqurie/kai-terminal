@@ -29,6 +29,11 @@ import {
   buildDynamicAgentSetup,
   listAgentIds,
 } from "../core/agents";
+import {
+  detectChangedFilesFromDisk,
+  runCodeTaskWithAutoSync,
+  runExternalAgentCommand,
+} from "../core/codeModeWorkflow";
 import { installCommitMsgHook, hookStatus } from "../core/githooks";
 import packageJson from "../../package.json";
 
@@ -505,6 +510,9 @@ Commands:
   lsp [status]            Probe locally installed Language Server Protocol (LSP) servers
   doctor                Environment and install diagnostics (Linux app-drawer audit)
   mcp [path]              Start stdio JSON-RPC Model Context Protocol (MCP) server
+  run [path] -- <cmd>     Run an external coding agent, then auto-sync the graph
+                          (syncs on success, failure, timeout, or cancel; no
+                          manual kai_sync_graph call needed)
   bench [path]            Run privacy-safe evaluation benchmark across 4 configurations
   agent setup <agent|all> Install kai MCP wiring for an agent (auto-detects system)
   agent register ...     Alias of 'agent setup' (writes config files automatically)
@@ -529,6 +537,8 @@ Examples:
   kai graph rebuild .
   kai session clean --dry-run
   kai mcp .
+  kai run -- claude -p "fix the login bug"
+  kai run ./myproj -- opencode run "add tests for parser"
   kai agent setup claude
   kai agent setup all       # auto-wire every agent installed on this system
 `);
@@ -1025,6 +1035,117 @@ export async function runCli(argv: string[]): Promise<number> {
       const targetPath = args[1] || process.cwd();
       await startMcpServer(targetPath);
       return 0;
+    }
+
+    // 9b. kai run [path] [--timeout-ms N] -- <command> [args...]
+    // Code Mode lifecycle integration: Kai invokes the external coding
+    // agent as a child process, so process exit (success, failure,
+    // timeout, or cancel) is a reliable completion signal. The project
+    // graph is synchronized automatically afterwards — the user never
+    // runs kai_sync_graph manually. Partial changes after failure or
+    // cancellation are synced when safe; sync failure never rewrites the
+    // agent's exit outcome.
+    if (command === "run") {
+      const sepIndex = args.indexOf("--");
+      if (sepIndex === -1 || sepIndex === args.length - 1) {
+        console.error(
+          `[kai] Error: Usage: kai run [path] [--timeout-ms <ms>] -- <command> [args...]`
+        );
+        console.error(`Example: kai run -- claude -p "fix the login bug"`);
+        return 1;
+      }
+      const head = args.slice(1, sepIndex);
+      const cmdArgs = args.slice(sepIndex + 1);
+      let targetPath = process.cwd();
+      let timeoutMs: number | undefined;
+      for (let i = 0; i < head.length; i++) {
+        if (head[i] === "--timeout-ms" && i + 1 < head.length) {
+          const parsed = Number(head[i + 1]);
+          if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 86400000) {
+            console.error(`[kai] Error: --timeout-ms must be a positive number of milliseconds.`);
+            return 1;
+          }
+          timeoutMs = Math.floor(parsed);
+          i++;
+        } else if (!head[i].startsWith("-") && targetPath === process.cwd()) {
+          targetPath = head[i];
+        } else {
+          console.error(`[kai] Error: Unknown option "${head[i]}" for kai run.`);
+          return 1;
+        }
+      }
+      const meta = registerProject(targetPath);
+      let baseline = loadProjectIndex(meta.id);
+      if (!baseline) {
+        console.log(`[kai] Indexing project for Code Mode run...`);
+        baseline = await indexProject(meta);
+      }
+      const displayCmd = cmdArgs.map((a) => (a.includes(" ") ? JSON.stringify(a) : a)).join(" ");
+      console.log(`[kai] Running Code Mode task in "${meta.name}": ${displayCmd}`);
+      const controller = new AbortController();
+      const onInterrupt = (): void => {
+        controller.abort();
+      };
+      process.once("SIGINT", onInterrupt);
+      process.once("SIGTERM", onInterrupt);
+      let agentExitCode: number | null = 0;
+      let agentTimedOut = false;
+      let agentSignal: string | null = null;
+      try {
+        const outcome = await runCodeTaskWithAutoSync(
+          meta,
+          async () => {
+            const useShell = process.platform === "win32" && /\.(cmd|bat)$/i.test(cmdArgs[0] ?? "");
+            const result = await runExternalAgentCommand(cmdArgs[0], cmdArgs.slice(1), {
+              cwd: meta.canonicalPath,
+              timeoutMs,
+              signal: controller.signal,
+              shell: useShell,
+            });
+            agentExitCode = result.exitCode;
+            agentTimedOut = result.timedOut;
+            agentSignal = result.signal;
+            const changedOnDisk = detectChangedFilesFromDisk(loadProjectIndex(meta.id));
+            const exitNote = result.timedOut
+              ? `command timed out after ${timeoutMs}ms`
+              : result.signal
+                ? `command terminated by signal ${result.signal}`
+                : `command exited with code ${result.exitCode}`;
+            console.log(`[kai] Agent finished (${exitNote}, ${result.durationMs}ms).`);
+            return {
+              changedFiles: changedOnDisk,
+              uncertain: changedOnDisk.length === 0,
+              codeValidation: {
+                ran: false,
+                passed: false,
+                detail: `${exitNote}; agent outcome preserved separately from graph sync.`,
+              },
+            };
+          },
+          { signal: controller.signal }
+        );
+        const sync = outcome.syncReport;
+        console.log(
+          `[kai] Graph auto-sync: ${sync.graphResult} (${sync.graphScope}; freshness: ${sync.freshnessAfter}). ${sync.message}`
+        );
+        if (sync.warnings) for (const w of sync.warnings) console.log(`[kai] Note: ${w}`);
+        if (outcome.taskOutcome !== "completed") {
+          console.log(
+            `[kai] Task ${outcome.taskOutcome}${outcome.taskError ? `: ${outcome.taskError}` : ""}.`
+          );
+        }
+        // The agent's exit outcome is preserved: sync status is reported
+        // above but never rewrites it.
+        if (controller.signal.aborted || outcome.taskOutcome === "cancelled") return 130;
+        if (outcome.taskOutcome === "failed") return 1;
+        if (agentTimedOut) return 124;
+        if (agentSignal) return 130;
+        if (typeof agentExitCode === "number") return agentExitCode;
+        return 1;
+      } finally {
+        process.removeListener("SIGINT", onInterrupt);
+        process.removeListener("SIGTERM", onInterrupt);
+      }
     }
 
     // 10. kai bench [path]
