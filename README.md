@@ -55,7 +55,7 @@ Kai ships a CLI that indexes projects into `~/.kai/` (outside your repo) and ser
 ### External Commands (Any Terminal)
 
 ```bash
-kai open [path]           # open or focus Kai Terminal for project (defaults to .)
+kai open [path]           # launch or focus Kai Terminal desktop app (defaults to current dir)
 kai close                 # close active Kai Terminal instances
 ```
 

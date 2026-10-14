@@ -6,14 +6,14 @@ import { REPO_URL } from '../data/site';
 
 const STEPS: Array<{ n: string; t: string; d: string; what: string }> = [
   { n: '01', t: 'Install Kai', d: 'Download the installer for your OS from GitHub Releases. No account or cloud sign-up.', what: 'Source build instead? See DEVELOPMENT.md — requires Node 20+ and Rust 1.75+.' },
-  { n: '02', t: 'Open Kai for your project', d: 'From any shell, run: kai open [path] to focus Kai Terminal on your repository.', what: 'Kai initializes Code Mode and registers ~/.kai/ metadata without modifying your git repo.' },
+  { n: '02', t: 'Launch Kai Terminal', d: 'From any shell, run: kai open to launch the Kai Terminal desktop app.', what: 'kai open launches the Kai Terminal application itself (optional path defaults to current directory).' },
   { n: '03', t: 'Run your AI coding agent', d: 'Inside Kai Terminal, run: kai claude . (or cursor, aider, opencode, gemini, agy).', what: 'Kai auto-wires MCP, runs the agent, strips co-author trailers, and auto-syncs the AST graph on exit.' },
 ];
 
 const SNIPPETS: Record<'run' | 'ai' | 'config', { tab: string; code: string }> = {
   run: {
     tab: '$ workflow',
-    code: '# 1. Open your project in Kai Terminal (from any shell)\nkai open .\n\n# 2. Inside Kai Terminal, launch your favorite AI agent\nkai claude .\n\n# Kai auto-wires MCP, enters Code Mode, strips co-authors,\n# and auto-syncs the AST symbol graph upon agent exit.\n\n# 3. Check project and LSP bridge health\nkai status',
+    code: '# 1. Launch Kai Terminal app (from any shell)\nkai open\n# Or open Kai Terminal for a specific project folder:\n# kai open /path/to/project\n\n# 2. Inside Kai Terminal, launch your favorite AI agent\nkai claude .\n\n# Kai auto-wires MCP, enters Code Mode, strips co-authors,\n# and auto-syncs the AST symbol graph upon agent exit.\n\n# 3. Check project and LSP bridge health\nkai status',
   },
   ai: {
     tab: '$ AI agents',

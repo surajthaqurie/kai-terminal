@@ -47,19 +47,25 @@ Kai CLI enforces a strict environment boundary to protect workflows and prevent 
 These commands can be run from any standard terminal on macOS, Linux, or Windows.
 
 ### `kai open [path]`
-Opens or focuses the Kai Terminal desktop application for the specified project directory (defaults to current directory `.` if omitted). It registers the project and primes Code Mode.
+**Launches or focuses the Kai Terminal desktop application.**
+
+> **Note on Purpose**: `kai open` opens the **Kai Terminal desktop application** itself (not a file explorer or an external editor). The optional `[path]` argument tells Kai Terminal which project folder to set as its active workspace inside the terminal. If `[path]` is omitted, it defaults to the current working directory (`.`).
 
 **Syntax**:
 ```bash
+# Launch / open Kai Terminal in the current working directory:
+kai open
+
+# Launch / open Kai Terminal focused on a specific project directory:
 kai open [path]
 ```
 
 **Examples**:
 ```bash
-# Open Kai Terminal for the current directory
+# Open Kai Terminal desktop app for the current folder
 kai open
 
-# Open Kai Terminal for a specific project
+# Open Kai Terminal desktop app for a specific project
 kai open /home/kali/Documents/my-project
 kai open C:\Users\Dev\Projects\backend
 ```

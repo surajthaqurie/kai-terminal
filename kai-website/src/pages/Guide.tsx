@@ -7,7 +7,7 @@ import { CtaBanner } from '../components/CtaBanner';
 import { Link } from '../router';
 
 const CLI_ROWS: Array<[string, string]> = [
-  ['kai open [path]', 'Open or focus Kai Terminal for a project directory (run from any shell)'],
+  ['kai open [path]', 'Launch or focus Kai Terminal desktop app itself (optional path defaults to current dir)'],
   ['kai close', 'Close running Kai Terminal desktop application instances'],
   ['kai <agent> [path]', 'Launch AI agent with auto MCP wiring, Code Mode, and graph auto-sync'],
   ['kai list -a', 'List installed AI coding agents and their Kai MCP wiring status'],

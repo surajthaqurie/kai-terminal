@@ -12,9 +12,9 @@ const STEPS = [
   {
     icon: FolderOpen,
     step: 'Step 2',
-    title: 'Open your project',
-    body: 'From any shell, run kai open [path] to launch or focus Kai Terminal on your repository. Kai primes Code Mode and registers the project root.',
-    code: 'kai open .',
+    title: 'Open Kai Terminal',
+    body: 'From any shell, run kai open to launch the Kai Terminal desktop app. You can optionally specify a project folder or just run kai open in your current directory.',
+    code: 'kai open',
   },
   {
     icon: Bot,

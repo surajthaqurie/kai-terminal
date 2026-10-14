@@ -518,7 +518,7 @@ Usage:
   kai <command> [options]
 
 External Commands (Run outside or inside Kai Terminal):
-  open [path]             Open or focus Kai Terminal for a project directory (defaults to .)
+  open [path]             Launch or focus Kai Terminal desktop app (optional path defaults to .)
   close                   Close active Kai Terminal instances
 
 Internal Commands (Run inside Kai Terminal):

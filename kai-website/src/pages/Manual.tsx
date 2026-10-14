@@ -31,7 +31,7 @@ const SECTIONS: ManualSection[] = [
 ];
 
 const CHEATSHEET_ROWS = [
-  { cmd: 'kai open [path]', env: 'External Shell', desc: 'Opens or focuses Kai Terminal desktop application for a project directory.' },
+  { cmd: 'kai open [path]', env: 'External Shell', desc: 'Launches or focuses Kai Terminal desktop application itself (optional path defaults to current dir).' },
   { cmd: 'kai close', env: 'External Shell', desc: 'Closes running Kai Terminal desktop application instances.' },
   { cmd: 'kai --help / --version', env: 'Any Shell', desc: 'Displays Kai CLI version or top-level manual documentation.' },
   { cmd: 'kai <agent> [path]', env: 'Kai Terminal', desc: 'Launches AI agent with auto MCP wiring, Code Mode, and graph auto-sync.' },
@@ -196,13 +196,27 @@ export function ManualPage() {
               </p>
 
               <h3 style={{ fontSize: '1.1rem', fontWeight: 700, margin: '1.25rem 0 0.5rem' }}><code>kai open [path]</code></h3>
-              <p style={{ color: 'var(--text-secondary)', fontSize: '0.92rem' }}>
-                Opens or focuses the Kai Terminal desktop application for the specified project directory (defaults to current directory <code>.</code>). Automatically primes Code Mode and registers the project root.
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.92rem', lineHeight: 1.6 }}>
+                <strong>Launches or focuses the Kai Terminal desktop application itself.</strong> This command opens the Kai Terminal GUI (it is <em>not</em> for opening folders in a file explorer or external editor). The optional <code>[path]</code> parameter specifies which folder Kai Terminal should set as its active workspace (defaults to the current working directory <code>.</code> if omitted).
               </p>
+
+              <div className="t-callout-tip" style={{ margin: '0.75rem 0 1rem' }}>
+                <Info size={18} />
+                <div>
+                  <strong>Quick Tip:</strong> Running bare <code>kai open</code> without any arguments launches Kai Terminal in your current working folder.
+                </div>
+              </div>
+
               <div className="t-panel" style={{ padding: '0.85rem 1.25rem', margin: '0.75rem 0' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <code style={{ fontSize: '0.85rem', color: 'var(--accent-cyan-fg)' }}>kai open /path/to/project</code>
-                  <CopyBtn text="kai open ." />
+                  <code style={{ fontSize: '0.85rem', color: 'var(--accent-cyan-fg)' }}>kai open  # launches Kai Terminal in current directory</code>
+                  <CopyBtn text="kai open" />
+                </div>
+              </div>
+              <div className="t-panel" style={{ padding: '0.85rem 1.25rem', margin: '0.75rem 0' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <code style={{ fontSize: '0.85rem', color: 'var(--accent-cyan-fg)' }}>kai open /path/to/project  # launches Kai Terminal for a specific folder</code>
+                  <CopyBtn text="kai open /path/to/project" />
                 </div>
               </div>
               <div className="t-manual-output">

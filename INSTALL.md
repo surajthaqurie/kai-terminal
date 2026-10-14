@@ -41,9 +41,10 @@ npm link
 ```
 After installing, the `kai` command is available in your shell:
 ```bash
-# External command (from any terminal)
-kai open .
-kai close
+# External commands (from any terminal)
+kai open                 # launch / focus Kai Terminal desktop app in current directory
+kai open /path/to/dir    # launch / focus Kai Terminal desktop app for a specific project
+kai close                # close active Kai Terminal instances
 kai --version
 
 # Internal commands (inside Kai Terminal)
