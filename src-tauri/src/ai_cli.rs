@@ -371,6 +371,7 @@ fn validate_launcher(launcher: &[String]) -> Result<(), String> {
 }
 
 /// Resolved spawn form for a kai MCP server config entry.
+#[derive(Debug)]
 struct McpSpawn {
     command: String,
     args_head: Vec<String>,
@@ -430,7 +431,7 @@ fn resolve_mcp_command(launcher: &[String]) -> Result<McpSpawn, String> {
             let command = args_head.remove(0);
             return Ok(McpSpawn { command, args_head });
         }
-        return Err("The kai launcher is not directly runnable and no kai JS bundle could be found inside it. Run `kai agent setup <name>` from a terminal instead.".to_string());
+        Err("The kai launcher is not directly runnable and no kai JS bundle could be found inside it. Run `kai agent setup <name>` from a terminal instead.".to_string())
     }
     #[cfg(target_os = "windows")]
     {
@@ -439,7 +440,7 @@ fn resolve_mcp_command(launcher: &[String]) -> Result<McpSpawn, String> {
             let command = args_head.remove(0);
             return Ok(McpSpawn { command, args_head });
         }
-        return Err("The kai launcher is a shell shim (.cmd/.ps1) that agents cannot spawn directly, and no kai JS bundle could be found inside it. Run `kai agent setup <name>` from a terminal instead.".to_string());
+        Err("The kai launcher is a shell shim (.cmd/.ps1) that agents cannot spawn directly, and no kai JS bundle could be found inside it. Run `kai agent setup <name>` from a terminal instead.".to_string())
     }
 }
 
