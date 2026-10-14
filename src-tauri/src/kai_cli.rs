@@ -22,10 +22,10 @@
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-#[cfg(feature = "tauri")]
-use tauri::Manager;
 #[cfg(target_os = "windows")]
 use std::time::{Duration, Instant};
+#[cfg(feature = "tauri")]
+use tauri::Manager;
 
 /// Status of the bundled CLI install, surfaced to the frontend.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
