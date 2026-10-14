@@ -12,7 +12,7 @@ const outFile = join(websiteDir, 'src', 'generated', 'docs.json');
 const REPO = 'surajthaqurie/kai-terminal';
 
 const DOCS = [
-  { slug: 'manual', file: 'USER_MANUAL.md', title: 'Commands', desc: 'Every command, grouped by topic.' },
+  { slug: 'manual', file: 'USER_MANUAL.md', title: 'Commands', desc: 'Kai is a desktop terminal with a built-in CLI for running AI coding tools on your code. Commands outside Kai launch or quit the app. Everything else runs inside Kai.' },
   { slug: 'mcp', file: 'MCP.md', title: 'MCP', desc: 'Local MCP server: start command and tool reference.' },
 ];
 

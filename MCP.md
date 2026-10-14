@@ -2,13 +2,46 @@
 
 Kai includes a local MCP server. It lets a coding tool read your code map: project info, search, symbols, dependencies, context, task planning, graph sync, language servers, and refresh. Everything runs on your machine.
 
-## Start
+## Commands
+
+### 1. Start Server
 
 ```bash
 kai mcp .
 ```
 
-Starts a stdio JSON-RPC server for the project folder. Keep it running while the tool works. `kai setup <agent>` writes this command into the tool's settings for you, so you rarely type it by hand.
+Starts a stdio JSON-RPC server for the project folder. Keep it running while the tool works.
+
+### 2. Connect an Agent
+
+Auto-wire Kai MCP into an agent's configuration:
+
+```bash
+kai mcp claude          # Wire Claude Code (~/.claude.json)
+kai mcp cursor          # Wire Cursor (.cursor/mcp.json)
+kai mcp all             # Wire every detected agent on your system
+```
+
+Options: `--print` (preview snippet only), `--dry-run` (simulate without writing), `--force` (overwrite existing Kai entry), `--project` (project-scoped config).
+
+### 3. List MCP Status & Connections
+
+```bash
+kai mcp list            # Or: kai list mcp, kai list -m
+```
+
+Displays local MCP server status, available tools, and connection status across all supported agents.
+
+### 4. Remove Agent Wiring
+
+Disconnect Kai MCP from an agent's configuration:
+
+```bash
+kai remove -m claude    # Or: kai mcp remove claude
+kai remove -m cursor    # Or: kai mcp remove cursor
+```
+
+Option: `--dry-run` to preview changes without modifying files.
 
 ## Tools
 

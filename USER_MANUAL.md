@@ -1,7 +1,5 @@
 # Commands
 
-Kai is a desktop terminal with a built-in CLI for running AI coding tools on your code. Commands outside Kai launch or quit the app. Everything else runs inside Kai.
-
 ## Open and close
 
 Run these from any shell.
@@ -43,11 +41,23 @@ Leave tool mode. Maps and files are kept.
 kai stop
 ```
 
-## Setup
+## Setup & MCP
+
+### kai mcp
+
+Manage the Model Context Protocol (MCP) server and agent connections.
+
+```bash
+kai mcp .               # start local MCP stdio server for this folder
+kai mcp <agent>         # wire Kai MCP into an agent (e.g. kai mcp claude)
+kai mcp all             # wire all detected tools automatically
+kai mcp list            # check MCP server info and connected agents
+kai mcp remove <agent>  # disconnect a tool from Kai MCP
+```
 
 ### kai setup
 
-Connect one tool, or every installed tool.
+Connect one tool, or every installed tool (alias for `kai mcp <agent>`).
 
 ```bash
 kai setup <agent>
@@ -60,6 +70,7 @@ Options: `--print` (preview only), `--dry-run` (show what would change), `--forc
 
 Look things up. The default view shows tools.
 
+- `kai list mcp` / `kai list -m` — MCP server state and tool connections
 - `kai list -a` — installed tools and connection state
 - `kai list -i` — mapped projects
 - `kai list -s` — session and cache files
@@ -69,8 +80,9 @@ Look things up. The default view shows tools.
 
 Delete Kai's own data. Your code is never touched.
 
-- `kai remove -i .` — a project's map (`--dry-run` previews first)
+- `kai remove -m <name>` — disconnect a tool from Kai MCP (e.g. `kai remove -m claude`)
 - `kai remove -a <name>` — disconnect a tool
+- `kai remove -i .` — a project's map (`--dry-run` previews first)
 - `kai remove -s` — session and cache files
 
 ## Project graph
@@ -79,10 +91,28 @@ Delete Kai's own data. Your code is never touched.
 
 Build or check the code map.
 
+#### kai graph init
+
+Build the map from scratch.
+
 ```bash
-kai graph init .    # build from scratch
-kai graph update .  # rebuild now
-kai graph status .  # size and age
+kai graph init .
+```
+
+#### kai graph update
+
+Rebuild the map now.
+
+```bash
+kai graph update .
+```
+
+#### kai graph status
+
+Show map size and age.
+
+```bash
+kai graph status .
 ```
 
 ### kai status

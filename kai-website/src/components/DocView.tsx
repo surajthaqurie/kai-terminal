@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, Search, X } from 'lucide-react';
 import { renderMarkdown, slugify, type TocItem } from '../lib/markdown';
 
@@ -89,7 +89,7 @@ export function DocView({ doc, flatToc = false }: { doc: DocEntry; flatToc?: boo
   useEffect(() => {
     const root = bodyRef.current;
     if (!root) return;
-    const els = Array.from(root.querySelectorAll<HTMLElement>('[data-doc-section], h3[id]'));
+    const els = Array.from(root.querySelectorAll<HTMLElement>('[data-doc-section], h3[id], h4[id]'));
     if (els.length === 0 || typeof IntersectionObserver === 'undefined') return;
     const io = new IntersectionObserver(
       (entries) => {
@@ -175,37 +175,90 @@ export function DocView({ doc, flatToc = false }: { doc: DocEntry; flatToc?: boo
               </>
             ) : (
               <>
-                {filtered.map((s) => {
-                  const subIds = s.toc.filter((t) => t.level === 3).map((t) => t.id);
-                  const groupActive = active === s.id || (active !== null && subIds.includes(active));
-                  return (
-                  <div key={s.id} className="t-doc-toc-group">
+                {(() => {
+                  // "Open and close" bookends the reference with no group
+                  // heading and no count: `kai open` stays first and
+                  // `kai close` stays last, as heading-style rows.
+                  const bookend = filtered.find((s) => s.id === 'open-and-close');
+                  const bookendSubs = bookend ? bookend.toc.filter((t) => t.level === 3) : [];
+                  const topBookend = bookendSubs[0] ?? null;
+                  const bottomBookend = bookendSubs.length > 1 ? bookendSubs[bookendSubs.length - 1] : null;
+                  const groups = filtered.filter((s) => s.id !== 'open-and-close');
+                  const bookendRow = (sub: TocItem) => (
                     <a
-                      href={`#${s.id}`}
-                      data-active={groupActive}
-                      className="t-doc-toc-link"
-                      onClick={() => go(s.id)}
+                      key={sub.id}
+                      href={`#${sub.id}`}
+                      data-active={active === sub.id}
+                      className="t-doc-toc-link t-doc-toc-link--head t-doc-toc-link--cmd"
+                      onClick={() => go(sub.id)}
                     >
-                      {s.title}
+                      <span>{sub.text}</span>
                     </a>
-                    {s.toc.filter((t) => t.level === 3).length > 0 && (
-                      <div className="t-doc-toc-sub">
-                        {s.toc.filter((t) => t.level === 3).map((sub) => (
-                          <a
-                            key={sub.id}
-                            href={`#${sub.id}`}
-                            data-active={active === sub.id}
-                            className="t-doc-toc-sublink"
-                            onClick={() => go(sub.id)}
-                          >
-                            {sub.text}
-                          </a>
-                        ))}
-                      </div>
-                    )}
-                  </div>
                   );
-                })}
+                  return (
+                    <>
+                      {topBookend && <div className="t-doc-toc-group">{bookendRow(topBookend)}</div>}
+                      {groups.map((s) => {
+                        const subs = s.toc.filter((t) => t.level === 3);
+                        const subIds = subs.map((t) => t.id);
+                        const groupActive = active === s.id || (active !== null && subIds.includes(active));
+                        // Nest #### entries under their preceding ###.
+                        const nested: Array<{ h3: TocItem; h4s: TocItem[] }> = [];
+                        for (const t of s.toc) {
+                          if (t.level === 3) nested.push({ h3: t, h4s: [] });
+                          else if (t.level === 4 && nested.length > 0) nested[nested.length - 1].h4s.push(t);
+                        }
+                        return (
+                          <div key={s.id} className="t-doc-toc-group">
+                            <a
+                              href={`#${s.id}`}
+                              data-active={groupActive}
+                              className="t-doc-toc-link t-doc-toc-link--head"
+                              onClick={() => go(s.id)}
+                            >
+                              <span>{s.title}</span>
+                            </a>
+                            {nested.length > 0 && (
+                              <div className="t-doc-toc-sub">
+                                {nested.map(({ h3, h4s }) => {
+                                  const h3Active = active === h3.id || h4s.some((h) => h.id === active);
+                                  return (
+                                    <Fragment key={h3.id}>
+                                      <a
+                                        href={`#${h3.id}`}
+                                        data-active={h3Active}
+                                        className="t-doc-toc-sublink"
+                                        onClick={() => go(h3.id)}
+                                      >
+                                        {h3.text}
+                                      </a>
+                                      {h4s.length > 0 && (
+                                        <div className="t-doc-toc-subsub">
+                                          {h4s.map((h) => (
+                                            <a
+                                              key={h.id}
+                                              href={`#${h.id}`}
+                                              data-active={active === h.id}
+                                              className="t-doc-toc-subsublink"
+                                              onClick={() => go(h.id)}
+                                            >
+                                              {h.text}
+                                            </a>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </Fragment>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                      {bottomBookend && <div className="t-doc-toc-group">{bookendRow(bottomBookend)}</div>}
+                    </>
+                  );
+                })()}
               </>
             )}
             {filtered.length === 0 && <p className="t-micro">No topics match “{query}”.</p>}

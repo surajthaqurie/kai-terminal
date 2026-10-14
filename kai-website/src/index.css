@@ -218,7 +218,7 @@ code, kbd, samp, pre { overflow-wrap: anywhere; word-break: break-word; }
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 0.55rem;
+  gap: 0.95rem;
   flex-wrap: wrap;
   margin: 0 auto 2.25rem;
   font-size: 0.84rem;
@@ -1104,6 +1104,13 @@ html.js.io-ok .t-reveal.is-visible, .t-reveal.is-visible { opacity: 1; transform
 /* ——— Synced GitHub docs (DocView) ——— */
 .t-doc-hero-meta { display: flex; align-items: center; justify-content: center; gap: 0.75rem; flex-wrap: wrap; margin-top: 0.5rem; }
 .t-doc-layout { display: grid; grid-template-columns: 300px 1fr; gap: 2rem; align-items: start; }
+/* The aside itself sticks to the viewport (its parent row is as tall as the
+   article), so Search + Topics stay floating and visible to the page bottom.
+   Sticking the inner div never worked: the aside shrink-wraps it. */
+@media (min-width: 901px) {
+  .t-doc-side { position: sticky; top: 76px; z-index: 20; align-self: start; max-height: calc(100vh - 96px); overflow-y: auto; border-radius: 12px; }
+  .t-doc-side-sticky { position: static; }
+}
 .t-doc-side-sticky { position: sticky; top: 76px; display: flex; flex-direction: column; gap: 1rem; }
 .t-doc-search { position: relative; }
 .t-doc-search-icon { position: absolute; left: 0.8rem; top: 50%; transform: translateY(-50%); color: var(--text-tertiary); pointer-events: none; }
@@ -1111,7 +1118,7 @@ html.js.io-ok .t-reveal.is-visible, .t-reveal.is-visible { opacity: 1; transform
 .t-doc-search-input:focus { outline: none; border-color: var(--accent-cyan-fg); box-shadow: 0 0 0 3px var(--accent-cyan-bg); }
 .t-doc-search-clear { position: absolute; right: 0.5rem; top: 50%; transform: translateY(-50%); background: none; border: none; color: var(--text-tertiary); cursor: pointer; padding: 0.25rem; border-radius: 6px; }
 .t-doc-toc-toggle { display: none; align-items: center; justify-content: space-between; gap: 0.5rem; width: 100%; padding: 0.65rem 0.9rem; border-radius: 10px; background: var(--bg-surface); border: 1px solid var(--border-default); color: var(--text-primary); font: inherit; font-size: 0.87rem; font-weight: 700; cursor: pointer; }
-.t-doc-toc { display: flex; flex-direction: column; gap: 0.15rem; max-height: 46vh; overflow-y: auto; padding: 0.75rem; border-radius: 12px; background: var(--bg-surface); border: 1px solid var(--border-default); }
+.t-doc-toc { display: flex; flex-direction: column; gap: 0.15rem; padding: 0.9rem; border-radius: 12px; background: var(--bg-surface); border: 1px solid var(--border-default); }
 .t-doc-toc-group { display: flex; flex-direction: column; gap: 0.1rem; }
 .t-doc-toc-link { font-size: 0.82rem; color: var(--text-secondary); text-decoration: none; padding: 0.4rem 0.6rem; border-radius: 8px; line-height: 1.4; display: block; }
 .t-doc-toc-link:hover { color: var(--text-primary); background: var(--btn-secondary-bg); }
@@ -1120,6 +1127,63 @@ html.js.io-ok .t-reveal.is-visible, .t-reveal.is-visible { opacity: 1; transform
 .t-doc-toc-sublink { font-size: 0.76rem; color: var(--text-tertiary); text-decoration: none; padding: 0.25rem 0.5rem; border-radius: 6px; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; }
 .t-doc-toc-sublink:hover { color: var(--text-primary); background: var(--btn-secondary-bg); }
 .t-doc-toc-sublink[data-active='true'] { color: var(--accent-cyan-fg); font-weight: 600; background: var(--accent-cyan-bg); }
+/* Grouped Topics: airy groups, heading-style group titles, pill counts. */
+.t-doc-toc-group:not(:last-child) { margin-bottom: 0.55rem; }
+.t-doc-toc-link--head {
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.5rem;
+  padding: 0.35rem 0.6rem;
+  margin-bottom: 0.2rem;
+}
+.t-doc-toc-link--head[data-active='true'] { color: var(--accent-cyan-fg); background: var(--accent-cyan-bg); }
+.t-doc-toc-sub { gap: 0.2rem; margin: 0.1rem 0 0.25rem; }
+.t-doc-toc-sublink { font-size: 0.8rem; padding: 0.35rem 0.55rem; }
+/* Bullets on every command row. Group headings stay bullet-free. */
+.t-doc-toc-sublink::before {
+  content: '';
+  display: inline-block;
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+  margin-right: 0.55rem;
+  vertical-align: 0.12em;
+  flex-shrink: 0;
+}
+.t-doc-toc-sublink[data-active='true']::before { background: var(--accent-cyan-fg); }
+/* Nested #### rows (e.g. kai graph init / update / status). */
+.t-doc-toc-subsub { display: flex; flex-direction: column; gap: 0.15rem; padding-left: 0.7rem; margin: 0.05rem 0 0.2rem 0.55rem; border-left: 1px solid var(--border-subtle); }
+.t-doc-toc-subsublink { font-size: 0.74rem; color: var(--text-tertiary); text-decoration: none; padding: 0.25rem 0.5rem; border-radius: 6px; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; }
+.t-doc-toc-subsublink:hover { color: var(--text-primary); background: var(--btn-secondary-bg); }
+.t-doc-toc-subsublink[data-active='true'] { color: var(--accent-cyan-fg); font-weight: 600; background: var(--accent-cyan-bg); }
+.t-doc-toc-subsublink::before {
+  content: '';
+  display: inline-block;
+  width: 4px; height: 4px;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+  margin-right: 0.5rem;
+  vertical-align: 0.14em;
+  flex-shrink: 0;
+}
+.t-doc-toc-subsublink[data-active='true']::before { background: var(--accent-cyan-fg); }
+.t-doc-toc-link--cmd::before {
+  content: '';
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+  margin-right: 0.05rem;
+  align-self: center;
+  flex-shrink: 0;
+}
+.t-doc-toc-link--cmd[data-active='true']::before { background: var(--accent-cyan-fg); }
 .t-doc-side-links { display: flex; gap: 0.75rem; flex-wrap: wrap; font-size: 0.8rem; }
 .t-doc-side-links a { display: inline-flex; align-items: center; gap: 0.35rem; color: var(--accent-cyan-fg); text-decoration: none; font-weight: 600; }
 .t-doc-body { min-width: 0; display: flex; flex-direction: column; }
@@ -1150,7 +1214,6 @@ h1:hover .t-doc-anchor, h2:hover .t-doc-anchor, h3:hover .t-doc-anchor { opacity
 @media (max-width: 900px) {
   .t-doc-layout { grid-template-columns: 1fr; }
   .t-doc-side-sticky { position: sticky; top: 64px; z-index: 40; background: var(--bg-canvas); padding: 0.5rem 0; }
-  .t-doc-toc { max-height: 220px; }
   .t-doc-toc-toggle { display: inline-flex; }
   .t-doc-side[data-toc='closed'] .t-doc-toc, .t-doc-side[data-toc='closed'] .t-doc-side-links { display: none; }
   .t-doc-section { scroll-margin-top: 210px; }

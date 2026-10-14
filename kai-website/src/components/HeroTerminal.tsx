@@ -32,7 +32,7 @@ export function HeroTerminal({ version }: { version: string }) {
     if (['help', '?', 'kai --help', 'kai -h'].includes(input)) {
       reply = (
         <div style={{ color: '#67e8f9' }}>
-          <p>try: <b style={{ color: '#fcd34d' }}>open</b> · <b style={{ color: '#fcd34d' }}>&lt;agent&gt;</b> · <b style={{ color: '#fcd34d' }}>status</b> · <b style={{ color: '#fcd34d' }}>list</b> · <b style={{ color: '#fcd34d' }}>setup</b> · <b style={{ color: '#fcd34d' }}>graph</b> · <b style={{ color: '#fcd34d' }}>remove</b> · <b style={{ color: '#fcd34d' }}>doctor</b> · <b style={{ color: '#fcd34d' }}>lsp</b> · <b style={{ color: '#fcd34d' }}>stop</b></p>
+          <p>try: <b style={{ color: '#fcd34d' }}>open</b> · <b style={{ color: '#fcd34d' }}>&lt;agent&gt;</b> · <b style={{ color: '#fcd34d' }}>status</b> · <b style={{ color: '#fcd34d' }}>list</b> · <b style={{ color: '#fcd34d' }}>setup</b> · <b style={{ color: '#fcd34d' }}>graph</b> · <b style={{ color: '#fcd34d' }}>remove</b> · <b style={{ color: '#fcd34d' }}>doctor</b> · <b style={{ color: '#fcd34d' }}>lsp</b> · <b style={{ color: '#fcd34d' }}>stop</b> · <b style={{ color: '#fcd34d' }}>close</b></p>
         </div>
       );
     } else if (['kai', 'kai help'].includes(input)) {

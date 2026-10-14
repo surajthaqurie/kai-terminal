@@ -64,14 +64,16 @@ kai close                 # close active Kai Terminal instances
 ```bash
 kai claude .              # run Claude: auto-wires MCP, enters Code Mode, builds & syncs graph
 kai cursor /path/to/proj  # launch Cursor with auto-wired MCP and project context
-kai setup all             # auto-wire Kai MCP into every detected agent configuration
-kai setup claude          # auto-wire Kai MCP into Claude Code configuration
+kai mcp .                 # start stdio MCP server for the current project
+kai mcp claude            # auto-wire Kai MCP into Claude Code configuration
+kai mcp all               # auto-wire Kai MCP into every detected agent configuration
+kai mcp list              # show MCP server status and all agent connections (or kai list mcp)
 kai list -a               # detect installed agents and Kai MCP wiring status (default)
 kai list -i               # list all indexed projects, symbol counts, and freshness
 kai list -s               # list active session and cache files
 kai list -c               # display current CLI configuration
+kai remove -m claude      # un-wire Kai MCP from Claude Code (or kai mcp remove claude)
 kai remove -i .           # safely delete project index from ~/.kai/projects/ (repo untouched)
-kai remove -a claude      # un-wire Kai MCP from agent configuration
 kai remove -s             # clear session and cache files
 kai graph init .          # initialize AST symbol index and dependency graph
 kai graph update .        # force update and rebuild of project graph

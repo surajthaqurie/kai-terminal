@@ -1323,7 +1323,7 @@ export function removeAgentSetup(
         message: `Would remove kai MCP section from ${filePath}.`,
       };
     }
-    backupExistingConfig(filePath);
+    backupFile(filePath);
     const updated = raw.replace(/\n?\[mcp_servers\.kai\][\s\S]*?(?=\n\[|$)/, "");
     atomicWriteFile(filePath, updated);
     return {
@@ -1335,7 +1335,7 @@ export function removeAgentSetup(
     };
   }
 
-  const parsed = readJsonConfigFile(filePath);
+  const parsed = readJsonConfig(filePath);
   if (parsed.parseError) {
     return {
       id: def.id,
@@ -1376,7 +1376,7 @@ export function removeAgentSetup(
     };
   }
 
-  backupExistingConfig(filePath);
+  backupFile(filePath);
   delete container.kai;
   atomicWriteFile(filePath, JSON.stringify(parsed.data, null, 2) + "\n");
   return {

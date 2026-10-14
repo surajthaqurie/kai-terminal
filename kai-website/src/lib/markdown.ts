@@ -120,7 +120,7 @@ export function renderMarkdown(md: string): { html: string; toc: TocItem[] } {
       const level = h[1].length;
       const text = h[2].trim();
       const id = uniqueId(text.replace(/`/g, ''));
-      if (level === 2 || level === 3) toc.push({ id, level, text: text.replace(/`/g, '') });
+      if (level === 2 || level === 3 || level === 4) toc.push({ id, level, text: text.replace(/`/g, '') });
       html += `<h${level} id="${id}" class="t-doc-h${level}"><a href="#${id}" class="t-doc-anchor" aria-label="Link to this section">#</a>${renderInline(text)}</h${level}>`;
       i++;
       continue;

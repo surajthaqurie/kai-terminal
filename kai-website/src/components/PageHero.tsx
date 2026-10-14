@@ -11,7 +11,7 @@ export function PageHero({
 }: {
   badge: React.ReactNode;
   title: string;
-  sub?: string;
+  sub?: React.ReactNode;
   children?: React.ReactNode;
 }) {
   return (

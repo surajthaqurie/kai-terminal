@@ -1,4 +1,4 @@
-import { BookOpen, Github } from 'lucide-react';
+import { BookOpen } from 'lucide-react';
 import { PageHero } from '../components/PageHero';
 import { DocView } from '../components/DocView';
 import { Container } from '../components/ui';
@@ -25,14 +25,8 @@ export function ManualPage() {
       <PageHero
         badge={<><BookOpen size={14} /> Reference</>}
         title={doc.heading || 'Commands'}
-        sub={doc.desc || 'Every command, grouped by topic.'}
-      >
-        <div className="t-doc-hero-meta">
-          <a href={doc.githubUrl} target="_blank" rel="noreferrer" className="t-btn t-btn--secondary t-btn--sm">
-            <Github size={14} /> View on GitHub
-          </a>
-        </div>
-      </PageHero>
+        sub={<>Kai is a desktop terminal with a built-in CLI for running AI coding tools on your code. Commands outside Kai launch or quit the app. Everything else runs inside Kai. For full detail, visit <a href={doc.githubUrl} target="_blank" rel="noreferrer" className="t-link">USER_MANUAL.md</a>.</>}
+      />
       <section className="t-section" style={{ paddingTop: '1rem' }}>
         <Container>
           <DocView key="manual" doc={doc} />
