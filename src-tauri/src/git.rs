@@ -594,16 +594,27 @@ fn run_git_bounded(
 
     let mut child = c.spawn().ok()?;
     let mut stdout_pipe = child.stdout.take();
+    // Buffer at most 4 bytes per kept char (UTF-8 worst case): a giant diff
+    // (generated/minified/lock files) must not balloon process memory just to
+    // be truncated to `max_chars` below. The remainder is still drained into
+    // a sink so git never blocks on a full pipe and exits normally.
+    let max_bytes = max_chars.saturating_mul(4).saturating_add(4);
     let stdout_handle = std::thread::spawn(move || {
+        use std::io::Read;
         let mut buf = Vec::new();
         if let Some(ref mut pipe) = stdout_pipe {
-            let _ = std::io::Read::read_to_end(pipe, &mut buf);
+            let mut limited = pipe.by_ref().take(max_bytes as u64);
+            let _ = limited.read_to_end(&mut buf);
+            let _ = std::io::copy(pipe, &mut std::io::sink());
         }
         buf
     });
 
     let deadline = std::time::Instant::now() + Duration::from_secs(8);
     let mut exited = false;
+    // Short first polls (most probes finish in a few ms) backing off to 25 ms
+    // so a slow git still costs almost no CPU.
+    let mut poll_ms: u64 = 2;
     while std::time::Instant::now() < deadline {
         match child.try_wait() {
             Ok(Some(_)) => {
@@ -611,7 +622,8 @@ fn run_git_bounded(
                 break;
             }
             Ok(None) => {
-                std::thread::sleep(Duration::from_millis(25));
+                std::thread::sleep(Duration::from_millis(poll_ms));
+                poll_ms = (poll_ms * 2).min(25);
             }
             Err(_) => break,
         }

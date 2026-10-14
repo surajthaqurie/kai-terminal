@@ -10,6 +10,7 @@ import {
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
+import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
 import { ptyService, PtyService } from "../services/ptyService";
 import { isCopyKeyEvent, isPasteKeyEvent } from "../services/shortcuts";
@@ -21,6 +22,57 @@ import { lineLikelyChangesCwd, lineLikelyChangesCodeMode } from "../services/cwd
 // Search UI only mounts on first toggle (Ctrl+Shift+F), so it stays out of
 // the per-pane startup path.
 const SearchBar = lazy(() => import("./SearchBar").then((m) => ({ default: m.SearchBar })));
+
+/**
+ * GPU (WebGL) renderer for xterm. The default DOM renderer is the main cause
+ * of typing/scroll lag and dropped frames under heavy output (TUIs, AI CLIs,
+ * builds), so panes use WebGL whenever the WebView supports it.
+ *
+ * - Attached only to VISIBLE panes: browsers cap live WebGL contexts (~16), and
+ *   hidden tabs stay mounted, so they release theirs and fall back to DOM.
+ * - Any failure (no WebGL2, blocklisted GPU, context loss) silently keeps / falls
+ *   back to the DOM renderer — never breaks the terminal.
+ * - Escape hatch: `localStorage.kai_renderer = "dom"` forces the DOM renderer.
+ */
+function gpuRendererDisabled(): boolean {
+  try {
+    return window.localStorage.getItem("kai_renderer") === "dom";
+  } catch {
+    return false;
+  }
+}
+
+function attachGpuRenderer(term: Terminal, slot: { current: WebglAddon | null }): void {
+  if (slot.current || gpuRendererDisabled()) return;
+  try {
+    const addon = new WebglAddon();
+    addon.onContextLoss(() => {
+      try {
+        addon.dispose();
+      } catch {
+        // Already disposed with the terminal.
+      }
+      if (slot.current === addon) slot.current = null;
+    });
+    term.loadAddon(addon);
+    slot.current = addon;
+    term.refresh(0, Math.max(0, term.rows - 1));
+  } catch {
+    // WebGL2 unavailable: the DOM renderer keeps working.
+    slot.current = null;
+  }
+}
+
+function detachGpuRenderer(slot: { current: WebglAddon | null }): void {
+  const addon = slot.current;
+  slot.current = null;
+  if (!addon) return;
+  try {
+    addon.dispose();
+  } catch {
+    // Already disposed; safe to ignore.
+  }
+}
 
 export interface TerminalViewRef {
   clear: () => void;
@@ -92,6 +144,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
     const xtermRef = useRef<Terminal | null>(null);
     const fitAddonRef = useRef<FitAddon | null>(null);
     const searchAddonRef = useRef<SearchAddon | null>(null);
+    const webglAddonRef = useRef<WebglAddon | null>(null);
     // Backend PTY session id returned by create_pty (UUID). This is distinct
     // from the frontend tab id (`sessionId`): all IPC read/write/resize/close
     // calls and output filtering MUST use the backend id, otherwise writes
@@ -372,6 +425,8 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       } catch {
         // ignore initial layout errors
       }
+      // GPU renderer must load AFTER open() (it needs the screen element).
+      if (visibleRef.current) attachGpuRenderer(term, webglAddonRef);
 
       const onTextareaFocus = () => {
         onFocusRef.current?.();
@@ -725,6 +780,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
           flushTimer = null;
         }
         term.textarea?.removeEventListener("focus", onTextareaFocus);
+        detachGpuRenderer(webglAddonRef);
         inputDisposable.dispose();
         resizeObserver.disconnect();
         if (resizeTimer) clearTimeout(resizeTimer);
@@ -743,6 +799,16 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       // sessionId scopes the tab lifetime; shell/cwd changes apply on next launch.
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [sessionId]);
+
+    // Hold a WebGL context only while this pane is on screen (see
+    // attachGpuRenderer): hidden tabs release it so many tabs never exhaust the
+    // browser's context cap. Idempotent with the mount-time attach above.
+    useEffect(() => {
+      const term = xtermRef.current;
+      if (!term) return;
+      if (visible) attachGpuRenderer(term, webglAddonRef);
+      else detachGpuRenderer(webglAddonRef);
+    }, [visible]);
 
     // Periodic live CWD synchronization for the visible pane (ensures footer updates on cd).
     // Polled at 5 s (not 1.5 s): each tick is a backend IPC + mutex grab,

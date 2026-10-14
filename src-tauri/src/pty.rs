@@ -164,19 +164,24 @@ pub struct PtySessionHandle {
 /// Minimum gap between live-OS cwd probes for one session.
 const CWD_PROBE_MIN_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
 
-/// Refreshes `handle.cwd` from the live OS at most once per
-/// `CWD_PROBE_MIN_INTERVAL`. Returns the (possibly cached) cwd.
-fn probe_session_cwd(handle: &mut PtySessionHandle) -> String {
-    if let Some(pid) = handle.pid {
-        let now = std::time::Instant::now();
-        if now.duration_since(handle.last_cwd_probe) >= CWD_PROBE_MIN_INTERVAL {
-            handle.last_cwd_probe = now;
-            if let Some(curr) = resolve_process_cwd(pid) {
-                handle.cwd = curr;
-            }
-        }
+/// Claims the throttled live-cwd probe slot for a session: returns the pid to
+/// probe when `CWD_PROBE_MIN_INTERVAL` has elapsed since the last probe (and
+/// stamps the probe time), otherwise `None`.
+///
+/// Only the bookkeeping happens here, under the sessions lock. The probe
+/// itself (`resolve_process_cwd`: a syscall on Linux, an `lsof` child
+/// process on macOS that can take 100+ ms) MUST run after the lock is
+/// released — see `PtyManager::resolve_and_store_cwd` — otherwise every
+/// other tab's write/resize/close blocks behind it and input lags.
+fn take_cwd_probe_slot(handle: &mut PtySessionHandle) -> Option<u32> {
+    let pid = handle.pid?;
+    let now = std::time::Instant::now();
+    if now.duration_since(handle.last_cwd_probe) >= CWD_PROBE_MIN_INTERVAL {
+        handle.last_cwd_probe = now;
+        Some(pid)
+    } else {
+        None
     }
-    handle.cwd.clone()
 }
 
 /// Thread-safe manager for active PTY sessions.
@@ -187,8 +192,11 @@ pub struct PtyManager {
 
 // Maximum output batch size before flushing to event emitter (16 KB)
 const MAX_OUTPUT_BATCH_BYTES: usize = 16_384;
-// Buffer read chunk size (4 KB)
-const READ_BUFFER_CHUNK_BYTES: usize = 4_096;
+// Buffer read chunk size (32 KB). `read()` returns whatever is available, so
+// interactive latency is unchanged; under floods (`cat bigfile`, installs)
+// each read drains up to 8x more bytes per IPC event than the old 4 KB
+// buffer, cutting event/serialization overhead on every OS.
+const READ_BUFFER_CHUNK_BYTES: usize = 32_768;
 // Dimension bounds limits
 const MIN_COLS: u16 = 10;
 const MAX_COLS: u16 = 500;
@@ -412,23 +420,31 @@ impl PtyManager {
                         // unavailable. Frontend xterm parses the same bytes
                         // independently; output forwarding below is untouched.
                         scan_buf.extend_from_slice(&read_buf[..n]);
-                        for osc_cwd in extract_osc_cwds(&scan_buf) {
-                            if osc_cwd != last_emitted_cwd {
-                                last_emitted_cwd = osc_cwd.clone();
-                                if let Ok(mut map) = sessions_map_ref.lock() {
-                                    if let Some(handle) = map.get_mut(&id_clone) {
-                                        handle.cwd = osc_cwd.clone();
+                        // Fast path: an OSC sequence always starts with ESC.
+                        // Plain-text floods (logs, `cat`, installs) have no
+                        // ESC at all, so skip the scan and drop the tail —
+                        // no partial sequence can be pending without one.
+                        if scan_buf.contains(&0x1B) {
+                            for osc_cwd in extract_osc_cwds(&scan_buf) {
+                                if osc_cwd != last_emitted_cwd {
+                                    last_emitted_cwd = osc_cwd.clone();
+                                    if let Ok(mut map) = sessions_map_ref.lock() {
+                                        if let Some(handle) = map.get_mut(&id_clone) {
+                                            handle.cwd = osc_cwd.clone();
+                                        }
                                     }
+                                    emitter_reader.emit_cwd(PtyCwdPayload {
+                                        id: id_clone.clone(),
+                                        cwd: osc_cwd,
+                                    });
                                 }
-                                emitter_reader.emit_cwd(PtyCwdPayload {
-                                    id: id_clone.clone(),
-                                    cwd: osc_cwd,
-                                });
                             }
-                        }
-                        if scan_buf.len() > 8192 {
-                            let excess = scan_buf.len() - 8192;
-                            scan_buf.drain(..excess);
+                            if scan_buf.len() > 8192 {
+                                let excess = scan_buf.len() - 8192;
+                                scan_buf.drain(..excess);
+                            }
+                        } else {
+                            scan_buf.clear();
                         }
 
                         // Check if child working directory changed (throttled —
@@ -657,50 +673,87 @@ impl PtyManager {
         }
     }
 
+    /// Runs a due live-cwd probe for session `id` WITHOUT holding the
+    /// sessions lock, then stores the fresh value back (re-locking briefly).
+    /// `due_pid` is the result of `take_cwd_probe_slot`; `cached` is returned
+    /// when no probe is due or the OS cannot report a cwd (e.g. Windows).
+    fn resolve_and_store_cwd(&self, id: &str, due_pid: Option<u32>, cached: String) -> String {
+        let Some(pid) = due_pid else {
+            return cached;
+        };
+        match resolve_process_cwd(pid) {
+            Some(fresh) => {
+                if let Ok(mut sessions) = self.sessions.lock() {
+                    if let Some(session) = sessions.get_mut(id) {
+                        session.cwd = fresh.clone();
+                    }
+                }
+                fresh
+            }
+            None => cached,
+        }
+    }
+
     /// Returns live resolved working directory for a session if active.
     pub fn get_session_cwd(&self, id: &str) -> Option<String> {
-        let mut sessions = self.sessions.lock().ok()?;
-        let session = sessions.get_mut(id)?;
-        Some(probe_session_cwd(session))
+        let (cached, due_pid) = {
+            let mut sessions = self.sessions.lock().ok()?;
+            let session = sessions.get_mut(id)?;
+            (session.cwd.clone(), take_cwd_probe_slot(session))
+        };
+        Some(self.resolve_and_store_cwd(id, due_pid, cached))
     }
 
     /// Returns session metadata for a given ID.
     pub fn get_session_info(&self, id: &str) -> Option<PtySessionInfo> {
-        let mut sessions = self.sessions.lock().ok()?;
-        let session = sessions.get_mut(id)?;
-        let cwd = probe_session_cwd(session);
-        Some(PtySessionInfo {
-            id: session.id.clone(),
-            pid: session.pid,
-            shell_path: session.shell_path.clone(),
-            cwd,
-            cols: session.cols,
-            rows: session.rows,
-            status: session.status.clone(),
-        })
+        let (mut info, due_pid) = {
+            let mut sessions = self.sessions.lock().ok()?;
+            let session = sessions.get_mut(id)?;
+            let due_pid = take_cwd_probe_slot(session);
+            (
+                PtySessionInfo {
+                    id: session.id.clone(),
+                    pid: session.pid,
+                    shell_path: session.shell_path.clone(),
+                    cwd: session.cwd.clone(),
+                    cols: session.cols,
+                    rows: session.rows,
+                    status: session.status.clone(),
+                },
+                due_pid,
+            )
+        };
+        info.cwd = self.resolve_and_store_cwd(id, due_pid, info.cwd.clone());
+        Some(info)
     }
 
     /// Returns list of all active session metadata objects.
     pub fn list_sessions(&self) -> Vec<PtySessionInfo> {
-        if let Ok(mut sessions) = self.sessions.lock() {
-            sessions
+        let mut rows: Vec<(PtySessionInfo, Option<u32>)> = match self.sessions.lock() {
+            Ok(mut sessions) => sessions
                 .values_mut()
                 .map(|s| {
-                    let cwd = probe_session_cwd(s);
-                    PtySessionInfo {
-                        id: s.id.clone(),
-                        pid: s.pid,
-                        shell_path: s.shell_path.clone(),
-                        cwd,
-                        cols: s.cols,
-                        rows: s.rows,
-                        status: s.status.clone(),
-                    }
+                    let due_pid = take_cwd_probe_slot(s);
+                    (
+                        PtySessionInfo {
+                            id: s.id.clone(),
+                            pid: s.pid,
+                            shell_path: s.shell_path.clone(),
+                            cwd: s.cwd.clone(),
+                            cols: s.cols,
+                            rows: s.rows,
+                            status: s.status.clone(),
+                        },
+                        due_pid,
+                    )
                 })
-                .collect()
-        } else {
-            Vec::new()
+                .collect(),
+            Err(_) => return Vec::new(),
+        };
+        for (info, due_pid) in rows.iter_mut() {
+            info.cwd = self.resolve_and_store_cwd(&info.id, *due_pid, info.cwd.clone());
         }
+        rows.into_iter().map(|(info, _)| info).collect()
     }
 }
 

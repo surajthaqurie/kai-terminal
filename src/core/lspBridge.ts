@@ -278,35 +278,42 @@ export async function queryLspCrossFileReferences(
       });
 
       let step: "init" | "ready" | "done" = "init";
-      let responseBuffer = "";
+      // Byte-level framing: LSP `Content-Length` counts BYTES, so the buffer
+      // must stay a Buffer. Decoding chunks to strings corrupts multibyte
+      // characters split across chunk boundaries and forced several full
+      // re-encodes of the whole buffer per message.
+      let responseBuffer: Buffer = Buffer.alloc(0);
+      const MAX_LSP_BUFFER_BYTES = 8 * 1024 * 1024;
 
       proc.stdout?.on("data", (chunk: Buffer) => {
-        responseBuffer += chunk.toString("utf-8");
+        responseBuffer =
+          responseBuffer.length === 0 ? chunk : Buffer.concat([responseBuffer, chunk]);
+        if (responseBuffer.length > MAX_LSP_BUFFER_BYTES) {
+          // Runaway server output: drop it rather than grow without bound;
+          // the request timeout resolves the call in degraded mode.
+          responseBuffer = Buffer.alloc(0);
+          return;
+        }
 
         while (true) {
-          const separator = "\r\n\r\n";
-          const sepIndex = responseBuffer.indexOf(separator);
+          const sepIndex = responseBuffer.indexOf("\r\n\r\n");
           if (sepIndex === -1) break;
 
-          const header = responseBuffer.slice(0, sepIndex);
+          const header = responseBuffer.subarray(0, sepIndex).toString("utf-8");
           const match = header.match(/Content-Length:\s*(\d+)/i);
+          const bodyStart = sepIndex + 4;
           if (!match) {
-            responseBuffer = responseBuffer.slice(sepIndex + separator.length);
+            responseBuffer = responseBuffer.subarray(bodyStart);
             continue;
           }
 
           const length = parseInt(match[1], 10);
-          const bodyStart = sepIndex + separator.length;
-          const remaining = responseBuffer.slice(bodyStart);
-          if (Buffer.byteLength(remaining, "utf-8") < length) {
+          if (responseBuffer.length - bodyStart < length) {
             break; // Wait for full message body
           }
 
-          const body = Buffer.from(remaining, "utf-8").subarray(0, length).toString("utf-8");
-          const consumedLength =
-            Buffer.byteLength(responseBuffer.slice(0, bodyStart), "utf-8") + length;
-          const fullBuf = Buffer.from(responseBuffer, "utf-8");
-          responseBuffer = fullBuf.subarray(consumedLength).toString("utf-8");
+          const body = responseBuffer.subarray(bodyStart, bodyStart + length).toString("utf-8");
+          responseBuffer = responseBuffer.subarray(bodyStart + length);
 
           let parsed: Record<string, unknown> | null = null;
           try {

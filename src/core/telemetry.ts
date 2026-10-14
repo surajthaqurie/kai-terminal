@@ -26,6 +26,21 @@ export function getMetricsLogPath(): string {
   return path.join(getKaiHomeDir(), "metrics.jsonl");
 }
 
+// Every MCP call appends a line; without a cap the log grows forever and
+// `getTelemetrySummary` would slurp it all into memory. One rotated
+// generation (`metrics.jsonl.1`) keeps recent history bounded to ~2x this.
+const MAX_METRICS_LOG_BYTES = 5 * 1024 * 1024;
+
+function rotateMetricsLogIfLarge(logPath: string): void {
+  try {
+    if (fs.statSync(logPath).size > MAX_METRICS_LOG_BYTES) {
+      fs.renameSync(logPath, `${logPath}.1`);
+    }
+  } catch {
+    // Missing file (first write) or rename race: appending still works.
+  }
+}
+
 /**
  * Record a privacy-safe metric event.
  * Never logs user prompts, file contents, or secret tokens.
@@ -39,6 +54,7 @@ export function recordMetric(event: Omit<LocalMetricsRecord, "timestamp">): void
     };
     const logPath = getMetricsLogPath();
     const line = JSON.stringify(record) + "\n";
+    rotateMetricsLogIfLarge(logPath);
     fs.appendFileSync(logPath, line, { mode: 0o600, encoding: "utf-8" });
   } catch {
     // Metric recording is non-critical; never crash operations
@@ -99,11 +115,13 @@ export function getTelemetrySummary(): TelemetrySummary {
 
 export function clearMetricsLog(): void {
   const logPath = getMetricsLogPath();
-  if (fs.existsSync(logPath)) {
-    try {
-      fs.unlinkSync(logPath);
-    } catch {
-      // Ignore
+  for (const p of [logPath, `${logPath}.1`]) {
+    if (fs.existsSync(p)) {
+      try {
+        fs.unlinkSync(p);
+      } catch {
+        // Ignore
+      }
     }
   }
 }

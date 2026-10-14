@@ -105,9 +105,10 @@ export class PtyServiceImpl implements IPtyService {
     // would otherwise leak (hidden shell + reader/waiter threads forever),
     // so reap the late arrival when it lands.
     const pending = invoke<PtySessionInfo>("create_pty", { options });
-    const timeout = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error("PTY launch timed out after 20s")), 20000)
-    );
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error("PTY launch timed out after 20s")), 20000);
+    });
     try {
       return await Promise.race([pending, timeout]);
     } catch (err) {
@@ -120,6 +121,9 @@ export class PtyServiceImpl implements IPtyService {
         () => {}
       );
       throw err;
+    } finally {
+      // Don't leave a 20 s timer (and its closure) alive per spawned pane.
+      if (timer !== undefined) clearTimeout(timer);
     }
   }
 

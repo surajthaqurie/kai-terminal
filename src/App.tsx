@@ -1422,6 +1422,20 @@ export function App() {
     window.addEventListener("focus", refitVisibleTerminals);
     let cancelled = false;
     const unlistens: Array<() => void> = [];
+    // The listen promises resolve asynchronously: if the effect already
+    // cleaned up (fast unmount / StrictMode double-invoke), unlisten right
+    // away instead of pushing into an array nobody will drain again.
+    const track = (u: () => void) => {
+      if (cancelled) {
+        try {
+          u();
+        } catch {
+          // Already removed; safe to ignore.
+        }
+      } else {
+        unlistens.push(u);
+      }
+    };
     void import("@tauri-apps/api/window")
       .then(({ getCurrentWindow }) => {
         if (cancelled) return;
@@ -1431,13 +1445,13 @@ export function App() {
             .onResized(() => {
               refitVisibleTerminals();
             })
-            .then((u) => unlistens.push(u))
+            .then(track)
             .catch(() => {});
           void win
             .onFocusChanged((e) => {
               if (e.payload) refitVisibleTerminals();
             })
-            .then((u) => unlistens.push(u))
+            .then(track)
             .catch(() => {});
         } catch {
           // Browser/mock mode: document + window listeners above suffice.
@@ -1991,8 +2005,14 @@ export function App() {
             const rect = rectByPaneId.get(pane.id) ?? { x: 0, y: 0, w: 1, h: 1 };
             const isPaneActive = pane.id === tab.activePaneId;
             const focusPane = () => {
+              // Fires on every click/pointer-down/focus inside the pane (4
+              // call sites per click). Return the SAME array when this pane is
+              // already active so React bails out instead of re-rendering the
+              // whole shell on every click while selecting text.
               setTabs((prev) =>
-                prev.map((t) => (t.id === tab.id ? { ...t, activePaneId: pane.id } : t))
+                prev.some((t) => t.id === tab.id && t.activePaneId !== pane.id)
+                  ? prev.map((t) => (t.id === tab.id ? { ...t, activePaneId: pane.id } : t))
+                  : prev
               );
             };
             return (
