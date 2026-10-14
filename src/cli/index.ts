@@ -22,11 +22,13 @@ import { getTelemetrySummary, clearMetricsLog } from "../core/telemetry";
 import { detectInstalledLspServers } from "../core/lspBridge";
 import {
   AGENT_REGISTRY,
+  AgentDefinition,
   applyAgentSetup,
   autoSetupDetectedAgents,
   buildAgentSetup,
   detectInstalledAgentsSync,
   findDynamicAgentBinary,
+  findBinaryOnPath,
   buildDynamicAgentSetup,
   listAgentIds,
 } from "../core/agents";
@@ -495,6 +497,9 @@ Usage:
   kai <command> [options]
 
 Commands:
+  <agent> [args...]       Run an AI agent (claude, cursor, codex, gemini, opencode, aider, etc.)
+                          with auto MCP setup, Code Mode, and graph auto-sync
+  agents                  Dynamically detect AI agents installed on this system
   code [path] [--no-launch] Register, index, and open project in Kai Terminal (Code Mode)
                             (reuses the running window when Kai is already open;
                              --no-launch/--headless/--no-gui skips opening a window;
@@ -510,15 +515,9 @@ Commands:
   session list            List Kai-managed temporary session cache files
   session clean           Clean Kai-owned temporary session data (use --dry-run to inspect)
   lsp [status]            Probe locally installed Language Server Protocol (LSP) servers
-  doctor                Environment and install diagnostics (Linux app-drawer audit)
+  doctor                  Environment and install diagnostics (Linux app-drawer audit)
   mcp [path]              Start stdio JSON-RPC Model Context Protocol (MCP) server
-  run [path] -- <cmd>     Run an external coding agent, then auto-sync the graph
-                          (syncs on success, failure, timeout, or cancel; no
-                          manual kai_sync_graph call needed)
   bench [path]            Run privacy-safe evaluation benchmark across 4 configurations
-  agent setup <agent|all> Install kai MCP wiring for an agent (auto-detects system)
-  agent register ...     Alias of 'agent setup' (writes config files automatically)
-  agent list              Dynamically detect AI agents installed on this system
   metrics [clear]         Display local privacy-safe telemetry summary
 
 Flags:
@@ -529,6 +528,10 @@ Flags:
   --no-hook               With 'code': skip the automatic commit-msg hook install
 
 Examples:
+  kai claude              # auto-wires MCP, enters Code Mode, builds graph, runs Claude
+  kai claude -p "fix bug" # passes arguments directly to Claude
+  kai opencode
+  kai agents              # list installed agents and kai MCP wiring status
   kai code .              # opens Kai once; reuses the window if already running
   kai code . --no-launch  # index + set Code Mode, stay in this terminal
   kai stop code
@@ -537,13 +540,204 @@ Examples:
   kai unregister . --dry-run
   kai query "Explain PtyManager lifecycle"
   kai graph rebuild .
-  kai session clean --dry-run
   kai mcp .
-  kai run -- claude -p "fix the login bug"
-  kai run ./myproj -- opencode run "add tests for parser"
-  kai agent setup claude
-  kai agent setup all       # auto-wire every agent installed on this system
 `);
+}
+
+/**
+ * Resolve an agent name or alias against registered agents and dynamically detected PATH binaries.
+ */
+export function resolveAgent(nameOrAlias: string): {
+  agentDef?: AgentDefinition;
+  dynamicBin?: string | null;
+  agentId: string;
+} | null {
+  if (!nameOrAlias || nameOrAlias.startsWith("-")) return null;
+  const normalized = nameOrAlias.toLowerCase();
+  const agentDef = AGENT_REGISTRY.find(
+    (a) => a.id.toLowerCase() === normalized || a.aliases.some((al) => al.toLowerCase() === normalized)
+  );
+  if (agentDef) {
+    return { agentDef, agentId: agentDef.id };
+  }
+  const dynamicBin = findDynamicAgentBinary(nameOrAlias);
+  if (dynamicBin) {
+    return { dynamicBin, agentId: nameOrAlias };
+  }
+  return null;
+}
+
+/**
+ * Unified execution workflow for AI agents:
+ * 1. Resolves and registers the target project path.
+ * 2. Enters Code Mode and installs git hooks (if applicable).
+ * 3. Auto-configures MCP wiring for the agent (if not already wired).
+ * 4. Ensures the project graph/index is built.
+ * 5. Launches the agent with the forwarded arguments.
+ * 6. Automatically syncs the project graph on completion/failure/exit.
+ */
+export async function executeAgentWorkflow(
+  agentNameOrCommand: string,
+  agentArgs: string[],
+  opts: {
+    targetPath?: string;
+    timeoutMs?: number;
+  } = {}
+): Promise<number> {
+  const targetPath = opts.targetPath || process.cwd();
+  const meta = registerProject(targetPath);
+
+  // 1. Enter Code Mode & ensure commit-msg hook
+  saveActiveProjectState(meta.canonicalPath, meta.name, meta.id, "code");
+  try {
+    installCommitMsgHook(meta.canonicalPath);
+  } catch {
+    // ignore hook install errors
+  }
+
+  // 2. Auto-wire MCP for the agent
+  const resolved = resolveAgent(agentNameOrCommand);
+  if (resolved) {
+    let kaiBin = process.argv[1] ? path.resolve(process.argv[1]) : "kai";
+    try {
+      const real = fs.realpathSync(kaiBin);
+      if (real.toLowerCase().endsWith(".js")) kaiBin = real;
+    } catch {
+      // ignore
+    }
+    const setupResult = applyAgentSetup(resolved.agentId, kaiBin, {
+      projectDir: meta.canonicalPath,
+      scope: "auto",
+      force: false,
+      dryRun: false,
+    });
+    if (setupResult.wrote) {
+      console.log(`[kai] MCP configuration auto-wired for ${setupResult.name || resolved.agentId}.`);
+    }
+  }
+
+  // 3. Ensure baseline index & project graph
+  let baseline = loadProjectIndex(meta.id);
+  if (!baseline) {
+    console.log(`[kai] Indexing project for Code Mode run...`);
+    baseline = await indexProject(meta);
+  }
+
+  // 4. Resolve executable binary
+  let binaryToRun: string | null = null;
+  if (resolved?.agentDef) {
+    for (const b of resolved.agentDef.binaries) {
+      const found = findBinaryOnPath(b);
+      if (found) {
+        binaryToRun = found;
+        break;
+      }
+    }
+    if (!binaryToRun) {
+      binaryToRun = findBinaryOnPath(resolved.agentDef.id);
+    }
+  } else if (resolved?.dynamicBin) {
+    binaryToRun = resolved.dynamicBin;
+  } else {
+    binaryToRun = findBinaryOnPath(agentNameOrCommand) || agentNameOrCommand;
+  }
+
+  if (!binaryToRun) {
+    console.error(
+      `[kai] Error: Binary for "${resolved?.agentDef?.name || agentNameOrCommand}" not found on PATH.`
+    );
+    if (resolved?.agentDef?.installGuidance) {
+      console.error(`[kai] ${resolved.agentDef.installGuidance}`);
+    }
+    return 1;
+  }
+
+  let finalArgs = [...agentArgs];
+  if (resolved?.agentDef?.kind === "ide" && finalArgs.length === 0) {
+    finalArgs = [meta.canonicalPath];
+  }
+
+  const displayCmd = [resolved?.agentDef?.id || path.basename(binaryToRun), ...finalArgs]
+    .map((a) => (a.includes(" ") ? JSON.stringify(a) : a))
+    .join(" ");
+  console.log(`[kai] Running Code Mode task in "${meta.name}": ${displayCmd}`);
+
+  const controller = new AbortController();
+  const onInterrupt = (): void => {
+    controller.abort();
+  };
+  process.once("SIGINT", onInterrupt);
+  process.once("SIGTERM", onInterrupt);
+  let agentExitCode: number | null = 0;
+  let agentTimedOut = false;
+  let agentSignal: string | null = null;
+  try {
+    const outcome = await runCodeTaskWithAutoSync(
+      meta,
+      async () => {
+        const useShell = needsShellForCommand(binaryToRun!);
+        const result = await runExternalAgentCommand(binaryToRun!, finalArgs, {
+          cwd: meta.canonicalPath,
+          timeoutMs: opts.timeoutMs,
+          signal: controller.signal,
+          shell: useShell,
+        });
+        agentExitCode = result.exitCode;
+        agentTimedOut = result.timedOut;
+        agentSignal = result.signal;
+        const changedOnDisk = detectChangedFilesFromDisk(loadProjectIndex(meta.id));
+        const uncertainOutcome =
+          changedOnDisk.length === 0 ||
+          result.timedOut ||
+          result.signal !== null ||
+          controller.signal.aborted;
+        const exitNote = result.timedOut
+          ? `command timed out${opts.timeoutMs ? ` after ${opts.timeoutMs}ms` : ""}`
+          : result.signal
+            ? `command terminated by signal ${result.signal}`
+            : `command exited with code ${result.exitCode}`;
+        console.log(`[kai] Agent finished (${exitNote}, ${result.durationMs}ms).`);
+        return {
+          changedFiles: changedOnDisk,
+          uncertain: uncertainOutcome,
+          codeValidation: {
+            ran: false,
+            passed: false,
+            detail: `${exitNote}; agent outcome preserved separately from graph sync.`,
+          },
+        };
+      },
+      { signal: controller.signal }
+    );
+    const sync = outcome.syncReport;
+    console.log(
+      `[kai] Graph auto-sync: ${sync.graphResult} (${sync.graphScope}; freshness: ${sync.freshnessAfter}). ${sync.message}`
+    );
+    if (sync.warnings) for (const w of sync.warnings) console.log(`[kai] Note: ${w}`);
+    if (outcome.taskOutcome !== "completed") {
+      console.log(
+        `[kai] Task ${outcome.taskOutcome}${outcome.taskError ? `: ${outcome.taskError}` : ""}.`
+      );
+    }
+    if (agentTimedOut) {
+      console.log(
+        `[kai] Note: the timed-out command was signalled (SIGTERM, then SIGKILL after 2 s; process tree on Windows). A detached grandchild may still be writing; freshness above is point-in-time — rerun 'kai status' or 'kai graph rebuild' if it keeps changing.`
+      );
+    } else if (agentSignal) {
+      console.log(
+        `[kai] Note: the command was terminated by ${agentSignal}; a surviving detached child may still be writing — treat freshness as point-in-time.`
+      );
+    }
+    if (controller.signal.aborted || outcome.taskOutcome === "cancelled") return 130;
+    if (outcome.taskOutcome === "failed") return 1;
+    if (agentTimedOut) return 124;
+    if (agentSignal) return 130;
+    if (typeof agentExitCode === "number") return agentExitCode;
+    return 1;
+  } finally {
+    process.removeListener("SIGINT", onInterrupt);
+    process.removeListener("SIGTERM", onInterrupt);
+  }
 }
 
 export async function runCli(argv: string[]): Promise<number> {
@@ -561,6 +755,11 @@ export async function runCli(argv: string[]): Promise<number> {
   }
 
   try {
+    const resolvedAgent = resolveAgent(command);
+    if (resolvedAgent) {
+      return await executeAgentWorkflow(command, args.slice(1));
+    }
+
     // Direct folder invocation: support `kai .` or `kai <path>` directly
     const isDirectPath =
       command === "." ||
@@ -1109,96 +1308,7 @@ export async function runCli(argv: string[]): Promise<number> {
           return 1;
         }
       }
-      const meta = registerProject(targetPath);
-      let baseline = loadProjectIndex(meta.id);
-      if (!baseline) {
-        console.log(`[kai] Indexing project for Code Mode run...`);
-        baseline = await indexProject(meta);
-      }
-      const displayCmd = cmdArgs.map((a) => (a.includes(" ") ? JSON.stringify(a) : a)).join(" ");
-      console.log(`[kai] Running Code Mode task in "${meta.name}": ${displayCmd}`);
-      const controller = new AbortController();
-      const onInterrupt = (): void => {
-        controller.abort();
-      };
-      process.once("SIGINT", onInterrupt);
-      process.once("SIGTERM", onInterrupt);
-      let agentExitCode: number | null = 0;
-      let agentTimedOut = false;
-      let agentSignal: string | null = null;
-      try {
-        const outcome = await runCodeTaskWithAutoSync(
-          meta,
-          async () => {
-            const useShell = needsShellForCommand(cmdArgs[0] ?? "");
-            const result = await runExternalAgentCommand(cmdArgs[0], cmdArgs.slice(1), {
-              cwd: meta.canonicalPath,
-              timeoutMs,
-              signal: controller.signal,
-              shell: useShell,
-            });
-            agentExitCode = result.exitCode;
-            agentTimedOut = result.timedOut;
-            agentSignal = result.signal;
-            const changedOnDisk = detectChangedFilesFromDisk(loadProjectIndex(meta.id));
-            // Timeout/signal/cancel outcomes may still be mutating via a
-            // surviving detached grandchild: force the broader refresh path
-            // and warn, rather than trusting an immediately-fresh graph.
-            const uncertainOutcome =
-              changedOnDisk.length === 0 ||
-              result.timedOut ||
-              result.signal !== null ||
-              controller.signal.aborted;
-            const exitNote = result.timedOut
-              ? `command timed out after ${timeoutMs}ms`
-              : result.signal
-                ? `command terminated by signal ${result.signal}`
-                : `command exited with code ${result.exitCode}`;
-            console.log(`[kai] Agent finished (${exitNote}, ${result.durationMs}ms).`);
-            return {
-              changedFiles: changedOnDisk,
-              uncertain: uncertainOutcome,
-              codeValidation: {
-                ran: false,
-                passed: false,
-                detail: `${exitNote}; agent outcome preserved separately from graph sync.`,
-              },
-            };
-          },
-          { signal: controller.signal }
-        );
-        const sync = outcome.syncReport;
-        console.log(
-          `[kai] Graph auto-sync: ${sync.graphResult} (${sync.graphScope}; freshness: ${sync.freshnessAfter}). ${sync.message}`
-        );
-        if (sync.warnings) for (const w of sync.warnings) console.log(`[kai] Note: ${w}`);
-        if (outcome.taskOutcome !== "completed") {
-          console.log(
-            `[kai] Task ${outcome.taskOutcome}${outcome.taskError ? `: ${outcome.taskError}` : ""}.`
-          );
-        }
-        // The agent's exit outcome is preserved: sync status is reported
-        // above but never rewrites it. Conventional codes: 124 = timeout,
-        // 130 = terminated by signal / cancelled (SIGINT convention).
-        if (agentTimedOut) {
-          console.log(
-            `[kai] Note: the timed-out command was signalled (SIGTERM, then SIGKILL after 2 s; process tree on Windows). A detached grandchild may still be writing; freshness above is point-in-time — rerun 'kai status' or 'kai graph rebuild' if it keeps changing.`
-          );
-        } else if (agentSignal) {
-          console.log(
-            `[kai] Note: the command was terminated by ${agentSignal}; a surviving detached child may still be writing — treat freshness as point-in-time.`
-          );
-        }
-        if (controller.signal.aborted || outcome.taskOutcome === "cancelled") return 130;
-        if (outcome.taskOutcome === "failed") return 1;
-        if (agentTimedOut) return 124;
-        if (agentSignal) return 130;
-        if (typeof agentExitCode === "number") return agentExitCode;
-        return 1;
-      } finally {
-        process.removeListener("SIGINT", onInterrupt);
-        process.removeListener("SIGTERM", onInterrupt);
-      }
+      return await executeAgentWorkflow(cmdArgs[0], cmdArgs.slice(1), { targetPath, timeoutMs });
     }
 
     // 10. kai bench [path]
@@ -1261,9 +1371,8 @@ export async function runCli(argv: string[]): Promise<number> {
         }
       }
       console.log(
-        `\nRun 'kai setup agent <name>' to install MCP wiring, e.g. 'kai setup agent opencode'.`
+        `\nTip: Run 'kai <agent>' to launch an agent with auto-wired MCP, Code Mode, and graph sync (e.g. 'kai claude').`
       );
-      console.log(`Run 'kai setup agent all' to wire every installed agent at once.`);
       return 0;
     }
 

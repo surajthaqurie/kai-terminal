@@ -662,7 +662,7 @@ In chat: "Use kai_project_info to inspect the codebase."
 // Dynamic system detection (PATH + config presence, no execution)
 // ---------------------------------------------------------------------------
 
-function findBinaryOnPath(bin: string): string | null {
+export function findBinaryOnPath(bin: string): string | null {
   if (!/^[a-zA-Z0-9_.-]+$/.test(bin)) return null;
   const envPath = process.env.PATH || process.env.Path || "";
   const isWindows = process.platform === "win32";
