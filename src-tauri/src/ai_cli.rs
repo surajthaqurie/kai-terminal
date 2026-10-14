@@ -959,12 +959,18 @@ fn probe_version(binary_path: &str) -> Option<String> {
         c.spawn().ok()
     };
     // Direct spawn first (real binaries everywhere, shims on Unix). When
-    // that fails on Windows, retry once through the shim's interpreter.
+    // that fails on Windows, retry once through the shim's interpreter —
+    // but only when the target actually exists. A missing path can never
+    // yield a version; the interpreter would only echo its own
+    // "command not found" error, which must not be mistaken for one.
     let mut child = match build_child(false) {
         Some(c) => c,
         None => {
             #[cfg(target_os = "windows")]
             {
+                if !std::path::Path::new(binary_path).is_file() {
+                    return None;
+                }
                 build_child(true)?
             }
             #[cfg(not(target_os = "windows"))]
