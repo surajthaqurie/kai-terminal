@@ -1,5 +1,5 @@
-/* Single source of truth for OS detection.
-   Used by Hero, InstallBar and Downloads so all three agree. */
+/* Single source of truth for OS detection and labels.
+   Used by Hero and InstallBar to suggest the visitor's platform. */
 
 export type OsId = 'macos' | 'linux' | 'windows';
 

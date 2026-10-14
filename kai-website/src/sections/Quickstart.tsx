@@ -7,17 +7,17 @@ import { REPO_URL } from '../data/site';
 const STEPS: Array<{ n: string; t: string; d: string; what: string }> = [
   { n: '01', t: 'Install Kai', d: 'Download the installer for your OS from GitHub Releases. No account or cloud sign-up.', what: 'Source build instead? See DEVELOPMENT.md — requires Node 20+ and Rust 1.75+.' },
   { n: '02', t: 'Launch Kai Terminal', d: 'From any shell, run: kai open to launch the Kai Terminal desktop app.', what: 'kai open launches the Kai Terminal application itself (optional path defaults to current directory).' },
-  { n: '03', t: 'Run your AI coding agent', d: 'Inside Kai Terminal, run: kai claude . (or cursor, aider, opencode, gemini, agy).', what: 'Kai auto-wires MCP, runs the agent, strips co-author trailers, and auto-syncs the AST graph on exit.' },
+  { n: '03', t: 'Run your AI coding tool', d: 'Inside Kai Terminal, run your tool\u2019s command (Claude Code shown): kai claude .', what: 'Kai connects the tool, runs it, and updates the code map on exit.' },
 ];
 
 const SNIPPETS: Record<'run' | 'ai' | 'config', { tab: string; code: string }> = {
   run: {
     tab: '$ workflow',
-    code: '# 1. Launch Kai Terminal app (from any shell)\nkai open\n# Or open Kai Terminal for a specific project folder:\n# kai open /path/to/project\n\n# 2. Inside Kai Terminal, launch your favorite AI agent\nkai claude .\n\n# Kai auto-wires MCP, enters Code Mode, strips co-authors,\n# and auto-syncs the AST symbol graph upon agent exit.\n\n# 3. Check project and LSP bridge health\nkai status',
+    code: '# 1. Launch Kai Terminal app (from any shell)\nkai open\n# Or open Kai Terminal for a specific project folder:\n# kai open /path/to/project\n\n# 2. Inside Kai Terminal, launch your AI tool (Claude Code shown)\nkai claude .\n\n# Kai connects the tool and updates the code map on exit.\n\n# 3. Check project health\nkai status',
   },
   ai: {
     tab: '$ AI agents',
-    code: '# Launch agents directly inside Kai Terminal:\nkai claude .       # Claude Code\nkai cursor .       # Cursor IDE\nkai aider .        # Aider CLI\nkai opencode .     # OpenCode\nkai gemini .       # Gemini CLI\nkai agy .          # Antigravity CLI\n\n# Detect installed agents and Kai MCP status\nkai list -a\n\n# Wire Kai MCP across all detected agents\nkai setup all',
+    code: '# Launch your tool directly inside Kai Terminal (Claude Code shown):\nkai claude .\n\n# Check installed tools and connection state\nkai list -a\n\n# Connect every installed tool at once\nkai setup all',
   },
   config: {
     tab: '$ management',

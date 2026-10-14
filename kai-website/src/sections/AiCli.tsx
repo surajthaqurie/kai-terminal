@@ -6,24 +6,23 @@ export function AiCli() {
     <Section id="ai-cli" alt>
       <div className="t-split">
         <div>
-          <Badge tone="purple"><Bot size={14} /> Agent Intelligence</Badge>
-          <h2 className="t-section-title" style={{ textAlign: 'left' }}>Rich Code Intelligence for External AI Agents</h2>
+          <Badge tone="purple"><Bot size={14} /> For AI coding tools</Badge>
+          <h2 className="t-section-title" style={{ textAlign: 'left' }}>Your code, ready for AI tools</h2>
           <p style={{ color: 'var(--text-secondary)', fontSize: '1.02rem', lineHeight: 1.65, marginBottom: '1rem' }}>
-            Kai indexes your repository locally using Tree-sitter AST parsing and serves ranked semantic context directly over Model Context Protocol (MCP) stdio. Zero accounts, zero cloud dependencies.
+            Kai reads your project and hands the AI tool the parts it needs — files, functions, and how they connect. It all happens on your machine.
           </p>
           <p style={{ color: 'var(--text-tertiary)', fontSize: '0.88rem', lineHeight: 1.6, marginBottom: '1.5rem' }}>
-            Kai automatically configures MCP paths for your installed tools, keeping their native configurations backed up and intact.
+            Kai fills in each tool's settings for you, and keeps a backup of what was there before.
           </p>
           <ul className="t-check-list">
-            <li><CheckCircle2 size={18} color="var(--accent-purple-fg)" /><span><strong>10 coding agents supported</strong> — Claude, Cursor, Codex, Gemini, OpenCode, Aider, Windsurf, Cline, Copilot, Antigravity.</span></li>
-            <li><CheckCircle2 size={18} color="var(--accent-purple-fg)" /><span><strong>Local AST graph engine</strong> — symbol indexing, dependency tracking, and LSP bridging with zero cloud dependencies.</span></li>
-            <li><CheckCircle2 size={18} color="var(--accent-purple-fg)" /><span><strong>Automatic graph sync</strong> — incremental re-indexing triggered automatically when the agent finishes.</span></li>
-            <li><CheckCircle2 size={18} color="var(--accent-purple-fg)" /><span><strong>Strict boundary isolation</strong> — indexes reside in ~/.kai/; your source repository files are never touched.</span></li>
+            <li><CheckCircle2 size={18} color="var(--accent-purple-fg)" /><span><strong>10 tools supported</strong> — Claude Code, Cursor, Codex, Gemini, OpenCode, Aider, Windsurf, Cline, GitHub Copilot, and Antigravity.</span></li>
+            <li><CheckCircle2 size={18} color="var(--accent-purple-fg)" /><span><strong>Local code intelligence</strong> — builds an AST map of functions, types, and dependencies, and auto-syncs when the agent exits.</span></li>
+            <li><CheckCircle2 size={18} color="var(--accent-purple-fg)" /><span><strong>Private &amp; self-contained</strong> — index stored in <code>~/.kai/</code>; auto-strips AI co-author trailers in git commits.</span></li>
           </ul>
         </div>
 
         <div className="t-panel t-probe">
-          <div className="t-probe-head"><span>$ kai claude .</span><span className="t-pill">auto MCP & sync</span></div>
+          <div className="t-probe-head"><span>$ kai claude .</span><span className="t-pill">auto MCP &amp; sync</span></div>
           <pre className="t-code t-code--sm"><code>{`[kai] MCP configuration auto-wired for claude.
 [kai] Indexing project for Code Mode run...
 [kai] Running Code Mode task in "web-app": claude

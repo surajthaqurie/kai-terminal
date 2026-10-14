@@ -16,7 +16,6 @@ export function PageHero({
 }) {
   return (
     <section className="t-page-hero">
-      <div className="t-hero-glow" aria-hidden="true" />
       <div className="t-page-hero-inner">
         <div className="t-enter" style={{ animationDelay: '0ms' }}>
           <Badge>{badge}</Badge>

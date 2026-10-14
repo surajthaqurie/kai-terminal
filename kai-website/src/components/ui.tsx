@@ -43,17 +43,18 @@ export function Badge({ children, tone = 'cyan' }: { children: React.ReactNode; 
   return <div className={tone === 'cyan' ? 't-badge' : `t-badge t-badge--${tone}`}>{children}</div>;
 }
 
-export function Button({ children, variant = 'primary', href, onClick, ...rest }: {
+export function Button({ children, variant = 'primary', href, className = '', onClick, ...rest }: {
   children: React.ReactNode; variant?: 'primary' | 'secondary'; href?: string;
 } & React.AnchorHTMLAttributes<HTMLAnchorElement>) {
+  const combinedClass = `t-btn t-btn--${variant}${className ? ` ${className}` : ''}`;
   if (href && href.startsWith('/') && !href.startsWith('//')) {
     return (
-      <Link to={href} className={`t-btn t-btn--${variant}`} onClick={onClick} {...rest}>
+      <Link to={href} className={combinedClass} onClick={onClick} {...rest}>
         {children}
       </Link>
     );
   }
-  return <a href={href} className={`t-btn t-btn--${variant}`} onClick={onClick} {...rest}>{children}</a>;
+  return <a href={href} className={combinedClass} onClick={onClick} {...rest}>{children}</a>;
 }
 
 export function Section({ id, alt, children }: { id?: string; alt?: boolean; children: React.ReactNode }) {

@@ -12,22 +12,13 @@ const COLS: Array<{ head: string; links: Array<[string, string, boolean?]> }> = 
     ],
   },
   {
-    head: 'Resources',
+    head: 'Guides',
     links: [
-      ['/guide', 'Guide'],
-      ['/manual', 'User Manual'],
-      ['/docs', 'Docs'],
+      ['/guide', 'Getting started'],
+      ['/manual', 'Commands manual'],
+      ['/mcp', 'MCP reference'],
+      ['/docs', 'Documentation'],
       ['/faq', 'FAQ'],
-    ],
-  },
-  {
-    head: 'Docs (GitHub source)',
-    links: [
-      ['/docs/install', 'Install'],
-      ['/docs/architecture', 'Architecture'],
-      ['/docs/development', 'Development'],
-      ['/docs/security', 'Security'],
-      ['/docs/limitations', 'Limitations'],
     ],
   },
   {

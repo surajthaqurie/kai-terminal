@@ -1,27 +1,30 @@
 import { useState } from 'react';
 import { HelpCircle } from 'lucide-react';
 import { Badge, Section } from '../components/ui';
+import { renderInline } from '../lib/markdown';
 
 const FAQ_ITEMS = [
-  { q: 'What is Kai?', a: 'Kai is an ultra-fast cross-platform desktop terminal (Tauri 2 + Rust) featuring hardware-accelerated WebGL 60fps rendering, native PTY support (ConPTY on Windows, POSIX pty on macOS/Linux), and a local project intelligence engine designed for AI coding agents. MIT licensed.' },
-  { q: 'What does it cost? Is there tracking or telemetry?', a: '100% free and MIT licensed with no accounts, cloud subscriptions, or telemetry tracking. Project AST indexes, symbol caches, and configurations stay exclusively in ~/.kai/ on your computer. .env files, credentials, and binary files are automatically skipped.' },
-  { q: 'How do I start?', a: 'Download the installer for your OS, open your terminal, and run kai open [path] to launch Kai Terminal on your repository. Inside Kai Terminal, launch your agent directly (e.g. kai claude . or kai cursor .) or run kai setup all. See the User Manual for every command.' },
-  { q: 'Which AI coding agents are supported?', a: 'Kai supports 10 AI coding tools: Claude Code (claude), Cursor (cursor), Codex CLI (codex), Gemini CLI (gemini), OpenCode (opencode), Aider (aider), Windsurf (windsurf), Cline (cline), GitHub Copilot, and Antigravity (agy). Kai auto-wires MCP configurations and performs AST graph auto-sync upon session exit.' },
-  { q: 'What makes Kai different from standard terminals?', a: 'Kai pairs a high-performance 60fps WebGL GPU terminal engine (~30MB idle RAM, zero-remount flat grid split panes, and pointer-based tab drag reordering) with integrated AI agent orchestration. Kai automatically manages AST code graphs, bridges local Language Server Protocol (LSP) servers, and strips AI co-author trailers via commit-msg git hooks.' },
-  { q: 'Which files do I download?', a: 'macOS: .dmg (Apple Silicon M1–M4). Linux: .deb for Ubuntu/Debian or .AppImage for Fedora, Arch, and portable use (x86_64 and ARM64). Windows: .exe or .msi (x64).' },
-  { q: 'macOS says "kai is damaged"?', a: 'The .dmg is unsigned, so macOS Gatekeeper blocks it — the binary is intact. Eject the image, run xattr -d com.apple.quarantine on the .dmg, reopen it, drag Kai to Applications, then run xattr -cr /Applications/Kai.app and right-click Kai > Open once.' },
+  { q: 'What is Kai?', a: 'Kai is a desktop terminal for macOS, Linux, and Windows (built with Tauri 2 and Rust). It has tabs, split panes, and a built-in way to run AI coding tools on your own code. MIT licensed.' },
+  { q: 'What does it cost? Is there tracking?', a: 'Free. No accounts, no cloud, no tracking. Everything stays on your machine, and secret files like `.env` are skipped automatically.' },
+  { q: 'How do I start?', a: 'Download the installer for your system, open a terminal, and run `kai open` to launch Kai on your project folder. Inside Kai, run `kai claude .` (replace `claude` with your tool\u2019s command).' },
+  { q: 'Which AI coding tools work with it?', a: 'Whatever is installed on your machine. Kai detects your tools, fills in their settings for you, and keeps a backup of what was there before.' },
+  { q: 'How is it different from a normal terminal?', a: 'It pairs a normal fast terminal (tabs, splits, search) with the AI plumbing: it maps your code, shares that map with the AI tool, and cleans AI credit lines out of your commit messages.' },
+  { q: 'Which file do I download?', a: 'macOS: `.dmg` (Apple Silicon M1–M4). Linux: `.deb` for Ubuntu/Debian, or `.AppImage` for anything else. Windows: `.exe` or `.msi` (64-bit).' },
+  { q: 'macOS says "kai is damaged"?', a: 'The app isn\u2019t signed yet, so macOS blocks it — the file itself is fine. Eject the image, run `xattr -d com.apple.quarantine` on the `.dmg`, reopen it, drag Kai to Applications, then run `xattr -cr /Applications/Kai.app` and right-click Kai > Open once.' },
 ];
 
-export function Faq() {
+export function Faq({ showHead = true }: { showHead?: boolean }) {
   const [activeFaq, setActiveFaq] = useState<number | null>(0);
   return (
     <Section id="faq" alt>
       <div className="t-container-narrow" style={{ padding: 0 }}>
+        {showHead && (
         <div style={{ textAlign: 'center', marginBottom: '2.5rem' }}>
           <Badge tone="neutral"><HelpCircle size={14} /> FAQ</Badge>
           <h2 className="t-section-title">Questions</h2>
           <p className="t-section-sub">Straight answers. Click to expand.</p>
         </div>
+        )}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '.9rem' }}>
           {FAQ_ITEMS.map((item, idx) => {
             const open = activeFaq === idx;
@@ -49,7 +52,7 @@ export function Faq() {
                   <span className="t-faq-plus" style={{ transform: open ? 'rotate(45deg)' : 'rotate(0deg)' }} aria-hidden="true">+</span>
                 </div>
                 <div className="t-faq-a" id={panelId} role="region" aria-labelledby={btnId} hidden={!open}>
-                  <div className="t-faq-a-inner"><p>{item.a}</p></div>
+                  <div className="t-faq-a-inner"><p dangerouslySetInnerHTML={{ __html: renderInline(item.a) }} /></div>
                 </div>
               </div>
             );

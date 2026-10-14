@@ -7,6 +7,7 @@ import { DownloadPage } from './pages/Download';
 import { ChangelogPage } from './pages/Changelog';
 import { GuidePage } from './pages/Guide';
 import { ManualPage } from './pages/Manual';
+import { McpPage } from './pages/Mcp';
 import { DocsIndexPage, DocDetailPage } from './pages/Docs';
 import { FaqPage } from './pages/Faq';
 import { NotFoundPage } from './pages/NotFound';
@@ -28,8 +29,10 @@ function Routes() {
           : path === '/changelog' ? <ChangelogPage />
           : path === '/guide' ? <GuidePage />
           : path === '/manual' ? <ManualPage />
+          : path === '/mcp' ? <McpPage />
           : path === '/docs' ? <DocsIndexPage />
-          : docSlug ? <DocDetailPage slug={docSlug} />
+          : docSlug && docSlug !== 'mcp' ? <DocDetailPage slug={docSlug} />
+          : docSlug ? <McpPage />
           : path === '/faq' ? <FaqPage />
           : <NotFoundPage />}
       </main>

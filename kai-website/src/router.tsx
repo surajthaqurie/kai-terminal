@@ -13,28 +13,28 @@ export const ROUTE_META: Record<string, { title: string; description: string }> 
     description: 'Native packages for macOS (.dmg), Linux (.deb, .AppImage), and Windows (.exe, .msi). Free and MIT licensed.',
   },
   '/changelog': {
-    title: 'Changelog — Kai',
+    title: "What's new in Kai — Changelog",
     description: 'Release history, changelog entries, and version notes.',
   },
   '/guide': {
-    title: 'Getting Started — Kai Developer Guide',
-    description: 'Step-by-step onboarding guide to install Kai, start your first session, and connect AI coding agents.',
+    title: 'Getting started with Kai — Guide',
+    description: 'Install Kai, start your first session, and connect AI coding agents.',
   },
   '/manual': {
-    title: 'User Manual & Command Reference — Kai',
-    description: 'Complete technical reference: environment boundaries, external host commands, agent workflows, and cheatsheet.',
+    title: 'Commands — Kai',
+    description: 'Every Kai command, grouped by topic.',
   },
-  '/docs': {
-    title: 'Documentation — Kai',
-    description: 'Architecture, installation, security, and developer documentation rendered directly from the source repository.',
+  '/mcp': {
+    title: 'MCP reference — Kai',
+    description: 'Local MCP server: start command and tool reference.',
   },
   '/faq': {
-    title: 'FAQ — Kai',
+    title: 'Frequently asked questions — Kai',
     description: 'What Kai is, what it costs, how to start, and which files to download.',
   },
   '/404': {
     title: 'Page not found — Kai',
-    description: 'That Kai page does not exist. Try Home, Download, Docs or Manual.',
+    description: 'That Kai page does not exist. Try Home, Download, Guide or Manual.',
   },
 };
 
@@ -74,12 +74,12 @@ export function Link({ to, children, className, style, onClick, ...rest }: {
   style?: React.CSSProperties; onClick?: React.MouseEventHandler<HTMLAnchorElement>;
 } & Omit<React.AnchorHTMLAttributes<HTMLAnchorElement>, 'href' | 'onClick'>) {
   const path = usePath();
-  // Exact match, or parent match on segment boundary (/docs matches /docs/x, not /download).
+  // Exact match, or parent match on segment boundary (e.g. /manual matches /manual#setup).
   const active = !external(to) && !to.startsWith('#') && (to === path || (to !== '/' && path.startsWith(to.endsWith('/') ? to : `${to}/`)));
   return (
     <a
       href={to}
-      className={active && className ? `${className} is-active` : className}
+      className={active ? (className ? `${className} is-active` : 'is-active') : className}
       aria-current={active ? 'page' : undefined}
       style={style}
       onClick={(e) => {
@@ -125,9 +125,7 @@ export function useRouteScroll() {
 export function useRouteMeta() {
   const path = usePath();
   useEffect(() => {
-    // /docs/<slug> shares the /docs meta; unknown routes get the 404 meta.
-    const key = path.startsWith('/docs/') ? '/docs' : path;
-    const meta = ROUTE_META[key] ?? ROUTE_META['/404'];
+    const meta = ROUTE_META[path] ?? ROUTE_META['/404'];
     const url = `${SITE_URL}${path === '/' ? '/' : path}`;
     document.title = meta.title;
     document.querySelector('meta[name="description"]')?.setAttribute('content', meta.description);

@@ -1,6 +1,8 @@
-// Minimal dependency-free Markdown renderer for synced GitHub docs.
+// Minimal dependency-free Markdown renderer for the synced user manual.
 // Supports: headings, fenced code, tables, lists, blockquotes, hr,
 // bold/italic/inline-code/links/images. Raw HTML is escaped.
+
+import { REPO_URL } from '../data/site';
 
 export type TocItem = { id: string; level: number; text: string };
 
@@ -23,9 +25,12 @@ function escapeHtml(s: string): string {
     .replace(/"/g, '&quot;');
 }
 
-function renderInline(src: string): string {
+export function renderInline(src: string): string {
   // Escape first, then apply inline tokens on escaped text.
   let out = escapeHtml(src);
+
+  // Checkboxes: [x] or [ ]
+  out = out.replace(/^\[x\]\s+/i, '☑ ').replace(/^\[ \]\s+/, '☐ ');
 
   // Images: ![alt](url)
   out = out.replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+&quot;([^&]*?)&quot;)?\)/g, (_m, alt, url) => {
@@ -38,21 +43,18 @@ function renderInline(src: string): string {
   out = out.replace(/\[([^\]]+)\]\(([^)\s]+)(?:\s+&quot;([^&]*?)&quot;)?\)/g, (_m, text, url) => {
     const raw = String(url);
     const isExternal = /^(https?:)?\/\//i.test(raw) || /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(raw);
-    // Rewrite local repo .md links to site docs routes.
+    // Rewrite local repo .md links: manual + mcp stay on site, the rest point at GitHub.
     let href = raw;
-    const mdMatch = raw.match(/([A-Z_]+\.md)(#.*)?$/i);
+    const mdMatch = raw.match(/([A-Z_0-9-]+(?:\.test)?\.md)(#.*)?$/i);
     if (!isExternal && mdMatch) {
       const base = mdMatch[1].toLowerCase().replace(/_/g, '-').replace(/\.md$/, '');
-      const map: Record<string, string> = {
-        'user-manual': '/manual',
-        readme: '/docs/readme',
-        install: '/docs/install',
-        architecture: '/docs/architecture',
-        development: '/docs/development',
-        security: '/docs/security',
-        'known-limitations': '/docs/limitations',
-      };
-      href = (map[base] ?? `/docs/${base}`) + (mdMatch[2] ?? '');
+      if (base === 'user-manual') {
+        href = '/manual' + (mdMatch[2] ?? '');
+      } else if (base === 'mcp') {
+        href = '/mcp' + (mdMatch[2] ?? '');
+      } else {
+        href = `${REPO_URL}/blob/main/${mdMatch[1]}` + (mdMatch[2] ?? '');
+      }
     }
     const ext = isExternal ? ' target="_blank" rel="noreferrer"' : '';
     return `<a href="${href}"${ext}>${text}</a>`;
@@ -138,7 +140,27 @@ export function renderMarkdown(md: string): { html: string; toc: TocItem[] } {
         buf.push(lines[i].replace(/^>\s?/, ''));
         i++;
       }
-      const inner = buf.map((b) => renderInline(b)).join('<br />');
+      let inner = '';
+      let inQuoteCode = false;
+      let quoteCodeBuf: string[] = [];
+      for (const b of buf) {
+        if (/^```/.test(b.trim())) {
+          if (inQuoteCode) {
+            inner += `<div class="t-doc-code" style="margin: 0.5rem 0;"><pre><code>${escapeHtml(quoteCodeBuf.join('\n'))}</code></pre></div>`;
+            quoteCodeBuf = [];
+            inQuoteCode = false;
+          } else {
+            inQuoteCode = true;
+          }
+        } else if (inQuoteCode) {
+          quoteCodeBuf.push(b);
+        } else {
+          inner += (inner ? '<br />' : '') + renderInline(b);
+        }
+      }
+      if (inQuoteCode && quoteCodeBuf.length > 0) {
+        inner += `<div class="t-doc-code" style="margin: 0.5rem 0;"><pre><code>${escapeHtml(quoteCodeBuf.join('\n'))}</code></pre></div>`;
+      }
       const warn = /warning|never|danger|careful/i.test(inner);
       html += `<div class="${warn ? 't-callout-warn' : 't-callout-tip'} t-doc-callout">${inner}</div>`;
       continue;

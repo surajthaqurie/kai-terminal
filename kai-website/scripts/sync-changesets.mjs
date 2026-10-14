@@ -40,6 +40,17 @@ try {
   const changelogPath = [join(here, '..', '..', 'CHANGELOG.md'), join(here, '..', 'CHANGELOG.md')].find((p) => existsSync(p));
   const releases = [];
 
+  let existingReleases = [];
+  let existingGeneratedAt = new Date().toISOString();
+  const existingPath = [dataReleaseOut, releaseOut].find((p) => existsSync(p));
+  if (existingPath) {
+    try {
+      const prev = JSON.parse(readFileSync(existingPath, 'utf8'));
+      if (Array.isArray(prev.releases) && prev.releases.length > 0) existingReleases = prev.releases;
+      if (prev.generatedAt) existingGeneratedAt = prev.generatedAt;
+    } catch { /* ignore */ }
+  }
+
   if (changelogPath && existsSync(changelogPath)) {
     const text = readFileSync(changelogPath, 'utf8');
     const regex = /##\s*\[?(\d+\.\d+\.\d+)\]?(?:[^\n]*)\n([\s\S]*?)(?=\n##\s*\[?\d+\.\d+\.\d+\]?|\n##\s*\[Unreleased\]|$)/g;
@@ -51,27 +62,19 @@ try {
       const bulletLines = rawLines.filter((l) => l.startsWith('- ') || l.startsWith('* '));
       const notes = bulletLines.slice(0, 8).map((l) => l.replace(/^[-*]\s+([a-f0-9]+:\s*)?/, '- ')).join('\n');
       const firstTitle = bulletLines[0] ? bulletLines[0].replace(/^[-*]\s+([a-f0-9]+:\s*)?/, '').split(':')[0] : `Release ${relTag}`;
+      const existingDate = existingReleases.find((er) => er.tag === relTag)?.date;
       releases.push({
         tag: relTag,
         name: `Kai ${relTag} — ${firstTitle}`,
-        date: new Date().toISOString(),
+        date: existingDate || new Date().toISOString(),
         url: `https://github.com/surajthaqurie/kai-terminal/releases/tag/${relTag}`,
         notes: notes || `Release ${relTag}`,
       });
     }
   }
 
-  let existingReleases = [];
-  const existingPath = [dataReleaseOut, releaseOut].find((p) => existsSync(p));
-  if (existingPath) {
-    try {
-      const prev = JSON.parse(readFileSync(existingPath, 'utf8'));
-      if (Array.isArray(prev.releases) && prev.releases.length > 0) existingReleases = prev.releases;
-    } catch { /* ignore */ }
-  }
-
   const finalReleases = releases.length > 0 ? releases : existingReleases;
-  const releasePayload = JSON.stringify({ version, tag, generatedAt: new Date().toISOString(), releases: finalReleases }, null, 2) + '\n';
+  const releasePayload = JSON.stringify({ version, tag, generatedAt: existingGeneratedAt, releases: finalReleases }, null, 2) + '\n';
   writeFileSync(releaseOut, releasePayload);
   writeFileSync(dataReleaseOut, releasePayload);
   console.log(`[sync-changesets] version ${tag} (${finalReleases.length} releases) -> src/data/release.json & src/generated/release.json`);

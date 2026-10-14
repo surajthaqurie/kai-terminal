@@ -1,37 +1,34 @@
-import { ExternalLink, GitBranch, Package, ScrollText, Sparkles } from 'lucide-react';
+import { ExternalLink, ScrollText, Sparkles } from 'lucide-react';
 import { Badge, Section } from '../components/ui';
 import { Link } from '../router';
 import { fmtDate } from '../lib/format';
 import { LATEST_RELEASE_URL } from '../data/site';
 import { usePublishedReleases } from '../hooks/useRepo';
-import pendingChanges from '../generated/changesets.json';
-
-export type ChangesetEntry = {
-  file: string;
-  package: string;
-  bump: string;
-  summary: string;
-};
+import { renderInline } from '../lib/markdown';
 
 /* One helper for both release notes and changeset summaries:
-   first line = heading, rest = bullets. */
+   first line = heading, rest = bullets. If all are bullets, head is empty. */
 function splitNotes(text: string) {
   const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
-  if (lines.length <= 1) return { head: text.trim(), bullets: [] as string[] };
+  if (lines.length === 0) return { head: '', bullets: [] as string[] };
+  if (/^[-*•]\s+/.test(lines[0])) {
+    return {
+      head: '',
+      bullets: lines.map((l) => l.replace(/^[-*•]\s+/, '')),
+    };
+  }
   return {
     head: lines[0].replace(/:$/, ''),
-    bullets: lines.slice(1).map((l) => l.replace(/^[-*•]\s*/, '')),
+    bullets: lines.slice(1).map((l) => l.replace(/^[-*•]\s+/, '')),
   };
 }
 
-export function Changelog({ limit = 6 }: { limit?: number }) {
+export function Changelog({ limit = 6, showHead = true }: { limit?: number; showHead?: boolean }) {
   const releases = usePublishedReleases(limit);
-  const pending: ChangesetEntry[] = Array.isArray((pendingChanges as { entries?: unknown })?.entries)
-    ? (pendingChanges as { entries: ChangesetEntry[] }).entries
-    : [];
 
   return (
     <Section id="changelog" alt>
+      {showHead && (
       <div style={{ textAlign: 'center', marginBottom: '2.5rem' }}>
         <Badge tone="cyan"><ScrollText size={14} /> What's new</Badge>
         <h2 className="t-section-title">What's new in Kai</h2>
@@ -39,6 +36,7 @@ export function Changelog({ limit = 6 }: { limit?: number }) {
           Latest updates and improvements. Simple list, newest first.
         </p>
       </div>
+      )}
 
       <div className="t-log">
         {releases.length > 0 ? (
@@ -61,13 +59,13 @@ export function Changelog({ limit = 6 }: { limit?: number }) {
 
                   <div className="t-log-main" style={{ width: '100%' }}>
                     <div className="t-log-head" style={{ marginBottom: '0.5rem' }}>
-                      <b style={{ fontSize: '1.05rem' }}>{r.name}</b>
+                      <b style={{ fontSize: '1.05rem' }} dangerouslySetInnerHTML={{ __html: renderInline(r.name) }} />
                     </div>
-                    {head && <p className="t-log-notes" style={{ margin: '0 0 0.5rem' }}>{head}:</p>}
+                    {head && <p className="t-log-notes" style={{ margin: '0 0 0.5rem' }} dangerouslySetInnerHTML={{ __html: renderInline(head) }} />}
                     {bullets.length > 0 && (
                       <ul className="t-log-bullets">
                         {bullets.map((b, bIdx) => (
-                          <li key={bIdx}>{b}</li>
+                          <li key={bIdx} dangerouslySetInnerHTML={{ __html: renderInline(b) }} />
                         ))}
                       </ul>
                     )}
@@ -99,60 +97,6 @@ export function Changelog({ limit = 6 }: { limit?: number }) {
           </div>
         )}
 
-        {pending.length > 0 && (
-          <div className="t-panel" style={{ marginTop: '2rem' }}>
-            <div className="t-probe-head">
-              <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 600 }}>
-                <GitBranch size={16} color="var(--accent-green-fg)" />
-                <span>$ unreleased changes</span>
-              </span>
-              <span className="t-pill">{pending.length} changesets pending</span>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              {pending.map((p) => {
-                const { head, bullets } = splitNotes(p.summary);
-                return (
-                  <div
-                    key={p.file}
-                    style={{
-                      padding: '0.85rem 1rem',
-                      borderRadius: '8px',
-                      backgroundColor: 'var(--btn-secondary-bg)',
-                      border: '1px solid var(--border-subtle)',
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', marginBottom: '0.4rem', flexWrap: 'wrap' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
-                        <code className="t-pkg" style={{ padding: '0.15rem 0.45rem', borderRadius: '4px', background: 'var(--bg-canvas)' }}>
-                          <Package size={11} style={{ display: 'inline', marginRight: '0.25rem' }} />
-                          {p.package}
-                        </code>
-                        <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', fontFamily: 'var(--font-mono)' }}>
-                          {p.file}
-                        </span>
-                      </div>
-                      <span className={`t-bump t-bump--${p.bump}`}>{p.bump} bump</span>
-                    </div>
-
-                    <div style={{ fontSize: '0.86rem', color: 'var(--text-primary)', lineHeight: 1.5 }}>
-                      <b>{head}</b>
-                      {bullets.length > 0 && (
-                        <ul className="t-log-bullets" style={{ marginTop: '0.35rem' }}>
-                          {bullets.map((b, bIdx) => (
-                            <li key={bIdx}>{b}</li>
-                          ))}
-                        </ul>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-            <p className="t-micro" style={{ marginTop: '1rem' }}>
-              Coming in the next release.
-            </p>
-          </div>
-        )}
       </div>
     </Section>
   );

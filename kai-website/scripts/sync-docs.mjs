@@ -1,4 +1,4 @@
-// Syncs root repo markdown docs into src/generated/docs.json.
+// Syncs the user manual into src/generated/docs.json.
 // Runs on predev/prebuild (alongside sync-changesets.mjs). Never fails the build.
 import { readFileSync, mkdirSync, writeFileSync, existsSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -12,13 +12,8 @@ const outFile = join(websiteDir, 'src', 'generated', 'docs.json');
 const REPO = 'surajthaqurie/kai-terminal';
 
 const DOCS = [
-  { slug: 'manual', file: 'USER_MANUAL.md', title: 'User Manual', desc: 'Complete CLI command reference — synced from GitHub.' },
-  { slug: 'readme', file: 'README.md', title: 'README', desc: 'Project overview, download table and quickstart.' },
-  { slug: 'install', file: 'INSTALL.md', title: 'Install', desc: 'Detailed install steps per OS.' },
-  { slug: 'architecture', file: 'ARCHITECTURE.md', title: 'Architecture', desc: 'How the terminal, PTY, graph and MCP fit together.' },
-  { slug: 'development', file: 'DEVELOPMENT.md', title: 'Development', desc: 'Build from source, scripts and contributor setup.' },
-  { slug: 'security', file: 'SECURITY.md', title: 'Security', desc: 'Threat model, reporting and safe-handling notes.' },
-  { slug: 'limitations', file: 'KNOWN_LIMITATIONS.md', title: 'Limitations', desc: 'Known gaps, platform quirks and workarounds.' },
+  { slug: 'manual', file: 'USER_MANUAL.md', title: 'Commands', desc: 'Every command, grouped by topic.' },
+  { slug: 'mcp', file: 'MCP.md', title: 'MCP', desc: 'Local MCP server: start command and tool reference.' },
 ];
 
 function findFile(name) {

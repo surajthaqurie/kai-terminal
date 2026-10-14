@@ -1,5 +1,6 @@
 import { Download, FolderOpen, Bot } from 'lucide-react';
 import { Section, SectionHead } from '../components/ui';
+import { Link } from '../router';
 
 const STEPS = [
   {
@@ -20,7 +21,7 @@ const STEPS = [
     icon: Bot,
     step: 'Step 3',
     title: 'Launch any AI agent',
-    body: 'Inside Kai Terminal, launch your agent with kai <agent>. Kai auto-wires MCP, runs the agent, strips co-authors, and auto-syncs the AST graph on exit.',
+    body: 'Inside Kai Terminal, launch your tool with kai claude . (Claude Code shown — replace claude with your tool\u2019s command). Kai auto-wires MCP, runs the agent, strips co-authors, and auto-syncs the code graph on exit.',
     code: 'kai claude .',
   },
 ];
@@ -31,7 +32,7 @@ export function Workflow() {
     <Section id="how-it-works">
       <SectionHead
         title="How it works"
-        sub="From installation to your first agent workflow in seconds."
+        sub="Three steps, all on your machine."
       />
       <div className="t-grid-3">
         {STEPS.map((s) => (
@@ -59,7 +60,7 @@ export function Workflow() {
         ))}
       </div>
       <p className="t-micro" style={{ textAlign: 'center', marginTop: '1.5rem' }}>
-        Looking for all CLI options and flags? See the <a href="/manual" style={{ color: 'var(--accent-cyan-fg)', textDecoration: 'underline' }}>User Manual</a>.
+        Every command is listed in the <Link to="/manual" style={{ color: 'var(--accent-cyan-fg)' }}>User Manual</Link>.
       </p>
     </Section>
   );

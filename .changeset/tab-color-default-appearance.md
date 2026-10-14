@@ -1,5 +1,0 @@
----
-"kai-terminal": patch
----
-
-Fix tab color being invisible, default appearance unselected on fresh installs, and inconsistent new-tab names. The active tab's accent glow pill painted over the user's custom 2px top border, so picking a color appeared to do nothing — the pill now uses the custom color on colored tabs. On Windows/macOS the backend host sync reported `one-dark`, silently switching fresh installs off the labeled Kali default — it now reports `kali` to match the frontend default, and host-provided theme ids are validated before being applied. New tabs are always named `Terminal N` (collision-skipped) instead of shell-profile names. Also: desktop installers self-install the `kai` CLI onto the user PATH on first launch, update checks are unblocked in the WebView CSP and release links open in the OS browser, the footer no longer flickers while typing (normalized cwd comparison, no optimistic badge clearing, compact path display with click-to-copy), and `kai doctor` audits Linux app-drawer entries.

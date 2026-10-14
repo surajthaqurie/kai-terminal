@@ -18,7 +18,7 @@ export function DocsIndexPage() {
       <section className="t-section">
         <Container>
           <div className="t-grid-3">
-            {DOCS.filter((d) => d.slug !== 'manual').map((d) => (
+            {DOCS.filter((d) => d.slug !== 'manual' && d.slug !== 'mcp').map((d) => (
               <Link key={d.slug} to={`/docs/${d.slug}`} style={{ textDecoration: 'none' }}>
                 <Card hover>
                   <span className="t-tag">{d.file}</span>
@@ -54,7 +54,7 @@ export function DocDetailPage({ slug }: { slug: string }) {
               <p>Available docs:</p>
               <ul className="t-doc-list">
                 {DOCS.map((d) => (
-                  <li key={d.slug}><Link to={d.slug === 'manual' ? '/manual' : `/docs/${d.slug}`}>{d.title} ({d.file})</Link></li>
+                  <li key={d.slug}><Link to={d.slug === 'manual' ? '/manual' : d.slug === 'mcp' ? '/mcp' : `/docs/${d.slug}`}>{d.title} ({d.file})</Link></li>
                 ))}
               </ul>
             </div>

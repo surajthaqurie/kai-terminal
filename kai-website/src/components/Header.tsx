@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Download, Github, Menu, Moon, Sun, Terminal, X } from 'lucide-react';
 import { useTheme } from '../theme/ThemeContext';
 import { useRepoStars } from '../hooks/useRepo';
-import { Link, usePath } from '../router';
+import { Link } from '../router';
 import { REPO_URL } from '../data/site';
 
 export function ThemeToggle() {
@@ -24,8 +24,8 @@ export function ThemeToggle() {
 
 const NAV = [
   ['/guide', 'Guide'],
-  ['/manual', 'Manual'],
-  ['/docs', 'Docs'],
+  ['/manual', 'Commands'],
+  ['/mcp', 'MCP'],
   ['/download', 'Download'],
   ['/changelog', 'Changelog'],
   ['/faq', 'FAQ'],
@@ -34,7 +34,6 @@ const NAV = [
 export function SiteHeader({ version }: { version: string }) {
   const [open, setOpen] = useState(false);
   const stars = useRepoStars();
-  const path = usePath();
   return (
     <header className="t-header">
       <div className="t-header-inner" style={{ position: 'relative' }}>
@@ -50,7 +49,7 @@ export function SiteHeader({ version }: { version: string }) {
 
         <nav className="t-nav" data-open={open} aria-label="Primary">
           {NAV.map(([href, label]) => (
-            <Link key={href} to={href} onClick={() => setOpen(false)} className={path === href ? 'is-active' : undefined}>
+            <Link key={href} to={href} onClick={() => setOpen(false)}>
               {label}
             </Link>
           ))}

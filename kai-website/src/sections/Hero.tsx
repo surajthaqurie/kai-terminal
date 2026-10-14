@@ -1,15 +1,49 @@
 import { ArrowRight, Code2, Download } from 'lucide-react';
 import { Badge, Button } from '../components/ui';
-import { InstallBar } from '../components/InstallBar';
 import { HeroTerminal } from '../components/HeroTerminal';
 import { REPO_URL } from '../data/site';
+import { detectOs, OS_LABEL, type OsId } from '../lib/os';
+import { Link } from '../router';
 import type { LatestRelease } from '../hooks/useRepo';
 
 export function Hero({ tag, short, version, rel }: { tag: string; short: string; version: string; rel?: LatestRelease }) {
+  const os: OsId = detectOs();
+  const osName = OS_LABEL[os] ?? 'Linux';
+
+  const macDmg =
+    rel?.asset((n) => n.toLowerCase().endsWith('.dmg'), `kai_${short}_aarch64.dmg`) ??
+    `${REPO_URL}/releases/download/${tag}/kai_${short}_aarch64.dmg`;
+  const linuxDeb =
+    rel?.asset((n) => n.toLowerCase().includes('amd64') && n.toLowerCase().endsWith('.deb'), `kai_${short}_amd64.deb`) ??
+    `${REPO_URL}/releases/download/${tag}/kai_${short}_amd64.deb`;
+  const linuxApp =
+    rel?.asset((n) => n.toLowerCase().includes('amd64') && n.toLowerCase().endsWith('.appimage'), `kai_${short}_amd64.AppImage`) ??
+    `${REPO_URL}/releases/download/${tag}/kai_${short}_amd64.AppImage`;
+  const winExe =
+    rel?.asset((n) => n.toLowerCase().endsWith('setup.exe'), `kai_${short}_x64-setup.exe`) ??
+    `${REPO_URL}/releases/download/${tag}/kai_${short}_x64-setup.exe`;
+  const winMsi =
+    rel?.asset((n) => n.toLowerCase().endsWith('.msi'), `kai_${short}_x64_en-US.msi`) ??
+    `${REPO_URL}/releases/download/${tag}/kai_${short}_x64_en-US.msi`;
+
+  const primaryFormat = os === 'macos' ? '.dmg' : os === 'windows' ? '.exe' : '.deb';
+
+  const primaryDownload =
+    os === 'macos'
+      ? { url: macDmg, label: '.dmg (Apple Silicon)', name: `kai_${short}_aarch64.dmg` }
+      : os === 'windows'
+      ? { url: winExe, label: '.exe installer', name: `kai_${short}_x64-setup.exe` }
+      : { url: linuxDeb, label: '.deb (x64)', name: `kai_${short}_amd64.deb` };
+
+  const secondaryDownload =
+    os === 'linux'
+      ? { url: linuxApp, label: '.AppImage', name: `kai_${short}_amd64.AppImage` }
+      : os === 'windows'
+      ? { url: winMsi, label: '.msi package', name: `kai_${short}_x64_en-US.msi` }
+      : null;
 
   return (
     <section className="t-hero">
-      <div className="t-hero-glow"></div>
       <div className="t-hero-inner">
         <div className="t-enter" style={{ animationDelay: '0ms' }}>
           <Badge>{tag} · MIT · Tauri 2 + Rust</Badge>
@@ -21,20 +55,32 @@ export function Hero({ tag, short, version, rel }: { tag: string; short: string;
         </h1>
 
         <p className="t-hero-sub t-enter" style={{ animationDelay: '140ms' }}>
-          Kai is a fast, GPU-accelerated desktop terminal with an embedded local project intelligence engine for AI coding agents. Native PTY, WebGL 60fps rendering, and zero-remount split panes on macOS, Linux, and Windows.
+          Kai is a terminal for macOS, Linux, and Windows, with tabs, split
+          panes, and a built-in way to run AI coding tools on your own code.
+          Free and MIT licensed — no account, no tracking.
         </p>
 
-        <p className="t-hero-reassure t-enter" style={{ animationDelay: '190ms' }}>
-          <span>Free and open source under the MIT license. Zero telemetry, zero accounts.</span>
+        {/* Interactive preview terminal on top */}
+        <p className="t-hint t-enter t-terminal-hint" style={{ animationDelay: '200ms' }}>
+          <span>Try it — click a chip or type</span> <code>help</code> <span>and press Enter.</span>
         </p>
 
-        <div className="t-enter" style={{ animationDelay: '230ms' }}>
-          <InstallBar short={short} />
+        <div className="t-enter" style={{ animationDelay: '260ms' }}>
+          <HeroTerminal version={version} />
         </div>
 
-        <div className="t-hero-cta t-enter" style={{ animationDelay: '300ms' }}>
-          <Button href="/download">
-            <Download size={18} /> Download Kai
+        {/* Download section: clean balanced buttons */}
+        <div className="t-hero-cta t-enter" style={{ animationDelay: '320ms' }}>
+          <Button
+            href={primaryDownload.url}
+            className="t-btn--hero-primary"
+            target="_blank"
+            rel="noopener noreferrer"
+            title={`Download Kai for ${osName} (${primaryDownload.name})`}
+          >
+            <Download size={18} />
+            <span>Download Kai for {osName}</span>
+            <span className="t-btn-pill">{primaryFormat}</span>
           </Button>
           <Button href={REPO_URL} variant="secondary" target="_blank" rel="noreferrer">
             <Code2 size={18} /> GitHub
@@ -44,33 +90,40 @@ export function Hero({ tag, short, version, rel }: { tag: string; short: string;
           </Button>
         </div>
 
-        <div className="t-quick-dl t-enter" style={{ animationDelay: '360ms' }}>
-          {rel && rel.assets.length === 0 ? (
-            <span className="t-quick-dl-label" style={{ lineHeight: 1.6 }}>
-              Installers for {tag} aren't published on GitHub yet — see the download page for source build, or watch Releases.
-            </span>
-          ) : (
-            <>
-              <span className="t-quick-dl-label">All files ({tag}):</span>
-              <a href={macUrl} className="t-quick-dl-pill"><Download size={12} /> macOS .dmg</a>
-              <a href={linuxDeb} className="t-quick-dl-pill"><Download size={12} /> Linux .deb</a>
-              <a href={linuxApp} className="t-quick-dl-pill"><Download size={12} /> Linux .AppImage</a>
-              <a href={winExe} className="t-quick-dl-pill"><Download size={12} /> Windows .exe</a>
-              <a href={winMsi} className="t-quick-dl-pill"><Download size={12} /> Windows .msi</a>
-            </>
+        {/* Direct downloads quick chips for the detected OS */}
+        <div className="t-hero-dl-row t-enter" style={{ animationDelay: '360ms' }}>
+          <span className="t-hero-dl-label">Direct downloads:</span>
+          <a
+            href={primaryDownload.url}
+            className="t-dl-chip t-dl-chip--active"
+            target="_blank"
+            rel="noopener noreferrer"
+            title={`Download ${primaryDownload.name}`}
+          >
+            <Download size={13} /> {primaryDownload.label}
+          </a>
+          {secondaryDownload && (
+            <a
+              href={secondaryDownload.url}
+              className="t-dl-chip"
+              target="_blank"
+              rel="noopener noreferrer"
+              title={`Download ${secondaryDownload.name}`}
+            >
+              <Download size={13} /> {secondaryDownload.label}
+            </a>
           )}
+          <span className="t-dl-sep">·</span>
+          <Link to="/download" className="t-dl-link">
+            All platforms (macOS, Linux, Windows) →
+          </Link>
         </div>
 
-        <div className="t-stats t-enter" style={{ animationDelay: '400ms' }}>
-          {stats.map(([v, l]) => (
-            <div key={l} className="t-stat"><b>{v}</b><span>{l}</span></div>
-          ))}
-        </div>
-
-        <div className="t-enter" style={{ animationDelay: '460ms' }}>
-          <HeroTerminal version={version} />
-        </div>
-        <p className="t-hint t-enter t-terminal-hint" style={{ animationDelay: '520ms' }}><span>Interactive preview — click a chip or type</span> <code>help</code> <span>and press Enter.</span></p>
+        {rel && rel.assets.length === 0 && (
+          <p className="t-hero-reassure t-enter" style={{ animationDelay: '400ms' }}>
+            <span>Installers for {tag} aren't published yet — the download page shows how to build from source.</span>
+          </p>
+        )}
       </div>
     </section>
   );

@@ -1,8 +1,9 @@
-import { Download } from 'lucide-react';
+import { BookOpen, Download, ArrowRight } from 'lucide-react';
 import { PageHero } from '../components/PageHero';
 import { InstallBar } from '../components/InstallBar';
 import { Downloads } from '../sections/Downloads';
 import { Container, Reveal } from '../components/ui';
+import { Link } from '../router';
 import type { LatestRelease } from '../hooks/useRepo';
 
 /* Dedicated install page: auto-fed by useLatestRelease (GitHub API).
@@ -11,13 +12,13 @@ export function DownloadPage({ rel }: { rel: LatestRelease }) {
   return (
     <>
       <PageHero
-        badge={<><Download size={14} /> {rel.tag}</>}
+        badge={<><Download size={14} /> Download</>}
         title="Download Kai"
-        sub={`${rel.tag} · Files are on GitHub Releases. You pick — the site doesn't auto-decide for you.`}
+        sub={`Version ${rel.tag} · Files are on GitHub Releases. Pick your system below.`}
       >
-        <InstallBar short={rel.short} />
+        <InstallBar short={rel.short} rel={rel} />
       </PageHero>
-      <Downloads rel={rel} />
+      <Downloads rel={rel} showHead={false} />
       <section className="t-section t-section-alt">
         <Container narrow>
           <Reveal>
@@ -32,6 +33,24 @@ export function DownloadPage({ rel }: { rel: LatestRelease }) {
               <p className="t-micro">Verify the checksum on the GitHub release page before running, especially on shared machines.</p>
             </div>
           </Reveal>
+        </Container>
+      </section>
+      <section className="t-section" style={{ paddingTop: '1rem' }}>
+        <Container>
+          <div className="t-cta">
+            <div>
+              <h2>Ready to get started?</h2>
+              <p>Follow our quick setup guide to connect your first AI agent, or read the full user manual.</p>
+            </div>
+            <div className="t-cta-actions">
+              <Link to="/guide" className="t-btn t-btn--primary">
+                Setup guide <ArrowRight size={16} />
+              </Link>
+              <Link to="/manual" className="t-btn t-btn--secondary">
+                <BookOpen size={18} /> User manual
+              </Link>
+            </div>
+          </div>
         </Container>
       </section>
     </>

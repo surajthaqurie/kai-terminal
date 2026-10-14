@@ -511,52 +511,43 @@ export const EXTERNAL_COMMANDS = new Set([
 
 export function printHelp(): void {
   console.log(`
-Kai Terminal — Project Intelligence & CLI (v${KAI_VERSION})
-Lightweight terminal-first project intelligence tool for external AI coding agents.
+Kai Terminal — CLI (v${KAI_VERSION})
 
 Usage:
   kai <command> [options]
 
-External Commands (Run outside or inside Kai Terminal):
-  open [path]             Launch or focus Kai Terminal desktop app (optional path defaults to .)
-  close                   Close active Kai Terminal instances
+Outside Kai (any shell):
+  open [path]             Launch Kai Terminal (defaults to current folder)
+  close                   Quit Kai Terminal
 
-Internal Commands (Run inside Kai Terminal):
-  <agent> [path]          Launch an AI agent (claude, cursor, codex, gemini, opencode, aider, etc.)
-  setup <agent|all>       Auto-wire Kai MCP into an agent's configuration (or all agents)
-  list [options]          Inspect system resources:
-                            -a, --agent     List AI agents & MCP status (default)
-                            -i, --index     List indexed projects
-                            -s, --session   List active session and cache files
-                            -c, --config    List current configuration
-  remove [options]        Remove resources:
-                            -i, --index <path|id>   Delete project index (repo untouched)
-                            -a, --agent <name>      Remove Kai MCP from an agent
-                            -s, --session [target]  Delete session cache files
+Inside Kai Terminal — Run:
+  <agent> [path]          Run an AI tool (replace <agent> with its command)
+  stop                    Back to plain terminal (maps and files are kept)
+
+Inside Kai Terminal — Manage:
+  setup <agent|all>       Connect Kai to a tool (--print, --dry-run, --force, --project)
+  list [-a|-i|-s|-c]      Look up agents (-a, default), projects (-i),
+                          sessions (-s), config (-c)
+  remove [-i|-a|-s]       Delete Kai data only: index (-i <path|id>),
+                          agent wiring (-a <name>), sessions (-s) [--dry-run]
   graph <init|update|status> [path]
-                          Manage project dependency graph & symbol index
-  status [path]           Show project registration, health, and commit-hook status
-  stop                    Clear Code Mode and return to plain terminal mode
-  doctor                  Run environment & install diagnostics
-  lsp                     Probe locally installed Language Server Protocol (LSP) servers
-  metrics [clear]         Display or clear local privacy-safe telemetry summary
+                          Build, rebuild, or inspect the code-map
+  status [path]           Project health (map freshness, hook, language servers)
+
+Inside Kai Terminal — Check:
+  doctor                  Check setup (version, data dir, desktop app)
+  lsp                     Check installed language servers
+  metrics [clear]         Show or wipe local timing stats
 
 Flags:
-  -h, --help              Show help information
-  -v, --version           Show version information
+  -h, --help              Show help
+  -v, --version           Show version
 
 Examples:
   kai open /path/to/project
-  kai claude .
-  kai cursor /path/to/project
-  kai list -a
-  kai list -i
+  kai <agent> .
   kai setup all
-  kai setup claude
-  kai remove -i .
-  kai remove -a claude
-  kai remove -s
-  kai graph init .
+  kai list -a
   kai graph status .
   kai status .
 `);
@@ -564,14 +555,17 @@ Examples:
 
 /**
  * Resolve an agent name or alias against registered agents and dynamically detected PATH binaries.
+ *
+ * Grouped so the public surface stays obvious:
+ * - public: open, close, stop, status, remove, graph, list, setup, metrics, lsp, doctor
+ * - hidden compat (still work, not in help): unregister (= remove),
+ *   config (= list -c), session (= list -s / remove -s),
+ *   mcp (used by agent configs), run/bench (advanced), agent/agents (aliases)
+ * - removed (friendly redirect): code, clear, query, cost
  */
 const BUILTIN_COMMANDS = new Set([
   "open",
   "close",
-  "code",
-  "clear",
-  "query",
-  "cost",
   "stop",
   "status",
   "remove",
@@ -591,6 +585,10 @@ const BUILTIN_COMMANDS = new Set([
   "doctor",
   "help",
   "version",
+  "code",
+  "clear",
+  "query",
+  "cost",
 ]);
 
 export function resolveAgent(nameOrAlias: string): {
@@ -787,6 +785,33 @@ export async function executeAgentWorkflow(
   }
 }
 
+/** Shared session/cache cleanup used by `kai remove -s` and `kai session clean` (hidden compat). */
+export function clearSessionCacheFiles(): { sessions: number; cache: number } {
+  const sessionsDir = getSessionsDir();
+  const cacheDir = getCacheDir();
+  const sessionFiles = fs.existsSync(sessionsDir) ? fs.readdirSync(sessionsDir) : [];
+  const cacheFiles = fs.existsSync(cacheDir) ? fs.readdirSync(cacheDir) : [];
+  for (const f of sessionFiles) {
+    try {
+      const st = fs.lstatSync(path.join(sessionsDir, f));
+      if (!st.isFile()) continue;
+      fs.unlinkSync(path.join(sessionsDir, f));
+    } catch {
+      // ignore
+    }
+  }
+  for (const f of cacheFiles) {
+    try {
+      const st = fs.lstatSync(path.join(cacheDir, f));
+      if (!st.isFile()) continue;
+      fs.unlinkSync(path.join(cacheDir, f));
+    } catch {
+      // ignore
+    }
+  }
+  return { sessions: sessionFiles.length, cache: cacheFiles.length };
+}
+
 export async function runCli(argv: string[]): Promise<number> {
   const args = argv.slice(2);
   const command = args[0];
@@ -881,21 +906,16 @@ export async function runCli(argv: string[]): Promise<number> {
       return await executeAgentWorkflow(command, targetPath);
     }
 
-    // Removed commands
-    if (command === "code") {
-      console.error(
-        `[kai] 'kai code' has been removed. Use 'kai graph init [path]' to index or run 'kai <agent>' to launch an agent.`
-      );
-      return 1;
-    }
-
-    if (command === "clear") {
-      console.error(`[kai] 'kai clear' has been removed. Use 'kai stop' to exit Code Mode.`);
-      return 1;
-    }
-
-    if (command === "query" || command === "cost") {
-      console.error(`[kai] 'kai ${command}' has been removed.`);
+    // Removed commands (single redirect, kept for old muscle memory)
+    const REMOVED_HINTS: Record<string, string> = {
+      code: "'kai code' has been removed. Use 'kai graph init [path]' to index or 'kai <agent>' to run a tool.",
+      clear:
+        "'kai clear' has been removed. Use 'kai stop' to exit Code Mode.",
+      query: "'kai query' has been removed. Use 'kai status' or 'kai graph status'.",
+      cost: "'kai cost' has been removed. Use 'kai metrics' for local stats.",
+    };
+    if (command in REMOVED_HINTS) {
+      console.error(`[kai] ${REMOVED_HINTS[command]}`);
       return 1;
     }
 
@@ -1061,7 +1081,7 @@ export async function runCli(argv: string[]): Promise<number> {
       if (agentTarget !== null) {
         if (!agentTarget) {
           console.error(`[kai] Error: Please specify an agent name to remove with -a/--agent.`);
-          console.error(`Example: kai remove -a claude`);
+          console.error(`Example: kai remove -a <name>`);
           return 1;
         }
         const result = removeAgentSetup(agentTarget, {
@@ -1126,7 +1146,7 @@ export async function runCli(argv: string[]): Promise<number> {
       console.error(`\nExamples:`);
       console.error(`  kai remove -i .`);
       console.error(`  kai remove -i /path/to/project`);
-      console.error(`  kai remove -a claude`);
+      console.error(`  kai remove -a <name>`);
       console.error(`  kai remove -s`);
       return 1;
     }
@@ -1199,7 +1219,7 @@ export async function runCli(argv: string[]): Promise<number> {
       return 1;
     }
 
-    // 6. kai config [get|set|list]
+    // Hidden compat: `kai config` (prefer `kai list -c`). Still tested, so it stays working.
     if (command === "config") {
       const sub = args[1] || "list";
       const configPath = path.join(getKaiHomeDir(), "config.json");
@@ -1290,7 +1310,7 @@ export async function runCli(argv: string[]): Promise<number> {
       return 1;
     }
 
-    // 7. kai session [list]
+    // Hidden compat: `kai session` (prefer `kai list -s` / `kai remove -s`).
     if (command === "session" && (!args[1] || args[1] === "list")) {
       const sessionsDir = getSessionsDir();
       if (!fs.existsSync(sessionsDir)) {
@@ -1306,7 +1326,7 @@ export async function runCli(argv: string[]): Promise<number> {
       return 0;
     }
 
-    // 8. kai session clean [--dry-run]
+    // Hidden compat: `kai session clean` == `kai remove -s`. Prefer `kai remove -s`.
     if (command === "session" && args[1] === "clean") {
       const isDryRun = args.includes("--dry-run");
       const sessionsDir = getSessionsDir();
@@ -1325,55 +1345,27 @@ export async function runCli(argv: string[]): Promise<number> {
         return 0;
       }
 
-      for (const f of sessionFiles) {
-        try {
-          // Only remove regular files; never follow symlinks or recurse
-          // into subdirectories (a subdir here would previously throw and
-          // leave a partial clean).
-          const st = fs.lstatSync(path.join(sessionsDir, f));
-          if (!st.isFile()) continue;
-          fs.unlinkSync(path.join(sessionsDir, f));
-        } catch {
-          // ignore
-        }
-      }
-
-      for (const f of cacheFiles) {
-        try {
-          const st = fs.lstatSync(path.join(cacheDir, f));
-          if (!st.isFile()) continue;
-          fs.unlinkSync(path.join(cacheDir, f));
-        } catch {
-          // ignore
-        }
-      }
-
+      clearSessionCacheFiles();
       console.log(`[kai] Session and cache directories cleanly cleared.`);
       return 0;
     }
 
-    // 9. kai mcp [path]
+    // Hidden: MCP server stdio entrypoint used by agent configs (`kai mcp [path]`).
     if (command === "mcp") {
       const targetPath = args[1] || process.cwd();
       await startMcpServer(targetPath);
       return 0;
     }
 
-    // 9b. kai run [path] [--timeout-ms N] -- <command> [args...]
-    // Code Mode lifecycle integration: Kai invokes the external coding
-    // agent as a child process, so process exit (success, failure,
-    // timeout, or cancel) is a reliable completion signal. The project
-    // graph is synchronized automatically afterwards — the user never
-    // runs kai_sync_graph manually. Partial changes after failure or
-    // cancellation are synced when safe; sync failure never rewrites the
-    // agent's exit outcome.
+    // Hidden advanced: `kai run [path] [--timeout-ms N] -- <command> [args...]`
+    // Same workflow as `kai <agent>` with explicit command passthrough.
     if (command === "run") {
       const sepIndex = args.indexOf("--");
       if (sepIndex === -1 || sepIndex === args.length - 1) {
         console.error(
           `[kai] Error: Usage: kai run [path] [--timeout-ms <ms>] -- <command> [args...]`
         );
-        console.error(`Example: kai run -- claude -p "fix the login bug"`);
+        console.error(`Example: kai run -- <agent> -p "fix the login bug"`);
         return 1;
       }
       const head = args.slice(1, sepIndex);
@@ -1402,7 +1394,7 @@ export async function runCli(argv: string[]): Promise<number> {
       });
     }
 
-    // 10. kai bench [path]
+    // Hidden advanced: `kai bench [path]` (dev-only benchmark, not in manual).
     if (command === "bench") {
       const targetPath = args[1] || process.cwd();
       const meta = registerProject(targetPath);
@@ -1472,7 +1464,7 @@ export async function runCli(argv: string[]): Promise<number> {
           }
         }
         console.log(
-          `\nTip: Run 'kai <agent> [path]' to launch an agent with auto-wired MCP, Code Mode, and graph sync (e.g. 'kai claude .').`
+          `\nTip: Run 'kai <agent> [path]' to launch a tool with Kai connected (e.g. 'kai <agent> .').`
         );
       }
 

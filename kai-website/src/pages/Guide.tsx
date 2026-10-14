@@ -1,4 +1,4 @@
-import { BookOpen, Terminal, ArrowRight } from 'lucide-react';
+import { BookOpen, ArrowRight } from 'lucide-react';
 import { PageHero } from '../components/PageHero';
 import { Container, Reveal, Badge } from '../components/ui';
 import { SHORTCUTS } from '../data/site';
@@ -10,9 +10,9 @@ export function GuidePage() {
   return (
     <>
       <PageHero
-        badge={<><BookOpen size={14} /> Getting Started</>}
-        title="Developer Setup Guide"
-        sub="A straightforward guide to installing Kai, starting your first session, and connecting external AI coding agents."
+        badge={<><BookOpen size={14} /> Guide</>}
+        title="Getting started with Kai"
+        sub="Install Kai, start your first session, and connect your AI coding tools."
       />
 
       <section className="t-section" style={{ paddingTop: '1rem', paddingBottom: '3.5rem' }}>
@@ -72,7 +72,7 @@ export function GuidePage() {
                 </div>
               </div>
               <p style={{ color: 'var(--text-secondary)', lineHeight: 1.65, marginBottom: '1rem' }}>
-                From any standard shell (Bash, Zsh, or PowerShell), run <code>kai open</code> to launch the Kai Terminal desktop application. Kai starts the hardware-accelerated UI and registers your project workspace in <code>~/.kai/</code>.
+                From any shell, run <code>kai open</code> to launch Kai. It opens on your current folder.
               </p>
 
               <div className="t-panel" style={{ padding: '0.85rem 1.25rem', marginBottom: '0.75rem' }}>
@@ -83,22 +83,22 @@ export function GuidePage() {
               </div>
 
               <p style={{ fontSize: '0.84rem', color: 'var(--text-tertiary)', margin: '0.5rem 0 0' }}>
-                To open a specific project folder instead of the current directory, specify the target directory: <code>kai open /path/to/project</code>.
+                To open a specific folder instead, add the path: <code>kai open /path/to/project</code>.
               </p>
             </div>
           </Reveal>
 
-          {/* Quick Step 3: Run AI Agent */}
+          {/* Quick Step 3: Run AI tool */}
           <Reveal>
             <div className="t-manual-card">
               <div className="t-manual-card-header">
                 <div>
                   <Badge tone="green">Step 03</Badge>
-                  <h2 style={{ fontSize: '1.35rem', fontWeight: 800 }}>Run Your AI Coding Agent</h2>
+                  <h2 style={{ fontSize: '1.35rem', fontWeight: 800 }}>Run Your AI Coding Tool</h2>
                 </div>
               </div>
               <p style={{ color: 'var(--text-secondary)', lineHeight: 1.65, marginBottom: '1rem' }}>
-                Inside Kai Terminal, launch your preferred coding agent. Kai automatically wires its local Model Context Protocol (MCP) server, primes the AST code graph, and activates git commit hooks to strip AI co-author trailers.
+                Inside Kai, start your coding tool. Kai connects it to your code and updates the map when it finishes.
               </p>
 
               <div className="t-panel" style={{ padding: '0.85rem 1.25rem', marginBottom: '0.75rem' }}>
@@ -116,24 +116,6 @@ export function GuidePage() {
                   You can also run <code>kai setup all</code> inside Kai Terminal to configure all detected agents at once.
                 </p>
               </div>
-            </div>
-          </Reveal>
-
-          {/* Dedicated Manual Callout */}
-          <Reveal>
-            <div className="t-guide-callout" style={{ justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', padding: '1.5rem' }}>
-              <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
-                <Terminal size={24} style={{ color: 'var(--accent-cyan-fg)', flexShrink: 0 }} />
-                <div>
-                  <strong style={{ fontSize: '1rem' }}>Looking for the complete command reference?</strong>
-                  <p style={{ margin: '0.2rem 0 0', fontSize: '0.88rem', color: 'var(--text-secondary)' }}>
-                    Detailed options, environment boundaries, diagnostics, and the searchable cheatsheet live in our dedicated User Manual.
-                  </p>
-                </div>
-              </div>
-              <Link to="/manual" className="t-btn t-btn--primary t-btn--sm" style={{ marginTop: '0.5rem' }}>
-                Open User Manual & Cheatsheet <ArrowRight size={14} />
-              </Link>
             </div>
           </Reveal>
         </Container>

@@ -30,7 +30,7 @@ type PlatformGroup = {
   note: string;
 };
 
-export function Downloads({ rel }: { rel: LatestRelease }) {
+export function Downloads({ rel, showHead = true }: { rel: LatestRelease; showHead?: boolean }) {
   // Show everything by default — the user picks, we don't guess.
   const [platformFilter, setPlatformFilter] = useState<'all' | OsId>('all');
 
@@ -142,6 +142,7 @@ export function Downloads({ rel }: { rel: LatestRelease }) {
 
   return (
     <Section id="downloads">
+      {showHead && (
       <div style={{ textAlign: 'center', marginBottom: '2.75rem' }}>
         <Badge tone="green"><PackageCheck size={14} /> Free downloads</Badge>
         <h2 className="t-section-title" style={{ marginBottom: '0.75rem' }}>Download Kai</h2>
@@ -151,6 +152,7 @@ export function Downloads({ rel }: { rel: LatestRelease }) {
             : `${rel.tag} · All files are on GitHub Releases. Pick your system below.`}
         </p>
       </div>
+      )}
 
       <div style={{ display: 'flex', justifyContent: 'center', gap: '0.6rem', marginBottom: '2.5rem', flexWrap: 'wrap' }}>
         {[

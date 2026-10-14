@@ -1,8 +1,6 @@
 import { useState } from 'react';
-import { Download } from 'lucide-react';
 import { CopyBtn } from './CopyBtn';
-import { detectOs } from '../lib/os';
-import { REPO_URL } from '../data/site';
+import type { LatestRelease } from '../hooks/useRepo';
 
 type InstallTab = { id: string; label: string; note: string; code: string };
 
@@ -27,7 +25,7 @@ function installTabs(short: string): InstallTab[] {
       id: 'windows',
       label: 'Windows',
       note: 'For Windows 10 / 11 (64-bit). No winget package yet — download the .exe below, then run it. Needs WebView2 (preinstalled on most Windows 11 PCs).',
-      code: `# Windows 10 / 11 (64-bit) — download first, then run\n# 1 · download kai_${v}_x64-setup.exe from GitHub Releases (button above)\n# 2 · double-click the .exe and follow the steps`,
+      code: `# Windows 10 / 11 (64-bit) — run installer after download\n.\\kai_${v}_x64-setup.exe`,
     },
     {
       id: 'source',
@@ -38,37 +36,15 @@ function installTabs(short: string): InstallTab[] {
   ];
 }
 
-function detectTab(): string {
-  return detectOs();
-}
-
-export function InstallBar({ short }: { short: string }) {
+export function InstallBar({ short }: { short: string; rel?: LatestRelease }) {
   const tabs = installTabs(short);
-  // Suggest the visitor's OS, but every tab stays one click away.
-  const [tab, setTab] = useState<string>(detectTab);
-  const detected = detectTab();
+  // No OS guessing: plain tabs, starting with macOS.
+  const [tab, setTab] = useState<string>('macos');
   const active = tabs.find((t) => t.id === tab) ?? tabs[0];
   const commands = active.code
     .split('\n')
     .filter((l) => l.trim() !== '' && !l.trim().startsWith('#'))
     .join('\n');
-
-  const directDownloads: Record<string, Array<{ name: string; url: string; label: string; primary?: boolean }>> = {
-    macos: [
-      { name: `kai_${short}_aarch64.dmg`, url: `${REPO_URL}/releases/download/v${short}/kai_${short}_aarch64.dmg`, label: '.dmg (M1–M4)', primary: true },
-    ],
-    linux: [
-      { name: `kai_${short}_amd64.deb`, url: `${REPO_URL}/releases/download/v${short}/kai_${short}_amd64.deb`, label: '.deb (x64)', primary: true },
-      { name: `kai_${short}_amd64.AppImage`, url: `${REPO_URL}/releases/download/v${short}/kai_${short}_amd64.AppImage`, label: '.AppImage' },
-    ],
-    windows: [
-      { name: `kai_${short}_x64-setup.exe`, url: `${REPO_URL}/releases/download/v${short}/kai_${short}_x64-setup.exe`, label: '.exe installer', primary: true },
-      { name: `kai_${short}_x64_en-US.msi`, url: `${REPO_URL}/releases/download/v${short}/kai_${short}_x64_en-US.msi`, label: '.msi package' },
-    ],
-    source: [],
-  };
-
-  const currentDls = directDownloads[tab] ?? [];
 
   return (
     <div className="t-install" role="region" aria-label="Install Kai">
@@ -84,30 +60,11 @@ export function InstallBar({ short }: { short: string }) {
             title={`Show ${t.label} instructions`}
           >
             {t.label}
-            {t.id === detected && <span className="t-sr"> (your system)</span>}
           </button>
         ))}
         <span style={{ flex: 1 }} />
         <CopyBtn text={commands} />
       </div>
-      <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', padding: '0.5rem 1.1rem 0', margin: 0 }}>
-        The highlighted tab is only a guess from your browser — pick any tab, you are not locked in.
-      </p>
-      {currentDls.length > 0 && (
-        <div className="t-install-direct">
-          <span className="t-install-direct-label">Direct Download:</span>
-          {currentDls.map((d) => (
-            <a
-              key={d.name}
-              href={d.url}
-              className={`t-btn t-btn--sm ${d.primary ? 't-btn--primary' : 't-btn--secondary'}`}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', padding: '0.25rem 0.65rem', fontSize: '0.78rem' }}
-            >
-              <Download size={13} /> {d.label}
-            </a>
-          ))}
-        </div>
-      )}
       <pre className="t-install-code"><code>{active.code.split('\n').map((line, i) => {
         const trimmed = line.trim();
         if (trimmed === '') return <span key={i} className="t-code-line" aria-hidden="true">&nbsp;</span>;
