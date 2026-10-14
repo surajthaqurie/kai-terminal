@@ -188,7 +188,10 @@ pub fn build_cmd_shim(node_exe: &str, cli_js: &Path) -> String {
     } else {
         node_exe.to_string()
     };
-    format!("@echo off\r\n{node} \"{}\" %*\r\n", cli_js.to_string_lossy())
+    format!(
+        "@echo off\r\n{node} \"{}\" %*\r\n",
+        cli_js.to_string_lossy()
+    )
 }
 
 /// `kai.ps1` shim body (PowerShell callers).
