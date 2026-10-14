@@ -133,6 +133,34 @@ export const MCP_TOOLS = [
     },
   },
   {
+    name: "kai_strip_coauthors",
+    description:
+      "Remove AI-agent Co-authored-by trailers from recent commit messages. Fail-closed: requires a clean tree and unpushed history unless force is set. File content is never altered, messages only.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectPath: { type: "string", description: "Optional project root path." },
+        last: {
+          type: "number",
+          description: "How many commits back from HEAD to process (default: 1, max: 50).",
+        },
+        match: {
+          type: "string",
+          description:
+            "Optional case-insensitive substring: only strip trailer lines containing it.",
+        },
+        dryRun: {
+          type: "boolean",
+          description: "Preview the stripped messages without rewriting history.",
+        },
+        force: {
+          type: "boolean",
+          description: "Allow rewriting commits already pushed upstream.",
+        },
+      },
+    },
+  },
+  {
     name: "kai_get_lsp_status",
     description:
       "Detect installed local Language Server Protocol (LSP) servers for cross-file type references.",
@@ -747,6 +775,73 @@ export async function handleMcpMessage(
             ],
           },
         };
+      }
+
+      if (toolName === "kai_strip_coauthors") {
+        if (args.last !== undefined) {
+          if (typeof args.last !== "number" || !Number.isFinite(args.last) || args.last < 1) {
+            return {
+              jsonrpc: "2.0",
+              id: reqId,
+              error: { code: -32602, message: "last parameter must be a positive number" },
+            };
+          }
+        }
+        if (args.match !== undefined && typeof args.match !== "string") {
+          return {
+            jsonrpc: "2.0",
+            id: reqId,
+            error: { code: -32602, message: "match parameter must be a string" },
+          };
+        }
+        for (const flag of ["dryRun", "force"] as const) {
+          if (args[flag] !== undefined && typeof args[flag] !== "boolean") {
+            return {
+              jsonrpc: "2.0",
+              id: reqId,
+              error: { code: -32602, message: `${flag} must be a boolean` },
+            };
+          }
+        }
+        const last =
+          typeof args.last === "number" ? Math.min(Math.max(1, Math.floor(args.last)), 50) : 1;
+        const match = typeof args.match === "string" ? args.match.trim().slice(0, 256) : undefined;
+        try {
+          const { stripCoAuthorsInRepo } = await import("./coauthors");
+          const result = stripCoAuthorsInRepo(canonicalRoot, {
+            last,
+            match,
+            dryRun: Boolean(args.dryRun),
+            force: Boolean(args.force),
+          });
+          recordMetric({
+            projectId: meta.id,
+            operation: "mcp_call",
+            latencyMs: Date.now() - start,
+            tokensEstimated: 0,
+            success: true,
+          });
+          return {
+            jsonrpc: "2.0",
+            id: reqId,
+            result: {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify(result, null, 2),
+                },
+              ],
+            },
+          };
+        } catch (err: unknown) {
+          // Operational refusals (dirty tree, pushed history, merges) are
+          // expected outcomes with actionable messages, not server faults.
+          return {
+            jsonrpc: "2.0",
+            id: reqId,
+            error: { code: -32602, message: err instanceof Error ? err.message : String(err) },
+          };
+        }
       }
 
       if (toolName === "kai_get_lsp_status") {

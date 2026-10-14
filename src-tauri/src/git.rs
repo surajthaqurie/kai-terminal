@@ -513,7 +513,17 @@ fn run_git(cwd: &str, args: &[&str]) -> Option<String> {
 
 /// True when a `git` executable resolves on PATH (or via well-known
 /// install locations). Used to distinguish "git missing" from "not a repo".
+///
+/// Step 9 perf: the PATH scan (stat per directory) ran on EVERY git probe,
+/// so each footer refresh paid it N times for N panes. The result is cached
+/// process-wide — a mid-process git install/uninstall takes effect on the
+/// next app restart. Path validation elsewhere is untouched.
 fn git_binary_available() -> bool {
+    static CACHE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *CACHE.get_or_init(git_binary_available_uncached)
+}
+
+fn git_binary_available_uncached() -> bool {
     if let Ok(path_env) = std::env::var("PATH") {
         for dir in std::env::split_paths(&path_env) {
             if dir.as_os_str().is_empty() {

@@ -21,3 +21,6 @@ Thumbs.db
 # Local env files
 .env
 .env.local
+
+# Step 9 benchmark measurements (regenerate with `npm run bench:perf`)
+scripts/bench/results/

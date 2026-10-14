@@ -29,6 +29,7 @@ import {
   buildDynamicAgentSetup,
   listAgentIds,
 } from "../core/agents";
+import { stripCoAuthorsInRepo } from "../core/coauthors";
 import packageJson from "../../package.json";
 
 export const KAI_VERSION: string = packageJson.version ?? "0.1.0";
@@ -493,6 +494,8 @@ Commands:
   stop [code]             Clear Code Mode and return to plain terminal mode (plain kai stop works too)
   status [path]           Show project registration, index health, and file statistics
   unregister <path|id>    Delete a project's Kai-owned index data (repo untouched)
+  strip-coauthors [path] Remove AI-agent Co-authored-by trailers from recent commits
+                             (default: HEAD only; unpushed history only unless --force)
   graph rebuild [path]    Rebuild project symbol index and dependency graph
   query <task> [path]     Assemble task-aware context package and prompt for a task
   cost [path]             Display estimated token footprint and retrieval metrics
@@ -552,6 +555,7 @@ export async function runCli(argv: string[]): Promise<number> {
         command !== "code" &&
         command !== "stop" &&
         command !== "status" &&
+        command !== "strip-coauthors" &&
         command !== "unregister" &&
         command !== "graph" &&
         command !== "query" &&
@@ -1253,6 +1257,61 @@ export async function runCli(argv: string[]): Promise<number> {
     if (command === "doctor") {
       printDoctorReport();
       return 0;
+    }
+
+    // 15. kai strip-coauthors [path] [--last N] [--match text] [--dry-run] [--force]
+    // Remove `Co-authored-by:` trailers that AI coding agents append to
+    // commit messages. Fail-closed: clean tree, attached branch, no merges
+    // in range, and unpushed history only (unless --force). Messages travel
+    // via temp files (0600) — never shell interpolation — on every OS.
+    if (command === "strip-coauthors") {
+      const positionals = args.slice(1).filter((a) => !a.startsWith("-"));
+      const targetPath = positionals[0] || process.cwd();
+      const flagValue = (name: string): string | undefined => {
+        const eq = args.find((a) => a.startsWith(`${name}=`));
+        if (eq) return eq.slice(name.length + 1);
+        const idx = args.indexOf(name);
+        if (idx >= 0 && idx + 1 < args.length && !args[idx + 1].startsWith("-")) {
+          return args[idx + 1];
+        }
+        return undefined;
+      };
+      const lastRaw = flagValue("--last");
+      let last = 1;
+      if (lastRaw !== undefined) {
+        last = Number(lastRaw);
+        if (!Number.isInteger(last) || last < 1 || last > 50) {
+          console.error(`[kai] Error: --last must be an integer from 1 to 50.`);
+          return 1;
+        }
+      }
+      const match = flagValue("--match");
+      if (match !== undefined && match.length > 256) {
+        console.error(`[kai] Error: --match must be at most 256 characters.`);
+        return 1;
+      }
+      const dryRun = args.includes("--dry-run");
+      const force = args.includes("--force");
+      try {
+        const result = stripCoAuthorsInRepo(targetPath, { last, match, dryRun, force });
+        console.log(`[kai] Branch "${result.branch}" (${result.repoRoot})`);
+        if (result.rewrittenCount === 0) {
+          console.log(`[kai] ${result.note}`);
+          return 0;
+        }
+        for (const c of result.commits) {
+          if (c.removed === 0) continue;
+          const after = c.newSha ? ` -> ${c.newSha.slice(0, 8)}` : " (preview)";
+          console.log(
+            `[kai] ${dryRun ? "Would strip" : "Stripped"} ${c.removed} trailer(s): ${c.sha.slice(0, 8)} "${c.subject}"${after}`
+          );
+        }
+        console.log(`[kai] ${result.note}`);
+        return 0;
+      } catch (err: unknown) {
+        console.error(`[kai] Error: ${err instanceof Error ? err.message : String(err)}`);
+        return 1;
+      }
     }
 
     console.error(`[kai] Unknown command: "${command}". Run 'kai --help' for usage.`);

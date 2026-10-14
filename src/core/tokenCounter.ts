@@ -103,26 +103,39 @@ export function truncateToTokenBudget(
     return { text, wasTruncated: false, metrics: initial };
   }
 
-  // Binary search for slice boundary that fits within budget
-  let low = 0;
-  let high = text.length;
-  let best = 0;
+  // Fast path: jump straight to a proportional guess, then correct with a
+  // bounded number of refinement steps. The old binary search re-scanned the
+  // candidate from scratch ~log2(n) times (≈18 full passes for a 260 KB
+  // prompt); chars-per-token is stable enough that the guess lands within a
+  // few percent, so ~4-6 passes suffice. The trailing guard loop keeps the
+  // hard budget guarantee even for adversarial inputs.
+  const avgCharsPerToken = Math.max(1, text.length / initial.estimatedTokens);
+  let bound = Math.max(0, Math.min(text.length - 1, Math.floor(maxTokens * avgCharsPerToken)));
 
-  while (low <= high) {
-    const mid = Math.floor((low + high) / 2);
-    const candidate = text.slice(0, mid);
-    const candidateTokens = estimateTokens(candidate, customTokenizer).estimatedTokens;
-
+  for (let i = 0; i < 6; i++) {
+    const candidateTokens = estimateTokens(text.slice(0, bound), customTokenizer).estimatedTokens;
     if (candidateTokens <= maxTokens) {
-      best = mid;
-      low = mid + 1;
+      const remaining = maxTokens - candidateTokens;
+      if (remaining < 2 || bound >= text.length) break;
+      const grown = Math.min(
+        text.length,
+        bound + Math.max(1, Math.floor(remaining * avgCharsPerToken))
+      );
+      if (grown <= bound) break;
+      bound = grown;
     } else {
-      high = mid - 1;
+      const shrunk = Math.floor((bound * maxTokens) / candidateTokens);
+      bound = Math.max(0, Math.min(bound - 1, shrunk));
     }
   }
 
-  const truncated = text.slice(0, best);
-  const metrics = estimateTokens(truncated, customTokenizer);
+  let truncated = text.slice(0, bound);
+  let metrics = estimateTokens(truncated, customTokenizer);
+  while (metrics.estimatedTokens > maxTokens && bound > 0) {
+    bound = Math.max(0, Math.floor(bound * 0.9) - 1);
+    truncated = text.slice(0, bound);
+    metrics = estimateTokens(truncated, customTokenizer);
+  }
   return {
     text: truncated,
     wasTruncated: true,

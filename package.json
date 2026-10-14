@@ -28,6 +28,7 @@
     "format": "prettier --write \"src/**/*.{ts,tsx,css,json}\"",
     "format:check": "prettier --check \"src/**/*.{ts,tsx,css,json}\"",
     "check": "npm run typecheck && npm run format:check && npm run test",
+    "bench:perf": "vitest run scripts/bench/step9.perf.test.ts",
     "test:docker": "docker compose -f docker-compose.test.yml run --rm kai-test all",
     "test:docker:frontend": "docker compose -f docker-compose.test.yml run --rm kai-test frontend",
     "test:docker:rust": "docker compose -f docker-compose.test.yml run --rm kai-test rust",

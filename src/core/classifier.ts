@@ -152,6 +152,20 @@ export interface ExtractedSearchTokens {
   intentHints: TaskIntentHints;
 }
 
+// Keyword regexes are fixed at module scope (bounded by CATEGORY_RULES), so
+// compile each once instead of rebuilding ~70 RegExp objects per
+// classifyTask() call. No /g flag: shared instances stay stateless.
+const keywordRegexCache = new Map<string, RegExp>();
+
+function keywordRegex(kw: string): RegExp {
+  let re = keywordRegexCache.get(kw);
+  if (!re) {
+    re = new RegExp(`\\b${kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
+    keywordRegexCache.set(kw, re);
+  }
+  return re;
+}
+
 /**
  * Extracts normalized query tokens, decomposing camelCase, snake_case, and file paths.
  */
@@ -263,7 +277,7 @@ export function classifyTask(task: string, explicitOverride?: TaskCategory): Cla
 
     // Keyword matching
     for (const kw of rule.keywords) {
-      const kwRegex = new RegExp(`\\b${kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
+      const kwRegex = keywordRegex(kw);
       if (kwRegex.test(lower)) {
         score += 0.2 * rule.weight;
         ruleKeywordsFound.push(kw);

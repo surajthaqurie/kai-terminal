@@ -16,6 +16,7 @@ import { isCopyKeyEvent, isPasteKeyEvent } from "../services/shortcuts";
 import { ShellProfile, SessionStatus, UserSettings } from "../types/terminal";
 import { SettingsService, DEFAULT_SETTINGS } from "../services/settingsService";
 import { loadCommandHistory, recordCommand, saveCommandHistory } from "../services/autocomplete";
+import { TerminalOutputBuffer } from "../services/terminalOutputBuffer";
 import { lineLikelyChangesCwd, lineLikelyChangesCodeMode } from "../services/cwdCommand";
 // Search UI only mounts on first toggle (Ctrl+Shift+F), so it stays out of
 // the per-pane startup path.
@@ -571,7 +572,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
           }
         });
       };
-      let pendingOutput = "";
+      let pendingOutput = new TerminalOutputBuffer();
       let rafScheduled = false;
       let rafId: number | null = null;
       let flushTimer: ReturnType<typeof setTimeout> | null = null;
@@ -593,9 +594,8 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
           clearTimeout(flushTimer);
           flushTimer = null;
         }
-        if (pendingOutput) {
-          const chunk = pendingOutput;
-          pendingOutput = "";
+        if (!pendingOutput.isEmpty) {
+          const chunk = pendingOutput.flush();
           try {
             for (let off = 0; off < chunk.length; off += MAX_TERM_WRITE_CHARS) {
               term.write(chunk.slice(off, off + MAX_TERM_WRITE_CHARS));
@@ -631,18 +631,11 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       trackUnlisten(
         ptyService.onPtyOutput((payload) => {
           if (payload.id === backendPtyIdRef.current) {
-            // Bound the pending buffer so a flood of output cannot grow
-            // frontend memory without limit (xterm scrollback is also bounded).
-            pendingOutput += payload.data;
-            if (pendingOutput.length > 1_048_576) {
-              let startIdx = pendingOutput.length - 1_048_576;
-              // If slicing right at a low surrogate, advance index by 1 so surrogate pair isn't split
-              const code = pendingOutput.charCodeAt(startIdx);
-              if (code >= 0xdc00 && code <= 0xdfff) {
-                startIdx += 1;
-              }
-              pendingOutput = pendingOutput.slice(startIdx);
-            }
+            // Bounded FIFO (see TerminalOutputBuffer): a flood of output
+            // appends O(1) per chunk with memory capped at ~1 MB, instead of
+            // re-copying a megabyte string on every event. xterm scrollback
+            // bounds the rendered side as before.
+            pendingOutput.append(payload.data);
             scheduleFlush();
           }
         }),
