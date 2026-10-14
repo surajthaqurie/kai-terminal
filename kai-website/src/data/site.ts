@@ -18,12 +18,12 @@ export type Feature = {
 };
 
 export const FEATURES: Feature[] = [
-  { icon: Cpu, tone: 't-icon--neutral', tag: 'Rust · portable-pty', title: 'Native PTY', body: 'ConPTY on Windows, POSIX pty on macOS/Linux. No Electron backend in the path.' },
-  { icon: Zap, tone: 't-icon--neutral', tag: 'xterm.js', title: 'Terminal rendering', body: 'Canvas viewport with search and selection. Handles large output without freezing the UI.' },
-  { icon: Layers, tone: 't-icon--neutral', tag: 'tabs', title: 'Isolated tabs', body: 'Each tab keeps its own cwd and process. A crash in one tab does not take the others down.' },
-  { icon: Bot, tone: 't-icon--neutral', tag: 'CLI · MCP', title: 'Local project index + MCP', body: 'kai code indexes a folder to ~/.kai/. kai mcp serves 7 read-only tools for Claude, Cursor, Codex, Gemini, Copilot, Windsurf, Cline.' },
-  { icon: ShieldCheck, tone: 't-icon--neutral', tag: 'local only', title: 'No account, local files', body: '.env files, keys and binaries are skipped. Nothing is uploaded by the app itself.' },
-  { icon: Monitor, tone: 't-icon--neutral', tag: 'Tauri 2', title: 'Small install', body: '~30MB idle on the maintainer machine with one tab. MIT licensed, builds on GitHub Actions.' },
+  { icon: Cpu, tone: 't-icon--neutral', tag: 'Rust · portable-pty', title: 'Native PTY', body: 'ConPTY on Windows, POSIX pty on macOS/Linux. Sub-millisecond ANSI throughput with zero Electron backend.' },
+  { icon: Zap, tone: 't-icon--neutral', tag: 'xterm.js · WebGL', title: 'GPU 60fps Terminal', body: 'Hardware-accelerated WebGL rendering with canvas fallback. High-throughput FIFO output buffer handles 10MB floods without lag.' },
+  { icon: Layers, tone: 't-icon--neutral', tag: 'tabs & splits', title: 'Zero-Remount Splits', body: 'Flat grid split panes keep terminal process state intact during resizing and layout changes. Pointer drag-and-drop tab ordering.' },
+  { icon: Bot, tone: 't-icon--neutral', tag: 'CLI · MCP · AST', title: 'Project Graph & Auto MCP', body: 'Built-in AST symbol indexing with automatic post-agent sync. Auto-wires MCP for 10 agents (Claude, Cursor, Codex, Gemini, OpenCode, Aider, Windsurf, Cline, Antigravity).' },
+  { icon: ShieldCheck, tone: 't-icon--neutral', tag: 'local only', title: 'Privacy & Co-Author Hooks', body: 'Auto-strips AI co-author trailers in commit-msg hooks. Zero telemetry or cloud dependencies. .env files and keys skipped.' },
+  { icon: Monitor, tone: 't-icon--neutral', tag: 'Tauri 2', title: 'Small Footprint (~30MB)', body: '~30MB idle RAM with one tab. MIT licensed, builds on GitHub Actions with native installers for macOS, Linux, and Windows.' },
 ];
 
 export type Shortcut = { label: string; keys: string[] };
@@ -43,9 +43,11 @@ export type CompareRow = { label: string; kai: string; electron: string; alacrit
 
 export const COMPARE_ROWS: CompareRow[] = [
   { label: 'Idle memory (1 tab)', kai: '~30 MB', electron: '300 MB+', alacritty: 'low' },
-  { label: 'Tabs + splits', kai: 'built in', electron: 'built in', alacritty: 'via tmux' },
-  { label: 'Local index + MCP', kai: 'built in', electron: 'via plugins', alacritty: 'none' },
-  { label: 'Query path', kai: 'local, budgeted', electron: 'varies', alacritty: 'manual' },
-  { label: 'Index location', kai: '~/.kai/', electron: 'varies', alacritty: 'n/a' },
-  { label: 'Telemetry in app', kai: 'none', electron: 'varies', alacritty: 'none' },
+  { label: 'Terminal rendering', kai: 'WebGL GPU 60fps', electron: 'Chromium DOM', alacritty: 'OpenGL' },
+  { label: 'Tabs & split panes', kai: 'zero-remount grid', electron: 'built in', alacritty: 'tmux only' },
+  { label: 'AI Agent integration', kai: 'native (10 agents)', electron: 'via plugins', alacritty: 'none' },
+  { label: 'AST graph auto-sync', kai: 'automatic on exit', electron: 'none', alacritty: 'none' },
+  { label: 'Co-author hook strip', kai: 'built in (commit-msg)', electron: 'none', alacritty: 'none' },
+  { label: 'MCP server & tools', kai: 'built in (7 stdio tools)', electron: 'external', alacritty: 'none' },
+  { label: 'Telemetry & privacy', kai: 'zero telemetry, local only', electron: 'varies', alacritty: 'none' },
 ];

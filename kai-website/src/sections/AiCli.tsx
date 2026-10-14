@@ -16,23 +16,22 @@ export function AiCli() {
             Start with one tool. The config paths differ per tool — Kai writes them for you.
           </p>
           <ul className="t-check-list">
-            <li><CheckCircle2 size={18} color="var(--accent-purple-fg)" /><span><strong>7 tools covered</strong> — Claude, Cursor, Codex, Gemini, Copilot, Windsurf, Cline.</span></li>
-            <li><CheckCircle2 size={18} color="var(--accent-purple-fg)" /><span><strong>Local only</strong> — read-only access, .env and keys skipped by default.</span></li>
-            <li><CheckCircle2 size={18} color="var(--accent-purple-fg)" /><span><strong>Budgeted output</strong> — kai query stays within a token budget (default 4000).</span></li>
-            <li><CheckCircle2 size={18} color="var(--accent-purple-fg)" /><span><strong>Outside your repo</strong> — nothing is written into your git tree.</span></li>
+            <li><CheckCircle2 size={18} color="var(--accent-purple-fg)" /><span><strong>10 coding agents supported</strong> — Claude, Cursor, Codex, Gemini, OpenCode, Aider, Windsurf, Cline, Copilot, Antigravity.</span></li>
+            <li><CheckCircle2 size={18} color="var(--accent-purple-fg)" /><span><strong>Local AST graph engine</strong> — symbol indexing, dependency tracking, and LSP bridging with zero cloud dependencies.</span></li>
+            <li><CheckCircle2 size={18} color="var(--accent-purple-fg)" /><span><strong>Automatic graph sync</strong> — incremental re-indexing triggered automatically when the agent finishes.</span></li>
+            <li><CheckCircle2 size={18} color="var(--accent-purple-fg)" /><span><strong>Strict boundary isolation</strong> — indexes reside in ~/.kai/; your source repository files are never touched.</span></li>
           </ul>
         </div>
 
         <div className="t-panel t-probe">
-          <div className="t-probe-head"><span>$ kai mcp .</span><span className="t-pill">7 tools, stdio</span></div>
-          <pre className="t-code t-code--sm"><code>{`[kai-mcp] listening on stdio
-- kai_project_info
-- kai_search_code
-- kai_find_symbol
-- kai_get_dependencies
-- kai_get_context
-- kai_refresh_index
-- kai_get_lsp_status`}</code></pre>
+          <div className="t-probe-head"><span>$ kai claude .</span><span className="t-pill">auto MCP & sync</span></div>
+          <pre className="t-code t-code--sm"><code>{`[kai] MCP configuration auto-wired for claude.
+[kai] Indexing project for Code Mode run...
+[kai] Running Code Mode task in "web-app": claude
+... [Agent Session Runs Here] ...
+[kai] Agent finished (command exited with code 0).
+[kai] Graph auto-sync: incremental (changed-files).
+Re-indexed 3 modified files in 24ms.`}</code></pre>
         </div>
       </div>
     </Section>

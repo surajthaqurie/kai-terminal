@@ -5,23 +5,23 @@ const STEPS = [
   {
     icon: Download,
     step: 'Step 1',
-    title: 'Install',
-    body: 'Download the file for your OS from GitHub Releases and open it. No account.',
+    title: 'Install Kai',
+    body: 'Download the installer for your OS (macOS .dmg, Linux .deb/.AppImage, or Windows .exe/.msi) from GitHub Releases. Free & MIT licensed.',
     code: 'macOS .dmg / Linux .deb / Windows .exe',
   },
   {
     icon: FolderOpen,
     step: 'Step 2',
-    title: 'Index a folder',
-    body: 'Open a repo in Kai and run kai code . The index goes to ~/.kai/, your repo stays untouched.',
-    code: 'kai code .',
+    title: 'Open your project',
+    body: 'From any shell, run kai open [path] to launch or focus Kai Terminal on your repository. Kai primes Code Mode and registers the project root.',
+    code: 'kai open .',
   },
   {
     icon: Bot,
     step: 'Step 3',
-    title: 'Use with your AI tool',
-    body: 'Run kai agent setup for one tool (Claude, Cursor, Codex, Gemini, Copilot, Windsurf, Cline, opencode or Aider), then work as usual. Run kai agent list to see what is installed.',
-    code: 'kai agent setup claude',
+    title: 'Launch any AI agent',
+    body: 'Inside Kai Terminal, launch your agent with kai <agent>. Kai auto-wires MCP, runs the agent, strips co-authors, and auto-syncs the AST graph on exit.',
+    code: 'kai claude .',
   },
 ];
 

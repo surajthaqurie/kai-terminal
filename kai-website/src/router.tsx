@@ -18,7 +18,11 @@ export const ROUTE_META: Record<string, { title: string; description: string }> 
   },
   '/guide': {
     title: 'Setup guide — Kai',
-    description: 'Install Kai, index a folder with kai code ., wire up one AI tool. CLI reference included.',
+    description: 'Install Kai, open your project, and run your favorite AI coding agent with auto MCP wiring.',
+  },
+  '/manual': {
+    title: 'User Manual & Command Reference — Kai',
+    description: 'Comprehensive user manual, environment boundaries, CLI commands, agent workflows, and cheatsheet for Kai Terminal.',
   },
   '/faq': {
     title: 'FAQ — Kai',

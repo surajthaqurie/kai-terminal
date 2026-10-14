@@ -737,3 +737,170 @@ html.js.io-ok .t-reveal.is-visible, .t-reveal.is-visible { opacity: 1; transform
 }
 .t-beginner-list { margin: 0.5rem 0 0; padding-left: 1.1rem; color: var(--text-secondary); font-size: 0.88rem; line-height: 1.65; }
 .t-terminal-hint { display: flex; align-items: center; justify-content: center; gap: 0.4rem; flex-wrap: wrap; }
+
+/* ——— User Manual & Documentation ——— */
+.t-manual-nav {
+  position: sticky;
+  top: 65px;
+  z-index: 40;
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.75rem 0;
+  background-color: var(--bg-overlay);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border-subtle);
+  overflow-x: auto;
+  white-space: nowrap;
+  scrollbar-width: none;
+  margin-bottom: 2.5rem;
+}
+.t-manual-nav::-webkit-scrollbar { display: none; }
+.t-manual-nav-pill {
+  padding: 0.45rem 0.9rem;
+  border-radius: 999px;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-decoration: none;
+  transition: all 0.18s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.t-manual-nav-pill:hover, .t-manual-nav-pill.is-active {
+  color: var(--text-primary);
+  border-color: var(--accent-cyan-border);
+  background-color: var(--accent-cyan-bg);
+}
+.t-manual-search-wrap {
+  position: relative;
+  max-width: 600px;
+  margin: 0 auto 2.5rem;
+}
+.t-manual-search-icon {
+  position: absolute;
+  left: 1rem;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-tertiary);
+  pointer-events: none;
+}
+.t-manual-search-input {
+  width: 100%;
+  padding: 0.85rem 1rem 0.85rem 2.8rem;
+  border-radius: 12px;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  color: var(--text-primary);
+  font-size: 0.95rem;
+  font-family: inherit;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.t-manual-search-input:focus {
+  outline: none;
+  border-color: var(--accent-cyan-fg);
+  box-shadow: 0 0 0 3px var(--accent-cyan-bg);
+}
+.t-manual-card {
+  padding: 2rem;
+  border-radius: 14px;
+  background-color: var(--card-bg-solid);
+  border: 1px solid var(--border-default);
+  margin-bottom: 2rem;
+  box-shadow: var(--shadow-sm);
+  transition: border-color 0.2s ease;
+}
+.t-manual-card:hover {
+  border-color: var(--border-strong);
+}
+.t-manual-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.25rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.t-manual-output {
+  background-color: #040810;
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  padding: 1.1rem 1.25rem;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  line-height: 1.6;
+  color: #e2e8f0;
+  overflow-x: auto;
+  margin: 1rem 0;
+}
+.t-manual-table-wrap {
+  overflow-x: auto;
+  margin: 1.5rem 0;
+  border-radius: 10px;
+  border: 1px solid var(--border-default);
+}
+.t-manual-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 0.88rem;
+}
+.t-manual-table th {
+  background-color: var(--bg-surface);
+  color: var(--text-secondary);
+  font-weight: 700;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border-default);
+  white-space: nowrap;
+}
+.t-manual-table td {
+  padding: 0.85rem 1rem;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  vertical-align: top;
+}
+.t-manual-table tr:last-child td {
+  border-bottom: none;
+}
+.t-manual-table tr:hover td {
+  background-color: var(--bg-raised);
+}
+.t-callout-warn {
+  display: flex;
+  gap: 0.85rem;
+  padding: 1rem 1.25rem;
+  border-radius: 10px;
+  background-color: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: var(--text-primary);
+  font-size: 0.88rem;
+  line-height: 1.55;
+  margin: 1.25rem 0;
+}
+.t-callout-warn svg {
+  color: #ef4444;
+  flex-shrink: 0;
+  margin-top: 0.15rem;
+}
+.t-callout-tip {
+  display: flex;
+  gap: 0.85rem;
+  padding: 1rem 1.25rem;
+  border-radius: 10px;
+  background-color: var(--accent-cyan-bg);
+  border: 1px solid var(--accent-cyan-border);
+  color: var(--text-primary);
+  font-size: 0.88rem;
+  line-height: 1.55;
+  margin: 1.25rem 0;
+}
+.t-callout-tip svg {
+  color: var(--accent-cyan-fg);
+  flex-shrink: 0;
+  margin-top: 0.15rem;
+}

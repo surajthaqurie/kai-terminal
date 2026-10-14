@@ -6,6 +6,7 @@ import { HomePage } from './pages/Home';
 import { DownloadPage } from './pages/Download';
 import { ChangelogPage } from './pages/Changelog';
 import { GuidePage } from './pages/Guide';
+import { ManualPage } from './pages/Manual';
 import { FaqPage } from './pages/Faq';
 import { NotFoundPage } from './pages/NotFound';
 import { Footer } from './sections/Footer';
@@ -24,6 +25,7 @@ function Routes() {
           : path === '/download' ? <DownloadPage rel={rel} />
           : path === '/changelog' ? <ChangelogPage />
           : path === '/guide' ? <GuidePage />
+          : path === '/manual' ? <ManualPage />
           : path === '/faq' ? <FaqPage />
           : <NotFoundPage />}
       </main>

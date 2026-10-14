@@ -24,49 +24,69 @@ export function HeroTerminal({ version }: { version: string }) {
     if (['help', '?', 'kai --help', 'kai -h'].includes(input)) {
       reply = (
         <div style={{ color: '#67e8f9' }}>
-          <p>try: <b style={{ color: '#fcd34d' }}>status</b> · <b style={{ color: '#fcd34d' }}>mcp</b> · <b style={{ color: '#fcd34d' }}>query</b> · <b style={{ color: '#fcd34d' }}>downloads</b> · <b style={{ color: '#fcd34d' }}>clear</b></p>
+          <p>try: <b style={{ color: '#fcd34d' }}>status</b> · <b style={{ color: '#fcd34d' }}>list</b> · <b style={{ color: '#fcd34d' }}>claude</b> · <b style={{ color: '#fcd34d' }}>graph</b> · <b style={{ color: '#fcd34d' }}>doctor</b> · <b style={{ color: '#fcd34d' }}>lsp</b> · <b style={{ color: '#fcd34d' }}>downloads</b> · <b style={{ color: '#fcd34d' }}>clear</b></p>
         </div>
       );
     } else if (['status', 'kai --status', 'kai status'].includes(input)) {
       reply = (
         <div style={{ color: '#34d399' }}>
-          <p>✔ Kai is working well</p>
-          <p>✔ Fast display · Low memory (~30MB)</p>
-          <p>✔ Ready to help your AI tool</p>
+          <p>✔ Project: web-app (id: e2b57f01a8cd3241)</p>
+          <p>✔ Files: 142 · Symbols: 890 · Freshness: fresh</p>
+          <p>✔ Semantic Mode: active (LSP connected) · Commit Hook: installed</p>
         </div>
       );
-    } else if (['mcp', 'kai mcp', 'kai mcp .'].includes(input)) {
-      reply = (
-        <div style={{ color: '#34d399' }}>
-          <p>[kai] Ready to help your AI tool</p>
-          <p style={{ color: '#a78bfa' }}>Can: find code · explain files · answer questions</p>
-          <p style={{ color: '#94a3b8', fontSize: '0.75rem' }}>Fast · Private · Nothing leaves your computer</p>
-        </div>
-      );
-    } else if (input.startsWith('kai query') || input.startsWith('query')) {
-      reply = (
-        <div style={{ color: '#38bdf8' }}>
-          <p>✔ question: "Where is the login code?"</p>
-          <p>✔ found: 4 files, only the needed parts</p>
-          <p style={{ color: '#34d399' }}>✔ low cost: 68% cheaper than sharing all files</p>
-        </div>
-      );
-    } else if (['claude', 'codex', 'gemini', 'copilot', 'opencode', 'aider', 'windsurf', 'cline', 'ai'].includes(input) || input.startsWith('kai agent') || input.startsWith('kai ')) {
+    } else if (['list', 'kai list', 'kai list -a'].includes(input)) {
       reply = (
         <div style={{ color: '#d8b4fe' }}>
-          <p>codex <span style={{ color: '#34d399' }}>✓</span> · claude <span style={{ color: '#34d399' }}>✓</span> · gemini <span style={{ color: '#34d399' }}>✓</span> · copilot <span style={{ color: '#34d399' }}>✓</span> · opencode <span style={{ color: '#34d399' }}>✓</span> · aider <span style={{ color: '#34d399' }}>✓</span> · cursor · windsurf · cline</p>
-          <p style={{ color: '#94a3b8', fontSize: '0.75rem' }}>Detect installed ones with: kai agent list. Example: kai agent setup opencode.</p>
+          <p>[kai] AI Agent Detection (live system probe):</p>
+          <p>  <span style={{ color: '#34d399' }}>✓</span> claude     Claude Code      · kai wired <span style={{ color: '#34d399' }}>✓</span></p>
+          <p>  <span style={{ color: '#34d399' }}>✓</span> cursor     Cursor           · kai wired <span style={{ color: '#34d399' }}>✓</span></p>
+          <p>  <span style={{ color: '#34d399' }}>✓</span> aider      Aider            · kai wired <span style={{ color: '#34d399' }}>✓</span></p>
+          <p>  <span style={{ color: '#34d399' }}>✓</span> gemini     Gemini CLI       · kai wired <span style={{ color: '#34d399' }}>✓</span></p>
+          <p>  <span style={{ color: '#34d399' }}>✓</span> opencode   opencode         · kai wired <span style={{ color: '#34d399' }}>✓</span></p>
+        </div>
+      );
+    } else if (['claude', 'kai claude', 'kai claude .', 'kai cursor', 'kai aider'].includes(input)) {
+      reply = (
+        <div style={{ color: '#38bdf8' }}>
+          <p>[kai] MCP auto-wired for claude · Entering Code Mode</p>
+          <p>[kai] AST graph synchronized: incremental (3 modified files in 24ms)</p>
+          <p style={{ color: '#34d399' }}>[kai] commit-msg hook active: auto-strip AI co-authors</p>
+        </div>
+      );
+    } else if (['graph', 'kai graph', 'kai graph status'].includes(input)) {
+      reply = (
+        <div style={{ color: '#34d399' }}>
+          <p>[kai] Graph Status for "web-app":</p>
+          <p>  Files: 142 · Symbols: 890 · AST Engine: ready</p>
+          <p style={{ color: '#94a3b8', fontSize: '0.75rem' }}>Auto-syncs incremental file changes on agent exit</p>
+        </div>
+      );
+    } else if (['doctor', 'kai doctor'].includes(input)) {
+      reply = (
+        <div style={{ color: '#67e8f9' }}>
+          <p>[kai] Doctor — install & desktop diagnostics (kai {version}):</p>
+          <p>  Platform: linux/x64 · Binary: /usr/bin/kai <span style={{ color: '#34d399' }}>✓</span></p>
+          <p>  Renderer: WebGL GPU (60fps) <span style={{ color: '#34d399' }}>✓</span> · KAI_HOME: ~/.kai <span style={{ color: '#34d399' }}>✓</span></p>
+        </div>
+      );
+    } else if (['lsp', 'kai lsp'].includes(input)) {
+      reply = (
+        <div style={{ color: '#38bdf8' }}>
+          <p>[kai] Language Server Protocol (LSP) Bridge Status:</p>
+          <p>  <span style={{ color: '#34d399' }}>✓</span> typescript (typescript-language-server)</p>
+          <p>  <span style={{ color: '#34d399' }}>✓</span> python (pyright) · <span style={{ color: '#34d399' }}>✓</span> rust (rust-analyzer)</p>
         </div>
       );
     } else if (['downloads', 'download', 'install'].includes(input)) {
       reply = (
         <div style={{ color: '#67e8f9' }}>
-          <p>.exe / .msi · .deb / .AppImage · .dmg (macOS)</p>
-          <p style={{ color: '#94a3b8' }}>open the /download page ↓</p>
+          <p>.dmg (macOS) · .deb / .AppImage (Linux) · .exe / .msi (Windows)</p>
+          <p style={{ color: '#94a3b8' }}>Visit the /download page to pick your installer</p>
         </div>
       );
     } else if (['version', 'kai --version'].includes(input)) {
-      reply = <p style={{ color: '#67e8f9' }}>Kai {version} — Free and private</p>;
+      reply = <p style={{ color: '#67e8f9' }}>Kai {version} — MIT licensed, Tauri 2 + Rust</p>;
     } else if (['ls', 'dir'].includes(input)) {
       reply = <p style={{ color: '#94a3b8' }}>src/ src-tauri/ packaging/ Cargo.toml package.json</p>;
     } else if (input === 'clear' || input === 'cls') {
@@ -90,7 +110,7 @@ export function HeroTerminal({ version }: { version: string }) {
     run(terminalInput);
   };
 
-  const chips = ['kai status', 'kai mcp .', 'kai query', 'help'];
+  const chips = ['kai status', 'kai list -a', 'kai claude', 'kai graph status', 'help'];
 
   return (
     <div className="t-terminal" role="region" aria-label="Interactive Kai preview terminal">
