@@ -1,25 +1,38 @@
-import { FC, useEffect, useMemo, useRef, useState } from "react";
 import {
+  FC,
+  KeyboardEvent as ReactKeyboardEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import {
+  ExternalLink,
+  Pause,
+  Play,
   Search,
-  Shuffle,
-  SkipBack,
   SkipForward,
-  Repeat,
   Volume2,
   VolumeX,
-  List,
+  WifiOff,
   X,
 } from "lucide-react";
+import { isTypingTarget } from "../../services/shortcuts";
+import { openExternalUrl } from "../../services/updateService";
 import {
   MusicTrack,
   YOUTUBE_EMBED_ORIGIN,
   YOUTUBE_LISTENING_HANDSHAKE,
+  YouTubeCommand,
+  clearLegacyQueue,
   embedSrcForTrack,
-  loadQueue,
+  hasNextItem,
   parseYouTubePlayerMessage,
   progressPercent,
   resolveInputToTrack,
-  saveQueue,
+  watchUrlForTrack,
+  youtubeCommand,
 } from "../../services/musicService";
 
 interface MusicPanelProps {
@@ -31,10 +44,15 @@ interface MusicPanelProps {
   onProgressChange?: (percent: number) => void;
 }
 
+function isOnline(): boolean {
+  return typeof navigator === "undefined" || navigator.onLine !== false;
+}
+
 /**
- * Compact YouTube drawer (272px): icon-only smart search, always-video
- * embed, full controls in panel. Queue is a slide-over covering the
- * player, hidden by default, opened via the queue button only.
+ * Music Time drawer (272px): one search box, the YouTube video, and four
+ * buttons (play/pause, next, mute, open in browser). YouTube owns search,
+ * playlists and "next"; nothing is stored locally. The panel stays mounted
+ * while enabled so audio survives closing the drawer.
  */
 export const MusicPanel: FC<MusicPanelProps> = ({
   startMuted,
@@ -44,39 +62,60 @@ export const MusicPanel: FC<MusicPanelProps> = ({
   onProgressChange,
 }) => {
   const [query, setQuery] = useState("");
-  const [queue, setQueue] = useState<MusicTrack[]>(() => loadQueue());
-  const [activeId, setActiveId] = useState<string | null>(() => loadQueue()[0]?.id ?? null);
+  const [track, setTrack] = useState<MusicTrack | null>(null);
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(startMuted);
-  const [loop, setLoop] = useState(false);
-  const [shuffle, setShuffle] = useState(false);
-  const [queueOpen, setQueueOpen] = useState(false);
+  const [online, setOnline] = useState(isOnline);
   const [notice, setNotice] = useState<string | null>(null);
   const frameRef = useRef<HTMLIFrameElement | null>(null);
   const lastPercentRef = useRef(0);
+  const mutedRef = useRef(muted);
+  mutedRef.current = muted;
 
-  const active = useMemo(() => queue.find((t) => t.id === activeId) ?? null, [queue, activeId]);
-  const src = useMemo(() => {
-    if (!active || !playing) return null;
-    const base = embedSrcForTrack(active);
-    return `${base}${loop ? "&loop=1" : ""}${muted ? "&mute=1" : ""}`;
-  }, [active, playing, loop, muted]);
+  // Mute is applied at load through the URL and afterwards through commands,
+  // so toggling it never reloads (restarts) the video.
+  const src = useMemo(
+    () => (track && online ? embedSrcForTrack(track, mutedRef.current) : null),
+    // Only the track's identity reloads the embed; a title update must not.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [track?.videoId, track?.playlistId, track?.query, online]
+  );
+
+  const sendCommand = useCallback((func: YouTubeCommand) => {
+    frameRef.current?.contentWindow?.postMessage(youtubeCommand(func), YOUTUBE_EMBED_ORIGIN);
+  }, []);
+
+  // Older versions saved a queue locally; this version keeps nothing.
+  useEffect(() => {
+    clearLegacyQueue();
+  }, []);
 
   useEffect(() => {
-    saveQueue(queue);
-  }, [queue]);
+    const goOnline = () => setOnline(true);
+    const goOffline = () => {
+      setOnline(false);
+      setPlaying(false);
+    };
+    window.addEventListener("online", goOnline);
+    window.addEventListener("offline", goOffline);
+    return () => {
+      window.removeEventListener("online", goOnline);
+      window.removeEventListener("offline", goOffline);
+    };
+  }, []);
 
   useEffect(() => {
-    onTrackChange?.(active, playing);
-  }, [active, playing, onTrackChange]);
+    onTrackChange?.(track, playing);
+  }, [track, playing, onTrackChange]);
 
   useEffect(() => {
     onMutedChange?.(muted);
   }, [muted, onMutedChange]);
 
-  // Real playback position: the embed (enablejsapi=1) posts currentTime /
-  // duration once it receives the "listening" handshake. Only messages from
-  // our own iframe window at the YouTube origin are trusted.
+  // Real playback state: the embed (enablejsapi=1) posts currentTime /
+  // duration / playerState / title once it receives the "listening"
+  // handshake. Only messages from our own iframe window at the YouTube origin
+  // are trusted.
   useEffect(() => {
     const report = (percent: number) => {
       if (percent === lastPercentRef.current) return;
@@ -101,6 +140,12 @@ export const MusicPanel: FC<MusicPanelProps> = ({
       const t = parseYouTubePlayerMessage(e.data);
       if (!t) return;
       received = true;
+      if (t.playerState === 1) setPlaying(true);
+      else if (t.playerState === 2 || t.playerState === 0) setPlaying(false);
+      if (t.title) {
+        const title = t.title;
+        setTrack((prev) => (prev && prev.title !== title ? { ...prev, title } : prev));
+      }
       if (t.playerState === 0) {
         report(100);
       } else if (t.currentTime !== undefined && t.duration !== undefined) {
@@ -123,26 +168,36 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     };
   }, [src, onProgressChange]);
 
+  const togglePlay = () => {
+    if (!src) return;
+    sendCommand(playing ? "pauseVideo" : "playVideo");
+    setPlaying((v) => !v);
+  };
+
+  const next = () => {
+    if (!src || !hasNextItem(track)) return;
+    sendCommand("nextVideo");
+    setPlaying(true);
+  };
+
+  const toggleMute = () => {
+    const nextMuted = !muted;
+    setMuted(nextMuted);
+    sendCommand(nextMuted ? "mute" : "unMute");
+  };
+
+  const openInBrowser = () => {
+    if (track) void openExternalUrl(watchUrlForTrack(track));
+  };
+
   // Footer + global shortcuts drive the panel via window events so the
   // footer works while the drawer is closed (panel stays mounted).
+  const actionsRef = useRef({ togglePlay, next, toggleMute });
+  actionsRef.current = { togglePlay, next, toggleMute };
   useEffect(() => {
-    const onTogglePlay = () => {
-      if (activeId) setPlaying((v) => !v);
-    };
-    const onNext = () => {
-      setQueue((prev) => {
-        if (prev.length === 0) return prev;
-        const idx = prev.findIndex((t) => t.id === activeId);
-        const at = idx < 0 ? 0 : (idx + 1) % prev.length;
-        const next = prev[at];
-        if (next) {
-          setActiveId(next.id);
-          setPlaying(true);
-        }
-        return prev;
-      });
-    };
-    const onMute = () => setMuted((v) => !v);
+    const onTogglePlay = () => actionsRef.current.togglePlay();
+    const onNext = () => actionsRef.current.next();
+    const onMute = () => actionsRef.current.toggleMute();
     window.addEventListener("kai-music-toggle-play", onTogglePlay);
     window.addEventListener("kai-music-next", onNext);
     window.addEventListener("kai-music-mute", onMute);
@@ -151,45 +206,58 @@ export const MusicPanel: FC<MusicPanelProps> = ({
       window.removeEventListener("kai-music-next", onNext);
       window.removeEventListener("kai-music-mute", onMute);
     };
-  }, [activeId]);
+  }, []);
+
+  // Panel-scoped keys: Space play / pause, N next, M mute, Esc closes the
+  // drawer. Only plain keys, never while typing in the search box, and Space
+  // is left to a focused button so it doesn't toggle twice.
+  const onPanelKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (e.ctrlKey || e.metaKey || e.altKey || e.nativeEvent.isComposing) return;
+    if (isTypingTarget(e.target)) return;
+    switch (e.key) {
+      case " ":
+        if ((e.target as HTMLElement).closest("button")) return;
+        togglePlay();
+        break;
+      case "n":
+      case "N":
+        next();
+        break;
+      case "m":
+      case "M":
+        toggleMute();
+        break;
+      case "Escape":
+        onClose();
+        break;
+      default:
+        return;
+    }
+    e.preventDefault();
+  };
 
   const submit = () => {
-    const track = resolveInputToTrack(query);
-    if (!track) {
-      setNotice("Paste a YouTube link or type a song name.");
+    const resolved = resolveInputToTrack(query);
+    if (!resolved) {
+      setNotice("Type a song name or paste a YouTube link.");
       return;
     }
     setNotice(null);
-    setQueue((prev) => [track, ...prev].slice(0, 50));
-    setActiveId(track.id);
+    setTrack(resolved);
     setPlaying(true);
     setQuery("");
   };
 
-  const step = (dir: 1 | -1) => {
-    if (queue.length === 0) return;
-    const idx = queue.findIndex((t) => t.id === activeId);
-    let next: MusicTrack | undefined;
-    if (shuffle) {
-      next = queue[Math.floor(Math.random() * queue.length)];
-    } else {
-      const at = idx < 0 ? 0 : (idx + dir + queue.length) % queue.length;
-      next = queue[at];
-    }
-    if (next) {
-      setActiveId(next.id);
-      setPlaying(true);
-    }
-  };
-
   return (
-    <div className="music-panel" role="complementary" aria-label="YouTube music player">
+    <div
+      className="music-panel"
+      role="complementary"
+      aria-label="Music Time player"
+      onKeyDown={onPanelKeyDown}
+    >
       <div className="music-head">
-        <div>
-          <b>YouTube</b>
-          <span>smart search • video</span>
-        </div>
-        <button className="btn btn-icon" onClick={onClose} aria-label="Close music player">
+        <b>Music Time</b>
+        <button className="btn btn-icon" onClick={onClose} aria-label="Close Music Time">
           <X size={14} />
         </button>
       </div>
@@ -206,10 +274,10 @@ export const MusicPanel: FC<MusicPanelProps> = ({
           type="text"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search or paste YouTube URL…"
-          aria-label="Search songs or paste YouTube URL"
+          placeholder="Song name or YouTube link"
+          aria-label="Song name or YouTube link"
         />
-        <button type="submit" className="music-search-go" title="Search / load" aria-label="Search">
+        <button type="submit" className="music-search-go" title="Play" aria-label="Search">
           <Search size={13} />
         </button>
       </form>
@@ -232,121 +300,63 @@ export const MusicPanel: FC<MusicPanelProps> = ({
             }
             className="music-video"
             src={src}
-            title={active?.title ?? "YouTube player"}
+            title={track?.title ?? "YouTube player"}
             allow="autoplay; encrypted-media; picture-in-picture"
             allowFullScreen
           />
+        ) : track && !online ? (
+          <div className="music-video-empty music-offline" role="status">
+            <WifiOff size={16} aria-hidden="true" />
+            <span>No internet connection</span>
+            <small>Music comes back when you do.</small>
+          </div>
         ) : (
-          <div className="music-video-empty">Search above to play video</div>
+          <div className="music-video-empty">Search a song to start</div>
         )}
-        <h3>{active?.title ?? "Nothing queued"}</h3>
+        <h3 title={track?.title}>{track?.title ?? "Nothing playing"}</h3>
         <div className="music-controls">
           <button
             type="button"
-            className={`btn btn-icon${shuffle ? " is-on" : ""}`}
-            onClick={() => setShuffle((v) => !v)}
-            title="Shuffle (panel only)"
-            aria-label="Toggle shuffle"
-            aria-pressed={shuffle}
-          >
-            <Shuffle size={14} />
-          </button>
-          <button
-            type="button"
-            className="btn btn-icon"
-            onClick={() => step(-1)}
-            title="Previous (P)"
-            aria-label="Previous track"
-          >
-            <SkipBack size={14} />
-          </button>
-          <button
-            type="button"
             className="music-play"
-            onClick={() => active && setPlaying((v) => !v)}
+            onClick={togglePlay}
+            disabled={!src}
             title="Play / pause (Space)"
             aria-label={playing ? "Pause" : "Play"}
           >
-            {playing ? "⏸" : "▶"}
+            {playing ? <Pause size={14} /> : <Play size={14} />}
           </button>
           <button
             type="button"
             className="btn btn-icon"
-            onClick={() => step(1)}
+            onClick={next}
+            disabled={!src || !hasNextItem(track)}
             title="Next song (N)"
-            aria-label="Next track"
+            aria-label="Next song"
           >
             <SkipForward size={14} />
           </button>
           <button
             type="button"
-            className={`btn btn-icon${loop ? " is-on" : ""}`}
-            onClick={() => setLoop((v) => !v)}
-            title="Loop (L)"
-            aria-label="Toggle loop"
-            aria-pressed={loop}
-          >
-            <Repeat size={14} />
-          </button>
-        </div>
-        <div className="music-volrow">
-          <button
-            type="button"
             className="btn btn-icon"
-            onClick={() => setMuted((v) => !v)}
+            onClick={toggleMute}
             title="Mute (M)"
             aria-label={muted ? "Unmute" : "Mute"}
             aria-pressed={muted}
           >
             {muted ? <VolumeX size={14} /> : <Volume2 size={14} />}
           </button>
-          <span className="music-muted-label">{muted ? "Muted" : "Sound on"}</span>
           <button
             type="button"
             className="btn btn-icon"
-            onClick={() => setQueueOpen(true)}
-            title="Queue (Q)"
-            aria-label="Open queue"
+            onClick={openInBrowser}
+            disabled={!track}
+            title="Open in browser"
+            aria-label="Open in browser"
           >
-            <List size={14} />
+            <ExternalLink size={14} />
           </button>
         </div>
       </div>
-
-      {queueOpen && (
-        <div className="music-queue-slide" role="dialog" aria-label="Music queue">
-          <div className="music-queue-head">
-            <span>Queue ({queue.length})</span>
-            <button
-              type="button"
-              className="btn btn-icon"
-              onClick={() => setQueueOpen(false)}
-              aria-label="Close queue"
-            >
-              <X size={14} />
-            </button>
-          </div>
-          <div className="music-queue-list">
-            {queue.length === 0 && <div className="music-queue-empty">Queue is empty.</div>}
-            {queue.map((t) => (
-              <button
-                key={t.id}
-                type="button"
-                className={`music-queue-item${t.id === activeId ? " active" : ""}`}
-                onClick={() => {
-                  setActiveId(t.id);
-                  setPlaying(true);
-                  setQueueOpen(false);
-                }}
-                title={t.query}
-              >
-                <span className="music-queue-dot">{t.id === activeId ? "▶" : "♪"}</span>
-                <span className="music-queue-title">{t.title}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 };

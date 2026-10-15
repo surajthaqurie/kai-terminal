@@ -1,3 +1,5 @@
+'use client';
+
 import { useEffect, useMemo, useState } from 'react';
 import { BookOpen, Check, Copy, Search, Terminal, X } from 'lucide-react';
 import { PageHero } from '../components/PageHero';
@@ -91,7 +93,11 @@ function parseManual(md: string): RefGroup[] {
       const { html: introHtml } = renderMarkdown(intro || '');
       return { id, title, introHtml, commands };
     })
-    .filter((g) => g.commands.length > 0 || g.introHtml);
+    .filter((g) => g.commands.length > 0 || g.introHtml)
+    // Website commands page skips the desktop-only sections (keyboard
+    // shortcuts). USER_MANUAL.md stays the full source of truth for
+    // the app itself; shortcuts live on the Guide page.
+    .filter((g) => !/^desktop\s/i.test(g.title));
 }
 
 function CopyButton({ text }: { text: string }) {
@@ -116,7 +122,7 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-/* /manual — professional CLI reference built from USER_MANUAL.md. */
+/* /commands — professional CLI reference built from USER_MANUAL.md. */
 export function ManualPage() {
   const doc = getDoc('manual');
   const [query, setQuery] = useState('');
@@ -156,7 +162,7 @@ export function ManualPage() {
       <PageHero
         badge={<><BookOpen size={14} /> CLI Reference</>}
         title="Commands"
-        sub={<>Every Kai command, grouped by workflow. Commands run inside Kai Terminal — except open and close, which launch or quit the app. Source of truth: <a href={doc.githubUrl} target="_blank" rel="noreferrer" className="t-link">USER_MANUAL.md</a>.</>}
+        sub="Every Kai command, grouped by workflow. Commands run inside Kai Terminal — except open and close, which launch or quit the app."
       />
 
       <section className="t-section" style={{ paddingTop: '1.5rem' }}>

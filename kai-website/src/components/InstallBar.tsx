@@ -1,6 +1,7 @@
+'use client';
+
 import { useState } from 'react';
 import { CopyBtn } from './CopyBtn';
-import type { LatestRelease } from '../hooks/useRepo';
 
 type InstallTab = { id: string; label: string; note: string; code: string };
 
@@ -36,7 +37,7 @@ function installTabs(short: string): InstallTab[] {
   ];
 }
 
-export function InstallBar({ short }: { short: string; rel?: LatestRelease }) {
+export function InstallBar({ short }: { short: string }) {
   const tabs = installTabs(short);
   // No OS guessing: plain tabs, starting with macOS.
   const [tab, setTab] = useState<string>('macos');

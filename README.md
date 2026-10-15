@@ -10,9 +10,23 @@ Tauri 2 + Rust (`portable-pty`) + WebGL GPU terminal renderer (`xterm.js`). MIT 
 
 Live site: **https://kai-terminal.vercel.app/** · Releases: [latest](https://github.com/surajthaqurie/kai-terminal/releases/latest)
 
-> Status: v0.1.4 is an active release. If something breaks, please open an issue with OS, version and steps to reproduce.
+> Status: v0.1.6 is an active release. If something breaks, please open an issue with OS, version and steps to reproduce.
 
-[![kai hero](docs/screenshot.png)](https://kai-terminal.vercel.app/)
+<a href="https://kai-terminal.vercel.app/">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/screenshot-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="docs/screenshot-light.png">
+    <img alt="kai — One terminal. Every platform." src="docs/screenshot-light.png">
+  </picture>
+</a>
+
+<p align="center">
+  <a href="https://github.com/surajthaqurie/kai-terminal/releases/latest"><img alt="Download" src="https://img.shields.io/badge/Download-latest-06b6d4?style=for-the-badge&logo=github"></a>
+  <a href="https://kai-terminal.vercel.app/"><img alt="Website" src="https://img.shields.io/badge/Website-open-0f172a?style=for-the-badge"></a>
+  <a href="https://kai-terminal.vercel.app/guide"><img alt="Guide" src="https://img.shields.io/badge/Setup-guide-0f172a?style=for-the-badge"></a>
+</p>
+
+<sub>The screenshot follows your GitHub theme: dark (Settings → Appearance) shows the dark hero, light shows the light one.</sub>
 
 ## Download — you pick the file
 
@@ -20,12 +34,12 @@ No auto-detection here. All installers are published on [GitHub Releases](https:
 
 | OS                  | File                                | Install                                            |
 | ------------------- | ----------------------------------- | -------------------------------------------------- |
-| macOS 12+ (M1–M4)   | `kai_0.1.4_aarch64.dmg`             | Open the `.dmg`, drag `Kai.app` to `/Applications` |
-| Linux x64           | `kai_0.1.4_amd64.deb`               | `sudo dpkg -i kai_0.1.4_amd64.deb`                 |
-| Linux (any distro)  | `kai_0.1.4_amd64.AppImage`          | `chmod +x kai_*.AppImage && ./kai_*.AppImage`      |
-| Linux ARM64         | `kai_0.1.4_arm64.deb` / `.AppImage` | Same as above, ARM build                           |
-| Windows 10/11 x64   | `kai_0.1.4_x64-setup.exe`           | Download and run                                   |
-| Windows x64 (admin) | `kai_0.1.4_x64_en-US.msi`           | For silent/admin installs                          |
+| macOS 12+ (M1–M4)   | `kai_0.1.6_aarch64.dmg`             | Open the `.dmg`, drag `Kai.app` to `/Applications` |
+| Linux x64           | `kai_0.1.6_amd64.deb`               | `sudo dpkg -i kai_0.1.6_amd64.deb`                 |
+| Linux (any distro)  | `kai_0.1.6_amd64.AppImage`          | `chmod +x kai_*.AppImage && ./kai_*.AppImage`      |
+| Linux ARM64         | `kai_0.1.6_arm64.deb` / `.AppImage` | Same as above, ARM build                           |
+| Windows 10/11 x64   | `kai_0.1.6_x64-setup.exe`           | Download and run                                   |
+| Windows x64 (admin) | `kai_0.1.6_x64_en-US.msi`           | For silent/admin installs                          |
 
 The website lists the same files and does not choose for you. If your browser guessed wrong, just click another tab — nothing is locked in.
 
@@ -137,9 +151,26 @@ To remove the hook later, delete
 
 The status bar in the app shows the indexed project, file/symbol counts and last query cost.
 
-### Music player (optional, off by default)
+### Keyboard shortcuts
 
-Enable **Settings → Appearance → Show YouTube player**. One smart search takes a YouTube link or a plain song name (backend decides, always video, no API key). The footer mini pill before the version keeps icon + title + pause + next + mute with a bottom progress bar; the `☰` queue opens as a slide-over. Shortcuts: `Ctrl+Alt+M` panel, `Ctrl+Alt+Space` play/pause, `Ctrl+Alt+N` next, `Ctrl+Alt+U` mute.
+On macOS use `Cmd` where `Ctrl` is shown. Plain `Ctrl+C` always stays the shell interrupt, and plain `Ctrl+V` always reaches the shell.
+
+| Keys | Action |
+| :--- | :--- |
+| `Ctrl+Shift+C` (or `Ctrl+Insert`) | Copy the selection |
+| `Ctrl+Shift+V` (or `Shift+Insert`) | Paste |
+| `Ctrl+Shift+A` | Select all output |
+| `Ctrl+Shift+K` | Clear the terminal |
+| `Ctrl+Shift+Home` / `End` | Scroll to the top / bottom |
+| `Shift+PageUp` / `PageDown` | Scroll one page |
+| `Ctrl+=` / `Ctrl+-` / `Ctrl+0` | Zoom the font in / out / back to the saved size (this session only) |
+| `Ctrl+1` … `8`, `Ctrl+9` | Jump to that tab, or to the last tab |
+| `Ctrl+Shift+T` / `W` | New tab / close tab |
+| `Ctrl+Shift+P` | Command palette |
+| `Ctrl+Shift+F` | Find in output |
+| `Ctrl+Shift+G` | Review git changes |
+
+The tab, pane, search and settings shortcuts are remappable in **Settings → Shortcuts**; the fixed ones above are listed there read-only.
 
 ### Privacy and limits
 
@@ -150,7 +181,7 @@ Enable **Settings → Appearance → Show YouTube player**. One smart search tak
 - Indexes live in `~/.kai/`; `kai remove` deletes them.
 - Local diagnostics go to `~/.kai/metrics.jsonl`. No account, no telemetry in the app.
 
-See [KNOWN_LIMITATIONS](KNOWN_LIMITATIONS.md) for what v0.1.4 does not do yet.
+See [KNOWN_LIMITATIONS](KNOWN_LIMITATIONS.md) for what v0.1.6 does not do yet.
 
 ## Docs
 

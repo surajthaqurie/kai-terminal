@@ -1,3 +1,5 @@
+'use client';
+
 import { useState } from 'react';
 import { Download, ExternalLink, PackageCheck, Terminal } from 'lucide-react';
 import { Badge, Section } from '../components/ui';
@@ -6,7 +8,8 @@ import { CopyBtn } from '../components/CopyBtn';
 import { fmtSize } from '../lib/format';
 import type { OsId } from '../lib/os';
 import { LATEST_RELEASE_URL, REPO_URL } from '../data/site';
-import type { LatestRelease } from '../hooks/useRepo';
+import type { SerializableRelease } from '../lib/release';
+import { assetUrl } from '../lib/release';
 
 type PlatformInstaller = {
   name: string;
@@ -30,7 +33,7 @@ type PlatformGroup = {
   note: string;
 };
 
-export function Downloads({ rel, showHead = true }: { rel: LatestRelease; showHead?: boolean }) {
+export function Downloads({ rel, showHead = true }: { rel: SerializableRelease; showHead?: boolean }) {
   // Show everything by default — the user picks, we don't guess.
   const [platformFilter, setPlatformFilter] = useState<'all' | OsId>('all');
 
@@ -43,7 +46,7 @@ export function Downloads({ rel, showHead = true }: { rel: LatestRelease; showHe
       installers: [
         {
           name: `kai_${rel.short}_aarch64.dmg`,
-          url: rel.asset((n) => n.toLowerCase().endsWith('.dmg'), `kai_${rel.short}_aarch64.dmg`),
+          url: assetUrl(rel, (n) => n.toLowerCase().endsWith('.dmg'), `kai_${rel.short}_aarch64.dmg`),
           size: rel.assets.find((a) => a.name.toLowerCase().endsWith('.dmg'))?.size ?? 0,
           label: 'Mac Installer',
           format: '.dmg',
@@ -64,7 +67,7 @@ export function Downloads({ rel, showHead = true }: { rel: LatestRelease; showHe
       installers: [
         {
           name: `kai_${rel.short}_amd64.deb`,
-          url: rel.asset((n) => n.toLowerCase().includes('amd64') && n.toLowerCase().endsWith('.deb'), `kai_${rel.short}_amd64.deb`),
+          url: assetUrl(rel, (n) => n.toLowerCase().includes('amd64') && n.toLowerCase().endsWith('.deb'), `kai_${rel.short}_amd64.deb`),
           size: rel.assets.find((a) => a.name.toLowerCase().includes('amd64') && a.name.toLowerCase().endsWith('.deb'))?.size ?? 0,
           label: 'Linux Installer',
           format: '.deb',
@@ -74,7 +77,7 @@ export function Downloads({ rel, showHead = true }: { rel: LatestRelease; showHe
         },
         {
           name: `kai_${rel.short}_amd64.AppImage`,
-          url: rel.asset((n) => n.toLowerCase().includes('amd64') && n.toLowerCase().endsWith('.appimage'), `kai_${rel.short}_amd64.AppImage`),
+          url: assetUrl(rel, (n) => n.toLowerCase().includes('amd64') && n.toLowerCase().endsWith('.appimage'), `kai_${rel.short}_amd64.AppImage`),
           size: rel.assets.find((a) => a.name.toLowerCase().includes('amd64') && a.name.toLowerCase().endsWith('.appimage'))?.size ?? 0,
           label: 'Portable App',
           format: '.AppImage',
@@ -83,7 +86,7 @@ export function Downloads({ rel, showHead = true }: { rel: LatestRelease; showHe
         },
         {
           name: `kai_${rel.short}_arm64.deb`,
-          url: rel.asset((n) => n.toLowerCase().includes('arm64') && n.toLowerCase().endsWith('.deb'), `kai_${rel.short}_arm64.deb`),
+          url: assetUrl(rel, (n) => n.toLowerCase().includes('arm64') && n.toLowerCase().endsWith('.deb'), `kai_${rel.short}_arm64.deb`),
           size: rel.assets.find((a) => a.name.toLowerCase().includes('arm64') && a.name.toLowerCase().endsWith('.deb'))?.size ?? 0,
           label: 'Linux Installer (ARM)',
           format: '.deb',
@@ -92,7 +95,7 @@ export function Downloads({ rel, showHead = true }: { rel: LatestRelease; showHe
         },
         {
           name: `kai_${rel.short}_arm64.AppImage`,
-          url: rel.asset((n) => n.toLowerCase().includes('arm64') && n.toLowerCase().endsWith('.appimage'), `kai_${rel.short}_arm64.AppImage`),
+          url: assetUrl(rel, (n) => n.toLowerCase().includes('arm64') && n.toLowerCase().endsWith('.appimage'), `kai_${rel.short}_arm64.AppImage`),
           size: rel.assets.find((a) => a.name.toLowerCase().includes('arm64') && a.name.toLowerCase().endsWith('.appimage'))?.size ?? 0,
           label: 'Portable App (ARM)',
           format: '.AppImage',
@@ -112,7 +115,7 @@ export function Downloads({ rel, showHead = true }: { rel: LatestRelease; showHe
       installers: [
         {
           name: `kai_${rel.short}_x64-setup.exe`,
-          url: rel.asset((n) => n.toLowerCase().endsWith('setup.exe'), `kai_${rel.short}_x64-setup.exe`),
+          url: assetUrl(rel, (n) => n.toLowerCase().endsWith('setup.exe'), `kai_${rel.short}_x64-setup.exe`),
           size: rel.assets.find((a) => a.name.toLowerCase().endsWith('setup.exe'))?.size ?? 0,
           label: 'Windows Setup',
           format: '.exe',
@@ -122,7 +125,7 @@ export function Downloads({ rel, showHead = true }: { rel: LatestRelease; showHe
         },
         {
           name: `kai_${rel.short}_x64_en-US.msi`,
-          url: rel.asset((n) => n.toLowerCase().endsWith('.msi'), `kai_${rel.short}_x64_en-US.msi`),
+          url: assetUrl(rel, (n) => n.toLowerCase().endsWith('.msi'), `kai_${rel.short}_x64_en-US.msi`),
           size: rel.assets.find((a) => a.name.toLowerCase().endsWith('.msi'))?.size ?? 0,
           label: 'Windows Installer',
           format: '.msi',

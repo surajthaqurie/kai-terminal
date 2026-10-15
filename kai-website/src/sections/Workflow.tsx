@@ -60,7 +60,7 @@ export function Workflow() {
         ))}
       </div>
       <p className="t-micro" style={{ textAlign: 'center', marginTop: '1.5rem' }}>
-        Every command is listed in the <Link to="/manual" style={{ color: 'var(--accent-cyan-fg)' }}>User Manual</Link>.
+        Every command is listed in the <Link to="/commands" style={{ color: 'var(--accent-cyan-fg)' }}>User Manual</Link>.
       </p>
     </Section>
   );

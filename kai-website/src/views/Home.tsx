@@ -4,12 +4,12 @@ import { Features } from '../sections/Features';
 import { AiCli } from '../sections/AiCli';
 import { Compare } from '../sections/Compare';
 import { CtaBanner } from '../components/CtaBanner';
-import type { LatestRelease } from '../hooks/useRepo';
+import type { SerializableRelease } from '../lib/release';
 
 /* Landing page: focused product narrative, live terminal preview, feature architecture,
    and comparison. Dedicated pages handle Downloads (/download), Setup Guide (/guide),
-   User Manual (/manual), Changelog (/changelog), and FAQ (/faq). */
-export function HomePage({ rel }: { rel: LatestRelease }) {
+   User Manual (/commands), Changelog (/changelog), and FAQ (/faq). */
+export function HomePage({ rel }: { rel: SerializableRelease }) {
   return (
     <>
       <Hero tag={rel.tag} short={rel.short} version={rel.tag} rel={rel} />

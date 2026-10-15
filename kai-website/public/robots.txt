@@ -1,4 +1,0 @@
-User-agent: *
-Allow: /
-
-Sitemap: https://kai-terminal.vercel.app/sitemap.xml

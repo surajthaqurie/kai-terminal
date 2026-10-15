@@ -54,9 +54,12 @@ import {
 } from "./services/projectService";
 import {
   matchShortcut,
+  matchBuiltinShortcut,
   isMacPlatform,
   isTypingTarget,
+  isXtermInput,
   platformLabel,
+  zoomedFontSize,
   ShortcutActionId,
 } from "./services/shortcuts";
 import {
@@ -637,7 +640,7 @@ export function App() {
     [shells, userSettings.defaultShellId, userSettings.launchAtStartup]
   );
 
-  // Music player: footer + shortcuts dispatch window events that the
+  // Music Time: footer + shortcuts dispatch window events that the
   // (always-mounted while enabled) MusicPanel listens to, so playback
   // survives panel close and footer works while the drawer is hidden.
   const dispatchMusicEvent = useCallback((name: string) => {
@@ -1681,7 +1684,27 @@ export function App() {
         }
       }
       const action: ShortcutActionId | null = matchShortcut(e, userSettings.keybindings);
-      if (!action) return;
+      if (!action) {
+        // Fixed shortcuts (user bindings above win): Ctrl+= / - / 0 zoom the
+        // terminal font for this session; Ctrl+1-9 jump to a tab. Skipped in
+        // text fields, but the terminal's own hidden input counts as terminal.
+        if (isTypingTarget(e.target) && !isXtermInput(e.target)) return;
+        const builtin = matchBuiltinShortcut(e);
+        if (!builtin) return;
+        e.preventDefault();
+        if (builtin.type === "zoom") {
+          const base = SettingsService.loadSettings().fontSize;
+          setUserSettings((prev) => ({
+            ...prev,
+            fontSize: zoomedFontSize(prev.fontSize, builtin.delta, base),
+          }));
+        } else {
+          const target = builtin.index === "last" ? tabs.length - 1 : builtin.index;
+          const tab = tabs[target];
+          if (tab) setActiveTabId(tab.id);
+        }
+        return;
+      }
       e.preventDefault();
       switch (action) {
         case "newTab":
@@ -1872,7 +1895,7 @@ export function App() {
     },
     {
       id: "toggle-music",
-      label: "Toggle Music Player",
+      label: "Toggle Music Time",
       category: "Music",
       shortcut: platformLabel(kb.toggleMusic, isMac),
       icon: <Activity size={16} />,

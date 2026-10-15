@@ -1,76 +1,29 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+'use client';
+
+import React, { useEffect } from 'react';
+import NextLink from 'next/link';
+import { usePathname } from 'next/navigation';
 import { SITE_URL } from './data/site';
 
-/* Simple hash-free router: History API + Vercel rewrite to /index.html. */
+export { ROUTE_META, canonicalFor } from './lib/routes';
 
-export const ROUTE_META: Record<string, { title: string; description: string }> = {
-  '/': {
-    title: 'Kai — Fast, GPU-Accelerated Terminal for AI Coding Agents',
-    description: 'Hardware-accelerated terminal for macOS, Linux, and Windows with a native local project intelligence engine for AI agents.',
-  },
-  '/download': {
-    title: 'Download Kai — macOS, Linux, Windows',
-    description: 'Native packages for macOS (.dmg), Linux (.deb, .AppImage), and Windows (.exe, .msi). Free and MIT licensed.',
-  },
-  '/changelog': {
-    title: "What's new in Kai — Changelog",
-    description: 'Release history, changelog entries, and version notes.',
-  },
-  '/guide': {
-    title: 'Getting started with Kai — Guide',
-    description: 'Install Kai, start your first session, and connect AI coding agents.',
-  },
-  '/manual': {
-    title: 'Commands — Kai',
-    description: 'Every Kai command, grouped by topic.',
-  },
-  '/commands': {
-    title: 'Commands — Kai',
-    description: 'Every Kai command, grouped by topic.',
-  },
-  '/mcp': {
-    title: 'MCP reference — Kai',
-    description: 'Local MCP server: start command and tool reference.',
-  },
-  '/faq': {
-    title: 'Frequently asked questions — Kai',
-    description: 'What Kai is, what it costs, how to start, and which files to download.',
-  },
-  '/404': {
-    title: 'Page not found — Kai',
-    description: 'That Kai page does not exist. Try Home, Download, Guide or Manual.',
-  },
-};
+/* Next.js App Router compatibility shim.
+   Keeps the old `<Link to="">` API working while rendering next/link
+   underneath so navigation stays client-side and prefetchable. */
 
-function pathname(): string {
-  let p = window.location.pathname || '/';
-  if (p.length > 1 && p.endsWith('/')) p = p.slice(0, -1);
-  return p;
-}
-
-export function navigate(to: string) {
-  window.history.pushState({}, '', to);
-  window.dispatchEvent(new PopStateEvent('popstate'));
-}
-
-const PathCtx = createContext('/');
-
-export function RouterProvider({ children }: { children: React.ReactNode }) {
-  const [path, setPath] = useState(() => (typeof window === 'undefined' ? '/' : pathname()));
-  useEffect(() => {
-    const onChange = () => setPath(pathname());
-    window.addEventListener('popstate', onChange);
-    return () => window.removeEventListener('popstate', onChange);
-  }, []);
-  return <PathCtx.Provider value={path}>{children}</PathCtx.Provider>;
-}
-
-export function usePath() {
-  return useContext(PathCtx);
-}
+export { SITE_URL };
 
 function external(to: string) {
   return /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(to) || to.startsWith('//');
+}
+
+// No-op provider kept so old App.tsx imports keep compiling during migration.
+export function RouterProvider({ children }: { children: React.ReactNode }) {
+  return <>{children}</>;
+}
+
+export function usePath() {
+  return usePathname() ?? '/';
 }
 
 export function Link({ to, children, className, style, onClick, ...rest }: {
@@ -78,25 +31,21 @@ export function Link({ to, children, className, style, onClick, ...rest }: {
   style?: React.CSSProperties; onClick?: React.MouseEventHandler<HTMLAnchorElement>;
 } & Omit<React.AnchorHTMLAttributes<HTMLAnchorElement>, 'href' | 'onClick'>) {
   const path = usePath();
-  // Exact match, or parent match on segment boundary (e.g. /manual matches /manual#setup).
-  const active = !external(to) && !to.startsWith('#') && (to === path || (to !== '/' && path.startsWith(to.endsWith('/') ? to : `${to}/`)));
+  if (external(to) || to.startsWith('#')) {
+    return <a href={to} className={className} style={style} onClick={onClick} {...rest}>{children}</a>;
+  }
+  const active = to === path || (to !== '/' && path.startsWith(to.endsWith('/') ? to : `${to}/`));
   return (
-    <a
+    <NextLink
       href={to}
       className={active ? (className ? `${className} is-active` : 'is-active') : className}
       aria-current={active ? 'page' : undefined}
       style={style}
-      onClick={(e) => {
-        onClick?.(e);
-        if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
-        if (external(to) || to.startsWith('#')) return;
-        e.preventDefault();
-        navigate(to);
-      }}
+      onClick={onClick}
       {...rest}
     >
       {children}
-    </a>
+    </NextLink>
   );
 }
 
@@ -104,17 +53,14 @@ export function useRouteScroll() {
   const path = usePath();
   useEffect(() => {
     const hash = window.location.hash;
-    // Strip leading # and decode; ignore empty hashes.
     const id = hash ? decodeURIComponent(hash.slice(1)) : '';
     const el = id ? document.getElementById(id) : null;
     if (el) {
-      // Defer one frame so the freshly rendered doc sections exist.
       requestAnimationFrame(() => el.scrollIntoView({ behavior: 'smooth', block: 'start' }));
     } else {
       window.scrollTo(0, 0);
     }
   }, [path]);
-  // Same-page anchor clicks (e.g. DocView TOC) don't change path — listen for hash.
   useEffect(() => {
     const onHash = () => {
       const id = decodeURIComponent((window.location.hash || '').slice(1));
@@ -126,18 +72,6 @@ export function useRouteScroll() {
   }, []);
 }
 
-export function useRouteMeta() {
-  const path = usePath();
-  useEffect(() => {
-    const meta = ROUTE_META[path] ?? ROUTE_META['/404'];
-    // Aliases share one canonical URL so search engines see a single page.
-    const canonicalPath = path === '/commands' ? '/manual' : path;
-    const url = `${SITE_URL}${canonicalPath === '/' ? '/' : canonicalPath}`;
-    document.title = meta.title;
-    document.querySelector('meta[name="description"]')?.setAttribute('content', meta.description);
-    document.querySelector('link[rel="canonical"]')?.setAttribute('href', url);
-    document.querySelector('meta[property="og:url"]')?.setAttribute('content', url);
-    document.querySelector('meta[property="og:title"]')?.setAttribute('content', meta.title);
-    document.querySelector('meta[property="og:description"]')?.setAttribute('content', meta.description);
-  }, [path]);
-}
+// Per-route <title>/meta/canonical> are now emitted server-side via Next
+// generateMetadata. This hook is a no-op kept for old imports.
+export function useRouteMeta() {}

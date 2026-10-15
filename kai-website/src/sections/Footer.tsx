@@ -15,7 +15,7 @@ const COLS: Array<{ head: string; links: Array<[string, string, boolean?]> }> = 
     head: 'Guides',
     links: [
       ['/guide', 'Getting started'],
-      ['/manual', 'Commands manual'],
+      ['/commands', 'Commands manual'],
       ['/mcp', 'MCP reference'],
       ['/docs', 'Documentation'],
       ['/faq', 'FAQ'],

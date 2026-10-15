@@ -3602,7 +3602,7 @@ select.modal-input {
   }
 }
 
-/* YouTube music player (Appearance-gated, default OFF) */
+/* Music Time player (Appearance-gated, default OFF) */
 .music-drawer {
   position: absolute;
   top: 0;
@@ -3716,10 +3716,6 @@ select.modal-input {
   gap: 10px;
   margin-top: 7px;
 }
-.music-controls .btn.is-on {
-  color: var(--accent-hover);
-  border-color: var(--border-accent);
-}
 .music-play {
   width: 32px;
   height: 32px;
@@ -3728,73 +3724,25 @@ select.modal-input {
   background: #e52e2e;
   color: #fff;
   cursor: pointer;
-}
-.music-volrow {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 7px;
-  margin-top: 8px;
-  font-size: var(--text-xs);
-  color: var(--text-secondary);
+  justify-content: center;
 }
-.music-muted-label {
-  flex: 1;
+.music-play:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
-.music-queue-slide {
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: 86%;
-  background: var(--bg-header);
-  border-left: 1px solid var(--border-accent);
-  z-index: 5;
-  display: flex;
+.music-controls button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.music-offline {
   flex-direction: column;
+  gap: 3px;
+  color: var(--color-warning);
 }
-.music-queue-head {
-  padding: 9px 10px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  border-bottom: 1px solid var(--border-subtle);
-  font-size: var(--text-sm);
-  font-weight: 600;
-}
-.music-queue-list {
-  flex: 1;
-  overflow-y: auto;
-  min-height: 0;
-}
-.music-queue-empty {
-  padding: 10px;
-  font-size: var(--text-xs);
+.music-offline small {
   color: var(--text-tertiary);
-}
-.music-queue-item {
-  width: 100%;
-  display: flex;
-  gap: 7px;
-  align-items: center;
-  padding: 7px 10px;
-  background: transparent;
-  border: 0;
-  border-bottom: 1px solid var(--border-subtle);
-  color: var(--text-primary);
-  font-size: var(--text-xs);
-  cursor: pointer;
-  text-align: left;
-}
-.music-queue-item.active {
-  background: var(--accent-subtle);
-}
-.music-queue-dot {
-  flex-shrink: 0;
-}
-.music-queue-title {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 .music-mini {
   display: flex;

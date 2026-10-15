@@ -1,4 +1,5 @@
 import { BookOpen, ArrowRight } from 'lucide-react';
+import { useMemo } from 'react';
 import { PageHero } from '../components/PageHero';
 import { Container, Reveal, Badge } from '../components/ui';
 import { SHORTCUTS } from '../data/site';
@@ -7,6 +8,18 @@ import { CtaBanner } from '../components/CtaBanner';
 import { Link } from '../router';
 
 export function GuidePage() {
+  const isMac = useMemo(() => {
+    if (typeof navigator === 'undefined') return false;
+    const platform =
+      // @ts-expect-error - userAgentData is not yet in all TS lib versions
+      navigator.userAgentData?.platform ?? navigator.platform ?? '';
+    if (/mac/i.test(platform)) return true;
+    return /mac/i.test(navigator.userAgent ?? '');
+  }, []);
+
+  const displayKeys = (keys: string[]) =>
+    isMac ? keys.map((k) => (k === 'Ctrl' ? 'Cmd ⌘' : k)) : keys;
+
   return (
     <>
       <PageHero
@@ -128,21 +141,20 @@ export function GuidePage() {
             <div className="t-section-head">
               <Badge tone="neutral">Productivity</Badge>
               <h2 className="t-section-title">Essential Shortcuts</h2>
-              <p className="t-section-sub">Default key combinations. Remappable anytime in Settings.</p>
+              <p className="t-section-sub">Default key combinations. App shortcuts are remappable in Settings; copy, paste, zoom and tab-jump keys are fixed.</p>
             </div>
             <div className="t-panel">
-              <div className="t-probe-head"><span>Terminal Shortcuts</span><span className="t-pill">Ctrl / Cmd</span></div>
+              <div className="t-probe-head"><span>Terminal Shortcuts</span><span className="t-pill">Ctrl / Cmd (⌘)</span></div>
               <ul className="t-keys">
                 {SHORTCUTS.map((s) => (
                   <li key={s.label}>
                     <span className="t-keys-label">{s.label}</span>
                     <span className="t-kbd-group">
-                      {s.keys.map((k) => <kbd key={k} className="t-kbd">{k}</kbd>)}
+                      {displayKeys(s.keys).map((k) => <kbd key={k} className="t-kbd">{k}</kbd>)}
                     </span>
                   </li>
                 ))}
               </ul>
-              <p className="t-micro">Keys show Ctrl on Linux/Windows — use Cmd (⌘) on macOS.</p>
             </div>
           </Reveal>
         </Container>

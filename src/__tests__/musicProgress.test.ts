@@ -7,8 +7,18 @@ import {
 
 describe("music playback progress", () => {
   it("enables the embed JS API for direct and search tracks", () => {
-    const direct = embedSrcForTrack({ id: "a", title: "t", videoId: "dQw4w9WgXcQ", query: "q" });
-    const search = embedSrcForTrack({ id: "b", title: "t", videoId: null, query: "lofi beats" });
+    const direct = embedSrcForTrack({
+      title: "t",
+      videoId: "dQw4w9WgXcQ",
+      playlistId: null,
+      query: "q",
+    });
+    const search = embedSrcForTrack({
+      title: "t",
+      videoId: null,
+      playlistId: null,
+      query: "lofi beats",
+    });
     expect(direct).toContain("enablejsapi=1");
     expect(search).toContain("enablejsapi=1");
   });

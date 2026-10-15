@@ -13,7 +13,12 @@ import { SearchAddon } from "@xterm/addon-search";
 import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
 import { ptyService, PtyService } from "../services/ptyService";
-import { isCopyKeyEvent, isPasteKeyEvent } from "../services/shortcuts";
+import {
+  isCopyKeyEvent,
+  isPasteKeyEvent,
+  matchBuiltinShortcut,
+  matchTerminalAction,
+} from "../services/shortcuts";
 import { ShellProfile, SessionStatus, UserSettings } from "../types/terminal";
 import { SettingsService, DEFAULT_SETTINGS } from "../services/settingsService";
 import { loadCommandHistory, recordCommand, saveCommandHistory } from "../services/autocomplete";
@@ -573,6 +578,23 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
           }
           return false;
         }
+        // Terminal-local keys: Ctrl+Shift+A select all, Ctrl+Shift+K clear,
+        // Ctrl+Shift+Home / End jump to the top / bottom of the scrollback.
+        const localAction = matchTerminalAction(event);
+        if (localAction) {
+          event.preventDefault();
+          if (event.type === "keydown") {
+            if (localAction === "selectAll") term.selectAll();
+            else if (localAction === "clear") term.clear();
+            else if (localAction === "scrollTop") term.scrollToTop();
+            else term.scrollToBottom();
+          }
+          return false;
+        }
+        // App-level zoom (Ctrl+= / - / 0) and tab jump (Ctrl+1-9) are handled
+        // by App on the bubbled event; keep xterm from also sending the
+        // matching control byte to the shell.
+        if (matchBuiltinShortcut(event)) return false;
         // Handle Ctrl+Shift+F for toggling search
         if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.code === "KeyF") {
           if (event.type === "keydown") {

@@ -1,10 +1,13 @@
-import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
+'use client';
+
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 
 export type Theme = 'dark' | 'light';
 
 const KEY = 'kai-theme';
 
-function initial(): Theme {
+function readStored(): Theme {
+  // Client-only: read after mount so the first client render matches SSR.
   try {
     const s = localStorage.getItem(KEY);
     if (s === 'light' || s === 'dark') return s;
@@ -18,8 +21,19 @@ function initial(): Theme {
 const Ctx = createContext<{ theme: Theme; toggle: () => void }>({ theme: 'dark', toggle: () => {} });
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [theme, setTheme] = useState<Theme>(initial);
+  // Fixed 'dark' initial so SSR HTML and the first client render agree —
+  // the inline <head> script already painted the right theme pre-hydration.
+  // Stored/OS preference is applied in an effect (no hydration mismatch).
+  const [theme, setTheme] = useState<Theme>('dark');
+  const synced = useRef(false);
   useEffect(() => {
+    // Mount: adopt the theme the <head> script painted (stored or OS).
+    // Skip the DOM write — paint is already correct, so no flash.
+    if (!synced.current) {
+      synced.current = true;
+      setTheme(readStored());
+      return;
+    }
     document.documentElement.dataset.theme = theme;
     document.documentElement.style.colorScheme = theme;
     try { localStorage.setItem(KEY, theme); } catch { /* ignore */ }

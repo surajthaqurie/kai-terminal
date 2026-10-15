@@ -38,7 +38,6 @@ Last reviewed 2026-10-15. Everything below is still true today; items fixed in c
 - **Edits preserving size, mtime and ctime** on a file hashed more than 5 s after its last change can evade freshness detection until the next full rebuild (§5.2).
 - **WSL has no hosted CI runner:** verification is manual-only (§4.2).
 - **Pure-MCP clients** must follow writes with a graph read or `kai_sync_graph`, unless the opt-in `--watch` watcher is on (§5.4).
-- **Music player needs network + OS media codecs:** the optional YouTube embed streams only (nothing is downloaded); plain-text search uses the no-API-key `listType=search` embed, so results match YouTube search ranking, not a local index (by design).
 
 ---
 
@@ -70,7 +69,8 @@ Last reviewed 2026-10-15. Everything below is still true today; items fixed in c
 - **Tests Added:** `src/__tests__/shortcuts.test.ts`.
 - **Actual Test Result:** Passed.
 - **Platform Coverage:** Cross-platform (macOS, Linux, Windows).
-- **Remaining Limitation:** System-level OS global hotkeys reserved by host operating system (e.g. `Cmd+Space` on macOS) cannot be overridden by webview shortcuts.
+- **Fixed shortcuts:** copy/paste (`Ctrl+Shift+C/V`, `Ctrl/Shift+Insert`), `Ctrl+Shift+A/K/Home/End`, `Ctrl+=/-/0` zoom and `Ctrl+1-9` tab jump are not remappable. Plain `Ctrl+C` / `Ctrl+V` still reach the shell.
+- **Remaining Limitation:** System-level OS global hotkeys reserved by host operating system (e.g. `Cmd+Space` on macOS) cannot be overridden by webview shortcuts. `Ctrl+-` / `Ctrl+_` (the readline "undo" byte) is claimed by zoom-out; use `Ctrl+x Ctrl+u` instead.
 
 ### 1.5 Named Sessions & Project Workspaces
 - **Implementation Change:** Built versioned local workspace schema (`kai_workspaces_v1` v2) with migration from legacy formats (`terminal_workspaces_v1`, `terminal_tab_layout_v1` → "Restored session") in `workspaces.ts`. Added `WorkspaceModal.tsx` for creating, renaming, deleting, saving, and restoring named workspaces. Saving persists titles + cwd/shell + pane structure + nested split tree only (layout included via `nodeToPersistedLayout`); keystrokes, history, scrollback, env values, and secrets are strictly excluded and sanitized away on load. Restoration re-validates every tab (`sanitizeWorkspaceForRestore`: drops malformed tabs, clears un-restorable cwd values so the backend falls back to HOME) and mints fresh pane ids so no backend PTY session is ever reused. Invalid persisted layouts (stale ids, duplicate pane refs) fall back to an even tiling via `resolveTabLayout` (requires exact + unique cover) so every live pane renders exactly once. Added working directory path validation (`validateWorkspaceDir`; existence checked at launch by the backend) and environment variable override support in project settings (`ProjectWorkspaceSettings`).
@@ -124,7 +124,6 @@ Last reviewed 2026-10-15. Everything below is still true today; items fixed in c
 - **Workspaces & Editor Launching:** Save active tab/pane layouts, restore named workspaces, and launch projects in external code editors (VS Code, Cursor, VSCodium, Sublime, Zed).
 - **Git Integration:** Displays active branch name and dirty status using system `git` with cached directory status and machine-readable output.
 - **Local AI CLI Diagnostics:** Displays PATH detection, local version status, and non-modifying auth configuration status for AI coding tools without network calls or external data transfer.
-- **Music Player (optional, off by default):** Appearance-gated YouTube drawer (always-video embed, smart link-or-text search, persisted queue) with a minimized footer pill (pause/next/mute + bottom progress) and remappable shortcuts.
 
 ---
 

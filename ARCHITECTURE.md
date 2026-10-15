@@ -80,18 +80,14 @@ flowchart TD
 - **`src/services/ptyService.ts`**: Provides the `IPtyService` interface abstraction, handling native Tauri IPC calls when running inside desktop app and fallback mock PTY behavior during browser previews.
 - **`src/services/paneLayout.ts`**: Handles split-pane calculations (up to 8 panes per tab, horizontal/vertical splits, fraction clamping, minimum split size floor). Panes render as a flat list of absolutely-positioned siblings with stable keys, ensuring splitting, closing, and divider dragging never remounts or drops an active terminal session. Each pane runs an independent backend PTY session ID.
 - **`src/services/workspaces.ts`**: Manages workspace configuration storage (`kai_workspaces_v1`), layout restoration with restore-time revalidation, tab renaming, and safe legacy schema migration (`terminal_workspaces_v1`, `terminal_tab_layout_v1`).
-- **`src/services/shortcuts.ts`**: Centralized keybinding registry for custom keyboard shortcuts (including tab/pane navigation `nextTab`, `prevTab`, `nextPane`) with conflict detection and macOS key label translation.
+- **`src/services/shortcuts.ts`**: Centralized keybinding registry for custom keyboard shortcuts (including tab/pane navigation `nextTab`, `prevTab`, `nextPane`) with conflict detection and macOS key label translation. Also owns the fixed (non-remappable) matchers: `isCopyKeyEvent` / `isPasteKeyEvent` (Ctrl+Shift+C/V, Ctrl/Shift+Insert, Cmd+C/V), `matchTerminalAction` (select all, clear, scroll top/bottom — handled in `TerminalView`'s xterm key handler) and `matchBuiltinShortcut` (Ctrl+=/-/0 zoom, Ctrl+1-9 tab jump — handled in `App`'s global keydown after user bindings, session-only zoom via `zoomedFontSize`). xterm is told not to forward these keys to the PTY.
 - **`src/services/aiCliService.ts` & `projectService.ts`**: Clients for local AI CLI discovery/version/config-presence diagnostics (passive, local, non-billable; version/config never prove sign-in) and git status caching with invalidation on mutating actions.
-- **`src/components/MusicPlayer/MusicPanel.tsx`**: Optional YouTube drawer (272px, always-video iframe, icon-only smart search, shuffle/prev/play/next/loop + mute, queue slide-over hidden by default). Always mounted while enabled so audio survives drawer close; footer + shortcuts drive it via `kai-music-*` window events.
-- **`src/services/musicService.ts`**: Smart input resolution (YouTube `watch` / `youtu.be` / `music.youtube.com` / `shorts` / `live` / raw id → direct `videoId`; plain text → `listType=search` embed, no API key) plus queue persistence (`kai_music_queue_v1`, max 50, titles/queries only — no watch history or credentials).
-- **`src/components/StatusBar.tsx` (music mini)**: Minimized footer pill before the version — icon + title + pause + next + mute on the top row, progress bar along the bottom. Rendered only when `UserSettings.showMusicPlayer` is true (Appearance, default OFF).
 
 ### 2.2 IPC Boundary (`src-tauri/capabilities/`)
 
 - **Security Sandboxing:** IPC permissions are declared in `capabilities/default.json` giving minimum necessary privileges (`core:default`).
 - **Content Security Policy:** Declared in `tauri.conf.json`:
-  `default-src 'self'; connect-src 'self' ipc: http://ipc.localhost https://api.github.com https://www.youtube.com; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: https://i.ytimg.com; frame-src 'self' https://www.youtube.com https://music.youtube.com; media-src 'self' https://www.youtube.com`
-  (YouTube frame/media/img entries exist only for the optional music player; the terminal core needs none of them.)
+  `default-src 'self'; connect-src 'self' ipc: http://ipc.localhost https://api.github.com; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:;`
 
 #### Native IPC Commands:
 - `create_pty(options)`: Spawns a shell process attached to a native PTY master/slave pair.

@@ -9,6 +9,10 @@ import {
   isCopyKeyEvent,
   isPasteKeyEvent,
   platformLabel,
+  matchBuiltinShortcut,
+  matchTerminalAction,
+  zoomedFontSize,
+  isXtermInput,
 } from "../services/shortcuts";
 import { DEFAULT_KEYBINDINGS } from "../services/settingsService";
 
@@ -133,5 +137,87 @@ describe("shortcut registry", () => {
       const e = keyEvent(code, opts);
       expect(isCopyKeyEvent(e, sel) && isPasteKeyEvent(e)).toBe(false);
     }
+  });
+
+  it("maps Ctrl/Cmd zoom and tab-jump keys without touching plain typing", () => {
+    expect(matchBuiltinShortcut(keyEvent("Equal", { ctrlKey: true }))).toEqual({
+      type: "zoom",
+      delta: 1,
+    });
+    expect(matchBuiltinShortcut(keyEvent("Equal", { ctrlKey: true, shiftKey: true }))).toEqual({
+      type: "zoom",
+      delta: 1,
+    });
+    expect(matchBuiltinShortcut(keyEvent("Minus", { metaKey: true }))).toEqual({
+      type: "zoom",
+      delta: -1,
+    });
+    expect(matchBuiltinShortcut(keyEvent("Digit0", { ctrlKey: true }))).toEqual({
+      type: "zoom",
+      delta: 0,
+    });
+    expect(matchBuiltinShortcut(keyEvent("Digit1", { ctrlKey: true }))).toEqual({
+      type: "gotoTab",
+      index: 0,
+    });
+    expect(matchBuiltinShortcut(keyEvent("Digit8", { ctrlKey: true }))).toEqual({
+      type: "gotoTab",
+      index: 7,
+    });
+    expect(matchBuiltinShortcut(keyEvent("Digit9", { ctrlKey: true }))).toEqual({
+      type: "gotoTab",
+      index: "last",
+    });
+    // No modifier, Alt-combos and Ctrl+Shift+digit are not ours
+    expect(matchBuiltinShortcut(keyEvent("Equal", {}))).toBeNull();
+    expect(matchBuiltinShortcut(keyEvent("Digit1", {}))).toBeNull();
+    expect(matchBuiltinShortcut(keyEvent("Digit1", { ctrlKey: true, altKey: true }))).toBeNull();
+    expect(matchBuiltinShortcut(keyEvent("Digit1", { ctrlKey: true, shiftKey: true }))).toBeNull();
+    // Plain Ctrl+C / Ctrl+V keep reaching the shell
+    expect(matchBuiltinShortcut(keyEvent("KeyC", { ctrlKey: true }))).toBeNull();
+    expect(matchBuiltinShortcut(keyEvent("KeyV", { ctrlKey: true }))).toBeNull();
+  });
+
+  it("maps terminal-local keys and leaves readline keys alone", () => {
+    const cs = { ctrlKey: true, shiftKey: true };
+    expect(matchTerminalAction(keyEvent("KeyA", cs))).toBe("selectAll");
+    expect(matchTerminalAction(keyEvent("KeyK", cs))).toBe("clear");
+    expect(matchTerminalAction(keyEvent("Home", cs))).toBe("scrollTop");
+    expect(matchTerminalAction(keyEvent("End", { metaKey: true, shiftKey: true }))).toBe(
+      "scrollBottom"
+    );
+    // Plain Ctrl+A / Ctrl+K are readline line-editing keys
+    expect(matchTerminalAction(keyEvent("KeyA", { ctrlKey: true }))).toBeNull();
+    expect(matchTerminalAction(keyEvent("KeyK", { ctrlKey: true }))).toBeNull();
+    // Copy/paste are handled elsewhere and never collide
+    expect(matchTerminalAction(keyEvent("KeyC", cs))).toBeNull();
+    expect(matchTerminalAction(keyEvent("KeyV", cs))).toBeNull();
+  });
+
+  it("does not collide with any default binding", () => {
+    for (const binding of Object.values(DEFAULT_KEYBINDINGS)) {
+      const p = parseBinding(binding);
+      expect(p).not.toBeNull();
+      const e = keyEvent(p!.code, { ctrlKey: p!.ctrlOrCmd, altKey: p!.alt, shiftKey: p!.shift });
+      expect(matchBuiltinShortcut(e)).toBeNull();
+      expect(matchTerminalAction(e)).toBeNull();
+      expect(isCopyKeyEvent(e, true) || isPasteKeyEvent(e)).toBe(false);
+    }
+  });
+
+  it("clamps zoom to the settings range and resets to the saved size", () => {
+    expect(zoomedFontSize(12, 1, 12)).toBe(13);
+    expect(zoomedFontSize(12, -1, 12)).toBe(11);
+    expect(zoomedFontSize(36, 1, 12)).toBe(36);
+    expect(zoomedFontSize(8, -1, 12)).toBe(8);
+    expect(zoomedFontSize(20, 0, 14)).toBe(14);
+  });
+
+  it("treats xterm's hidden textarea as the terminal, not a text field", () => {
+    const ta = document.createElement("textarea");
+    expect(isXtermInput(ta)).toBe(false);
+    ta.className = "xterm-helper-textarea";
+    expect(isXtermInput(ta)).toBe(true);
+    expect(isXtermInput(null)).toBe(false);
   });
 });

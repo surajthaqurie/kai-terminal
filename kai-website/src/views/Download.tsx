@@ -4,11 +4,11 @@ import { InstallBar } from '../components/InstallBar';
 import { Downloads } from '../sections/Downloads';
 import { Container, Reveal } from '../components/ui';
 import { Link } from '../router';
-import type { LatestRelease } from '../hooks/useRepo';
+import type { SerializableRelease } from '../lib/release';
 
 /* Dedicated install page: auto-fed by useLatestRelease (GitHub API).
    Shows live assets when a release exists, source fallback otherwise. */
-export function DownloadPage({ rel }: { rel: LatestRelease }) {
+export function DownloadPage({ rel }: { rel: SerializableRelease }) {
   return (
     <>
       <PageHero
@@ -16,7 +16,7 @@ export function DownloadPage({ rel }: { rel: LatestRelease }) {
         title="Download Kai"
         sub={`Version ${rel.tag} · Files are on GitHub Releases. Pick your system below.`}
       >
-        <InstallBar short={rel.short} rel={rel} />
+        <InstallBar short={rel.short} />
       </PageHero>
       <Downloads rel={rel} showHead={false} />
       <section className="t-section t-section-alt">
@@ -46,7 +46,7 @@ export function DownloadPage({ rel }: { rel: LatestRelease }) {
               <Link to="/guide" className="t-btn t-btn--primary">
                 Setup guide <ArrowRight size={16} />
               </Link>
-              <Link to="/manual" className="t-btn t-btn--secondary">
+              <Link to="/commands" className="t-btn t-btn--secondary">
                 <BookOpen size={18} /> User manual
               </Link>
             </div>

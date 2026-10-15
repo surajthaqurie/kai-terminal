@@ -1,29 +1,36 @@
+'use client';
+
+import { useEffect, useState } from 'react';
 import { ArrowRight, Code2, Download } from 'lucide-react';
 import { Badge, Button } from '../components/ui';
 import { HeroTerminal } from '../components/HeroTerminal';
 import { REPO_URL } from '../data/site';
 import { detectOs, OS_LABEL, type OsId } from '../lib/os';
 import { Link } from '../router';
-import type { LatestRelease } from '../hooks/useRepo';
+import type { SerializableRelease } from '../lib/release';
+import { assetUrl } from '../lib/release';
 
-export function Hero({ tag, short, version, rel }: { tag: string; short: string; version: string; rel?: LatestRelease }) {
-  const os: OsId = detectOs();
+export function Hero({ tag, short, version, rel }: { tag: string; short: string; version: string; rel?: SerializableRelease }) {
+  // SSR-safe default ('linux') so server HTML and first client render agree;
+  // the visitor's real OS is adopted after mount with no hydration mismatch.
+  const [os, setOs] = useState<OsId>('linux');
+  useEffect(() => { setOs(detectOs()); }, []);
   const osName = OS_LABEL[os] ?? 'Linux';
 
   const macDmg =
-    rel?.asset((n) => n.toLowerCase().endsWith('.dmg'), `kai_${short}_aarch64.dmg`) ??
+    rel ? assetUrl(rel, (n) => n.toLowerCase().endsWith('.dmg'), `kai_${short}_aarch64.dmg`) :
     `${REPO_URL}/releases/download/${tag}/kai_${short}_aarch64.dmg`;
   const linuxDeb =
-    rel?.asset((n) => n.toLowerCase().includes('amd64') && n.toLowerCase().endsWith('.deb'), `kai_${short}_amd64.deb`) ??
+    rel ? assetUrl(rel, (n) => n.toLowerCase().includes('amd64') && n.toLowerCase().endsWith('.deb'), `kai_${short}_amd64.deb`) :
     `${REPO_URL}/releases/download/${tag}/kai_${short}_amd64.deb`;
   const linuxApp =
-    rel?.asset((n) => n.toLowerCase().includes('amd64') && n.toLowerCase().endsWith('.appimage'), `kai_${short}_amd64.AppImage`) ??
+    rel ? assetUrl(rel, (n) => n.toLowerCase().includes('amd64') && n.toLowerCase().endsWith('.appimage'), `kai_${short}_amd64.AppImage`) :
     `${REPO_URL}/releases/download/${tag}/kai_${short}_amd64.AppImage`;
   const winExe =
-    rel?.asset((n) => n.toLowerCase().endsWith('setup.exe'), `kai_${short}_x64-setup.exe`) ??
+    rel ? assetUrl(rel, (n) => n.toLowerCase().endsWith('setup.exe'), `kai_${short}_x64-setup.exe`) :
     `${REPO_URL}/releases/download/${tag}/kai_${short}_x64-setup.exe`;
   const winMsi =
-    rel?.asset((n) => n.toLowerCase().endsWith('.msi'), `kai_${short}_x64_en-US.msi`) ??
+    rel ? assetUrl(rel, (n) => n.toLowerCase().endsWith('.msi'), `kai_${short}_x64_en-US.msi`) :
     `${REPO_URL}/releases/download/${tag}/kai_${short}_x64_en-US.msi`;
 
   const primaryFormat = os === 'macos' ? '.dmg' : os === 'windows' ? '.exe' : '.deb';

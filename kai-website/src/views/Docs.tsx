@@ -13,10 +13,11 @@ export function DocsIndexPage() {
       <PageHero
         badge={<><BookOpen size={14} /> Docs</>}
         title="Docs"
-        sub="Every page below is rendered from its markdown file on GitHub — no duplicated hand-written copies."
+        sub="Guides and references for working with Kai."
       />
       <section className="t-section">
         <Container>
+          {DOCS.filter((d) => d.slug !== 'manual' && d.slug !== 'mcp').length > 0 ? (
           <div className="t-grid-3">
             {DOCS.filter((d) => d.slug !== 'manual' && d.slug !== 'mcp').map((d) => (
               <Link key={d.slug} to={`/docs/${d.slug}`} style={{ textDecoration: 'none' }}>
@@ -30,9 +31,21 @@ export function DocsIndexPage() {
               </Link>
             ))}
           </div>
+          ) : (
+          <div className="t-panel" style={{ textAlign: 'center', padding: '2.5rem 2rem' }}>
+            <div className="t-icon t-icon--neutral" style={{ margin: '0 auto 1.25rem' }}><FileText size={22} /></div>
+            <h2 style={{ fontSize: '1.25rem', fontWeight: 800, marginBottom: '0.5rem' }}>Docs live in the reference pages</h2>
+            <p className="t-section-sub" style={{ marginBottom: '1.5rem' }}>Right now every synced doc has its own home — more guides will appear here as they are added.</p>
+            <div className="t-cta-actions" style={{ justifyContent: 'center' }}>
+              <Link to="/commands" className="t-btn t-btn--primary t-btn--sm">Commands manual</Link>
+              <Link to="/mcp" className="t-btn t-btn--secondary t-btn--sm">MCP reference</Link>
+              <Link to="/guide" className="t-btn t-btn--secondary t-btn--sm">Setup guide</Link>
+            </div>
+          </div>
+          )}
           <div className="t-guide-callout" style={{ marginTop: '2rem' }}>
             <BookOpen size={18} />
-            <span>Looking for the command reference? The <Link to="/manual">User Manual</Link> is also synced — from USER_MANUAL.md.</span>
+            <span>Looking for the command reference? See the <Link to="/commands">User Manual</Link>.</span>
           </div>
         </Container>
       </section>
@@ -54,7 +67,7 @@ export function DocDetailPage({ slug }: { slug: string }) {
               <p>Available docs:</p>
               <ul className="t-doc-list">
                 {DOCS.map((d) => (
-                  <li key={d.slug}><Link to={d.slug === 'manual' ? '/manual' : d.slug === 'mcp' ? '/mcp' : `/docs/${d.slug}`}>{d.title} ({d.file})</Link></li>
+                  <li key={d.slug}><Link to={d.slug === 'manual' ? '/commands' : d.slug === 'mcp' ? '/mcp' : `/docs/${d.slug}`}>{d.title} ({d.file})</Link></li>
                 ))}
               </ul>
             </div>

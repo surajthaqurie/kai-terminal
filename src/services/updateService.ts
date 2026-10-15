@@ -486,15 +486,20 @@ export function isDismissed(version: string | null): boolean {
   return getDismissedVersion() === normalizeVersion(version);
 }
 
-/** Opens the release page in the OS browser (desktop) or a new tab (web).
+/** Opens the release page in the OS browser (desktop) or a new tab (web). */
+export async function openReleasePage(url: string): Promise<void> {
+  return openExternalUrl(url || RELEASES_PAGE_URL);
+}
+
+/** Opens a URL in the OS browser (desktop) or a new tab (web).
  *
  * Desktop note: the app ships no opener plugin, so `window.open` cannot
- * reach the system browser from the Tauri WebView — the "View release"
- * button silently did nothing on every OS. Inside Tauri this goes through
- * the allow-listed `open_external_url_cmd` backend command instead.
+ * reach the system browser from the Tauri WebView — "View release" and the
+ * music player's "Open in browser" silently did nothing on every OS. Inside
+ * Tauri this goes through the allow-listed `open_external_url_cmd` backend
+ * command instead (releases page and exact YouTube link shapes only).
  */
-export async function openReleasePage(url: string): Promise<void> {
-  const target = url || RELEASES_PAGE_URL;
+export async function openExternalUrl(target: string): Promise<void> {
   try {
     const { isTauriAvailable } = await import("./ptyService");
     if (isTauriAvailable()) {

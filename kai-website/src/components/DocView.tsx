@@ -1,3 +1,5 @@
+'use client';
+
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, Search, X } from 'lucide-react';
 import { renderMarkdown, slugify, type TocItem } from '../lib/markdown';
@@ -71,7 +73,7 @@ export function DocView({ doc, flatToc = false }: { doc: DocEntry; flatToc?: boo
   const useFlat = flatToc && flat.length > 0;
 
   // Scroll-spy on rendered sections and subsections.
-  // Initialise from the URL hash so a deep link (e.g. /manual#kai-open)
+  // Initialise from the URL hash so a deep link (e.g. /commands#kai-open)
   // highlights immediately, then keep it in sync on back/forward.
   useEffect(() => {
     const fromHash = () => decodeURIComponent((window.location.hash || '').slice(1));

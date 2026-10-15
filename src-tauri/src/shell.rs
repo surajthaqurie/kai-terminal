@@ -1024,10 +1024,47 @@ pub fn open_in_editor(requested_editor: Option<&str>, cwd: &str) -> Result<Strin
 /// `window.open` cannot reach the OS browser from the Tauri WebView (no
 /// opener plugin shipped), so "View release" and friends go through this
 /// backend command instead. Only our own releases page (and release URLs
-/// under it) may be opened — never arbitrary user input.
+/// under it) and three exact YouTube link shapes (the music player's
+/// "Open in browser") may be opened — never arbitrary user input.
 pub const EXTERNAL_URL_BASE: &str = "https://github.com/surajthaqurie/kai-terminal/";
 pub const EXTERNAL_URL_FALLBACK: &str =
     "https://github.com/surajthaqurie/kai-terminal/releases/latest";
+
+const YOUTUBE_URL_BASE: &str = "https://www.youtube.com/";
+
+/// True only for `watch?v=<11-char id>`, `playlist?list=<id>` and
+/// `results?search_query=<words>` on www.youtube.com.
+///
+/// On Windows the URL goes through `cmd /c start`, so the allowed alphabet is
+/// deliberately free of every cmd metacharacter (`& | ^ % < > "`, all ASCII):
+/// ids are `[A-Za-z0-9_-]`, and search words are ASCII letters/digits, any
+/// non-ASCII character (so every script and combining mark works without
+/// percent-encoding), and `+ . _ ~ -`. Any other ASCII is refused, not escaped.
+fn is_allowed_youtube_url(url: &str) -> bool {
+    let Some(rest) = url.strip_prefix(YOUTUBE_URL_BASE) else {
+        return false;
+    };
+    let id_ok = |s: &str, min: usize, max: usize| {
+        (min..=max).contains(&s.len())
+            && s.chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    };
+    if let Some(v) = rest.strip_prefix("watch?v=") {
+        return id_ok(v, 11, 11);
+    }
+    if let Some(l) = rest.strip_prefix("playlist?list=") {
+        return id_ok(l, 10, 64);
+    }
+    if let Some(q) = rest.strip_prefix("results?search_query=") {
+        return !q.is_empty()
+            && q.chars().all(|c| {
+                !c.is_ascii()
+                    || c.is_ascii_alphanumeric()
+                    || matches!(c, '+' | '.' | '_' | '~' | '-')
+            });
+    }
+    false
+}
 
 /// Pure validation for external URLs (unit-tested; no process is spawned).
 pub fn validate_external_url(url: &str) -> Result<(), TerminalError> {
@@ -1041,9 +1078,13 @@ pub fn validate_external_url(url: &str) -> Result<(), TerminalError> {
             "Refusing to open a URL with whitespace or control characters.".to_string(),
         ));
     }
-    if !(url == EXTERNAL_URL_FALLBACK || url.starts_with(EXTERNAL_URL_BASE)) {
+    if !(url == EXTERNAL_URL_FALLBACK
+        || url.starts_with(EXTERNAL_URL_BASE)
+        || is_allowed_youtube_url(url))
+    {
         return Err(TerminalError::IoError(
-            "Refusing to open a URL outside the Kai Terminal releases page.".to_string(),
+            "Refusing to open a URL outside the Kai Terminal releases page or a YouTube link."
+                .to_string(),
         ));
     }
     Ok(())
@@ -1437,6 +1478,41 @@ mod tests {
         assert!(validate_external_url("http://github.com/surajthaqurie/kai-terminal/").is_err());
         assert!(validate_external_url("https://github.com/surajthaqurie/kai-terminal/ x").is_err());
         assert!(validate_external_url("").is_err());
+    }
+
+    #[test]
+    fn test_validate_external_url_allows_only_exact_youtube_shapes() {
+        assert!(validate_external_url("https://www.youtube.com/watch?v=dQw4w9WgXcQ").is_ok());
+        assert!(
+            validate_external_url("https://www.youtube.com/playlist?list=PLabcdefghij").is_ok()
+        );
+        assert!(
+            validate_external_url("https://www.youtube.com/results?search_query=lofi+beats")
+                .is_ok()
+        );
+        // non-ASCII words are fine (no percent-encoding needed)
+        assert!(
+            validate_external_url("https://www.youtube.com/results?search_query=गीत+songs").is_ok()
+        );
+        // cmd metacharacters and extra params are refused
+        for bad in [
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=PLabcdefghij",
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ&calc",
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ|calc",
+            "https://www.youtube.com/results?search_query=a%20b",
+            "https://www.youtube.com/results?search_query=a&b",
+            "https://www.youtube.com/results?search_query=a^b",
+            "https://www.youtube.com/results?search_query=a\"b",
+            "https://www.youtube.com/results?search_query=",
+            "https://www.youtube.com/watch?v=short",
+            "https://www.youtube.com/playlist?list=x",
+            "https://www.youtube.com/channel/abc",
+            "https://www.youtube.com.evil.com/watch?v=dQw4w9WgXcQ",
+            "https://music.youtube.com/watch?v=dQw4w9WgXcQ",
+            "http://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        ] {
+            assert!(validate_external_url(bad).is_err(), "should refuse {bad}");
+        }
         assert!(validate_external_url(
             &"https://github.com/surajthaqurie/kai-terminal/a".repeat(20)
         )

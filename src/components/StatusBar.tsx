@@ -199,8 +199,8 @@ export const StatusBar: FC<StatusBarProps> = ({
                 type="button"
                 className="music-mini-main"
                 onClick={onToggleMusicPanel}
-                title={music.title ?? "Open music player"}
-                aria-label="Open music player"
+                title={music.title ?? "Open Music Time"}
+                aria-label="Open Music Time"
               >
                 <span className="music-mini-art" aria-hidden="true">
                   ♪

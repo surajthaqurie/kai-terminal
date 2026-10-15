@@ -49,7 +49,7 @@ export function renderInline(src: string): string {
     if (!isExternal && mdMatch) {
       const base = mdMatch[1].toLowerCase().replace(/_/g, '-').replace(/\.md$/, '');
       if (base === 'user-manual') {
-        href = '/manual' + (mdMatch[2] ?? '');
+        href = '/commands' + (mdMatch[2] ?? '');
       } else if (base === 'mcp') {
         href = '/mcp' + (mdMatch[2] ?? '');
       } else {

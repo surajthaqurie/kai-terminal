@@ -1,3 +1,5 @@
+'use client';
+
 import { useState } from 'react';
 import { Download, Github, Menu, Moon, Sun, Terminal, X } from 'lucide-react';
 import { useTheme } from '../theme/ThemeContext';
@@ -24,7 +26,7 @@ export function ThemeToggle() {
 
 const NAV = [
   ['/guide', 'Guide'],
-  ['/manual', 'Commands'],
+  ['/commands', 'Commands'],
   ['/mcp', 'MCP'],
   ['/download', 'Download'],
   ['/changelog', 'Changelog'],

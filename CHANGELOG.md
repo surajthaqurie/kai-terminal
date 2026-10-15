@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.6
+
+### Minor Changes
+
+- c25045c: Close the fixable KNOWN_LIMITATIONS items: live PTY kill tests (`close_pty` / `close_all` verified against the OS process table), symlink-dependent tests now report explicit skips with a reason, freshness detection also compares ctime and re-hashes racily-clean files so same-size edits with restored timestamps are caught, opt-in `kai mcp --watch` / `KAI_MCP_WATCH=1` background graph refresh for pure-MCP clients, and release/CI targets for Linux `.rpm`, Windows ARM64 (NSIS) and macOS Intel.
+
+### Patch Changes
+
+- More terminal shortcuts: `Ctrl+Shift+A` select all, `Ctrl+Shift+K` clear, `Ctrl+Shift+Home`/`End` scroll to top/bottom, `Ctrl+=`/`Ctrl+-`/`Ctrl+0` zoom the font (this session), and `Ctrl+1`–`9` jump to a tab (`Cmd` on macOS). Copy/paste (`Ctrl+Shift+C`/`V`) is unchanged and plain `Ctrl+C` still interrupts. The fixed shortcuts are listed read-only in Settings → Shortcuts.
+- c25045c: `kai run` can now launch Windows `.ps1` scripts directly: they run via `powershell.exe -NoProfile -File` (no shell, execution policy respected) instead of failing with `spawn ENOENT`.
+- c25045c: Show a notice when a pane split is refused (8-pane cap or the minimum pane size) instead of silently doing nothing.
+- c25045c: Fix Changes review dialog sizing: remove the minimize button, resize from any edge/corner like a normal terminal window, and make fullscreen work after a manual resize (the manual size no longer sticks around to override fullscreen). The footer branch badge is now display-only — the git Changes menu is removed.
+
 ## 0.1.5
 
 ### Patch Changes

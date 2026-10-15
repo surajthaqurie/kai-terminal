@@ -1,31 +1,22 @@
 /**
- * YouTube music service: smart search + queue persistence.
- * Single input handles both cases (backend decides):
- * - YouTube URL (watch / youtu.be / music.youtube.com / shorts / live)
- *   -> extracts videoId -> direct embed load.
+ * Music Time service: turns what the user typed into a YouTube embed.
+ * Nothing is stored locally — YouTube owns search, playlists and playback.
+ * - YouTube video link (watch / youtu.be / music.youtube.com / shorts / live)
+ *   -> direct embed; a `list=` in the link makes it a playlist embed.
+ * - Playlist link -> playlist embed.
  * - Plain text -> YouTube search embed (no API key needed):
  *   `https://www.youtube.com/embed?listType=search&list=<query>`
  */
 
 export interface MusicTrack {
-  id: string;
   title: string;
   videoId: string | null;
+  playlistId: string | null;
   query: string;
 }
 
-const QUEUE_KEY = "kai_music_queue_v1";
-
-function uid(): string {
-  try {
-    if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-      return crypto.randomUUID().slice(0, 8);
-    }
-  } catch {
-    // ignore
-  }
-  return Math.floor(Math.random() * 0xffffffff).toString(16);
-}
+/** Key of the queue older versions persisted; removed on first run. */
+const LEGACY_QUEUE_KEY = "kai_music_queue_v1";
 
 /** Extract an 11-char YouTube videoId from watch / short / live / share URLs. */
 export function extractVideoId(input: string): string | null {
@@ -49,29 +40,68 @@ export function extractVideoId(input: string): string | null {
   return null;
 }
 
+/** Extract a playlist id from any YouTube link carrying `list=`. */
+export function extractPlaylistId(input: string): string | null {
+  if (!isYouTubeUrl(input)) return null;
+  const m = input.match(/[?&]list=([\w-]{10,64})/);
+  return m ? m[1] : null;
+}
+
 export function isYouTubeUrl(input: string): boolean {
   const s = input.trim().toLowerCase();
   return s.includes("youtube.com/") || s.includes("youtu.be/") || s.includes("music.youtube.com");
 }
 
-/** Resolve user input into a playable track (URL -> direct, text -> search). */
+/** Resolve user input into a playable track (link -> direct, text -> search). */
 export function resolveInputToTrack(input: string): MusicTrack | null {
   const raw = input.trim().slice(0, 300);
   if (!raw) return null;
   const videoId = extractVideoId(raw);
-  if (videoId) {
-    return { id: uid(), title: raw.slice(0, 80), videoId, query: raw };
+  const playlistId = extractPlaylistId(raw);
+  if (videoId || playlistId) {
+    return {
+      title: videoId && !playlistId ? "YouTube video" : "YouTube playlist",
+      videoId,
+      playlistId,
+      query: raw,
+    };
   }
-  if (isYouTubeUrl(raw) && !videoId) return null; // unparseable URL
-  return { id: uid(), title: raw.slice(0, 80), videoId: null, query: raw };
+  if (isYouTubeUrl(raw)) return null; // unparseable link
+  return { title: raw.slice(0, 80), videoId: null, playlistId: null, query: raw };
 }
 
-/** Embed src for a track. Search tracks use listType=search (no API key). */
-export function embedSrcForTrack(track: MusicTrack): string {
+/** True when YouTube can move to a next item (playlist or search results). */
+export function hasNextItem(track: MusicTrack | null): boolean {
+  return Boolean(track && (track.playlistId || !track.videoId));
+}
+
+/** Embed src for a track. `muted` only applies at load; later changes use commands. */
+export function embedSrcForTrack(track: MusicTrack, muted = false): string {
+  const tail = `autoplay=1&rel=0&enablejsapi=1${muted ? "&mute=1" : ""}`;
   if (track.videoId) {
-    return `https://www.youtube.com/embed/${track.videoId}?autoplay=1&rel=0&enablejsapi=1`;
+    const list = track.playlistId ? `&list=${track.playlistId}` : "";
+    return `https://www.youtube.com/embed/${track.videoId}?${tail}${list}`;
   }
-  return `https://www.youtube.com/embed?listType=search&list=${encodeURIComponent(track.query)}&autoplay=1&enablejsapi=1`;
+  if (track.playlistId) {
+    return `https://www.youtube.com/embed?listType=playlist&list=${track.playlistId}&${tail}`;
+  }
+  return `https://www.youtube.com/embed?listType=search&list=${encodeURIComponent(track.query)}&${tail}`;
+}
+
+/**
+ * Link that opens this track on youtube.com. Only the exact shapes the backend
+ * allow-list accepts (`watch?v=`, `playlist?list=`, `results?search_query=`),
+ * with search words reduced to letters, marks and digits joined by `+`.
+ */
+export function watchUrlForTrack(track: MusicTrack): string {
+  if (track.videoId) return `https://www.youtube.com/watch?v=${track.videoId}`;
+  if (track.playlistId) return `https://www.youtube.com/playlist?list=${track.playlistId}`;
+  const words = track.query
+    .replace(/[^\p{L}\p{M}\p{N}._~-]+/gu, "+")
+    .replace(/^\++|\++$/g, "")
+    .slice(0, 200)
+    .replace(/\++$/, "");
+  return `https://www.youtube.com/results?search_query=${words || "music"}`;
 }
 
 /** Only messages from this origin are trusted as player telemetry. */
@@ -89,11 +119,20 @@ export const YOUTUBE_LISTENING_HANDSHAKE = JSON.stringify({
   channel: "widget",
 });
 
+export type YouTubeCommand = "playVideo" | "pauseVideo" | "nextVideo" | "mute" | "unMute";
+
+/** Control message for an embed that was loaded with `enablejsapi=1`. */
+export function youtubeCommand(func: YouTubeCommand): string {
+  return JSON.stringify({ event: "command", func, args: "" });
+}
+
 export interface YouTubePlayerTelemetry {
   currentTime?: number;
   duration?: number;
   /** -1 unstarted, 0 ended, 1 playing, 2 paused, 3 buffering, 5 cued */
   playerState?: number;
+  /** Title YouTube reports for the current video. */
+  title?: string;
 }
 
 function finiteNumber(v: unknown): number | undefined {
@@ -128,6 +167,11 @@ export function parseYouTubePlayerMessage(data: unknown): YouTubePlayerTelemetry
     if (currentTime !== undefined) out.currentTime = currentTime;
     if (duration !== undefined) out.duration = duration;
     if (playerState !== undefined) out.playerState = playerState;
+    const videoData = i.videoData;
+    if (videoData && typeof videoData === "object") {
+      const title = (videoData as Record<string, unknown>).title;
+      if (typeof title === "string" && title.trim()) out.title = title.trim().slice(0, 80);
+    }
     return Object.keys(out).length > 0 ? out : null;
   }
   return null;
@@ -139,36 +183,11 @@ export function progressPercent(currentTime: number, duration: number): number {
   return Math.max(0, Math.min(100, Math.round((currentTime / duration) * 100)));
 }
 
-export function thumbnailForTrack(track: MusicTrack): string | null {
-  if (!track.videoId) return null;
-  return `https://i.ytimg.com/vi/${track.videoId}/default.jpg`;
-}
-
-export function loadQueue(): MusicTrack[] {
+/** Remove the queue older versions saved locally; the player keeps nothing now. */
+export function clearLegacyQueue(): void {
   try {
-    const raw = localStorage.getItem(QUEUE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .filter((t) => t && typeof t === "object")
-      .slice(0, 50)
-      .map((t) => ({
-        id: typeof t.id === "string" ? t.id : uid(),
-        title: typeof t.title === "string" ? t.title.slice(0, 80) : "Untitled",
-        videoId: typeof t.videoId === "string" && /^[\w-]{11}$/.test(t.videoId) ? t.videoId : null,
-        query: typeof t.query === "string" ? t.query.slice(0, 300) : "",
-      }))
-      .filter((t) => t.query || t.videoId);
+    localStorage.removeItem(LEGACY_QUEUE_KEY);
   } catch {
-    return [];
-  }
-}
-
-export function saveQueue(tracks: MusicTrack[]): void {
-  try {
-    localStorage.setItem(QUEUE_KEY, JSON.stringify(tracks.slice(0, 50)));
-  } catch {
-    // quota ignored
+    // storage unavailable: nothing to clean
   }
 }

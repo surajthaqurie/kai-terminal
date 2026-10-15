@@ -15,7 +15,7 @@ export const SHORTCUT_ACTION_LABELS: Record<ShortcutActionId, string> = {
   nextTab: "Next tab",
   prevTab: "Previous tab",
   nextPane: "Next active pane",
-  toggleMusic: "Toggle music player",
+  toggleMusic: "Toggle Music Time",
   musicPlayPause: "Music play / pause",
   musicNext: "Music next track",
   musicMute: "Music mute / unmute",
@@ -317,4 +317,84 @@ export function isPasteKeyEvent(e: {
     (e.metaKey && !e.ctrlKey && e.code === "KeyV") ||
     (e.shiftKey && e.code === "Insert")
   );
+}
+
+type KeyLike = {
+  ctrlKey: boolean;
+  metaKey: boolean;
+  altKey?: boolean;
+  shiftKey: boolean;
+  code: string;
+};
+
+/** Fixed (non-remappable) app-level shortcuts that work like a browser / Windows Terminal. */
+export type BuiltinShortcut =
+  { type: "zoom"; delta: 1 | -1 | 0 } | { type: "gotoTab"; index: number | "last" };
+
+/**
+ * Ctrl/Cmd + `=` / `-` / `0` zoom the terminal font in / out / back to the
+ * saved size; Ctrl/Cmd + 1-8 jump to that tab and 9 to the last tab. Plain
+ * Ctrl+digit never produces shell text, so claiming it is safe.
+ */
+export function matchBuiltinShortcut(e: KeyLike): BuiltinShortcut | null {
+  if (!(e.ctrlKey || e.metaKey) || e.altKey) return null;
+  if (e.code === "Equal" || e.code === "NumpadAdd") return { type: "zoom", delta: 1 };
+  if (e.code === "Minus" || e.code === "NumpadSubtract") return { type: "zoom", delta: -1 };
+  if (e.shiftKey) return null;
+  if (e.code === "Digit0" || e.code === "Numpad0") return { type: "zoom", delta: 0 };
+  const m = /^(?:Digit|Numpad)([1-9])$/.exec(e.code);
+  if (m) {
+    const n = Number(m[1]);
+    return { type: "gotoTab", index: n === 9 ? "last" : n - 1 };
+  }
+  return null;
+}
+
+/** Terminal-local actions that must not reach the shell. */
+export type TerminalLocalAction = "selectAll" | "clear" | "scrollTop" | "scrollBottom";
+
+/**
+ * Ctrl+Shift+A select all, Ctrl+Shift+K clear, Ctrl+Shift+Home / End scroll to
+ * top / bottom of the scrollback (Cmd+Shift+... on macOS). Plain Ctrl+A / Ctrl+K
+ * are readline line-editing keys and are deliberately left alone.
+ */
+export function matchTerminalAction(e: KeyLike): TerminalLocalAction | null {
+  if (!(e.ctrlKey || e.metaKey) || !e.shiftKey || e.altKey) return null;
+  switch (e.code) {
+    case "KeyA":
+      return "selectAll";
+    case "KeyK":
+      return "clear";
+    case "Home":
+      return "scrollTop";
+    case "End":
+      return "scrollBottom";
+    default:
+      return null;
+  }
+}
+
+/** Fixed shortcuts shown read-only in Settings (Cmd replaces Ctrl on macOS). */
+export const FIXED_SHORTCUT_HELP: ReadonlyArray<{ keys: string; label: string }> = [
+  { keys: "Ctrl+Shift+C", label: "Copy selection (Ctrl+C stays interrupt)" },
+  { keys: "Ctrl+Shift+V", label: "Paste" },
+  { keys: "Ctrl+Insert / Shift+Insert", label: "Copy / paste (alternate)" },
+  { keys: "Ctrl+Shift+A", label: "Select all output" },
+  { keys: "Ctrl+Shift+K", label: "Clear terminal" },
+  { keys: "Ctrl+Shift+Home / End", label: "Scroll to top / bottom" },
+  { keys: "Shift+PageUp / PageDown", label: "Scroll one page" },
+  { keys: "Ctrl+= / Ctrl+- / Ctrl+0", label: "Zoom in / out / reset font" },
+  { keys: "Ctrl+1 … 8 / Ctrl+9", label: "Jump to tab 1–8 / last tab" },
+  { keys: "Ctrl+Shift+G", label: "Review git changes" },
+];
+
+/** Next zoomed font size, clamped to the same 8-36 range settings enforce. */
+export function zoomedFontSize(current: number, delta: 1 | -1 | 0, base: number): number {
+  const next = delta === 0 ? base : current + delta;
+  return Math.max(8, Math.min(36, Math.round(next)));
+}
+
+/** True for xterm's hidden input — it is a textarea, but it IS the terminal. */
+export function isXtermInput(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement && target.classList.contains("xterm-helper-textarea");
 }

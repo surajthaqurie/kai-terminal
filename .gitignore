@@ -6,6 +6,8 @@ kai-website/node_modules/
 dist/
 dist.old/
 kai-website/dist/
+kai-website/.next/
+kai-website/out/
 src-tauri/target/
 
 # Generated website data (rebuilt by predev/prebuild)
@@ -24,3 +26,5 @@ Thumbs.db
 
 # Step 9 benchmark measurements (regenerate with `npm run bench:perf`)
 scripts/bench/results/
+
+kai-website/tsconfig.tsbuildinfo

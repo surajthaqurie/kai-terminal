@@ -14,6 +14,7 @@ import {
   validateBinding,
   isMacPlatform,
   platformLabel,
+  FIXED_SHORTCUT_HELP,
   eventToBindingString,
 } from "../services/shortcuts";
 import {
@@ -432,12 +433,12 @@ export const SettingsModal: FC<SettingsModalProps> = ({
                       setFormData({ ...formData, showMusicPlayer: e.target.checked })
                     }
                   />
-                  <span>Show YouTube player</span>
+                  <span>Show Music Time player</span>
                 </label>
                 <p className="muted-text">
-                  Off by default. Shows the music drawer and the footer mini player (icon, name,
-                  pause, next, mute, progress). Smart search handles YouTube links and plain song
-                  names.
+                  Off by default. Adds the Music Time drawer and a small footer player. Search a
+                  song or paste a YouTube link; YouTube does the rest and nothing is saved on this
+                  computer.
                 </p>
               </div>
 
@@ -756,6 +757,20 @@ export const SettingsModal: FC<SettingsModalProps> = ({
                     Conflicting shortcuts must be resolved before saving.
                   </p>
                 )}
+
+                <label style={{ marginTop: "16px", display: "block" }}>
+                  Built-in shortcuts <span className="muted-text">(fixed, not remappable)</span>
+                </label>
+                <div className="shortcuts-table">
+                  {FIXED_SHORTCUT_HELP.map((row) => (
+                    <div key={row.keys} className="shortcut-row-item">
+                      <span className="shortcut-label">{row.label}</span>
+                      <kbd className="muted-text">
+                        {isMac ? row.keys.replace(/Ctrl/g, "Cmd") : row.keys}
+                      </kbd>
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
           )}

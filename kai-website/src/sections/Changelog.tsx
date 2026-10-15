@@ -1,3 +1,5 @@
+'use client';
+
 import { ExternalLink, ScrollText, Sparkles } from 'lucide-react';
 import { Badge, Section } from '../components/ui';
 import { Link } from '../router';

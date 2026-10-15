@@ -5,6 +5,10 @@
 
 html { scroll-behavior: smooth; }
 
+/* Reserve scrollbar space so navigating between short and long pages
+   never shifts the layout sideways. */
+html { scrollbar-gutter: stable; }
+
 body {
   font-family: var(--font-sans);
   background-color: var(--bg-canvas);
@@ -187,6 +191,8 @@ code, kbd, samp, pre { overflow-wrap: anywhere; word-break: break-word; }
   transition: color 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
 }
 .t-theme-toggle:hover { color: var(--text-primary); border-color: var(--border-strong); transform: translateY(-1px); }
+.t-theme-toggle svg { transition: transform 0.3s cubic-bezier(0.22, 0.68, 0.32, 1); }
+.t-theme-toggle:active svg { transform: scale(0.82) rotate(20deg); }
 
 .t-menu-btn { display: none; }
 
@@ -859,6 +865,13 @@ html.js.io-ok .t-reveal.is-visible, .t-reveal.is-visible { opacity: 1; transform
 /* Calm interactive states */
 .t-faq-item { transition: border-color 0.2s ease; }
 
+/* Theme cross-fade: surfaces that swap CSS variables get the same gentle
+   background/color glide as body/cards, so toggling theme never snaps. */
+.t-manual-card, .t-faq-item, .t-install, .t-doc-toc, .t-doc-search-input,
+.t-manual-search-input, .t-ref-search-input, .t-copy {
+  transition: background-color 0.25s ease, color 0.25s ease, border-color 0.2s ease;
+}
+
 /* ——— Multi-page: active nav, page hero, CTA, footer, 404 ——— */
 .t-nav a.is-active { color: var(--text-primary); font-weight: 700; }
 .t-nav a.is-active::after {
@@ -913,6 +926,7 @@ html.js.io-ok .t-reveal.is-visible, .t-reveal.is-visible { opacity: 1; transform
     padding: 0.5rem 1.5rem 1rem; z-index: 60;
   }
   .t-nav[data-open='true'] a { padding: 0.9rem 0; border-top: 1px solid var(--border-subtle); min-height: 48px; display: flex; align-items: center; }
+  .t-nav[data-open='true'] { animation: t-page-in 0.25s cubic-bezier(0.22, 0.68, 0.32, 1); }
   .t-menu-btn { display: inline-flex; }
   .t-header-cta-label { display: none; }
   .t-section { padding: 4rem 0; }

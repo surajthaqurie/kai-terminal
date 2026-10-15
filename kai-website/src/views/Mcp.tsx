@@ -1,3 +1,5 @@
+'use client';
+
 import { useMemo, useState } from 'react';
 import { ShieldCheck, Terminal } from 'lucide-react';
 import { PageHero } from '../components/PageHero';
@@ -92,7 +94,7 @@ export function McpPage() {
       <PageHero
         badge={<><Terminal size={14} /> MCP</>}
         title="MCP reference"
-        sub={<>Kai runs a local MCP server over stdio, so connected coding tools can read your project map — privately, on your machine. Source: <a href={doc.githubUrl} target="_blank" rel="noreferrer" className="t-link">MCP.md</a>.</>}
+        sub="Kai runs a local MCP server over stdio, so connected coding tools can read your project map — privately, on your machine."
       />
       <section className="t-section" style={{ paddingTop: '1rem' }}>
         <Container narrow>
@@ -125,9 +127,6 @@ export function McpPage() {
                 </tbody>
               </table>
             </div>
-            <p className="t-micro">
-              Full detail in <a href={doc.githubUrl} target="_blank" rel="noreferrer" className="t-link">MCP.md</a>.
-            </p>
           </div>
         </Container>
       </section>

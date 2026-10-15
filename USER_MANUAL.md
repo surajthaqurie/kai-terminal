@@ -26,7 +26,7 @@ kai health
 
 Output:
 ```text
-✔ Kai v0.1.5 is ready
+✔ Kai v0.1.6 is ready
 
 ✔ Fast and private · Free
 ```
@@ -196,14 +196,3 @@ Quit Kai Terminal from any shell.
 ```bash
 kai close
 ```
-
----
-
-## Desktop — Music player (optional, off by default)
-
-- Enable in **Settings → Appearance → Show YouTube player** (plus optional **Start muted**). The footer mini player and drawer stay hidden until enabled.
-- One smart search (icon only, no Add button) handles both inputs — the backend decides: a YouTube link (`youtube.com/watch`, `youtu.be`, `music.youtube.com`, `shorts`, `live`, or a raw 11-char id) loads directly; plain text runs a YouTube search embed (no API key needed). Always video.
-- Drawer (272px right): video + shuffle / previous / play / next / loop + mute row. The queue (`☰`) is a slide-over covering the player, hidden by default — pick or reorder, then close to return.
-- Minimized footer pill (before the version): icon + title + pause + next + mute, progress bar along the bottom. Click the title to open the drawer. Playback survives drawer close.
-- Shortcuts (remappable in Settings → Shortcuts): `Ctrl+Alt+M` toggle panel, `Ctrl+Alt+Space` play/pause, `Ctrl+Alt+N` next, `Ctrl+Alt+U` mute. Command palette: “Toggle Music Player”.
-- Queue persists locally (`kai_music_queue_v1`, max 50 titles/queries only). Requires network + OS media codecs; nothing is downloaded.

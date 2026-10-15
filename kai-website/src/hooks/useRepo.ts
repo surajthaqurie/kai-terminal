@@ -1,3 +1,5 @@
+'use client';
+
 import { useEffect, useState } from 'react';
 import { FALLBACK_TAG, LATEST_RELEASE_URL, REPO_URL } from '../data/site';
 import releaseInfo from '../data/release.json';
@@ -23,11 +25,13 @@ function save(key: string, value: unknown) {
   try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* ignore */ }
 }
 
-/* Proactive: instant fallback render, then upgrade to live GitHub data.
-   One fetch per hook, silent failure keeps fallback. */
+/* Proactive: fallback render (matches SSR), then upgrade to cached live data,
+   then to fresh GitHub data. Cache is read in an effect so the first client
+   render always agrees with the server HTML — no hydration mismatch. */
 export function useLatestRelease(): LatestRelease {
-  const [data, setData] = useState<{ tag: string; assets: ReleaseAsset[] } | null>(() => load('kai-release'));
+  const [data, setData] = useState<{ tag: string; assets: ReleaseAsset[] } | null>(null);
   useEffect(() => {
+    setData(load('kai-release'));
     fetch(`https://api.github.com/repos/${REPO}/releases/latest`)
       .then((r) => (r.ok ? r.json() : null))
       .then((j) => {
@@ -61,8 +65,10 @@ export type PublishedRelease = { tag: string; name: string; date: string; url: s
 export const FALLBACK_RELEASES: PublishedRelease[] = releaseInfo.releases;
 
 export function usePublishedReleases(limit = 6): PublishedRelease[] {
-  const [list, setList] = useState<PublishedRelease[]>(() => load<PublishedRelease[]>('kai-releases') ?? FALLBACK_RELEASES);
+  const [list, setList] = useState<PublishedRelease[]>(FALLBACK_RELEASES);
   useEffect(() => {
+    const cached = load<PublishedRelease[]>('kai-releases');
+    if (cached) setList(cached);
     fetch(`https://api.github.com/repos/${REPO}/releases?per_page=${limit}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((j) => {
@@ -85,10 +91,12 @@ export function usePublishedReleases(limit = 6): PublishedRelease[] {
 }
 
 export function useRepoStars(): string | null {
-  const [stars, setStars] = useState<string | null>(() => {
-    try { return localStorage.getItem('kai-stars'); } catch { return null; }
-  });
+  const [stars, setStars] = useState<string | null>(null);
   useEffect(() => {
+    try {
+      const cached = localStorage.getItem('kai-stars');
+      if (cached) setStars(cached);
+    } catch { /* ignore */ }
     fetch(`https://api.github.com/repos/${REPO}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((j) => {
