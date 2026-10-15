@@ -41,20 +41,28 @@ try {
   const releases = [];
 
   let existingReleases = [];
-  let existingGeneratedAt = new Date().toISOString();
+  let prevVersion = null;
+  let prevGeneratedAt = null;
   const existingPath = [dataReleaseOut, releaseOut].find((p) => existsSync(p));
   if (existingPath) {
     try {
       const prev = JSON.parse(readFileSync(existingPath, 'utf8'));
       if (Array.isArray(prev.releases) && prev.releases.length > 0) existingReleases = prev.releases;
-      if (prev.generatedAt) existingGeneratedAt = prev.generatedAt;
+      if (typeof prev.version === 'string') prevVersion = prev.version;
+      if (typeof prev.generatedAt === 'string') prevGeneratedAt = prev.generatedAt;
     } catch { /* ignore */ }
   }
+  const existingByTag = new Map(existingReleases.map((er) => [er.tag, er]));
+  const now = new Date().toISOString();
 
   if (changelogPath && existsSync(changelogPath)) {
     const text = readFileSync(changelogPath, 'utf8');
     const regex = /##\s*\[?(\d+\.\d+\.\d+)\]?(?:[^\n]*)\n([\s\S]*?)(?=\n##\s*\[?\d+\.\d+\.\d+\]?|\n##\s*\[Unreleased\]|$)/g;
     let m;
+    // Dedupe by tag: same release -> old entry is removed and replaced
+    // with the freshly parsed notes (no duplicates). New releases are
+    // appended without touching the other tags.
+    const byTag = new Map();
     while ((m = regex.exec(text)) !== null) {
       const v = m[1];
       const relTag = `v${v}`;
@@ -62,19 +70,46 @@ try {
       const bulletLines = rawLines.filter((l) => l.startsWith('- ') || l.startsWith('* '));
       const notes = bulletLines.slice(0, 8).map((l) => l.replace(/^[-*]\s+([a-f0-9]+:\s*)?/, '- ')).join('\n');
       const firstTitle = bulletLines[0] ? bulletLines[0].replace(/^[-*]\s+([a-f0-9]+:\s*)?/, '').split(':')[0] : `Release ${relTag}`;
-      const existingDate = existingReleases.find((er) => er.tag === relTag)?.date;
-      releases.push({
+      const name = `Kai ${relTag} — ${firstTitle}`;
+      const prev = existingByTag.get(relTag);
+      // Same tag + identical content -> keep old date so history is stable.
+      // Same tag + changed notes/name -> refresh date so the update is visible.
+      // New tag -> stamp now.
+      const unchanged = prev && prev.notes === (notes || `Release ${relTag}`) && prev.name === name;
+      byTag.set(relTag, {
         tag: relTag,
-        name: `Kai ${relTag} — ${firstTitle}`,
-        date: existingDate || new Date().toISOString(),
+        name,
+        date: unchanged ? prev.date : now,
         url: `https://github.com/surajthaqurie/kai-terminal/releases/tag/${relTag}`,
         notes: notes || `Release ${relTag}`,
       });
     }
+    releases.push(...byTag.values());
+    // Keep any previously-known tags that are no longer in CHANGELOG
+    // (new releases must never delete old ones).
+    for (const prev of existingReleases) {
+      if (!byTag.has(prev.tag)) releases.push(prev);
+    }
+    // Newest version first for stable display order.
+    releases.sort((a, b) => {
+      const pa = a.tag.slice(1).split('.').map(Number);
+      const pb = b.tag.slice(1).split('.').map(Number);
+      for (let i = 0; i < 3; i++) {
+        if ((pb[i] || 0) !== (pa[i] || 0)) return (pb[i] || 0) - (pa[i] || 0);
+      }
+      return 0;
+    });
   }
 
   const finalReleases = releases.length > 0 ? releases : existingReleases;
-  const releasePayload = JSON.stringify({ version, tag, generatedAt: existingGeneratedAt, releases: finalReleases }, null, 2) + '\n';
+  // Only bump generatedAt when version or release content actually changed,
+  // so every prebuild doesn't dirty the tracked data file. Same-tag edits
+  // still surface via the per-release date refresh above.
+  const contentChanged =
+    prevVersion !== version ||
+    JSON.stringify(finalReleases) !== JSON.stringify(existingReleases);
+  const generatedAt = contentChanged ? now : (prevGeneratedAt || now);
+  const releasePayload = JSON.stringify({ version, tag, generatedAt, releases: finalReleases }, null, 2) + '\n';
   writeFileSync(releaseOut, releasePayload);
   writeFileSync(dataReleaseOut, releasePayload);
   console.log(`[sync-changesets] version ${tag} (${finalReleases.length} releases) -> src/data/release.json & src/generated/release.json`);
