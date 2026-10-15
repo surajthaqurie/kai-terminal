@@ -24,7 +24,7 @@ import { isTypingTarget } from "../../services/shortcuts";
 import { openExternalUrl } from "../../services/updateService";
 import {
   MusicTrack,
-  YOUTUBE_EMBED_ORIGIN,
+  isYouTubeEmbedOrigin,
   YOUTUBE_LISTENING_HANDSHAKE,
   YouTubeCommand,
   clearLegacyQueue,
@@ -113,7 +113,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
   );
 
   const sendCommand = useCallback((func: YouTubeCommand) => {
-    frameRef.current?.contentWindow?.postMessage(youtubeCommand(func), YOUTUBE_EMBED_ORIGIN);
+    frameRef.current?.contentWindow?.postMessage(youtubeCommand(func), "*");
   }, []);
 
   // Older versions saved a queue locally; this version keeps nothing.
@@ -145,8 +145,8 @@ export const MusicPanel: FC<MusicPanelProps> = ({
 
   // Real playback state: the embed (enablejsapi=1) posts currentTime /
   // duration / playerState / title once it receives the "listening"
-  // handshake. Only messages from our own iframe window at the YouTube origin
-  // are trusted.
+  // handshake. Only messages from our own iframe window at trusted YouTube origins
+  // are accepted.
   useEffect(() => {
     const report = (percent: number) => {
       if (percent === lastPercentRef.current) return;
@@ -160,13 +160,10 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     let received = false;
     let tries = 0;
     const handshake = () => {
-      frameRef.current?.contentWindow?.postMessage(
-        YOUTUBE_LISTENING_HANDSHAKE,
-        YOUTUBE_EMBED_ORIGIN
-      );
+      frameRef.current?.contentWindow?.postMessage(YOUTUBE_LISTENING_HANDSHAKE, "*");
     };
     const onMessage = (e: MessageEvent) => {
-      if (e.origin !== YOUTUBE_EMBED_ORIGIN) return;
+      if (!isYouTubeEmbedOrigin(e.origin)) return;
       if (!frameRef.current || e.source !== frameRef.current.contentWindow) return;
       const t = parseYouTubePlayerMessage(e.data);
       if (!t) return;
@@ -293,7 +290,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
 
   const onResizeMove = (e: React.PointerEvent) => {
     if (!resizingRef.current) return;
-    const delta = e.clientX - resizingRef.current.startX;
+    const delta = resizingRef.current.startX - e.clientX;
     const newWidth = Math.max(300, Math.min(720, resizingRef.current.startWidth + delta));
     setPanelWidth(newWidth);
     setIsExpanded(newWidth >= 460);
@@ -433,10 +430,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
               ref={frameRef}
               referrerPolicy="strict-origin-when-cross-origin"
               onLoad={() =>
-                frameRef.current?.contentWindow?.postMessage(
-                  YOUTUBE_LISTENING_HANDSHAKE,
-                  YOUTUBE_EMBED_ORIGIN
-                )
+                frameRef.current?.contentWindow?.postMessage(YOUTUBE_LISTENING_HANDSHAKE, "*")
               }
               className="music-video"
               src={src}

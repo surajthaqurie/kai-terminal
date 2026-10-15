@@ -88,17 +88,25 @@ export function hasNextItem(track: MusicTrack | null): boolean {
  * browser-search fallback instead of embedding a guess.
  */
 export function embedSrcForTrack(track: MusicTrack, muted = false): string | null {
-  const originParam =
-    typeof window !== "undefined" && window.location?.origin
-      ? `&origin=${encodeURIComponent(window.location.origin)}`
-      : "";
+  // Only pass `origin` if it is a standard web HTTP/HTTPS origin (e.g. dev server).
+  // In desktop webviews (Tauri), `window.location.origin` is `tauri://localhost` or `tauri://`,
+  // which causes YouTube's embed configuration validator to crash with Error 153.
+  const isWebOrigin =
+    typeof window !== "undefined" &&
+    window.location?.origin &&
+    /^https?:\/\/(?!tauri)/i.test(window.location.origin);
+
+  const originParam = isWebOrigin
+    ? `&origin=${encodeURIComponent(window.location.origin)}`
+    : `&widget_referrer=${encodeURIComponent("https://www.youtube-nocookie.com")}`;
+
   const tail = `autoplay=1&rel=0&enablejsapi=1${originParam}${muted ? "&mute=1" : ""}`;
   if (track.videoId) {
     const list = track.playlistId ? `&list=${track.playlistId}` : "";
-    return `https://www.youtube.com/embed/${track.videoId}?${tail}${list}`;
+    return `https://www.youtube-nocookie.com/embed/${track.videoId}?${tail}${list}`;
   }
   if (track.playlistId) {
-    return `https://www.youtube.com/embed?listType=playlist&list=${track.playlistId}&${tail}`;
+    return `https://www.youtube-nocookie.com/embed?listType=playlist&list=${track.playlistId}&${tail}`;
   }
   return null;
 }
@@ -119,8 +127,16 @@ export function watchUrlForTrack(track: MusicTrack): string {
   return `https://www.youtube.com/results?search_query=${words || "music"}`;
 }
 
-/** Only messages from this origin are trusted as player telemetry. */
-export const YOUTUBE_EMBED_ORIGIN = "https://www.youtube.com";
+/** Only messages from trusted YouTube origins are accepted as player telemetry. */
+export const YOUTUBE_EMBED_ORIGIN = "https://www.youtube-nocookie.com";
+export const YOUTUBE_EMBED_ORIGINS = [
+  "https://www.youtube.com",
+  "https://www.youtube-nocookie.com",
+];
+
+export function isYouTubeEmbedOrigin(origin: string): boolean {
+  return origin === "https://www.youtube.com" || origin === "https://www.youtube-nocookie.com";
+}
 
 /**
  * Handshake an embed with `enablejsapi=1` waits for before it starts posting

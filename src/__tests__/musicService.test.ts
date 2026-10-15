@@ -40,6 +40,32 @@ describe("music input resolution", () => {
     expect(embedSrcForTrack(pl)).toContain("listType=playlist&list=PLabcdefghijkl");
   });
 
+  it("uses youtube-nocookie.com and never leaks tauri:// origin to prevent Error 153", () => {
+    const t = resolveInputToTrack("dQw4w9WgXcQ")!;
+    const src = embedSrcForTrack(t)!;
+    expect(src).toContain("youtube-nocookie.com/embed/dQw4w9WgXcQ");
+    expect(src).not.toContain("origin=tauri");
+
+    const originalLocation = window.location;
+    try {
+      Object.defineProperty(window, "location", {
+        value: new URL("tauri://localhost"),
+        writable: true,
+        configurable: true,
+      });
+      const tauriSrc = embedSrcForTrack(t)!;
+      expect(tauriSrc).toContain("youtube-nocookie.com/embed/dQw4w9WgXcQ");
+      expect(tauriSrc).not.toContain("origin=tauri");
+      expect(tauriSrc).toContain("widget_referrer=");
+    } finally {
+      Object.defineProperty(window, "location", {
+        value: originalLocation,
+        writable: true,
+        configurable: true,
+      });
+    }
+  });
+
   it("knows when YouTube can go to a next item", () => {
     expect(hasNextItem(null)).toBe(false);
     expect(hasNextItem(resolveInputToTrack("dQw4w9WgXcQ"))).toBe(false);

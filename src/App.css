@@ -3602,20 +3602,16 @@ select.modal-input {
   }
 }
 
-/* YouTube Music Modal System */
+/* YouTube Music Player — Right-side docked flyout */
 .music-modal-backdrop {
   position: fixed;
   top: 0;
   left: 0;
   right: 0;
   bottom: 0;
-  background-color: var(--bg-overlay, rgba(0, 0, 0, 0.65));
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
-  z-index: 1000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  background: transparent;
+  z-index: 900;
+  pointer-events: none;
   transition:
     opacity 0.15s ease,
     visibility 0.15s ease;
@@ -3630,17 +3626,21 @@ select.modal-input {
 .music-modal-backdrop.open {
   opacity: 1;
   visibility: visible;
-  pointer-events: auto;
 }
 
 .music-modal-dialog {
-  max-width: 94vw;
-  max-height: 90vh;
-  box-shadow: var(--shadow-modal, 0 20px 45px rgba(0, 0, 0, 0.6));
+  position: fixed;
+  right: 16px;
+  bottom: 34px;
+  pointer-events: auto;
+  max-width: min(720px, calc(100vw - 32px));
+  max-height: calc(100vh - 46px);
+  box-shadow:
+    0 12px 36px rgba(0, 0, 0, 0.5),
+    0 0 0 1px var(--border-default);
   border-radius: var(--radius-lg, 10px);
   border: 1px solid var(--border-default);
   background-color: var(--bg-surface);
-  position: relative;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -3661,8 +3661,8 @@ select.modal-input {
 
 .music-resize-handle {
   position: absolute;
-  bottom: 0;
-  right: 0;
+  top: 0;
+  left: 0;
   width: 16px;
   height: 16px;
   cursor: nwse-resize;
@@ -3672,12 +3672,12 @@ select.modal-input {
 .music-resize-handle::after {
   content: "";
   position: absolute;
-  bottom: 3px;
-  right: 3px;
+  top: 3px;
+  left: 3px;
   width: 6px;
   height: 6px;
-  border-bottom: 2px solid var(--text-tertiary);
-  border-right: 2px solid var(--text-tertiary);
+  border-top: 2px solid var(--text-tertiary);
+  border-left: 2px solid var(--text-tertiary);
   opacity: 0.6;
 }
 
