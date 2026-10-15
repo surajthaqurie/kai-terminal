@@ -24,7 +24,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     document.documentElement.style.colorScheme = theme;
     try { localStorage.setItem(KEY, theme); } catch { /* ignore */ }
     const meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.setAttribute('content', theme === 'dark' ? '#070a12' : '#f4f6fb');
+    if (meta) meta.setAttribute('content', theme === 'dark' ? '#111318' : '#f8fafc');
   }, [theme]);
 
   // Keep in sync if OS preference changes and user never chose manually

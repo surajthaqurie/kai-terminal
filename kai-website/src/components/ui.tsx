@@ -44,7 +44,7 @@ export function Badge({ children, tone = 'cyan' }: { children: React.ReactNode; 
 }
 
 export function Button({ children, variant = 'primary', href, className = '', onClick, ...rest }: {
-  children: React.ReactNode; variant?: 'primary' | 'secondary'; href?: string;
+  children: React.ReactNode; variant?: 'primary' | 'secondary' | 'ghost' | 'danger'; href?: string;
 } & React.AnchorHTMLAttributes<HTMLAnchorElement>) {
   const combinedClass = `t-btn t-btn--${variant}${className ? ` ${className}` : ''}`;
   if (href && href.startsWith('/') && !href.startsWith('//')) {

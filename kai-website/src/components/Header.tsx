@@ -39,7 +39,7 @@ export function SiteHeader({ version }: { version: string }) {
       <div className="t-header-inner" style={{ position: 'relative' }}>
         <Link to="/" className="t-brand" aria-label="Kai home" onClick={() => setOpen(false)}>
           <div className="t-brand-mark">
-            <Terminal size={22} color="#ffffff" />
+            <Terminal size={22} color="#22d3ee" />
           </div>
           <div>
             <span className="t-brand-name">kai</span>

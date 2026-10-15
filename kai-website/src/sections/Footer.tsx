@@ -37,7 +37,7 @@ export function Footer() {
       <div className="t-foot-grid">
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.75rem' }}>
-            <div className="t-brand-mark" style={{ width: '28px', height: '28px', borderRadius: '8px' }}><Terminal size={16} color="#ffffff" /></div>
+            <div className="t-brand-mark" style={{ width: '28px', height: '28px', borderRadius: '8px' }}><Terminal size={16} color="#22d3ee" /></div>
             <span style={{ fontSize: '1.1rem', fontWeight: 800 }}>kai</span>
             <span className="t-version">MIT</span>
           </div>
