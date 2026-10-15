@@ -1018,7 +1018,21 @@ export async function executeAgentSetupWorkflow(
   return 0;
 }
 
+let activeCliPromise: Promise<number> | null = null;
+
 export async function runCli(argv: string[]): Promise<number> {
+  if (activeCliPromise) {
+    return activeCliPromise;
+  }
+  activeCliPromise = executeCli(argv);
+  try {
+    return await activeCliPromise;
+  } finally {
+    activeCliPromise = null;
+  }
+}
+
+async function executeCli(argv: string[]): Promise<number> {
   const args = argv.slice(2);
   const command = args[0];
 

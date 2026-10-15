@@ -1068,9 +1068,9 @@ fn ai_cli_catalog() -> Vec<(
         ),
         (
             "agy",
-            "Agy",
+            "Antigravity (agy)",
             vec!["agy"],
-            "Agy AI agent CLI (`agy` on PATH). See your Agy vendor docs for install steps.",
+            "Antigravity CLI (`agy` on PATH). See your vendor docs for install steps.",
             false,
         ),
     ]

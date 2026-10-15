@@ -42,6 +42,8 @@ interface StatusBarProps {
   onToggleMode?: () => void;
   music?: MusicFooterState | null;
   onToggleMusicPanel?: () => void;
+  /** True while the YouTube Music drawer is open (drives aria-expanded/title). */
+  musicOpen?: boolean;
   onMusicPlayPause?: () => void;
   onMusicNext?: () => void;
   onMusicMute?: () => void;
@@ -67,6 +69,7 @@ export const StatusBar: FC<StatusBarProps> = ({
   isRefreshingGit = false,
   music = null,
   onToggleMusicPanel,
+  musicOpen = false,
   onMusicPlayPause,
   onMusicNext,
   onMusicMute,
@@ -102,43 +105,50 @@ export const StatusBar: FC<StatusBarProps> = ({
       return 0;
     }
   });
+  // Mirror of dragX for pointer handlers (avoids stale closures: the
+  // persisted value must be the position at pointer-up, not the render's).
+  const dragXRef = useRef<number>(dragX);
   const dragStartXRef = useRef<number | null>(null);
   const dragInitialXRef = useRef<number>(0);
-  const isDraggingRef = useRef(false);
 
-  const onMusicPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    if ((e.target as HTMLElement).closest(".status-check-btn")) return;
+  // Drag starts ONLY on the grip handle — never on the whole pill — so
+  // clicking the title or the playback buttons can never be swallowed by
+  // pointer capture or mistaken for a drag. Capture is held by the grip
+  // itself, leaving every button's click path untouched.
+  const onGripPointerDown = (e: React.PointerEvent<HTMLSpanElement>) => {
+    // Only the primary button starts a drag.
+    if (e.button !== 0) return;
     dragStartXRef.current = e.clientX;
-    dragInitialXRef.current = dragX;
-    isDraggingRef.current = false;
-    e.currentTarget.setPointerCapture(e.pointerId);
+    dragInitialXRef.current = dragXRef.current;
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      // No capture: move/up on the grip still work for mouse.
+    }
+    e.preventDefault();
+    e.stopPropagation();
   };
 
-  const onMusicPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+  const onGripPointerMove = (e: React.PointerEvent<HTMLSpanElement>) => {
     if (dragStartXRef.current === null) return;
     const delta = e.clientX - dragStartXRef.current;
-    if (Math.abs(delta) > 3) {
-      isDraggingRef.current = true;
-    }
     const newX = Math.max(-450, Math.min(250, dragInitialXRef.current + delta));
+    dragXRef.current = newX;
     setDragX(newX);
   };
 
-  const onMusicPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+  const endGripDrag = (e: React.PointerEvent<HTMLSpanElement>) => {
     if (dragStartXRef.current === null) return;
     dragStartXRef.current = null;
     try {
       e.currentTarget.releasePointerCapture(e.pointerId);
-      localStorage.setItem("kai_music_footer_drag_x", String(dragX));
+    } catch {}
+    try {
+      localStorage.setItem("kai_music_footer_drag_x", String(dragXRef.current));
     } catch {}
   };
 
-  const handleMusicClick = (e: React.MouseEvent) => {
-    if (isDraggingRef.current) {
-      e.preventDefault();
-      e.stopPropagation();
-      return;
-    }
+  const handleMusicToggle = () => {
     onToggleMusicPanel?.();
   };
 
@@ -246,22 +256,40 @@ export const StatusBar: FC<StatusBarProps> = ({
             className="music-mini"
             role="group"
             aria-label="YouTube Music player"
-            onPointerDown={onMusicPointerDown}
-            onPointerMove={onMusicPointerMove}
-            onPointerUp={onMusicPointerUp}
-            onPointerCancel={onMusicPointerUp}
             style={dragX ? { transform: `translateX(${dragX}px)` } : undefined}
-            title="YouTube Music — click to toggle player, drag to move in footer"
+            title="YouTube Music — click to open player, drag the grip to move it in the footer"
+            onClick={(e) => {
+              const target = e.target as HTMLElement;
+              if (target.closest(".music-mini-drag") || target.closest(".status-check-btn")) {
+                return;
+              }
+              handleMusicToggle();
+            }}
           >
-            <span className="music-mini-drag" aria-hidden="true" title="Drag to move in footer">
+            <span
+              className="music-mini-drag"
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Drag to move YouTube Music in footer"
+              title="Drag to move in footer"
+              onPointerDown={onGripPointerDown}
+              onPointerMove={onGripPointerMove}
+              onPointerUp={endGripDrag}
+              onPointerCancel={endGripDrag}
+            >
               <GripVertical size={11} />
             </span>
             <button
               type="button"
               className="music-mini-main"
-              onClick={handleMusicClick}
-              title={music.title ?? "Open YouTube Music"}
-              aria-label="Open YouTube Music"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleMusicToggle();
+              }}
+              title={music.title ?? (musicOpen ? "Close YouTube Music" : "Open YouTube Music")}
+              aria-label={music.title ?? "YouTube Music"}
+              aria-expanded={musicOpen}
+              aria-controls="kai-music-modal"
             >
               <span className="music-mini-art" aria-hidden="true">
                 ♪

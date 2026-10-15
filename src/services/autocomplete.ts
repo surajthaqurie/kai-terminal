@@ -122,7 +122,18 @@ export function loadCommandHistory(): string[] {
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter((s): s is string => typeof s === "string").slice(0, MAX_HISTORY);
+    return parsed
+      .filter((s): s is string => typeof s === "string")
+      .map((s) => s.trim())
+      .filter(
+        (s) =>
+          s.length > 0 &&
+          !s.includes("\n") &&
+          !s.includes("\r") &&
+          s.length <= 300 &&
+          !s.includes("[kai]")
+      )
+      .slice(0, MAX_HISTORY);
   } catch {
     return [];
   }
@@ -130,19 +141,32 @@ export function loadCommandHistory(): string[] {
 
 export function saveCommandHistory(history: string[]): void {
   try {
-    localStorage.setItem(AUTOCOMPLETE_HISTORY_KEY, JSON.stringify(history.slice(0, MAX_HISTORY)));
+    const sanitized = history
+      .filter(
+        (s) =>
+          typeof s === "string" &&
+          !s.includes("\n") &&
+          !s.includes("\r") &&
+          s.length <= 300 &&
+          !s.includes("[kai]")
+      )
+      .slice(0, MAX_HISTORY);
+    localStorage.setItem(AUTOCOMPLETE_HISTORY_KEY, JSON.stringify(sanitized));
   } catch {
     // ignore quota errors
   }
 }
 
-/** Record a submitted line (most-recent-first, deduped, capped). */
 export function recordCommand(history: string[], line: string): string[] {
-  const cmd = line.trim();
-  if (!cmd) return history;
+  if (line.includes("\r") || line.includes("\n")) return history;
+  const cleaned = line.trim();
+  if (!cleaned || cleaned.includes("[kai]") || cleaned.length > 300) return history;
   // Never persist likely-secret assignments (e.g. `export TOKEN=...`).
-  if (/(password|secret|token|api[_-]?key)\s*=\s*\S+/i.test(cmd)) return history;
-  const next = [cmd, ...history.filter((h) => h !== cmd)];
+  if (/(password|secret|token|api[_-]?key)\s*=\s*\S+/i.test(cleaned)) return history;
+  const next = [
+    cleaned,
+    ...history.filter((h) => h !== cleaned && !h.includes("\n") && !h.includes("\r")),
+  ];
   return next.slice(0, MAX_HISTORY);
 }
 

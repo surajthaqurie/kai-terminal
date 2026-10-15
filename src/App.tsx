@@ -652,8 +652,14 @@ export function App() {
   }, []);
 
   const handleToggleMusicPanel = useCallback(() => {
-    setIsMusicOpen((prev) => !prev);
-  }, []);
+    setIsMusicOpen((prev) => {
+      const next = !prev;
+      if (next && !userSettings.showMusicPlayer) {
+        handleSaveSettings({ ...userSettings, showMusicPlayer: true });
+      }
+      return next;
+    });
+  }, [userSettings, handleSaveSettings]);
 
   // On startup, reconcile the stored launch-at-startup preference with the
   // real OS state (user may have toggled it in OS settings outside the app).
@@ -705,6 +711,10 @@ export function App() {
         void import("./components/AiCliPanel").catch(() => {});
         void import("./components/DiagnosticsModal").catch(() => {});
         void import("./components/WorkspaceModal").catch(() => {});
+        // The YouTube Music drawer is lazy too: warm it so the first
+        // footer-pill click opens the panel instantly instead of a beat
+        // later (which reads as "the footer button does nothing").
+        void import("./components/MusicPlayer/MusicPanel").catch(() => {});
       }, 800);
     };
     const prefetchOnce = () => {
@@ -2507,19 +2517,40 @@ export function App() {
         />
 
         {userSettings.showMusicPlayer && (
-          <Suspense fallback={null}>
-            <div className={`music-drawer${isMusicOpen ? " open" : ""}`} aria-hidden={!isMusicOpen}>
-              <MusicPanel
-                startMuted={musicMuted}
-                onClose={() => setIsMusicOpen(false)}
-                onTrackChange={(track, playing) => {
-                  setMusicTitle(track?.title ?? null);
-                  setMusicPlaying(playing);
-                }}
-                onMutedChange={(m) => setMusicMuted(m)}
-                onProgressChange={setMusicProgress}
-              />
-            </div>
+          <Suspense
+            fallback={
+              isMusicOpen ? (
+                <div
+                  className="modal-backdrop music-modal-backdrop open"
+                  role="dialog"
+                  aria-label="Loading music player"
+                >
+                  <div className="settings-modal music-modal-dialog music-panel" role="document">
+                    <div className="modal-header music-head">
+                      <div className="music-head-title">
+                        <span className="music-head-badge" aria-hidden="true">
+                          ♪
+                        </span>
+                        <h3>YouTube Music</h3>
+                      </div>
+                    </div>
+                    <div className="music-video-empty">Loading player…</div>
+                  </div>
+                </div>
+              ) : null
+            }
+          >
+            <MusicPanel
+              startMuted={musicMuted}
+              open={isMusicOpen}
+              onClose={() => setIsMusicOpen(false)}
+              onTrackChange={(track, playing) => {
+                setMusicTitle(track?.title ?? null);
+                setMusicPlaying(playing);
+              }}
+              onMutedChange={(m) => setMusicMuted(m)}
+              onProgressChange={setMusicProgress}
+            />
           </Suspense>
         )}
       </Suspense>
@@ -2609,6 +2640,7 @@ export function App() {
             : null
         }
         onToggleMusicPanel={handleToggleMusicPanel}
+        musicOpen={isMusicOpen}
         onMusicPlayPause={() => dispatchMusicEvent("kai-music-toggle-play")}
         onMusicNext={() => dispatchMusicEvent("kai-music-next")}
         onMusicMute={() => dispatchMusicEvent("kai-music-mute")}

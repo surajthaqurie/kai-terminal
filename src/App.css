@@ -3602,75 +3602,121 @@ select.modal-input {
   }
 }
 
-/* YouTube Music player */
-.music-drawer {
-  position: absolute;
-  right: 12px;
-  bottom: 28px;
-  width: auto;
-  height: auto;
-  max-height: calc(100vh - 44px);
-  z-index: 40;
-  display: none;
-  border: 1px solid var(--border-default);
+/* YouTube Music Modal System */
+.music-modal-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: var(--bg-overlay, rgba(0, 0, 0, 0.65));
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition:
+    opacity 0.15s ease,
+    visibility 0.15s ease;
+}
+
+.music-modal-backdrop.closed {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.music-modal-backdrop.open {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.music-modal-dialog {
+  max-width: 94vw;
+  max-height: 90vh;
+  box-shadow: var(--shadow-modal, 0 20px 45px rgba(0, 0, 0, 0.6));
   border-radius: var(--radius-lg, 10px);
-  background: var(--bg-surface);
-  box-shadow:
-    0 10px 32px rgba(0, 0, 0, 0.45),
-    0 0 0 1px rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border-default);
+  background-color: var(--bg-surface);
+  position: relative;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
 }
-.music-drawer.open {
-  display: block;
+
+.music-modal-backdrop.open .music-modal-dialog {
+  animation: scaleIn var(--transition-fast, 0.15s ease);
 }
+
 .music-panel {
   display: flex;
   flex-direction: column;
   overflow: hidden;
   position: relative;
-  min-width: 280px;
-  max-width: 680px;
+  min-width: 300px;
+  max-width: 720px;
 }
+
 .music-resize-handle {
   position: absolute;
-  top: 0;
-  left: 0;
-  width: 14px;
-  height: 14px;
+  bottom: 0;
+  right: 0;
+  width: 16px;
+  height: 16px;
   cursor: nwse-resize;
   z-index: 10;
 }
+
 .music-resize-handle::after {
   content: "";
   position: absolute;
-  top: 3px;
-  left: 3px;
-  width: 5px;
-  height: 5px;
-  border-top: 2px solid var(--text-tertiary);
-  border-left: 2px solid var(--text-tertiary);
+  bottom: 3px;
+  right: 3px;
+  width: 6px;
+  height: 6px;
+  border-bottom: 2px solid var(--text-tertiary);
+  border-right: 2px solid var(--text-tertiary);
   opacity: 0.6;
 }
+
 .music-head {
-  padding: 8px 10px;
+  padding: 10px 14px;
   display: flex;
   justify-content: space-between;
   align-items: center;
   border-bottom: 1px solid var(--border-subtle);
   user-select: none;
+  background-color: var(--bg-header, var(--bg-surface-elevated));
 }
-.music-head b {
-  font-size: var(--text-xs);
+
+.music-head-title {
   display: flex;
   align-items: center;
-  gap: 6px;
-  color: var(--text-primary);
-  font-weight: 600;
+  gap: 8px;
 }
+
+.music-head-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #ef4444;
+  font-size: 13px;
+  font-weight: bold;
+}
+
+.music-head h3 {
+  font-size: var(--text-sm, 13px);
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+}
+
 .music-head-actions {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
 }
 .music-search {
   margin: 8px 9px 0;
@@ -3779,11 +3825,22 @@ select.modal-input {
   gap: 3px;
   color: var(--color-warning);
 }
+.music-search-only {
+  flex-direction: column;
+  gap: 6px;
+  text-align: center;
+  padding: 10px;
+  height: auto;
+  min-height: 130px;
+}
 .music-offline small {
   color: var(--text-tertiary);
 }
 
-/* Footer Music Mini: borderless, styled like path / git branch */
+/* Footer Music Mini: borderless, styled like path / git branch.
+   Only the grip handle starts a drag (touch-action: none lives there);
+   the pill itself keeps native click behavior so the title and the
+   playback buttons always respond. */
 .music-mini {
   display: inline-flex;
   align-items: center;
@@ -3799,14 +3856,10 @@ select.modal-input {
   font-family: var(--font-mono);
   position: relative;
   user-select: none;
-  touch-action: none;
-  cursor: grab;
+  cursor: pointer;
   transition:
     background-color 0.15s ease,
     color 0.15s ease;
-}
-.music-mini:active {
-  cursor: grabbing;
 }
 .music-mini:hover {
   background: var(--bg-surface-sunken, rgba(255, 255, 255, 0.05));
@@ -3818,6 +3871,13 @@ select.modal-input {
   color: var(--text-tertiary);
   opacity: 0.6;
   margin-right: 1px;
+  touch-action: none;
+  cursor: grab;
+  padding: 2px;
+  border-radius: 4px;
+}
+.music-mini-drag:active {
+  cursor: grabbing;
 }
 .music-mini:hover .music-mini-drag {
   opacity: 1;

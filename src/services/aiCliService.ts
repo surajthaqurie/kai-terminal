@@ -76,7 +76,7 @@ function unavailableFallback(): AiCliStatus[] {
     { id: "cursor", name: "Cursor", available: false, path: null },
     { id: "windsurf", name: "Windsurf", available: false, path: null },
     { id: "cline", name: "Cline", available: false, path: null },
-    { id: "agy", name: "Agy", available: false, path: null },
+    { id: "agy", name: "Antigravity (agy)", available: false, path: null },
   ];
 }
 
@@ -298,6 +298,14 @@ export async function registerUserCustomAiCli(config: CustomAiCliConfig): Promis
   const id = config.id.trim().slice(0, 64);
   if (!id || !/^[a-z0-9][a-z0-9_-]*$/i.test(id)) {
     throw new Error("Custom CLI id must be alphanumeric with dashes/underscores.");
+  }
+  // Built-in providers already have their own card (detection, version
+  // probe, Kai MCP wiring). Registering a second `agy` here would show the
+  // same agent twice, so redirect to the per-provider Validate path.
+  if ((KNOWN_AI_CLIS as readonly string[]).includes(id.toLowerCase())) {
+    throw new Error(
+      `"${id}" is already a built-in provider — enter its binary path in that provider's Validate field instead of registering it again.`
+    );
   }
   const cleanPath = config.path.trim().slice(0, 4096);
   if (!cleanPath || cleanPath.includes("\0")) {

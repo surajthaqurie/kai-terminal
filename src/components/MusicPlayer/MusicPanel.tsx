@@ -33,7 +33,6 @@ import {
   parseYouTubePlayerMessage,
   progressPercent,
   resolveInputToTrack,
-  searchYouTubeVideoId,
   watchUrlForTrack,
   youtubeCommand,
 } from "../../services/musicService";
@@ -41,6 +40,8 @@ import {
 interface MusicPanelProps {
   startMuted: boolean;
   onClose: () => void;
+  /** True while the drawer is open — focuses the search box on open. */
+  open?: boolean;
   onTrackChange?: (track: MusicTrack | null, playing: boolean) => void;
   onMutedChange?: (muted: boolean) => void;
   /** Whole-number playback percentage (0-100), reported only when it changes. */
@@ -60,6 +61,7 @@ function isOnline(): boolean {
 export const MusicPanel: FC<MusicPanelProps> = ({
   startMuted,
   onClose,
+  open = true,
   onTrackChange,
   onMutedChange,
   onProgressChange,
@@ -71,9 +73,35 @@ export const MusicPanel: FC<MusicPanelProps> = ({
   const [online, setOnline] = useState(isOnline);
   const [notice, setNotice] = useState<string | null>(null);
   const frameRef = useRef<HTMLIFrameElement | null>(null);
+  const searchRef = useRef<HTMLInputElement | null>(null);
   const lastPercentRef = useRef(0);
   const mutedRef = useRef(muted);
   mutedRef.current = muted;
+
+  // Focus the search box whenever the drawer opens so the footer toggle
+  // feels like opening a real panel (and keyboard users land in context).
+  useEffect(() => {
+    if (open) {
+      // Let the drawer finish displaying before focusing.
+      const t = window.setTimeout(() => searchRef.current?.focus({ preventScroll: true }), 60);
+      return () => window.clearTimeout(t);
+    }
+    return undefined;
+  }, [open]);
+
+  // Global Escape key dismisses the modal dialog
+  useEffect(() => {
+    if (!open) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [open, onClose]);
 
   // Mute is applied at load through the URL and afterwards through commands,
   // so toggling it never reloads (restarts) the video.
@@ -252,7 +280,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
       const saved = localStorage.getItem("kai_music_panel_width");
       if (saved) return parseInt(saved, 10);
     } catch {}
-    return isExpanded ? 480 : 320;
+    return isExpanded ? 520 : 360;
   });
 
   const resizingRef = useRef<{ startX: number; startWidth: number } | null>(null);
@@ -265,10 +293,10 @@ export const MusicPanel: FC<MusicPanelProps> = ({
 
   const onResizeMove = (e: React.PointerEvent) => {
     if (!resizingRef.current) return;
-    const delta = resizingRef.current.startX - e.clientX;
-    const newWidth = Math.max(280, Math.min(680, resizingRef.current.startWidth + delta));
+    const delta = e.clientX - resizingRef.current.startX;
+    const newWidth = Math.max(300, Math.min(720, resizingRef.current.startWidth + delta));
     setPanelWidth(newWidth);
-    setIsExpanded(newWidth >= 420);
+    setIsExpanded(newWidth >= 460);
   };
 
   const onResizeEnd = (e: React.PointerEvent) => {
@@ -277,14 +305,14 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     try {
       (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
       localStorage.setItem("kai_music_panel_width", String(panelWidth));
-      localStorage.setItem("kai_music_expanded", String(panelWidth >= 420));
+      localStorage.setItem("kai_music_expanded", String(panelWidth >= 460));
     } catch {}
   };
 
   const toggleExpand = () => {
     setIsExpanded((prev) => {
       const next = !prev;
-      const targetWidth = next ? 480 : 320;
+      const targetWidth = next ? 540 : 360;
       setPanelWidth(targetWidth);
       try {
         localStorage.setItem("kai_music_expanded", String(next));
@@ -294,167 +322,194 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     });
   };
 
-  const submit = async () => {
+  const submit = () => {
     const raw = query.trim();
     if (!raw) return;
     const resolved = resolveInputToTrack(raw);
     if (!resolved) {
-      setNotice("Type a song name or paste a YouTube link.");
+      setNotice("That link isn't playable here. Paste a video, playlist, or plain song name.");
       return;
     }
     setNotice(null);
+    // Plain song names have no videoId/playlistId and cannot be embedded
+    // (YouTube retired search embeds); they stay a browser-search action
+    // instead of guessing a random video.
+    if (!resolved.videoId && !resolved.playlistId) {
+      setTrack(resolved);
+      setPlaying(false);
+      setQuery("");
+      return;
+    }
     setTrack(resolved);
     setPlaying(true);
     setQuery("");
-
-    // If user searched plain text, resolve to real YouTube videoId to prevent Error 153
-    if (!resolved.videoId && !resolved.playlistId) {
-      try {
-        const vid = await searchYouTubeVideoId(resolved.query);
-        if (vid) {
-          setTrack((curr) =>
-            curr && curr.query === resolved.query ? { ...curr, videoId: vid } : curr
-          );
-        }
-      } catch {}
-    }
   };
 
   return (
     <div
-      className={`music-panel${isExpanded ? " expanded" : ""}`}
-      style={{ width: `${panelWidth}px` }}
-      role="complementary"
+      id="kai-music-modal"
+      className={`modal-backdrop music-modal-backdrop ${open ? "open" : "closed"}`}
+      onClick={onClose}
+      role="dialog"
+      aria-modal={open}
       aria-label="YouTube Music player"
-      onKeyDown={onPanelKeyDown}
+      aria-hidden={!open}
     >
       <div
-        className="music-resize-handle"
-        onPointerDown={onResizeStart}
-        onPointerMove={onResizeMove}
-        onPointerUp={onResizeEnd}
-        onPointerCancel={onResizeEnd}
-        title="Drag corner to expand or resize player"
-        aria-label="Resize music player"
-      />
-      <div className="music-head">
-        <b>YouTube Music</b>
-        <div className="music-head-actions">
-          <button
-            type="button"
-            className="btn btn-icon"
-            onClick={toggleExpand}
-            title={isExpanded ? "Collapse player" : "Expand player"}
-            aria-label={isExpanded ? "Collapse player" : "Expand player"}
-          >
-            {isExpanded ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
-          </button>
-          <button
-            type="button"
-            className="btn btn-icon"
-            onClick={onClose}
-            title="Close player"
-            aria-label="Close YouTube Music"
-          >
-            <X size={14} />
-          </button>
-        </div>
-      </div>
-
-      <form
-        className="music-search"
-        onSubmit={(e) => {
-          e.preventDefault();
-          submit();
-        }}
+        className={`settings-modal music-modal-dialog music-panel ${isExpanded ? "expanded" : ""}`}
+        style={{ width: `${panelWidth}px` }}
+        onClick={(e) => e.stopPropagation()}
+        role="document"
+        onKeyDown={onPanelKeyDown}
       >
-        <Search size={14} aria-hidden="true" />
-        <input
-          type="text"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Song name or YouTube link"
-          aria-label="Song name or YouTube link"
+        <div
+          className="music-resize-handle"
+          onPointerDown={onResizeStart}
+          onPointerMove={onResizeMove}
+          onPointerUp={onResizeEnd}
+          onPointerCancel={onResizeEnd}
+          title="Drag corner to expand or resize player"
+          aria-label="Resize music player"
         />
-        <button type="submit" className="music-search-go" title="Play" aria-label="Search">
-          <Search size={13} />
-        </button>
-      </form>
-      {notice && (
-        <div className="music-notice" role="status">
-          {notice}
-        </div>
-      )}
-
-      <div className="music-now">
-        {src ? (
-          <iframe
-            key={src}
-            ref={frameRef}
-            referrerPolicy="strict-origin-when-cross-origin"
-            onLoad={() =>
-              frameRef.current?.contentWindow?.postMessage(
-                YOUTUBE_LISTENING_HANDSHAKE,
-                YOUTUBE_EMBED_ORIGIN
-              )
-            }
-            className="music-video"
-            src={src}
-            title={track?.title ?? "YouTube player"}
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-            allowFullScreen
-          />
-        ) : track && !online ? (
-          <div className="music-video-empty music-offline" role="status">
-            <WifiOff size={16} aria-hidden="true" />
-            <span>No internet connection</span>
-            <small>Music comes back when you do.</small>
+        <div className="modal-header music-head">
+          <div className="music-head-title">
+            <span className="music-head-badge" aria-hidden="true">
+              ♪
+            </span>
+            <h3>YouTube Music</h3>
           </div>
-        ) : (
-          <div className="music-video-empty">Search a song to start</div>
+          <div className="music-head-actions">
+            <button
+              type="button"
+              className="btn btn-icon"
+              onClick={toggleExpand}
+              title={isExpanded ? "Collapse player" : "Expand player"}
+              aria-label={isExpanded ? "Collapse player" : "Expand player"}
+            >
+              {isExpanded ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+            </button>
+            <button
+              type="button"
+              className="btn-close"
+              onClick={onClose}
+              title="Close player"
+              aria-label="Close YouTube Music"
+            >
+              <X size={15} />
+            </button>
+          </div>
+        </div>
+
+        <form
+          className="music-search"
+          onSubmit={(e) => {
+            e.preventDefault();
+            submit();
+          }}
+        >
+          <Search size={14} aria-hidden="true" />
+          <input
+            ref={searchRef}
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Paste a YouTube link, or type a song to search"
+            aria-label="Song name or YouTube link"
+          />
+          <button type="submit" className="music-search-go" title="Play" aria-label="Search">
+            <Search size={13} />
+          </button>
+        </form>
+        {notice && (
+          <div className="music-notice" role="status">
+            {notice}
+          </div>
         )}
-        <h3 title={track?.title}>{track?.title ?? "Nothing playing"}</h3>
-        <div className="music-controls">
-          <button
-            type="button"
-            className="music-play"
-            onClick={togglePlay}
-            disabled={!src}
-            title="Play / pause (Space)"
-            aria-label={playing ? "Pause" : "Play"}
-          >
-            {playing ? <Pause size={14} /> : <Play size={14} />}
-          </button>
-          <button
-            type="button"
-            className="btn btn-icon"
-            onClick={next}
-            disabled={!src || !hasNextItem(track)}
-            title="Next song (N)"
-            aria-label="Next song"
-          >
-            <SkipForward size={14} />
-          </button>
-          <button
-            type="button"
-            className="btn btn-icon"
-            onClick={toggleMute}
-            title="Mute (M)"
-            aria-label={muted ? "Unmute" : "Mute"}
-            aria-pressed={muted}
-          >
-            {muted ? <VolumeX size={14} /> : <Volume2 size={14} />}
-          </button>
-          <button
-            type="button"
-            className="btn btn-icon"
-            onClick={openInBrowser}
-            disabled={!track}
-            title="Open in browser"
-            aria-label="Open in browser"
-          >
-            <ExternalLink size={14} />
-          </button>
+
+        <div className="music-now">
+          {src ? (
+            <iframe
+              key={src}
+              ref={frameRef}
+              referrerPolicy="strict-origin-when-cross-origin"
+              onLoad={() =>
+                frameRef.current?.contentWindow?.postMessage(
+                  YOUTUBE_LISTENING_HANDSHAKE,
+                  YOUTUBE_EMBED_ORIGIN
+                )
+              }
+              className="music-video"
+              src={src}
+              title={track?.title ?? "YouTube player"}
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+              allowFullScreen
+            />
+          ) : track && !online ? (
+            <div className="music-video-empty music-offline" role="status">
+              <WifiOff size={16} aria-hidden="true" />
+              <span>No internet connection</span>
+              <small>Music comes back when you do.</small>
+            </div>
+          ) : track && !track.videoId && !track.playlistId && online ? (
+            <div className="music-video-empty music-search-only" role="status">
+              <span>YouTube search can't play inside Kai — open the results in your browser.</span>
+              <button
+                type="button"
+                className="btn btn-secondary btn-small"
+                onClick={openInBrowser}
+                title="Open YouTube search in browser"
+              >
+                <ExternalLink size={13} aria-hidden="true" />
+                <span>Search YouTube for “{track.title}”</span>
+              </button>
+              <small>Paste a video or playlist link to play it here.</small>
+            </div>
+          ) : (
+            <div className="music-video-empty">Paste a YouTube link to start</div>
+          )}
+          <h3 title={track?.title}>{track?.title ?? "Nothing playing"}</h3>
+          <div className="music-controls">
+            <button
+              type="button"
+              className="music-play"
+              onClick={togglePlay}
+              disabled={!src}
+              title="Play / pause (Space)"
+              aria-label={playing ? "Pause" : "Play"}
+            >
+              {playing ? <Pause size={14} /> : <Play size={14} />}
+            </button>
+            <button
+              type="button"
+              className="btn btn-icon"
+              onClick={next}
+              disabled={!src || !hasNextItem(track)}
+              title="Next song (N)"
+              aria-label="Next song"
+            >
+              <SkipForward size={14} />
+            </button>
+            <button
+              type="button"
+              className="btn btn-icon"
+              onClick={toggleMute}
+              title="Mute (M)"
+              aria-label={muted ? "Unmute" : "Mute"}
+              aria-pressed={muted}
+            >
+              {muted ? <VolumeX size={14} /> : <Volume2 size={14} />}
+            </button>
+            <button
+              type="button"
+              className="btn btn-icon"
+              onClick={openInBrowser}
+              disabled={!track}
+              title="Open in browser"
+              aria-label="Open in browser"
+            >
+              <ExternalLink size={14} />
+            </button>
+          </div>
         </div>
       </div>
     </div>

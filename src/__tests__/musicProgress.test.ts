@@ -6,13 +6,16 @@ import {
 } from "../services/musicService";
 
 describe("music playback progress", () => {
-  it("enables the embed JS API for direct and search tracks", () => {
+  it("enables the embed JS API for direct tracks and skips search guesses", () => {
     const direct = embedSrcForTrack({
       title: "t",
       videoId: "dQw4w9WgXcQ",
       playlistId: null,
       query: "q",
     });
+    // Plain song names are browser-search only: no guessed embed (YouTube
+    // retired listType=search embeds and scraping results is CORS-blocked,
+    // so embedding would play a random video or Error 153).
     const search = embedSrcForTrack({
       title: "t",
       videoId: null,
@@ -20,7 +23,7 @@ describe("music playback progress", () => {
       query: "lofi beats",
     });
     expect(direct).toContain("enablejsapi=1");
-    expect(search).toContain("enablejsapi=1");
+    expect(search).toBeNull();
   });
 
   it("parses infoDelivery telemetry", () => {

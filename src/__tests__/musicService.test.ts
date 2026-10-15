@@ -43,7 +43,9 @@ describe("music input resolution", () => {
   it("knows when YouTube can go to a next item", () => {
     expect(hasNextItem(null)).toBe(false);
     expect(hasNextItem(resolveInputToTrack("dQw4w9WgXcQ"))).toBe(false);
-    expect(hasNextItem(resolveInputToTrack("lofi beats"))).toBe(true);
+    // Plain song names are browser-search only (no embed), so there is no
+    // in-player next item — only playlists have one.
+    expect(hasNextItem(resolveInputToTrack("lofi beats"))).toBe(false);
     expect(
       hasNextItem(resolveInputToTrack("https://www.youtube.com/playlist?list=PLabcdefghijkl"))
     ).toBe(true);

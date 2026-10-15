@@ -64,4 +64,30 @@ describe("terminal autocomplete", () => {
     expect(loadCommandHistory()).toEqual(["git status", "ls"]);
     expect(localStorage.getItem(AUTOCOMPLETE_HISTORY_KEY)).toContain("git status");
   });
+
+  it("rejects multiline commands, task logs, and oversized entries", () => {
+    let h = recordCommand([], "git status\nls -la\nwhoami");
+    expect(h).toEqual([]);
+    h = recordCommand(h, "[kai] Running Code Mode task in kai: agy");
+    expect(h).toEqual([]);
+    h = recordCommand(h, "a".repeat(350));
+    expect(h).toEqual([]);
+    h = recordCommand(h, "valid command");
+    expect(h).toEqual(["valid command"]);
+  });
+
+  it("sanitizes corrupt or multiline entries when loading history from storage", () => {
+    localStorage.setItem(
+      AUTOCOMPLETE_HISTORY_KEY,
+      JSON.stringify([
+        "clean command",
+        "multiline\ncorrupt",
+        "[kai] Running task",
+        "x".repeat(400),
+        "another valid",
+      ])
+    );
+    const loaded = loadCommandHistory();
+    expect(loaded).toEqual(["clean command", "another valid"]);
+  });
 });

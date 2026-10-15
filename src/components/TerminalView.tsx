@@ -205,19 +205,23 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
     const lineBufferRef = useRef("");
     const historyRef = useRef<string[]>([]);
 
-    const commitLineBuffer = () => {
-      const line = lineBufferRef.current;
-      lineBufferRef.current = "";
-      if (line.trim()) {
-        historyRef.current = recordCommand(historyRef.current, line);
+    const commitLine = (line: string) => {
+      const trimmed = line.trim();
+      if (trimmed) {
+        historyRef.current = recordCommand(historyRef.current, trimmed);
         saveCommandHistory(historyRef.current);
       }
     };
 
     const trackInputData = (data: string) => {
-      // Enter submits the line.
-      if (data === "\r" || data === "\n" || data === "\r\n") {
-        commitLineBuffer();
+      // Enter or multiline chunk/paste: split and commit completed lines.
+      if (data.includes("\r") || data.includes("\n")) {
+        const full = lineBufferRef.current + data;
+        const parts = full.split(/\r\n|\r|\n/);
+        for (let i = 0; i < parts.length - 1; i++) {
+          commitLine(parts[i]);
+        }
+        lineBufferRef.current = (parts[parts.length - 1] || "").slice(-4096);
         return;
       }
       // Ctrl+C / Ctrl+U cancel the line.
@@ -341,9 +345,8 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
           return;
         }
 
-        // Pasted text becomes part of the current line buffer so
-        // command history stays in sync.
-        lineBufferRef.current = (lineBufferRef.current + text).slice(-4096);
+        // Pasted text updates the line buffer so command history stays in sync.
+        trackInputData(text);
         PtyService.writeToPty(backendId, text).catch((e) => {
           const msg = e instanceof Error ? e.message : String(e);
           term?.writeln(`\r\n\x1b[31m[Paste failed: ${msg}]\x1b[0m\r\n`);
@@ -582,7 +585,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
                   return;
                 }
 
-                lineBufferRef.current = (lineBufferRef.current + text).slice(-4096);
+                trackInputData(text);
                 ptyService.writeToPty(backendId, text).catch((e) => {
                   const msg = e instanceof Error ? e.message : String(e);
                   term.writeln(`\r\n\x1b[31m[Paste failed: ${msg}]\x1b[0m\r\n`);

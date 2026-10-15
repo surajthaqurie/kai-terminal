@@ -4,8 +4,13 @@
  * - YouTube video link (watch / youtu.be / music.youtube.com / shorts / live)
  *   -> direct embed; a `list=` in the link makes it a playlist embed.
  * - Playlist link -> playlist embed.
- * - Plain text -> YouTube search embed (no API key needed):
- *   `https://www.youtube.com/embed?listType=search&list=<query>`
+ * - Plain text -> NOT embedded. YouTube retired the `listType=search` embed
+ *   (it now renders Error 153) and resolving text to a videoId needs a
+ *   server-side search API call: scraping `youtube.com/results` from the
+ *   WebView is blocked by CORS and, when it accidentally succeeds, the
+ *   first `"videoId"` in the HTML is unrelated to the query (a random
+ *   video). Plain text therefore stays a browser-search action instead of
+ *   a guessed embed.
  */
 
 export interface MusicTrack {
@@ -70,13 +75,19 @@ export function resolveInputToTrack(input: string): MusicTrack | null {
   return { title: raw.slice(0, 80), videoId: null, playlistId: null, query: raw };
 }
 
-/** True when YouTube can move to a next item (playlist or search results). */
+/** True when YouTube can move to a next item (playlists only). */
 export function hasNextItem(track: MusicTrack | null): boolean {
-  return Boolean(track && (track.playlistId || !track.videoId));
+  return Boolean(track?.playlistId);
 }
 
-/** Embed src for a track. `muted` only applies at load; later changes use commands. */
-export function embedSrcForTrack(track: MusicTrack, muted = false): string {
+/**
+ * Embed src for a track, or null when there is nothing embeddable.
+ * `muted` only applies at load; later changes use commands.
+ * Query-only tracks (plain song names) return null: the deprecated
+ * `listType=search` embed renders Error 153, so callers must offer the
+ * browser-search fallback instead of embedding a guess.
+ */
+export function embedSrcForTrack(track: MusicTrack, muted = false): string | null {
   const originParam =
     typeof window !== "undefined" && window.location?.origin
       ? `&origin=${encodeURIComponent(window.location.origin)}`
@@ -89,29 +100,7 @@ export function embedSrcForTrack(track: MusicTrack, muted = false): string {
   if (track.playlistId) {
     return `https://www.youtube.com/embed?listType=playlist&list=${track.playlistId}&${tail}`;
   }
-  return `https://www.youtube.com/embed?listType=search&list=${encodeURIComponent(track.query)}&${tail}`;
-}
-
-/**
- * Searches YouTube for a query string and extracts the first videoId.
- * Resolving search text to a direct videoId prevents Error 153 caused by deprecated listType=search.
- */
-export async function searchYouTubeVideoId(query: string): Promise<string | null> {
-  const raw = query.trim();
-  if (!raw) return null;
-  const existingId = extractVideoId(raw);
-  if (existingId) return existingId;
-  try {
-    const res = await fetch(
-      `https://www.youtube.com/results?search_query=${encodeURIComponent(raw)}`
-    );
-    if (!res.ok) return null;
-    const html = await res.text();
-    const m = html.match(/"videoId":"([\w-]{11})"/);
-    return m ? m[1] : null;
-  } catch {
-    return null;
-  }
+  return null;
 }
 
 /**
