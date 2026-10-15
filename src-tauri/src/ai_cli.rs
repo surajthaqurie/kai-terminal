@@ -1324,21 +1324,22 @@ fn details_for_entry(
                 };
             }
             match probe_version(&path) {
-                Some(v) => AiCliDetails {
-                    id: id.to_string(),
-                    name: name.to_string(),
-                    available: true,
-                    path: Some(path),
-                    version: Some(v),
-                    install_guidance: guidance.to_string(),
-                    diagnostic: format!(
-                        "Version detected (not authentication). Local config file: {} — presence does not prove sign-in; launch it in a terminal tab to verify.",
-                        auth_status
-                    ),
-                    state: AiCliDiagnosticState::VersionDetected,
-                    auth_status,
-                    kai_wired,
-                },
+                Some(v) => {
+                    let min = min_supported_version(id);
+                    let state = classify_version(min, &v);
+                    AiCliDetails {
+                        id: id.to_string(),
+                        name: name.to_string(),
+                        available: true,
+                        path: Some(path),
+                        version: Some(v),
+                        install_guidance: guidance.to_string(),
+                        diagnostic: version_diagnostic(&state, min, &auth_status),
+                        state,
+                        auth_status,
+                        kai_wired,
+                    }
+                }
                 None => AiCliDetails {
                     id: id.to_string(),
                     name: name.to_string(),
@@ -1395,6 +1396,11 @@ pub fn check_custom_ai_cli_path(id: &str, custom_path: &str) -> Result<AiCliDeta
         }
     }
     let version = probe_version(trimmed);
+    let min = min_supported_version(id);
+    let state = match &version {
+        Some(v) => classify_version(min, v),
+        None => AiCliDiagnosticState::ProbeFailed,
+    };
     Ok(AiCliDetails {
         id: id.to_string(),
         name,
@@ -1402,19 +1408,117 @@ pub fn check_custom_ai_cli_path(id: &str, custom_path: &str) -> Result<AiCliDeta
         path: Some(trimmed.to_string()),
         version: version.clone(),
         install_guidance: guidance,
-        diagnostic: match version {
-            Some(_) => "Custom path validated (version detected; not authentication).".to_string(),
-            None => {
+        diagnostic: match (&version, &state) {
+            (Some(_), AiCliDiagnosticState::UnsupportedVersion) => {
+                version_diagnostic(&state, min, &default_auth_status())
+            }
+            (Some(_), _) => "Custom path validated (version detected; not authentication).".to_string(),
+            (None, _) => {
                 "Custom path exists but --version probe failed or timed out; launch it directly for details.".to_string()
             }
         },
-        state: match version {
-            Some(_) => AiCliDiagnosticState::VersionDetected,
-            None => AiCliDiagnosticState::ProbeFailed,
-        },
+        state,
         auth_status: default_auth_status(),
         kai_wired: is_kai_wired(id),
     })
+}
+
+/// Documented minimum supported version per AI CLI id, as `(major, minor,
+/// patch)`. A CLI is reported `unsupported_version` only when its parsed
+/// version is strictly older than the entry here.
+///
+/// Policy (keep this table honest): add an entry ONLY for a minimum that is
+/// documented by the vendor or verified against that tool's release notes
+/// (e.g. the first release with the MCP/config behavior Kai wires up). An
+/// invented floor would tell users their working install is unsupported.
+/// Ids without an entry are never flagged. Currently empty: no vendor
+/// minimums have been verified, so passive probing emits
+/// `version_detected` for every parsable version.
+const MIN_SUPPORTED_VERSIONS: &[(&str, (u64, u64, u64))] = &[];
+
+fn min_supported_version(id: &str) -> Option<(u64, u64, u64)> {
+    MIN_SUPPORTED_VERSIONS
+        .iter()
+        .find(|(cid, _)| *cid == id)
+        .map(|(_, v)| *v)
+}
+
+/// Extracts the first `MAJOR.MINOR[.PATCH]` triple from a `--version` line.
+///
+/// Tolerant of vendor decoration (`codex-cli 0.46.0`, `2.1.5 (Claude Code)`,
+/// `aider 0.86.1`, `v1.2.3-beta.1`, `1.2`). Missing patch defaults to 0.
+/// Returns `None` when no dotted numeric token exists or a component
+/// overflows, so unparsable output can never be misread as "too old".
+fn parse_version_triple(raw: &str) -> Option<(u64, u64, u64)> {
+    let bytes = raw.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if !bytes[i].is_ascii_digit() {
+            i += 1;
+            continue;
+        }
+        // A version must start at a token boundary: digits glued to letters
+        // or a hyphen (`abc123.4`, a date `2025-01-02`) are ids, not versions.
+        // A single `v`/`V` prefix (`v1.2.3`) is the one accepted decoration.
+        let glued = |at: usize| bytes[at].is_ascii_alphanumeric() || bytes[at] == b'-';
+        let boundary = i == 0
+            || !glued(i - 1)
+            || (matches!(bytes[i - 1], b'v' | b'V') && (i == 1 || !glued(i - 2)));
+        let mut parts: Vec<u64> = Vec::new();
+        loop {
+            let ds = i;
+            while i < bytes.len() && bytes[i].is_ascii_digit() {
+                i += 1;
+            }
+            match raw[ds..i].parse::<u64>() {
+                Ok(n) => parts.push(n),
+                Err(_) => return None,
+            }
+            let dotted_digit =
+                i + 1 < bytes.len() && bytes[i] == b'.' && bytes[i + 1].is_ascii_digit();
+            if parts.len() < 3 && dotted_digit {
+                i += 1;
+                continue;
+            }
+            break;
+        }
+        if boundary && parts.len() >= 2 {
+            return Some((parts[0], parts[1], parts.get(2).copied().unwrap_or(0)));
+        }
+    }
+    None
+}
+
+/// Classifies a successfully probed `--version` line against `min`.
+///
+/// Returns `UnsupportedVersion` only when a minimum exists, the version
+/// parses, and it is strictly older. Everything else (no minimum, equal or
+/// newer, unparsable) stays `VersionDetected`: this is never an
+/// authentication verdict and never fails closed on garbage output.
+fn classify_version(min: Option<(u64, u64, u64)>, raw_version: &str) -> AiCliDiagnosticState {
+    match (min, parse_version_triple(raw_version)) {
+        (Some(min), Some(found)) if found < min => AiCliDiagnosticState::UnsupportedVersion,
+        _ => AiCliDiagnosticState::VersionDetected,
+    }
+}
+
+/// Diagnostic text for a probed version, including upgrade guidance when the
+/// version is below the documented minimum.
+fn version_diagnostic(
+    state: &AiCliDiagnosticState,
+    min: Option<(u64, u64, u64)>,
+    auth_status: &str,
+) -> String {
+    match (state, min) {
+        (AiCliDiagnosticState::UnsupportedVersion, Some((a, b, c))) => format!(
+            "Installed version is older than the minimum supported {}.{}.{}. Upgrade it, then re-run detection. Local config file: {}.",
+            a, b, c, auth_status
+        ),
+        _ => format!(
+            "Version detected (not authentication). Local config file: {} — presence does not prove sign-in; launch it in a terminal tab to verify.",
+            auth_status
+        ),
+    }
 }
 
 /// Bounded `<binary> --version` probe executed directly (no shell).
@@ -1933,17 +2037,105 @@ mod tests {
     }
 
     #[test]
-    fn test_unsupported_version_state_is_reserved_and_serializes() {
+    fn test_parse_version_triple_handles_vendor_decoration() {
+        assert_eq!(parse_version_triple("codex-cli 0.46.0"), Some((0, 46, 0)));
+        assert_eq!(parse_version_triple("2.1.5 (Claude Code)"), Some((2, 1, 5)));
+        assert_eq!(parse_version_triple("aider 0.86.1"), Some((0, 86, 1)));
+        assert_eq!(parse_version_triple("v1.2.3-beta.1"), Some((1, 2, 3)));
+        assert_eq!(parse_version_triple("tool V4.5.6"), Some((4, 5, 6)));
+        assert_eq!(parse_version_triple("opencode 1.2"), Some((1, 2, 0)));
+        assert_eq!(parse_version_triple("1.2.3.4"), Some((1, 2, 3)));
+        assert_eq!(parse_version_triple("10.20.30"), Some((10, 20, 30)));
+    }
+
+    #[test]
+    fn test_parse_version_triple_rejects_garbage_instead_of_guessing() {
+        assert_eq!(parse_version_triple(""), None);
+        assert_eq!(parse_version_triple("command not found"), None);
+        assert_eq!(parse_version_triple("version 7"), None);
+        assert_eq!(parse_version_triple("1."), None);
+        // Overflowing components must not wrap into a bogus small number.
+        assert_eq!(parse_version_triple("99999999999999999999999.1.1"), None);
+        // A token glued to letters is a hash/id, not a version.
+        assert_eq!(parse_version_triple("build abc123.4.5"), None);
+        // Only a lone `v` is decoration; `dev1.2.3` is not a version token.
+        assert_eq!(parse_version_triple("dev1.2.3"), None);
+        assert_eq!(parse_version_triple("2025-01-02"), None);
+    }
+
+    #[test]
+    fn test_classify_version_flags_only_strictly_older_parsable_versions() {
+        let min = Some((1, 4, 0));
+        assert_eq!(
+            classify_version(min, "tool 1.3.9"),
+            AiCliDiagnosticState::UnsupportedVersion
+        );
+        assert_eq!(
+            classify_version(min, "tool 0.99.99"),
+            AiCliDiagnosticState::UnsupportedVersion
+        );
+        // Exactly the minimum and newer are supported.
+        assert_eq!(
+            classify_version(min, "tool 1.4.0"),
+            AiCliDiagnosticState::VersionDetected
+        );
+        assert_eq!(
+            classify_version(min, "tool 2.0.0"),
+            AiCliDiagnosticState::VersionDetected
+        );
+        // Numeric (not lexicographic) comparison: 1.10.0 > 1.4.0.
+        assert_eq!(
+            classify_version(min, "tool 1.10.0"),
+            AiCliDiagnosticState::VersionDetected
+        );
+        // Unparsable output never becomes "unsupported", and no minimum
+        // means never flagged.
+        assert_eq!(
+            classify_version(min, "garbage"),
+            AiCliDiagnosticState::VersionDetected
+        );
+        assert_eq!(
+            classify_version(None, "tool 0.0.1"),
+            AiCliDiagnosticState::VersionDetected
+        );
+    }
+
+    #[test]
+    fn test_unsupported_version_diagnostic_gives_upgrade_guidance() {
+        let msg = version_diagnostic(
+            &AiCliDiagnosticState::UnsupportedVersion,
+            Some((1, 4, 0)),
+            "config_present",
+        );
+        assert!(msg.contains("1.4.0"));
+        assert!(msg.to_lowercase().contains("upgrade"));
+        let ok = version_diagnostic(&AiCliDiagnosticState::VersionDetected, None, "unknown");
+        assert!(ok.contains("not authentication"));
+    }
+
+    #[test]
+    fn test_min_supported_version_lookup_matches_table_entries_only() {
+        assert_eq!(min_supported_version("definitely-not-a-cli"), None);
+        for (id, v) in MIN_SUPPORTED_VERSIONS {
+            assert_eq!(min_supported_version(id), Some(*v));
+        }
+    }
+
+    #[test]
+    fn test_unsupported_version_state_serializes_and_needs_a_configured_minimum() {
         let _env = crate::test_support::lock_test_env();
-        // No minimum versions are documented today, so passive probing must
-        // never emit unsupported_version; the variant exists and round-trips
-        // for future use.
         let json = serde_json::to_string(&AiCliDiagnosticState::UnsupportedVersion).unwrap();
         assert_eq!(json, "\"unsupported_version\"");
+        // Passive probing of the real PATH may emit unsupported_version only
+        // for ids that have a configured minimum. With the table empty
+        // (no vendor-verified floors) it must never appear.
         let details = detect_ai_cli_details();
-        assert!(!details
+        for d in details
             .iter()
-            .any(|d| d.state == AiCliDiagnosticState::UnsupportedVersion));
+            .filter(|d| d.state == AiCliDiagnosticState::UnsupportedVersion)
+        {
+            assert!(min_supported_version(&d.id).is_some());
+        }
         assert!(!details
             .iter()
             .any(|d| d.state == AiCliDiagnosticState::Ready));
