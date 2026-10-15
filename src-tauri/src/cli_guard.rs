@@ -29,6 +29,7 @@ const CLI_COMMANDS: &[&str] = &[
     "stop",
     "clear",
     "status",
+    "health",
     "unregister",
     "graph",
     "query",

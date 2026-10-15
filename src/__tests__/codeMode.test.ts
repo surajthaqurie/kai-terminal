@@ -58,10 +58,11 @@ describe("lineLikelyChangesCodeMode", () => {
   it("returns false for read-only kai subcommands", () => {
     expect(lineLikelyChangesCodeMode("kai")).toBe(false);
     expect(lineLikelyChangesCodeMode("kai --version")).toBe(false);
-    expect(lineLikelyChangesCodeMode("kai status")).toBe(false);
+    expect(lineLikelyChangesCodeMode("kai health")).toBe(false);
     expect(lineLikelyChangesCodeMode('kai query "explain this"')).toBe(false);
     expect(lineLikelyChangesCodeMode("kai config list")).toBe(false);
-    expect(lineLikelyChangesCodeMode("kai agent list")).toBe(false);
+    expect(lineLikelyChangesCodeMode("kai list")).toBe(false);
+    expect(lineLikelyChangesCodeMode("kai list -a")).toBe(false);
   });
 
   it("detects state-changing kai subcommands", () => {

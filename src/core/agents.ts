@@ -1088,7 +1088,7 @@ export function applyAgentSetup(
       alreadyConfigured: false,
       skipped: true,
       backupPath: null,
-      message: `Unknown agent "${agent}". Run 'kai agent list' for targets.`,
+      message: `Unknown agent "${agent}". Run 'kai list -a' for targets.`,
     };
   }
   if (!kaiBin || kaiBin.length > 4096 || /[\0\r\n]/.test(kaiBin)) {

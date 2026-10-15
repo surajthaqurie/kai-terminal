@@ -334,7 +334,7 @@ describe("Harden Phase: Path escaping, spaces, Unicode, quotes & dynamic agent v
   it("kai list command succeeds and outputs detection status", async () => {
     const { runCli } = await import("../cli/index");
     expect(await runCli(["node", "kai", "list"])).toBe(0);
-    expect(await runCli(["node", "kai", "agents"])).toBe(0);
+    expect(await runCli(["node", "kai", "list", "-a"])).toBe(0);
   });
 
   it("kai stop clears Code Mode without arguments", async () => {

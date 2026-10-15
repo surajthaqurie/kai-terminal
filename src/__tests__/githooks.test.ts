@@ -194,10 +194,9 @@ describe.skipIf(!hasGit)("commit-msg hook lifecycle", () => {
     expect(await runCli(["node", "kai", "graph", "init", plain])).toBe(0);
   });
 
-  it("kai status reports the hook state", async () => {
+  it("graph init installs the hook and reports ours", async () => {
     const repo = track(initRepo());
     expect(await runCli(["node", "kai", "graph", "init", repo])).toBe(0);
-    expect(await runCli(["node", "kai", "status", repo])).toBe(0);
     expect(hookStatus(repo).state).toBe("ours");
   });
 

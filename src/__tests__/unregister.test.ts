@@ -55,8 +55,7 @@ describe("kai remove / unregister command", () => {
 
     expect(await runCli(["node", "kai", "remove", "-i", dir])).toBe(0);
     expect(fs.existsSync(getProjectStorageDir(meta.id))).toBe(false);
-    // Project is gone: status now reports unregistered
-    expect(await runCli(["node", "kai", "status", dir])).toBe(1);
+    expect(getProjectMeta(dir)).toBeNull();
   });
 
   it("accepts a project id as well as a path with -i / --index", async () => {
@@ -134,13 +133,13 @@ describe("runCli smoke coverage", () => {
     expect(await runCli(["node", "kai", "config", "set", "bogus", "1"])).toBe(1);
   });
 
-  it("runs graph init/status/update end to end", async () => {
+  it("runs graph init/status/update end to end and checks health", async () => {
     const dir = makeTempProject({
       "src/hello.ts": "export function helloWorld() { return 42; }\n",
     });
     expect(await runCli(["node", "kai", "graph", "init", dir])).toBe(0);
     expect(await runCli(["node", "kai", "graph", "status", dir])).toBe(0);
-    expect(await runCli(["node", "kai", "status", dir])).toBe(0);
+    expect(await runCli(["node", "kai", "health"])).toBe(0);
     expect(await runCli(["node", "kai", "graph", "update", dir])).toBe(0);
   });
 

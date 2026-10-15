@@ -12,7 +12,6 @@ import {
   getSessionsDir,
   getCacheDir,
   getKaiHomeDir,
-  checkPersistenceConsistency,
   listRegisteredProjects,
   resolveCanonicalPath,
 } from "../core/registry";
@@ -40,7 +39,7 @@ import {
   runExternalAgentCommand,
   needsShellForCommand,
 } from "../core/codeModeWorkflow";
-import { installCommitMsgHook, hookStatus } from "../core/githooks";
+import { installCommitMsgHook } from "../core/githooks";
 import packageJson from "../../package.json";
 
 export const KAI_VERSION: string = packageJson.version ?? "0.1.0";
@@ -502,6 +501,12 @@ export const EXTERNAL_COMMANDS = new Set([
   "close",
   "mcp",
   "setup",
+  "health",
+  "doctor",
+  "list",
+  "remove",
+  "unregister",
+  "session",
   "help",
   "--help",
   "-h",
@@ -515,12 +520,10 @@ export function printMcpHelp(): void {
 Kai MCP (Model Context Protocol) Management
 
 Usage:
-  kai mcp [path]                  Start stdio MCP server (defaults to current directory)
   kai mcp <agent|all>             Wire an AI agent to Kai MCP (--print, --dry-run, --force)
   kai mcp setup <agent|all>       Explicit setup alias for an agent
   kai mcp list                    Show MCP server info, tools, and agent connection status
   kai mcp remove <agent>          Remove Kai MCP wiring from an agent
-  kai mcp start [path]            Explicitly start stdio MCP server
 
 Options:
   --print                         Print config snippet without writing
@@ -530,7 +533,6 @@ Options:
   --global                        Write to global user config
 
 Examples:
-  kai mcp .                       Start MCP stdio server in current project
   kai mcp claude                  Connect Claude Code to Kai MCP
   kai mcp all                     Auto-wire all detected agents
   kai mcp list                    List MCP status and wired agents
@@ -542,7 +544,6 @@ Examples:
 export function printMcpStatus(projectDir: string = process.cwd()): void {
   console.log(`[kai] MCP (Model Context Protocol) Server & Agent Status:\n`);
   console.log(`  Local MCP Server:`);
-  console.log(`    Command:       kai mcp .`);
   console.log(`    Protocol:      JSON-RPC 2.0 (stdio)`);
   console.log(`    Project Root:  ${projectDir}`);
   console.log(`    Tools (${MCP_TOOLS.length}):     ${MCP_TOOLS.map((t) => t.name).join(", ")}\n`);
@@ -572,25 +573,29 @@ Usage:
 
 Outside Kai (any shell):
   open [path]             Launch Kai Terminal (defaults to current folder)
+  health                  System readiness and health check
+  doctor                  Environment, PATH, and install diagnostics
+  list [-a|-m|-i|-s|-c]   Look up agents (-a, default), MCP (-m),
+                          projects (-i), sessions (-s), config (-c)
+  remove [-m|-a|-i|-s]    Delete Kai data: MCP/agent wiring (-m/-a <name>),
+                          project index (-i <path|id>), project session (-s [path])
   close                   Quit Kai Terminal
 
 Inside Kai Terminal — Run:
   <agent> [path]          Run an AI tool (replace <agent> with its command)
   stop                    Back to plain terminal (maps and files are kept)
 
-Inside Kai Terminal — Manage:
-  setup <agent|all>       Connect Kai to a tool (--print, --dry-run, --force, --project)
+Manage & Integrate:
+  agent <add|remove> [name]
+                        Wire one tool (--print, --dry-run, --force,
+                        --project), or unwire one (aliases: agents; add =
+                        setup/install, remove = rm/unlink/unregister)
+  setup <agent|all>       Connect Kai to a tool (alias for kai agent add)
   mcp [agent|list|remove] Manage MCP server & agent connections (e.g. kai mcp claude)
-  list [-a|-i|-s|-c|-m]   Look up agents (-a, default), projects (-i),
-                          sessions (-s), config (-c), MCP server & agents (-m / list mcp)
-  remove [-i|-a|-m|-s]    Delete Kai data only: index (-i <path|id>),
-                          agent/MCP wiring (-m/-a <name>), sessions (-s) [--dry-run]
   graph <init|update|status> [path]
-                          Build, rebuild, or inspect the code-map
-  status [path]           Project health (map freshness, hook, language servers)
+                        Build, rebuild, or inspect the code-map
 
-Inside Kai Terminal — Check:
-  doctor                  Check setup (version, data dir, desktop app)
+Diagnostics:
   lsp                     Check installed language servers
   metrics [clear]         Show or wipe local timing stats
 
@@ -601,14 +606,16 @@ Flags:
 Examples:
   kai open /path/to/project
   kai <agent> .
+  kai agent add claude
+  kai agent remove claude
   kai mcp claude
   kai mcp list
   kai remove -m claude
-  kai setup all
   kai list -a
-  kai list mcp
+  kai list -m
   kai graph status .
-  kai status .
+  kai remove -s .
+  kai health
 `);
 }
 
@@ -616,16 +623,17 @@ Examples:
  * Resolve an agent name or alias against registered agents and dynamically detected PATH binaries.
  *
  * Grouped so the public surface stays obvious:
- * - public: open, close, stop, status, remove, graph, list, setup, metrics, lsp, doctor
+ * - public: open, close, stop, health, remove, graph, list, setup, agent/agents, metrics, lsp, doctor
  * - hidden compat (still work, not in help): unregister (= remove),
  *   config (= list -c), session (= list -s / remove -s),
- *   mcp (used by agent configs), run/bench (advanced), agent/agents (aliases)
- * - removed (friendly redirect): code, clear, query, cost
+ *   mcp (used by agent configs), run/bench (advanced)
+ * - removed (friendly redirect): code, clear, query, cost, status
  */
 const BUILTIN_COMMANDS = new Set([
   "open",
   "close",
   "stop",
+  "health",
   "status",
   "remove",
   "unregister",
@@ -825,7 +833,7 @@ export async function executeAgentWorkflow(
     }
     if (agentTimedOut) {
       console.log(
-        `[kai] Note: the timed-out command was signalled (SIGTERM, then SIGKILL after 2 s; process tree on Windows). A detached grandchild may still be writing; freshness above is point-in-time — rerun 'kai status' or 'kai graph rebuild' if it keeps changing.`
+        `[kai] Note: the timed-out command was signalled (SIGTERM, then SIGKILL after 2 s; process tree on Windows). A detached grandchild may still be writing; freshness above is point-in-time — rerun 'kai graph status' or 'kai graph update' if it keeps changing.`
       );
     } else if (agentSignal) {
       console.log(
@@ -1077,6 +1085,21 @@ export async function runCli(argv: string[]): Promise<number> {
       }
     }
 
+    // Removed commands (single redirect, kept for old muscle memory)
+    const REMOVED_HINTS: Record<string, string> = {
+      code: "'kai code' has been removed. Use 'kai graph init [path]' to index or 'kai <agent>' to run a tool.",
+      clear:
+        "'kai clear' has been removed. Use 'kai stop' to exit Code Mode.",
+      query: "'kai query' has been removed. Use 'kai graph status' or 'kai health'.",
+      cost: "'kai cost' has been removed. Use 'kai metrics' for local stats.",
+      status:
+        "'kai status' has been replaced by 'kai health' (and 'kai graph status' for code-map state).",
+    };
+    if (command in REMOVED_HINTS) {
+      console.error(`[kai] ${REMOVED_HINTS[command]}`);
+      return 1;
+    }
+
     // Boundary enforcement: internal commands must run inside Kai Terminal
     const isMcpList =
       command === "list" &&
@@ -1103,19 +1126,6 @@ export async function runCli(argv: string[]): Promise<number> {
       return await executeAgentWorkflow(command, targetPath);
     }
 
-    // Removed commands (single redirect, kept for old muscle memory)
-    const REMOVED_HINTS: Record<string, string> = {
-      code: "'kai code' has been removed. Use 'kai graph init [path]' to index or 'kai <agent>' to run a tool.",
-      clear:
-        "'kai clear' has been removed. Use 'kai stop' to exit Code Mode.",
-      query: "'kai query' has been removed. Use 'kai status' or 'kai graph status'.",
-      cost: "'kai cost' has been removed. Use 'kai metrics' for local stats.",
-    };
-    if (command in REMOVED_HINTS) {
-      console.error(`[kai] ${REMOVED_HINTS[command]}`);
-      return 1;
-    }
-
     // kai stop — clear Code Mode, back to plain terminal mode.
     if (command === "stop") {
       clearActiveProjectState();
@@ -1123,72 +1133,9 @@ export async function runCli(argv: string[]): Promise<number> {
       return 0;
     }
 
-    // kai status [path]
-    if (command === "status") {
-      const targetPath = args[1] || process.cwd();
-      const meta = getProjectMeta(targetPath);
-
-      if (!meta) {
-        console.log(`[kai] No project registered for: ${targetPath}`);
-        console.log(`Run 'kai graph init ${targetPath}' to register and index.`);
-        return 1;
-      }
-
-      console.log(`[kai] Project Status:`);
-      console.log(`  Name:             ${meta.name}`);
-      console.log(`  ID:               ${meta.id}`);
-      console.log(`  Root:             ${meta.rootPath}`);
-      console.log(`  Canonical:        ${meta.canonicalPath}`);
-      console.log(`  Registered:       ${meta.registeredAt}`);
-      console.log(`  Last Indexed:     ${meta.lastIndexedAt || "never"}`);
-      console.log(`  Status:           ${meta.status}`);
-      console.log(`  Files Indexed:    ${meta.fileCount}`);
-      console.log(`  Symbols Indexed:  ${meta.symbolCount}`);
-
-      const index = loadProjectIndex(meta.id);
-      if (index) {
-        const staleness = detectStaleIndexEntries(index);
-        // A torn persistence snapshot (crash between renames) must never
-        // read as fresh: validate the pairing before reporting.
-        let consistencyNote = "";
-        try {
-          const consistency = checkPersistenceConsistency(meta.id);
-          if (!consistency.consistent) {
-            consistencyNote = ` (persisted snapshot inconsistent: ${consistency.reason}; rebuild recommended)`;
-          }
-        } catch {
-          // Validation unavailable; report the on-disk signal as-is.
-        }
-        if (staleness.isStale || consistencyNote) {
-          const base = staleness.isStale
-            ? `stale (${staleness.staleFiles.length} modified, ${staleness.deletedFiles.length} deleted on disk)`
-            : `stale (on-disk files match, but persistence pairing failed)`;
-          console.log(`  Freshness:        ${base}${consistencyNote}`);
-        } else {
-          console.log(`  Freshness:        fresh`);
-        }
-      }
-
-      try {
-        const hook = hookStatus(meta.canonicalPath);
-        console.log(`  Commit Hook:      ${hook.state}`);
-      } catch {
-        // Not a git repo — the hook line does not apply.
-      }
-
-      const lspServers = detectInstalledLspServers();
-      const hasLsp = lspServers.some((s) => s.isAvailable);
-      console.log(
-        `  Semantic Mode:    ${
-          hasLsp
-            ? "active (LSP connected)"
-            : "degraded (syntax-only indexing; no local language server in PATH)"
-        }`
-      );
-
-      if (meta.lastError) {
-        console.log(`  Last Error:       ${meta.lastError}`);
-      }
+    // kai health
+    if (command === "health" || command === "--health") {
+      console.log(`✔ Kai v${KAI_VERSION} is ready\n\n✔ Fast and private · Free`);
       return 0;
     }
 
@@ -1309,14 +1256,52 @@ export async function runCli(argv: string[]): Promise<number> {
 
         let targetSessionFiles = sessionFiles;
         let targetCacheFiles = cacheFiles;
-        if (sessionTarget && sessionTarget !== ".") {
-          targetSessionFiles = sessionFiles.filter((f) => f.includes(sessionTarget!));
-          targetCacheFiles = cacheFiles.filter((f) => f.includes(sessionTarget!));
+        let targetScopeDesc = "all projects";
+        let activeMatched = false;
+
+        if (sessionTarget && sessionTarget !== "all") {
+          const candidatePath = sessionTarget === "." ? process.cwd() : sessionTarget;
+          const canonicalPath = resolveCanonicalPath(candidatePath);
+          let meta = getProjectMeta(candidatePath) || getProjectMeta(canonicalPath);
+          if (!meta && /^[0-9a-f]{16}$/.test(sessionTarget)) {
+            meta = getProjectMeta(sessionTarget);
+          }
+
+          const projId =
+            meta?.id || (fs.existsSync(canonicalPath) ? path.basename(canonicalPath) : sessionTarget);
+          const projName = meta?.name || path.basename(canonicalPath);
+          targetScopeDesc = `project "${projName}" (${canonicalPath})`;
+
+          targetSessionFiles = sessionFiles.filter(
+            (f) => f.includes(projId) || (meta && (f.includes(meta.id) || f.includes(meta.name)))
+          );
+          targetCacheFiles = cacheFiles.filter(
+            (f) => f.includes(projId) || (meta && (f.includes(meta.id) || f.includes(meta.name)))
+          );
+
+          // Check if active_project matches this project
+          const activeFile = path.join(getKaiHomeDir(), "active_project.json");
+          if (fs.existsSync(activeFile)) {
+            try {
+              const activeData = JSON.parse(fs.readFileSync(activeFile, "utf-8"));
+              if (
+                activeData.id === meta?.id ||
+                activeData.path === canonicalPath ||
+                sessionTarget === "."
+              ) {
+                activeMatched = true;
+              }
+            } catch {}
+          }
         }
 
         console.log(`[kai] Remove Session Scope:`);
+        console.log(`  Scope:                   ${targetScopeDesc}`);
         console.log(`  Session files to remove: ${targetSessionFiles.length} (in ${sessionsDir})`);
         console.log(`  Cache files to remove:   ${targetCacheFiles.length} (in ${cacheDir})`);
+        if (activeMatched) {
+          console.log(`  Active project state:    will be cleared`);
+        }
         console.log(`  NOTE: Project index databases in ~/.kai/projects/ are NOT touched.`);
 
         if (isDryRun) {
@@ -1336,7 +1321,10 @@ export async function runCli(argv: string[]): Promise<number> {
             if (st.isFile()) fs.unlinkSync(path.join(cacheDir, f));
           } catch {}
         }
-        console.log(`[kai] Session and cache directories cleanly cleared.`);
+        if (activeMatched) {
+          clearActiveProjectState();
+        }
+        console.log(`[kai] Session and cache data for ${targetScopeDesc} cleanly cleared.`);
         return 0;
       }
 
@@ -1553,12 +1541,12 @@ export async function runCli(argv: string[]): Promise<number> {
       return 0;
     }
 
-    // 10. kai mcp [subcommand|agent|path]
-    // Handles stdio server, agent configuration wiring, status/list, and removal.
+    // 10. kai mcp [subcommand|agent]
+    // Handles agent configuration wiring, status/list, and removal.
     if (command === "mcp") {
       const sub = (args[1] || "").toLowerCase();
 
-      if (sub === "--help" || sub === "-h" || sub === "help") {
+      if (!args[1] || sub === "--help" || sub === "-h" || sub === "help") {
         printMcpHelp();
         return 0;
       }
@@ -1595,12 +1583,6 @@ export async function runCli(argv: string[]): Promise<number> {
         return result.removed ? 0 : 1;
       }
 
-      if (sub === "start" || sub === "serve" || sub === "server" || sub === "stdio") {
-        const targetPath = args[2] || process.cwd();
-        await startMcpServer(targetPath);
-        return 0;
-      }
-
       let setupTarget: string | null = null;
       if (sub === "setup" || sub === "add" || sub === "install") {
         setupTarget = (args[2] || "").toLowerCase();
@@ -1624,8 +1606,22 @@ export async function runCli(argv: string[]): Promise<number> {
         return await executeAgentSetupWorkflow(setupTarget, args);
       }
 
+      if (sub === "." || sub === "start") {
+        if (process.stdin.isTTY) {
+          console.log(
+            `[kai] Note: The MCP server runs automatically over stdio for connected AI coding tools.`
+          );
+          console.log(
+            `Tip: Run 'kai mcp <agent>' to connect an agent (e.g. 'kai mcp claude'), or 'kai mcp list' to view status.`
+          );
+          return 0;
+        }
+        await startMcpServer(process.cwd());
+        return 0;
+      }
+
       const targetPath = args[1] || process.cwd();
-      if (args[1] && args[1] !== "." && !fs.existsSync(resolveCanonicalPath(targetPath))) {
+      if (args[1] && !fs.existsSync(resolveCanonicalPath(targetPath))) {
         console.error(
           `[kai] Error: "${args[1]}" is neither an existing directory nor a recognized agent/command.`
         );
@@ -1633,6 +1629,16 @@ export async function runCli(argv: string[]): Promise<number> {
           `Run 'kai mcp --help' or 'kai mcp list' to see available options and agents.`
         );
         return 1;
+      }
+
+      if (process.stdin.isTTY) {
+        console.log(
+          `[kai] Note: The MCP server runs automatically over stdio for connected AI coding tools.`
+        );
+        console.log(
+          `Tip: Run 'kai mcp <agent>' to connect an agent (e.g. 'kai mcp claude'), or 'kai mcp list' to view status.`
+        );
+        return 0;
       }
 
       await startMcpServer(targetPath);
@@ -1716,11 +1722,7 @@ export async function runCli(argv: string[]): Promise<number> {
     }
 
     // 11. kai list [options] (dynamic system detection + resources)
-    if (
-      command === "list" ||
-      ((command === "agent" || command === "agents") &&
-        (!args[1] || args[1] === "list" || args[1] === "status"))
-    ) {
+    if (command === "list") {
       const showMcp =
         args.includes("-m") ||
         args.includes("--mcp") ||
@@ -1827,13 +1829,16 @@ export async function runCli(argv: string[]): Promise<number> {
       return 0;
     }
 
-    // 11b. kai setup <agent|all>
+    // 11b. kai setup <agent|all> / kai agent <setup|add> <agent|all>
     // Automatically installs kai MCP wiring into the agent's own config
     // file (with backup). Use --print for the snippet only, --dry-run to
     // preview, --force to refresh an existing kai entry.
     if (
       ((command === "agent" || command === "agents") &&
-        (args[1] === "setup" || args[1] === "register")) ||
+        (args[1] === "setup" ||
+          args[1] === "register" ||
+          args[1] === "add" ||
+          args[1] === "install")) ||
       command === "setup"
     ) {
       let rest = args.slice(1);
@@ -1852,6 +1857,44 @@ export async function runCli(argv: string[]): Promise<number> {
       const positionals = rest.filter((a) => !a.startsWith("-"));
       const rawTarget = (targetFromFlag || positionals[0] || "").toLowerCase();
       return await executeAgentSetupWorkflow(rawTarget, args);
+    }
+
+    // 11c. kai agent <remove|rm|unlink|unregister> <agent> [--dry-run]
+    // Group alias for `kai remove -a/--agent <name>` and `kai mcp remove <name>`.
+    if (
+      (command === "agent" || command === "agents") &&
+      (args[1] === "remove" ||
+        args[1] === "rm" ||
+        args[1] === "unlink" ||
+        args[1] === "unregister")
+    ) {
+      const rest = args.slice(2);
+      const aIdx = rest.findIndex(
+        (a) => a === "-a" || a === "--agent" || a === "-m" || a === "--mcp"
+      );
+      let targetFromFlag: string | undefined;
+      if (aIdx !== -1 && rest[aIdx + 1] && !rest[aIdx + 1].startsWith("-")) {
+        targetFromFlag = rest[aIdx + 1];
+      }
+      const positionals = rest.filter((a) => !a.startsWith("-"));
+      const rawTarget = (targetFromFlag || positionals[0] || "").toLowerCase();
+      if (!rawTarget) {
+        console.error(`[kai] Error: Please specify an agent name to remove.`);
+        console.error(`Example: kai agent remove claude`);
+        return 1;
+      }
+      const isDryRun = args.includes("--dry-run");
+      const result = removeAgentSetup(rawTarget, {
+        projectDir: process.cwd(),
+        scope: "auto",
+        dryRun: isDryRun,
+      });
+      if (isDryRun) {
+        console.log(`[kai] Dry-run: ${result.message}`);
+        return 0;
+      }
+      console.log(`[kai] ${result.message}`);
+      return result.removed ? 0 : 1;
     }
 
     // 12. kai metrics [clear]

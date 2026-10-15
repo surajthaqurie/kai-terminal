@@ -100,4 +100,59 @@ describe("kai mcp CLI commands", () => {
     const code = await runCli(["node", "kai", "mcp", "calude"]);
     expect(code).toBe(1);
   });
+
+  it("runs kai health and outputs readiness message", async () => {
+    const consoleSpy = vi.spyOn(console, "log");
+    const code = await runCli(["node", "kai", "health"]);
+    expect(code).toBe(0);
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("is ready"));
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("Fast and private · Free"));
+  });
+
+  it("redirects removed kai status to kai health", async () => {
+    const errorSpy = vi.spyOn(console, "error");
+    const code = await runCli(["node", "kai", "status"]);
+    expect(code).toBe(1);
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("replaced by 'kai health'"));
+  });
+
+  it("handles 'kai mcp' with no args by printing help", async () => {
+    const code = await runCli(["node", "kai", "mcp"]);
+    expect(code).toBe(0);
+  });
+
+  it("informs user that MCP runs automatically when 'kai mcp .' is run in TTY", async () => {
+    const origIsTTY = process.stdin.isTTY;
+    try {
+      process.stdin.isTTY = true;
+      const logSpy = vi.spyOn(console, "log");
+      const code = await runCli(["node", "kai", "mcp", "."]);
+      expect(code).toBe(0);
+      expect(logSpy).toHaveBeenCalledWith(
+        expect.stringContaining("runs automatically over stdio")
+      );
+    } finally {
+      process.stdin.isTTY = origIsTTY;
+    }
+  });
+
+  it("supports both -m and --mcp for kai list and kai remove", async () => {
+    expect(await runCli(["node", "kai", "list", "-m"])).toBe(0);
+    expect(await runCli(["node", "kai", "list", "--mcp"])).toBe(0);
+    expect(await runCli(["node", "kai", "list", "-a"])).toBe(0);
+    expect(await runCli(["node", "kai", "list", "--agent"])).toBe(0);
+
+    const claudeJson = path.join(tempHome, ".claude.json");
+    fs.writeFileSync(
+      claudeJson,
+      JSON.stringify({
+        mcpServers: {
+          kai: { command: "node", args: ["kai.js", "mcp", "."] },
+        },
+      })
+    );
+    expect(await runCli(["node", "kai", "remove", "--mcp", "claude"])).toBe(0);
+    const doc = JSON.parse(fs.readFileSync(claudeJson, "utf-8"));
+    expect(doc.mcpServers.kai).toBeUndefined();
+  });
 });
