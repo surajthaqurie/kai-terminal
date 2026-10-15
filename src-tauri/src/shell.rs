@@ -619,28 +619,41 @@ pub fn validate_and_resolve_cwd(requested_cwd: Option<&str>) -> Result<String, T
 /// Helper function searching executable binary in system PATH without invoking shell commands.
 fn which_path(cmd: &str) -> Result<String, ()> {
     if let Ok(path_env) = env::var("PATH") {
+        #[cfg(target_os = "windows")]
+        let pathext = env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string());
         for dir in env::split_paths(&path_env) {
             let full_path = dir.join(cmd);
-            if full_path.exists() {
-                #[cfg(not(target_os = "windows"))]
-                if !is_executable(&full_path) {
-                    continue;
-                }
+            #[cfg(not(target_os = "windows"))]
+            if full_path.exists() && is_executable(&full_path) {
                 return Ok(full_path.to_string_lossy().to_string());
             }
 
+            // Windows: an extensionless file is never launchable via
+            // CreateProcess. Editors ship a bash shim named exactly `code` /
+            // `cursor` next to `code.cmd` / `cursor.cmd`; returning the bare
+            // shim made every launch fail with "not a valid Win32
+            // application". Accept an exact match only when it already has a
+            // PATHEXT extension, otherwise try each PATHEXT extension.
             #[cfg(target_os = "windows")]
             {
-                let pathext =
-                    env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string());
-                let extensions: Vec<&str> = pathext.split(';').collect();
-
-                for ext in &extensions {
+                let has_exec_ext = Path::new(cmd)
+                    .extension()
+                    .map(|e| {
+                        let dotted = format!(".{}", e.to_string_lossy());
+                        pathext
+                            .split(';')
+                            .any(|x| !x.trim().is_empty() && x.trim().eq_ignore_ascii_case(&dotted))
+                    })
+                    .unwrap_or(false);
+                if has_exec_ext && full_path.is_file() {
+                    return Ok(full_path.to_string_lossy().to_string());
+                }
+                for ext in pathext.split(';') {
                     let ext_trimmed = ext.trim();
                     if !ext_trimmed.is_empty() {
                         let path_with_ext =
                             dir.join(format!("{}{}", cmd, ext_trimmed.to_lowercase()));
-                        if path_with_ext.exists() {
+                        if path_with_ext.is_file() {
                             return Ok(path_with_ext.to_string_lossy().to_string());
                         }
                     }
@@ -949,21 +962,17 @@ pub fn open_in_editor(requested_editor: Option<&str>, cwd: &str) -> Result<Strin
         })?
     };
 
+    // A path recorded without a launchable extension (e.g. the bash shim
+    // `...\bin\code` a user pasted or an older scan stored) is mapped to its
+    // `.cmd`/`.exe` sibling before anything is spawned.
+    #[cfg(target_os = "windows")]
+    let editor_bin = windows_launchable_path(&editor_bin);
+
     // Cross-platform spawn (argv arrays only, no shell interpolation):
     #[cfg(target_os = "windows")]
     {
         let exe_candidate = if is_windows_script_shim(&editor_bin) {
-            let p = Path::new(&editor_bin);
-            p.parent()
-                .and_then(|bin_dir| bin_dir.parent())
-                .map(|root| root.join("Code.exe"))
-                .filter(|p| p.exists())
-                .or_else(|| {
-                    p.parent()
-                        .and_then(|bin_dir| bin_dir.parent())
-                        .map(|root| root.join("VSCodium.exe"))
-                        .filter(|p| p.exists())
-                })
+            windows_gui_exe_for_shim(Path::new(&editor_bin))
         } else {
             None
         };
@@ -971,7 +980,6 @@ pub fn open_in_editor(requested_editor: Option<&str>, cwd: &str) -> Result<Strin
         if let Some(exe_path) = exe_candidate {
             let mut c = std::process::Command::new(exe_path);
             c.arg(&valid_cwd);
-            #[cfg(target_os = "windows")]
             hide_console(&mut c);
             c.spawn().map_err(|e| {
                 TerminalError::IoError(format!("Failed to launch editor '{}': {}", editor_bin, e))
@@ -980,9 +988,19 @@ pub fn open_in_editor(requested_editor: Option<&str>, cwd: &str) -> Result<Strin
         }
 
         if is_windows_script_shim(&editor_bin) {
+            // No GUI exe found next to the shim: run it through `cmd`. The
+            // whole command line is passed raw, wrapped in an extra pair of
+            // quotes (`/s` strips exactly that pair), so paths containing
+            // spaces survive cmd's quote-stripping rules. `"` is not a legal
+            // path character on Windows, so no escaping is needed.
+            use std::os::windows::process::CommandExt;
+            if editor_bin.contains('"') || valid_cwd.contains('"') {
+                return Err(TerminalError::IoError(
+                    "Editor or project path contains an invalid quote character".into(),
+                ));
+            }
             let mut c = std::process::Command::new("cmd");
-            c.args(["/c", &editor_bin, &valid_cwd]);
-            #[cfg(target_os = "windows")]
+            c.raw_arg(format!("/d /s /c \"\"{}\" \"{}\"\"", editor_bin, valid_cwd));
             hide_console(&mut c);
             c.spawn().map_err(|e| {
                 TerminalError::IoError(format!("Failed to launch editor '{}': {}", editor_bin, e))
@@ -1134,6 +1152,54 @@ pub fn open_external_url(url: &str) -> Result<(), TerminalError> {
 fn is_windows_script_shim(path: &str) -> bool {
     let lower = path.to_lowercase();
     lower.ends_with(".cmd") || lower.ends_with(".bat") || lower.ends_with(".ps1")
+}
+
+/// Maps an existing extensionless file (the bash shim editors ship beside
+/// `code.cmd`) to its launchable `.exe` / `.cmd` / `.bat` sibling. Paths that
+/// already have an extension, or have no launchable sibling, are returned
+/// unchanged so the spawn error stays honest.
+#[cfg(any(target_os = "windows", test))]
+fn windows_launchable_path(path: &str) -> String {
+    let p = Path::new(path);
+    if p.extension().is_some() {
+        return path.to_string();
+    }
+    for ext in ["exe", "cmd", "bat"] {
+        let sibling = p.with_extension(ext);
+        if sibling.is_file() {
+            return sibling.to_string_lossy().to_string();
+        }
+    }
+    path.to_string()
+}
+
+/// Finds the real GUI executable that a `<install>\bin\<name>.cmd` shim
+/// wraps. Spawning it directly skips `cmd.exe` (faster, no quoting hazards, no
+/// console flash). VS Code / VSCodium / Windsurf keep it one level above
+/// `bin`; Cursor keeps it two levels up (`resources\app\bin`). Only an exe
+/// whose file stem matches a known editor name is accepted, so an unrelated
+/// binary in a parent directory is never launched.
+#[cfg(any(target_os = "windows", test))]
+fn windows_gui_exe_for_shim(shim: &Path) -> Option<std::path::PathBuf> {
+    const GUI_EXES: [&str; 7] = [
+        "Code.exe",
+        "Code - Insiders.exe",
+        "Cursor.exe",
+        "Windsurf.exe",
+        "VSCodium.exe",
+        "Zed.exe",
+        "sublime_text.exe",
+    ];
+    let bin_dir = shim.parent()?;
+    for root in bin_dir.ancestors().skip(1).take(3) {
+        for name in GUI_EXES {
+            let candidate = root.join(name);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+    None
 }
 
 /// Host system terminal configuration detected from terminal emulators or desktop environment.
@@ -1433,6 +1499,81 @@ mod tests {
         assert!(open_in_editor(Some("/non_existent_editor_xyz_99"), "/tmp").is_err());
         assert!(open_in_editor(Some("invalid\0editor"), "/tmp").is_err());
         assert!(open_in_editor(Some(""), "/tmp").is_err());
+    }
+
+    /// Lays out `<root>/<install>/bin/{code, code.cmd}` the way VS Code does
+    /// on Windows, plus the GUI exe at `exe_rel`.
+    fn fake_editor_install(tag: &str, bin_rel: &str, exe_rel: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!("kai_editor_{}_{}", tag, std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let bin = root.join(bin_rel);
+        fs::create_dir_all(&bin).unwrap();
+        File::create(bin.join("code")).unwrap();
+        File::create(bin.join("code.cmd")).unwrap();
+        let exe = root.join(exe_rel);
+        fs::create_dir_all(exe.parent().unwrap()).unwrap();
+        File::create(exe).unwrap();
+        root
+    }
+
+    #[test]
+    fn test_windows_launchable_path_prefers_cmd_over_bare_shim() {
+        let root = fake_editor_install("shim", "bin", "Code.exe");
+        let bare = root.join("bin").join("code");
+        let fixed = windows_launchable_path(&bare.to_string_lossy());
+        assert!(fixed.ends_with("code.cmd"), "got {fixed}");
+        // Already-launchable and unknown paths are left untouched.
+        let cmd = root
+            .join("bin")
+            .join("code.cmd")
+            .to_string_lossy()
+            .to_string();
+        assert_eq!(windows_launchable_path(&cmd), cmd);
+        let missing = root.join("bin").join("nope").to_string_lossy().to_string();
+        assert_eq!(windows_launchable_path(&missing), missing);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_windows_gui_exe_found_for_vscode_and_cursor_layouts() {
+        // VS Code: <root>\Code.exe next to <root>\bin\code.cmd
+        let vs = fake_editor_install("vs", "bin", "Code.exe");
+        let found = windows_gui_exe_for_shim(&vs.join("bin").join("code.cmd")).unwrap();
+        assert!(found.ends_with("Code.exe"));
+        let _ = fs::remove_dir_all(&vs);
+
+        // Cursor: <root>\Cursor.exe, shim at <root>\resources\app\bin\cursor.cmd
+        let cur = fake_editor_install("cur", "resources/app/bin", "Cursor.exe");
+        let found = windows_gui_exe_for_shim(&cur.join("resources/app/bin/code.cmd")).unwrap();
+        assert!(found.ends_with("Cursor.exe"));
+        let _ = fs::remove_dir_all(&cur);
+    }
+
+    #[test]
+    fn test_windows_gui_exe_none_without_known_editor_exe() {
+        let root = fake_editor_install("none", "bin", "Unrelated.exe");
+        assert!(windows_gui_exe_for_shim(&root.join("bin").join("code.cmd")).is_none());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// Regression: PATH lookup must skip the extensionless bash shim that
+    /// editors ship beside `code.cmd` — it cannot be spawned on Windows.
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_which_path_skips_extensionless_shim_on_windows() {
+        let _env = crate::test_support::lock_test_env();
+        let root = fake_editor_install("which", "bin", "Code.exe");
+        let bin = root.join("bin");
+        let old = env::var_os("PATH");
+        env::set_var("PATH", &bin);
+        let found = which_path("code");
+        match old {
+            Some(v) => env::set_var("PATH", v),
+            None => env::remove_var("PATH"),
+        }
+        let _ = fs::remove_dir_all(&root);
+        let found = found.expect("code.cmd should resolve");
+        assert!(found.to_lowercase().ends_with("code.cmd"), "got {found}");
     }
 
     #[test]

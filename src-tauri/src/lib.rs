@@ -75,43 +75,43 @@ fn close_app_window(app_handle: AppHandle) {
 }
 
 #[cfg(feature = "tauri")]
-#[tauri::command]
+#[tauri::command(async)]
 fn open_external_url_cmd(url: String) -> Result<(), error::TerminalError> {
     shell::open_external_url(&url)
 }
 
 #[cfg(feature = "tauri")]
-#[tauri::command]
+#[tauri::command(async)]
 fn get_available_shells() -> Vec<ShellProfile> {
     detect_available_shells()
 }
 
 #[cfg(feature = "tauri")]
-#[tauri::command]
+#[tauri::command(async)]
 fn get_ai_cli_status() -> Vec<AiCliStatus> {
     detect_ai_clis()
 }
 
 #[cfg(feature = "tauri")]
-#[tauri::command]
+#[tauri::command(async)]
 fn get_ai_cli_details() -> Vec<AiCliDetails> {
     detect_ai_cli_details()
 }
 
 #[cfg(feature = "tauri")]
-#[tauri::command]
+#[tauri::command(async)]
 fn check_ai_cli_path(id: String, custom_path: String) -> Result<AiCliDetails, String> {
     check_custom_ai_cli_path(&id, &custom_path)
 }
 
 #[cfg(feature = "tauri")]
-#[tauri::command]
+#[tauri::command(async)]
 fn get_kai_cli_launch_cmd() -> Result<Vec<String>, String> {
     get_kai_cli_launch()
 }
 
 #[cfg(feature = "tauri")]
-#[tauri::command]
+#[tauri::command(async)]
 fn setup_agent_mcp_cmd(
     id: String,
     launcher: Vec<String>,
@@ -123,55 +123,55 @@ fn setup_agent_mcp_cmd(
 }
 
 #[cfg(feature = "tauri")]
-#[tauri::command]
+#[tauri::command(async)]
 fn get_agent_setup_snippet_cmd(id: String, project_arg: String) -> Result<String, String> {
     ai_cli::agent_setup_snippet(&id, &project_arg)
 }
 
 #[cfg(feature = "tauri")]
-#[tauri::command]
+#[tauri::command(async)]
 fn get_git_info_cmd(cwd: String) -> GitInfo {
     get_git_info(&cwd)
 }
 
 #[cfg(feature = "tauri")]
-#[tauri::command]
+#[tauri::command(async)]
 fn run_git_action_cmd(cwd: String, action: String) -> Result<String, String> {
     run_git_action(&cwd, &action)
 }
 
 #[cfg(feature = "tauri")]
-#[tauri::command]
+#[tauri::command(async)]
 fn get_git_changes_cmd(cwd: String) -> Result<GitChangesSummary, String> {
     get_git_changes(&cwd)
 }
 
 #[cfg(feature = "tauri")]
-#[tauri::command]
+#[tauri::command(async)]
 fn get_git_diff_cmd(cwd: String, path: Option<String>, staged: bool) -> Result<String, String> {
     get_git_diff(&cwd, path.as_deref(), staged)
 }
 
 #[cfg(feature = "tauri")]
-#[tauri::command]
+#[tauri::command(async)]
 fn stage_git_file_cmd(cwd: String, path: String) -> Result<String, String> {
     stage_git_file(&cwd, &path)
 }
 
 #[cfg(feature = "tauri")]
-#[tauri::command]
+#[tauri::command(async)]
 fn unstage_git_file_cmd(cwd: String, path: String) -> Result<String, String> {
     unstage_git_file(&cwd, &path)
 }
 
 #[cfg(feature = "tauri")]
-#[tauri::command]
+#[tauri::command(async)]
 fn discard_git_file_cmd(cwd: String, path: String) -> Result<String, String> {
     discard_git_file(&cwd, &path)
 }
 
 #[cfg(feature = "tauri")]
-#[tauri::command]
+#[tauri::command(async)]
 fn get_project_intelligence_cmd(cwd: String) -> intelligence::ProjectIntelligenceSummary {
     intelligence::get_project_intelligence(&cwd)
 }
@@ -188,7 +188,7 @@ fn get_active_project_cmd() -> active_project::ActiveProject {
 }
 
 #[cfg(feature = "tauri")]
-#[tauri::command]
+#[tauri::command(async)]
 fn open_project_in_editor(
     editor_path: Option<String>,
     cwd: String,
@@ -197,7 +197,7 @@ fn open_project_in_editor(
 }
 
 #[cfg(feature = "tauri")]
-#[tauri::command]
+#[tauri::command(async)]
 fn detect_installed_editors_cmd() -> Vec<EditorInfo> {
     detect_installed_editors()
 }

@@ -82,6 +82,9 @@ function attachGpuRenderer(term: Terminal, slot: { current: WebglAddon | null })
   }
 }
 
+/** How long a hidden pane keeps its WebGL context before releasing it. */
+const GPU_RELEASE_DELAY_MS = 15_000;
+
 function detachGpuRenderer(slot: { current: WebglAddon | null }): void {
   const addon = slot.current;
   slot.current = null;
@@ -272,6 +275,17 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
     cwdRef.current = cwd;
     const visibleRef = useRef(visible);
     visibleRef.current = visible;
+    // `<backendId>:<cols>x<rows>` last pushed to the PTY; skips no-op resizes
+    // (a tab flip re-fits to the same grid, and a ConPTY resize forces a reflow).
+    const lastPtySizeRef = useRef<string>("");
+    const pushPtySize = (term: Terminal) => {
+      const backendId = backendPtyIdRef.current;
+      if (!term.cols || !term.rows || !backendId) return;
+      const key = `${backendId}:${term.cols}x${term.rows}`;
+      if (key === lastPtySizeRef.current) return;
+      lastPtySizeRef.current = key;
+      ptyService.resizePty(backendId, term.cols, term.rows).catch(() => {});
+    };
     // Tracks whether the initial PTY spawn has been scheduled, so tab
     // switches don't re-spawn a live session.
     const initialLaunchScheduledRef = useRef(false);
@@ -909,10 +923,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
           resizeTimer = null;
           try {
             fitAddon.fit();
-            const backendId = backendPtyIdRef.current;
-            if (term.cols && term.rows && backendId) {
-              ptyService.resizePty(backendId, term.cols, term.rows).catch(() => {});
-            }
+            pushPtySize(term);
           } catch {
             // Ignore layout errors during component unmount
           }
@@ -978,11 +989,20 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
     // Hold a WebGL context only while this pane is on screen (see
     // attachGpuRenderer): hidden tabs release it so many tabs never exhaust the
     // browser's context cap. Idempotent with the mount-time attach above.
+    // The release is delayed: dropping the context on every hide and rebuilding
+    // it (shader compile + glyph atlas) on every show made quick tab flips
+    // visibly laggy. Re-showing within the grace period reuses the live
+    // renderer; a pane left hidden still frees its context so many tabs never
+    // exhaust the cap (context loss is handled by `attachGpuRenderer`).
     useEffect(() => {
       const term = xtermRef.current;
       if (!term) return;
-      if (visible) attachGpuRenderer(term, webglAddonRef);
-      else detachGpuRenderer(webglAddonRef);
+      if (visible) {
+        attachGpuRenderer(term, webglAddonRef);
+        return;
+      }
+      const timer = setTimeout(() => detachGpuRenderer(webglAddonRef), GPU_RELEASE_DELAY_MS);
+      return () => clearTimeout(timer);
     }, [visible]);
 
     // Periodic live CWD synchronization for the visible pane (ensures footer updates on cd).
@@ -1019,10 +1039,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       }
       try {
         fitAddonRef.current?.fit();
-        const backendId = backendPtyIdRef.current;
-        if (term.cols && term.rows && backendId) {
-          ptyService.resizePty(backendId, term.cols, term.rows).catch(() => {});
-        }
+        pushPtySize(term);
       } catch {
         // ignore hidden-tab layout errors
       }
