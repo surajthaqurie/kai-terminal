@@ -334,7 +334,7 @@ export function isCodeModeActiveForDir(dir: string, activePath: string | null): 
   return ds === cs || ds.startsWith(`${cs}/`);
 }
 
-export type ModeDisplay = "code" | "code-elsewhere" | "terminal";
+export type ModeDisplay = "code" | "terminal";
 
 /**
  * Footer Code Mode pill state from the global persisted project + the
@@ -343,10 +343,9 @@ export type ModeDisplay = "code" | "code-elsewhere" | "terminal";
  * - No persisted project → `"terminal"` (always clears, even while the cwd
  *   is still resolving — `kai stop code` must reflect immediately).
  * - Pane inside the project → `"code"`.
- * - Project set but the active pane is elsewhere → `"code-elsewhere"` (the
- *   CLI said "switched Code Mode in the existing window" but this pane is
- *   not in that project — the footer shows the project with a jump action
- *   instead of lying with "Terminal").
+ * - Project set but the active pane is elsewhere → `"terminal"`: the pill
+ *   reflects the pane in front of you ("Code Mode" or "Terminal") and never
+ *   shows another project's name.
  * - Cwd still resolving (`""`) with a project set → keep `prev` (never
  *   blank/flap the pill mid-navigation).
  */
@@ -357,7 +356,7 @@ export function resolveModeDisplay(
 ): ModeDisplay {
   if (!codeModeProject) return "terminal";
   if (!effectiveDir) return prev;
-  return isCodeModeActiveForDir(effectiveDir, codeModeProject) ? "code" : "code-elsewhere";
+  return isCodeModeActiveForDir(effectiveDir, codeModeProject) ? "code" : "terminal";
 }
 
 /** Short display name for a Code Mode project path (`…/repo` → `repo`). */

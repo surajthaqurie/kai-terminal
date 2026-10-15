@@ -75,7 +75,7 @@ describe("TabBar hold-to-pick-up drag", () => {
     void el;
   }
 
-  it("arms a drag (grabbing cursor) after holding still, without moving", async () => {
+  it("arms a drag (move cursor) after holding still, without moving", async () => {
     const { React, root, container, onMoveTabToIndex } = await renderBar();
     const tabEl = container.querySelector('[data-tab-id="t1"]') as HTMLElement;
     expect(tabEl).not.toBeNull();
@@ -115,6 +115,32 @@ describe("TabBar hold-to-pick-up drag", () => {
       vi.advanceTimersByTime(1000);
     });
     expect(document.body.classList.contains("tab-dragging")).toBe(false);
+
+    root.unmount();
+    container.remove();
+  });
+
+  it("never drags from movement alone: moving before the hold time cancels the pick-up", async () => {
+    const { React, root, container, onMoveTabToIndex } = await renderBar();
+    const tabEl = container.querySelector('[data-tab-id="t1"]') as HTMLElement;
+
+    await React.act(async () => {
+      pressDown(tabEl);
+      // A clear drag-like move well past the press slop, before 500 ms.
+      window.dispatchEvent(
+        new MouseEvent("pointermove", { bubbles: true, clientX: 160, clientY: 10 })
+      );
+      expect(document.body.classList.contains("tab-dragging")).toBe(false);
+      // The hold timer must not lift the tab afterwards either.
+      vi.advanceTimersByTime(1000);
+    });
+    expect(document.body.classList.contains("tab-dragging")).toBe(false);
+    expect(tabEl.classList.contains("dragging")).toBe(false);
+
+    await React.act(async () => {
+      release(tabEl, 160);
+    });
+    expect(onMoveTabToIndex).not.toHaveBeenCalled();
 
     root.unmount();
     container.remove();

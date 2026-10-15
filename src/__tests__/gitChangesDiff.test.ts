@@ -453,7 +453,7 @@ describe("StatusBar Footer with Active Split Directory, Mode and Git", () => {
     container.remove();
   });
 
-  it("renders the code-elsewhere pill with project name and jump action", async () => {
+  it("never shows a project name: a pane outside the project renders the Terminal pill", async () => {
     const React = await import("react");
     const { createRoot } = await import("react-dom/client");
     const { StatusBar } = await import("../components/StatusBar");
@@ -462,7 +462,6 @@ describe("StatusBar Footer with Active Split Directory, Mode and Git", () => {
     document.body.appendChild(container);
     const root = createRoot(container);
 
-    let opened = 0;
     await React.act(async () => {
       root.render(
         React.createElement(StatusBar, {
@@ -474,24 +473,16 @@ describe("StatusBar Footer with Active Split Directory, Mode and Git", () => {
           updateAvailable: false,
           onViewUpdate: () => {},
           onGitAction: () => {},
-          mode: "code-elsewhere",
-          codeProjectPath: "/home/user/workspace/kai",
-          codeProjectName: "kai",
-          onOpenCodeProject: () => {
-            opened += 1;
-          },
+          mode: "terminal",
         })
       );
     });
 
-    const pill = container.querySelector(".status-mode-elsewhere") as HTMLButtonElement | null;
+    const pill = container.querySelector(".status-mode-pill") as HTMLElement | null;
     expect(pill).not.toBeNull();
-    expect(pill?.textContent).toContain("kai");
-    expect(pill?.tagName).toBe("BUTTON");
-    await React.act(async () => {
-      pill?.click();
-    });
-    expect(opened).toBe(1);
+    expect(pill?.tagName).toBe("SPAN");
+    expect(pill?.textContent).toBe("Terminal");
+    expect(container.querySelector(".status-mode-elsewhere")).toBeNull();
 
     root.unmount();
     container.remove();

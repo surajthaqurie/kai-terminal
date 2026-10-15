@@ -15,7 +15,7 @@ describe("resolveModeDisplay (footer pill: global + per-pane truth)", () => {
     expect(resolveModeDisplay(null, "")).toBe("terminal");
     // `kai stop code` must reflect at once, not keep a stale pill.
     expect(resolveModeDisplay(null, "/repo/demo", "code")).toBe("terminal");
-    expect(resolveModeDisplay(null, "", "code-elsewhere")).toBe("terminal");
+    expect(resolveModeDisplay(null, "", "code")).toBe("terminal");
   });
 
   it("is code inside the project (exact dir and children)", () => {
@@ -24,14 +24,16 @@ describe("resolveModeDisplay (footer pill: global + per-pane truth)", () => {
     expect(resolveModeDisplay("C:\\Repo\\Demo", "c:/repo/demo/src")).toBe("code");
   });
 
-  it("is code-elsewhere when the pane sits outside the project", () => {
-    expect(resolveModeDisplay("/repo/demo", "/repo/other")).toBe("code-elsewhere");
-    expect(resolveModeDisplay("/repo/demo", "/repo/demo-x")).toBe("code-elsewhere");
+  it("is terminal when the pane sits outside the project (no other project name shown)", () => {
+    expect(resolveModeDisplay("/repo/demo", "/repo/other")).toBe("terminal");
+    expect(resolveModeDisplay("/repo/demo", "/repo/demo-x")).toBe("terminal");
+    // Same pane flips back to Code Mode once it is inside the project again.
+    expect(resolveModeDisplay("/repo/demo", "/repo/demo/src", "terminal")).toBe("code");
   });
 
   it("keeps the previous pill while the cwd is still resolving", () => {
     expect(resolveModeDisplay("/repo/demo", "", "code")).toBe("code");
-    expect(resolveModeDisplay("/repo/demo", "", "code-elsewhere")).toBe("code-elsewhere");
+    expect(resolveModeDisplay("/repo/demo", "", "terminal")).toBe("terminal");
     expect(resolveModeDisplay("/repo/demo", "")).toBe("terminal");
   });
 });

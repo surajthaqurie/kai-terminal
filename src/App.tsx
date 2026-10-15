@@ -36,7 +36,6 @@ import {
   getCachedGitInfo,
   getGitInfoCached,
   cleanCwdForStore,
-  codeProjectName,
   invalidateGitCache,
   loadRecentProjects,
   normalizeCwdForCompare,
@@ -455,8 +454,8 @@ export function App() {
   // builds agree. Recent folders / new tabs never activate Code Mode.
   // Polled so an externally-run CLI updates the footer without a restart.
   // The footer pill combines global + per-pane truth (see
-  // resolveModeDisplay): inside the project → "Code Mode", project set but
-  // this pane elsewhere → "Code Mode: <name>" with a jump action.
+  // resolveModeDisplay): inside the project → "Code Mode", anywhere else →
+  // "Terminal" (the pill follows the pane; it never names another project).
   const [codeModeProject, setCodeModeProject] = useState<string | null>(() => {
     try {
       return getActiveProject();
@@ -2479,11 +2478,6 @@ export function App() {
         onRefreshGit={handleRefreshGit}
         isRefreshingGit={isRefreshingGit}
         mode={modeDisplay}
-        codeProjectPath={codeModeProject}
-        codeProjectName={codeModeProject ? codeProjectName(codeModeProject) : null}
-        onOpenCodeProject={
-          codeModeProject ? () => openOrFocusDirStable(codeModeProject) : undefined
-        }
       />
     </div>
   );

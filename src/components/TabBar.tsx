@@ -33,8 +33,7 @@ interface MenuState {
   y: number;
 }
 
-const DRAG_THRESHOLD_PX = 6;
-/** Hold-to-pick-up: press-and-hold this long arms a drag without moving. */
+/** Long-press-only reorder: press-and-hold this long picks the tab up. */
 const LONG_PRESS_MS = 500;
 /** Pointer may wander this far during the hold and still count as a press. */
 const HOLD_SLOP_PX = 12;
@@ -133,7 +132,7 @@ export const TabBar: FC<TabBarProps> = ({
 
   // Long-press pickup: holding the pointer (nearly) still for LONG_PRESS_MS
   // lifts the tab into drag mode before any movement, so the cursor flips
-  // to grabbing while the button is still held down. Releasing without
+  // to the move cursor while the button is still held down. Releasing without
   // moving just selects the tab (no reorder, no swallowed click).
   const armDragFromHold = useCallback((id: string) => {
     const pending = pendingRef.current;
@@ -166,22 +165,18 @@ export const TabBar: FC<TabBarProps> = ({
       const dx = e.clientX - pending.startX;
       const dy = e.clientY - pending.startY;
       if (!dragIdRef.current) {
-        if (Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) return;
-        // Fast drag (no hold): movement alone picks the tab up. The pending
-        // hold timer must not fire afterwards.
-        if (holdTimerRef.current) {
-          clearTimeout(holdTimerRef.current);
-          holdTimerRef.current = null;
-        }
-        // Don't start a drag while renaming.
-        const tabEl = containerRef.current?.querySelector(`[data-tab-id="${pending.id}"] input`);
-        if (tabEl) {
+        // Long-press only: moving before the hold completes is NOT a drag
+        // (a plain swipe/click-and-wiggle must never reorder). Once the
+        // pointer leaves the press slop, drop the pending hold so the tab
+        // can't lift later from a press the user already moved away from.
+        if (Math.hypot(dx, dy) > HOLD_SLOP_PX) {
+          if (holdTimerRef.current) {
+            clearTimeout(holdTimerRef.current);
+            holdTimerRef.current = null;
+          }
           pendingRef.current = null;
-          return;
         }
-        dragIdRef.current = pending.id;
-        setDragId(pending.id);
-        document.body.classList.add("tab-dragging");
+        return;
       }
       const idx = computeDropIndex(e.clientX);
       dropIndexRef.current = idx;
@@ -321,7 +316,7 @@ export const TabBar: FC<TabBarProps> = ({
       pointerId: e.pointerId,
     };
     // Hold-to-pick-up: a press held (nearly) still lifts the tab and flips
-    // the cursor to grabbing before any movement — reachable without moving
+    // the cursor to the move cursor before any movement — reachable without moving
     // the mouse at all. A quick press-release stays a plain click.
     if (holdTimerRef.current) clearTimeout(holdTimerRef.current);
     holdTimerRef.current = setTimeout(() => {

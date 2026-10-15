@@ -547,7 +547,8 @@ html,
   font-size: var(--text-sm);
   font-weight: 500;
   border-radius: var(--radius-md) var(--radius-md) 0 0;
-  cursor: grab;
+  /* Normal arrow at rest; reorder needs a long press (see TabBar). */
+  cursor: default;
   border: 1px solid var(--border-subtle);
   border-bottom: none;
   position: relative;
@@ -569,16 +570,16 @@ html,
    native HTML5 DnD shows a not-allowed cursor). */
 .tab-item.dragging {
   opacity: 0.45;
-  cursor: grabbing;
+  cursor: move;
 }
 
 .tabs-container.dragging {
-  cursor: grabbing;
+  cursor: move;
   touch-action: none;
 }
 
 .tabs-container.dragging .tab-item {
-  cursor: grabbing;
+  cursor: move;
 }
 
 .tab-drop-indicator {
@@ -594,7 +595,7 @@ html,
 
 body.tab-dragging,
 body.tab-dragging * {
-  cursor: grabbing !important;
+  cursor: move !important;
 }
 
 .tab-item:hover {
@@ -2396,28 +2397,6 @@ select.modal-input {
   background-color: var(--bg-surface);
   border-color: var(--border-default);
   color: var(--text-secondary);
-}
-
-/* Code Mode active, but this pane is outside the project: same accent
-   family, dashed outline, clickable (jumps to the project). Rendered as a
-   <button>, so reset button chrome to match the span pills. */
-.status-mode-pill.status-mode-elsewhere {
-  background-color: transparent;
-  border-style: dashed;
-  cursor: pointer;
-  font: inherit;
-  max-width: 240px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.status-mode-pill.status-mode-elsewhere:hover:not(:disabled) {
-  background-color: var(--accent-subtle);
-}
-
-.status-mode-pill.status-mode-elsewhere:disabled {
-  cursor: default;
-  opacity: 0.8;
 }
 
 .status-git-wrap {

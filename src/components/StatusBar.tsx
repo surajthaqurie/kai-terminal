@@ -23,11 +23,6 @@ interface StatusBarProps {
   /** Footer git menu is intentionally minimal: status list + changes diff. */
   onGitAction: (action: "status" | "changes") => void;
   mode?: string;
-  /** Active Code Mode project (null when plain terminal mode). */
-  codeProjectPath?: string | null;
-  codeProjectName?: string | null;
-  /** Jump to the Code Mode project (focus its tab, or open one). */
-  onOpenCodeProject?: () => void;
   /** Re-probe git for the active pane + re-sync Code Mode (footer refresh button). */
   onRefreshGit?: () => void;
   isRefreshingGit?: boolean;
@@ -54,9 +49,6 @@ export const StatusBar: FC<StatusBarProps> = ({
   onViewUpdate,
   onGitAction,
   mode = "terminal",
-  codeProjectPath = null,
-  codeProjectName = null,
-  onOpenCodeProject,
   onRefreshGit,
   isRefreshingGit = false,
 }) => {
@@ -114,32 +106,17 @@ export const StatusBar: FC<StatusBarProps> = ({
         {mode === "code" ? (
           <span
             className="status-mode-pill"
-            title="Code Mode — project intelligence active. Run `kai stop code` to clear."
+            title="Code Mode — project intelligence active for this folder. Run `kai stop` to clear."
             aria-label="Code Mode active"
           >
             <Code size={12} aria-hidden="true" />
             <span>Code Mode</span>
           </span>
-        ) : mode === "code-elsewhere" ? (
-          <button
-            type="button"
-            className="status-mode-pill status-mode-elsewhere"
-            title={
-              `Code Mode is active for ${codeProjectPath || codeProjectName || "another project"}.\n` +
-              `This pane is outside that project — click to open it.`
-            }
-            aria-label={`Code Mode active for ${codeProjectName || "another project"}. Activate to open it.`}
-            onClick={onOpenCodeProject}
-            disabled={!onOpenCodeProject}
-          >
-            <Code size={12} aria-hidden="true" />
-            <span>Code Mode: {codeProjectName || "elsewhere"}</span>
-          </button>
         ) : (
           projectDir && (
             <span
               className="status-mode-pill status-mode-terminal"
-              title="Terminal mode — run `kai code <path>` to enter Code Mode."
+              title="Terminal mode — this folder is not in an active Code Mode project. Run `kai <agent>` (e.g. `kai claude`) or `kai graph init` in a project to enter Code Mode."
               aria-label="Terminal mode"
             >
               <Terminal size={12} aria-hidden="true" />
