@@ -13,7 +13,7 @@ const STEPS: Array<{ n: string; t: string; d: string; what: string }> = [
 const SNIPPETS: Record<'run' | 'ai' | 'config', { tab: string; code: string }> = {
   run: {
     tab: '$ workflow',
-    code: '# 1. Launch Kai Terminal app (from any shell)\nkai open\n# Or open Kai Terminal for a specific project folder:\n# kai open /path/to/project\n\n# 2. Inside Kai Terminal, launch your AI tool (Claude Code shown)\nkai claude .\n\n# Kai connects the tool and updates the code map on exit.\n\n# 3. Check project health\nkai status',
+    code: '# 1. Launch Kai Terminal app (from any shell)\nkai open\n# Or open Kai Terminal for a specific project folder:\n# kai open /path/to/project\n\n# 2. Inside Kai Terminal, launch your AI tool (Claude Code shown)\nkai claude .\n\n# Kai connects the tool and updates the code map on exit.\n\n# 3. Check health\nkai health',
   },
   ai: {
     tab: '$ AI agents',

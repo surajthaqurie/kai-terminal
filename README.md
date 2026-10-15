@@ -56,32 +56,25 @@ Kai ships a CLI that indexes projects into `~/.kai/` (outside your repo) and ser
 
 ```bash
 kai open [path]           # launch or focus Kai Terminal desktop app (defaults to current dir)
+kai health                # check system readiness and health
+kai doctor                # run environment, PATH, and desktop diagnostics
+kai list [-a|-m|-i|-s|-c] # look up tools (-a), MCP (-m), projects (-i), sessions (-s), config (-c)
+kai remove [-m|-a|-i|-s]  # un-wire tools (-m/-a <name>) or delete index (-i)/session (-s) data
 kai close                 # close active Kai Terminal instances
 ```
 
-### Internal Commands (Inside Kai Terminal)
+### Inside Kai Terminal
 
 ```bash
-kai claude .              # run Claude: auto-wires MCP, enters Code Mode, builds & syncs graph
-kai cursor /path/to/proj  # launch Cursor with auto-wired MCP and project context
-kai mcp .                 # start stdio MCP server for the current project
-kai mcp claude            # auto-wire Kai MCP into Claude Code configuration
-kai mcp all               # auto-wire Kai MCP into every detected agent configuration
-kai mcp list              # show MCP server status and all agent connections (or kai list mcp)
-kai list -a               # detect installed agents and Kai MCP wiring status (default)
-kai list -i               # list all indexed projects, symbol counts, and freshness
-kai list -s               # list active session and cache files
-kai list -c               # display current CLI configuration
-kai remove -m claude      # un-wire Kai MCP from Claude Code (or kai mcp remove claude)
-kai remove -i .           # safely delete project index from ~/.kai/projects/ (repo untouched)
-kai remove -s             # clear session and cache files
+kai <agent> [path]        # run an AI tool: auto-wires MCP, enters Code Mode, builds & syncs graph
+kai agent add <agent|all> # wire tool(s) to Kai MCP (aliases: kai setup, kai mcp)
+kai agent remove <agent>  # un-wire tool from Kai MCP (or kai remove -a/-m)
 kai graph init .          # initialize AST symbol index and dependency graph
 kai graph update .        # force update and rebuild of project graph
 kai graph status .        # show graph index status and symbol counts
-kai status .              # show project health, commit hook, and LSP status
 kai stop                  # clear Code Mode and return to plain terminal
-kai doctor                # run environment, PATH, and desktop drawer diagnostics
 kai lsp                   # probe locally installed Language Server Protocol servers
+kai metrics               # view local performance and token diagnostics
 ```
 
 `kai <agent> [path]` (e.g. `kai claude .`, `kai opencode .`, `kai cursor .`) automatically
@@ -138,7 +131,7 @@ entering Code Mode (e.g. `kai <agent>` or `kai graph init .`) installs a self-co
 hook into the repo, so every future commit from any agent lands without
 `Co-authored-by:` trailers. The hook is POSIX sh only (Linux, macOS,
 Windows), fails open, and preserves/chains any pre-existing hook.
-`kai status` shows the hook state. To remove the hook later, delete
+To remove the hook later, delete
 `.git/hooks/commit-msg` (and rename `commit-msg.kai-orig` back to
 `commit-msg` if your own hook was preserved there).
 

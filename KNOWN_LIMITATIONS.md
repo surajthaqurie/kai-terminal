@@ -88,7 +88,7 @@ This document lists known operating system constraints, platform boundaries, res
 
 ## 3. Implemented Capabilities Summary
 
-- **Project Intelligence & MCP Server:** Terminal-first indexing (`kai code .`), status tracking (`kai status`), context querying (`kai query`), cost estimation (`kai cost`), evaluation benchmarks (`kai bench`), optional LSP status inspection (`kai lsp status`), and read-only MCP server (`kai mcp .`) over stdio JSON-RPC.
+- **Project Intelligence & MCP Server:** Terminal-first indexing (`kai code .`), status tracking (`kai status`), context querying (`kai query`), cost estimation (`kai cost`), evaluation benchmarks (`kai bench`), optional LSP status inspection (`kai lsp status`), and read-only MCP server over stdio JSON-RPC.
 - **Status Bar Intelligence Widget:** Native desktop status bar badge displaying project readiness, file count, symbol count, and estimated token footprint directly in Kai Terminal.
 - **Split Panes:** Up to 4 split panes per tab (horizontal and vertical splits) with independent backend PTY processes per pane.
 - **Custom Shortcuts:** Centralized shortcut manager with customizable keybindings, navigation shortcuts, and conflict detection.
@@ -130,7 +130,7 @@ Environment: Windows 11 (win32/x64), Node v24.21.0, npm 11.19.0, git 2.43.0.wind
 - Agent exit outcome is preserved separately from graph sync: `0` on success, non-zero agent codes pass through, `124` on timeout, `130` on signal/cancel. Sync status is reported on its own line and never rewrites the agent outcome.
 - Timeout/cancel sends SIGTERM, then SIGKILL after a 2 s grace period (`taskkill /PID /T /F` on Windows for the process tree). The promise resolves on child `close` (reaped).
 - Shell stays disabled (`shell: false`) except for Windows `.cmd`/`.bat` targets (`process.platform === "win32"` gate), so user arguments cannot become shell metacharacters on POSIX. `.ps1` scripts are intentionally NOT auto-elevated to a shell: invoke explicitly, e.g. `kai run -- powershell -NoProfile -ExecutionPolicy Bypass -File script.ps1` (Windows) — otherwise `spawn ENOENT`/exit failure is expected.
-- Surviving-grandchild limit: a detached grandchild that outlives its parent cannot be reaped from Node. Timeout/signal outcomes therefore force the broader (`full`) refresh path and are reported as point-in-time freshness; if the tree keeps writing, rerun `kai status` / `kai graph rebuild`. Sync never claims a surviving writer is fully accounted for.
+- Surviving-grandchild limit: a detached grandchild that outlives its parent cannot be reaped from Node. Timeout/signal outcomes therefore force the broader (`full`) refresh path and are reported as point-in-time freshness; if the tree keeps writing, rerun `kai graph status` / `kai graph update`. Sync never claims a surviving writer is fully accounted for.
 
 ### 5.2 Change detection and freshness truthfulness
 - Freshness covers modified/deleted tracked files (mtime/size, plus ctime at index time), case-only renames (realpath basename check), and untracked new files (bounded readdir-only walk with the same exclusion rules, so `node_modules`/`.git`/ignores/sensitive/binary/oversized files never mark stale). Same-size edits with a preserved mtime are caught via ctime at index time; a coarse-timestamp-only adversary that also preserves size remains a documented residual (next full rebuild resolves it).

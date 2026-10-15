@@ -47,13 +47,14 @@ kai open /path/to/dir    # launch / focus Kai Terminal desktop app for a specifi
 kai close                # close active Kai Terminal instances
 kai --version
 
-# Internal commands (inside Kai Terminal)
+# Inside Kai Terminal
 kai claude .
 kai list -a
+kai list -m
 kai list -i
-kai setup all
 kai graph init .
-kai status .
+kai graph status .
+kai health
 ```
 
 See [USER_MANUAL.md](USER_MANUAL.md) for full syntax and command reference.
@@ -206,8 +207,8 @@ The `kai` CLI keeps all of its data **outside** your repositories:
 To remove a single project's index without touching the repository:
 
 ```bash
-kai remove <path-or-id> --dry-run  # inspect first (supports path or 16-hex ID for orphaned cleanup)
-kai remove <path-or-id>
+kai remove -i <path-or-id> --dry-run  # inspect first (supports path or 16-hex ID for orphaned cleanup)
+kai remove -i <path-or-id>
 ```
 
 To fully uninstall the CLI and delete all Kai-owned data:

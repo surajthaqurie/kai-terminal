@@ -176,20 +176,29 @@ export function DocView({ doc, flatToc = false }: { doc: DocEntry; flatToc?: boo
             ) : (
               <>
                 {(() => {
-                  // "Open and close" bookends the reference with no group
-                  // heading and no count: `kai open` stays first and
-                  // `kai close` stays last, as heading-style rows.
-                  const bookend = filtered.find((s) => s.id === 'open-and-close');
-                  const bookendSubs = bookend ? bookend.toc.filter((t) => t.level === 3) : [];
-                  const topBookend = bookendSubs[0] ?? null;
-                  const bottomBookend = bookendSubs.length > 1 ? bookendSubs[bookendSubs.length - 1] : null;
-                  const groups = filtered.filter((s) => s.id !== 'open-and-close');
+                  // `kai open` stays first, `kai health` follows, and `kai close` stays last as
+                  // heading-style rows with no group heading and no count.
+                  // Found by command id wherever they live (`## Open` first,
+                  // `## Close` last), so each keeps its own header. Their
+                  // parent sections are hidden from the groups below.
+                  const h3s = filtered.flatMap((s) => s.toc.filter((t) => t.level === 3));
+                  const topBookend = h3s.find((t) => t.id === 'kai-open') ?? null;
+                  const healthBookend = h3s.find((t) => t.id === 'kai-health') ?? null;
+                  const bottomBookend = h3s.find((t) => t.id === 'kai-close') ?? null;
+                  const bookendIds = new Set(
+                    [topBookend?.id, healthBookend?.id, bottomBookend?.id].filter((id): id is string => Boolean(id)),
+                  );
+                  const groups = filtered.filter((s) => {
+                    const subs = s.toc.filter((t) => t.level === 3);
+                    if (subs.length === 0) return true;
+                    return !subs.every((t) => bookendIds.has(t.id));
+                  });
                   const bookendRow = (sub: TocItem) => (
                     <a
                       key={sub.id}
                       href={`#${sub.id}`}
                       data-active={active === sub.id}
-                      className="t-doc-toc-link t-doc-toc-link--head t-doc-toc-link--cmd"
+                      className="t-doc-toc-link t-doc-toc-link--head"
                       onClick={() => go(sub.id)}
                     >
                       <span>{sub.text}</span>
@@ -198,13 +207,17 @@ export function DocView({ doc, flatToc = false }: { doc: DocEntry; flatToc?: boo
                   return (
                     <>
                       {topBookend && <div className="t-doc-toc-group">{bookendRow(topBookend)}</div>}
+                      {healthBookend && <div className="t-doc-toc-group">{bookendRow(healthBookend)}</div>}
                       {groups.map((s) => {
-                        const subs = s.toc.filter((t) => t.level === 3);
+                        const toc = s.toc.filter(
+                          (t) => !(t.level === 3 && bookendIds.has(t.id)),
+                        );
+                        const subs = toc.filter((t) => t.level === 3);
                         const subIds = subs.map((t) => t.id);
                         const groupActive = active === s.id || (active !== null && subIds.includes(active));
                         // Nest #### entries under their preceding ###.
                         const nested: Array<{ h3: TocItem; h4s: TocItem[] }> = [];
-                        for (const t of s.toc) {
+                        for (const t of toc) {
                           if (t.level === 3) nested.push({ h3: t, h4s: [] });
                           else if (t.level === 4 && nested.length > 0) nested[nested.length - 1].h4s.push(t);
                         }
