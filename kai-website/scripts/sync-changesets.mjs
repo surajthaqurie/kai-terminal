@@ -32,14 +32,6 @@ console.log(`[sync-changesets] ${entries.length} entries -> src/generated/change
 
 // Automatically sync latest version and release notes from package.json and CHANGELOG.md
 try {
-  const pkgPath = [join(here, '..', '..', 'package.json'), join(here, '..', 'package.json')].find((p) => existsSync(p));
-  const pkg = pkgPath ? JSON.parse(readFileSync(pkgPath, 'utf8')) : { version: '0.1.1' };
-  const version = pkg.version || '0.1.1';
-  const tag = `v${version}`;
-
-  const changelogPath = [join(here, '..', '..', 'CHANGELOG.md'), join(here, '..', 'CHANGELOG.md')].find((p) => existsSync(p));
-  const releases = [];
-
   let existingReleases = [];
   let prevVersion = null;
   let prevGeneratedAt = null;
@@ -52,6 +44,43 @@ try {
       if (typeof prev.generatedAt === 'string') prevGeneratedAt = prev.generatedAt;
     } catch { /* ignore */ }
   }
+
+  const rootPkgPath = join(here, '..', '..', 'package.json');
+  const sitePkgPath = join(here, '..', 'package.json');
+  let version = prevVersion || '0.1.6';
+
+  if (existsSync(rootPkgPath)) {
+    try {
+      const rootPkg = JSON.parse(readFileSync(rootPkgPath, 'utf8'));
+      if (rootPkg.version) version = rootPkg.version;
+    } catch { /* ignore */ }
+  } else if (existsSync(sitePkgPath)) {
+    try {
+      const sitePkg = JSON.parse(readFileSync(sitePkgPath, 'utf8'));
+      if (sitePkg.version && sitePkg.version !== '0.1.1') version = sitePkg.version;
+    } catch { /* ignore */ }
+  }
+
+  // Keep website package.json version synchronized with resolved version
+  if (existsSync(sitePkgPath)) {
+    try {
+      const sitePkg = JSON.parse(readFileSync(sitePkgPath, 'utf8'));
+      if (sitePkg.version !== version) {
+        sitePkg.version = version;
+        writeFileSync(sitePkgPath, JSON.stringify(sitePkg, null, 2) + '\n');
+        console.log(`[sync-changesets] synced version ${version} to kai-website/package.json`);
+      }
+    } catch { /* ignore */ }
+  }
+
+  const tag = `v${version}`;
+
+  const changelogPath = [
+    join(here, '..', '..', 'CHANGELOG.md'),
+    join(here, '..', 'CHANGELOG.md'),
+    join(here, '..', 'content', 'CHANGELOG.md'),
+  ].find((p) => existsSync(p));
+  const releases = [];
   const existingByTag = new Map(existingReleases.map((er) => [er.tag, er]));
   const now = new Date().toISOString();
 

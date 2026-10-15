@@ -1,9 +1,9 @@
-import generated from '../generated/docs.json';
+import docsData from './docs.json';
 import type { DocEntry } from '../components/DocView';
 
 type GeneratedDocs = { generatedAt: string; docs: DocEntry[] };
 
-const data = generated as GeneratedDocs;
+const data = docsData as GeneratedDocs;
 
 export const DOCS_GENERATED_AT = data.generatedAt;
 export const DOCS: DocEntry[] = data.docs;

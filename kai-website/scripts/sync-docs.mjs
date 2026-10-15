@@ -7,7 +7,9 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 const websiteDir = join(here, '..');
 const repoRoot = join(here, '..', '..');
-const outFile = join(websiteDir, 'src', 'generated', 'docs.json');
+const outGenerated = join(websiteDir, 'src', 'generated', 'docs.json');
+const outData = join(websiteDir, 'src', 'data', 'docs.json');
+const contentDir = join(websiteDir, 'content');
 
 const REPO = 'surajthaqurie/kai-terminal';
 
@@ -16,9 +18,30 @@ const DOCS = [
   { slug: 'mcp', file: 'MCP.md', title: 'MCP', desc: 'Local MCP server: agent wiring and tool reference.' },
 ];
 
+let existingDocs = [];
+for (const p of [outData, outGenerated]) {
+  if (existsSync(p)) {
+    try {
+      const prev = JSON.parse(readFileSync(p, 'utf8'));
+      if (Array.isArray(prev.docs) && prev.docs.length > 0) {
+        existingDocs = prev.docs;
+        break;
+      }
+    } catch { /* ignore */ }
+  }
+}
+const existingBySlug = new Map(existingDocs.map((d) => [d.slug, d]));
+
 function findFile(name) {
-  const candidates = [join(repoRoot, name), join(websiteDir, name), join(process.cwd(), name)];
-  return candidates.find((p) => existsSync(p)) ?? join(repoRoot, name);
+  const candidates = [
+    join(repoRoot, name),
+    join(websiteDir, name),
+    join(contentDir, name),
+    join(websiteDir, 'docs', name),
+    join(process.cwd(), name),
+    join(process.cwd(), '..', name),
+  ];
+  return candidates.find((p) => existsSync(p));
 }
 
 function firstH1(text, fallback) {
@@ -26,13 +49,30 @@ function firstH1(text, fallback) {
   return m ? m[1].trim() : fallback;
 }
 
+try {
+  mkdirSync(contentDir, { recursive: true });
+} catch { /* ignore */ }
+
 const docs = [];
 for (const d of DOCS) {
   const path = findFile(d.file);
-  try {
-    const content = readFileSync(path, 'utf8');
-    let mtime = null;
-    try { mtime = statSync(path).mtime.toISOString(); } catch { /* ignore */ }
+  let content = null;
+  let mtime = null;
+
+  if (path && existsSync(path)) {
+    try {
+      content = readFileSync(path, 'utf8');
+      try { mtime = statSync(path).mtime.toISOString(); } catch { /* ignore */ }
+      // Keep a local copy in kai-website/content so isolated website builds have the source markdown
+      try {
+        writeFileSync(join(contentDir, d.file), content, 'utf8');
+      } catch { /* ignore */ }
+    } catch (err) {
+      console.warn(`[sync-docs] failed to read ${path}: ${err.message}`);
+    }
+  }
+
+  if (content) {
     docs.push({
       ...d,
       heading: firstH1(content, d.title),
@@ -41,18 +81,26 @@ for (const d of DOCS) {
       updatedAt: mtime,
       content,
     });
-  } catch (err) {
-    console.warn(`[sync-docs] skip ${d.file}: ${err.message}`);
+  } else {
+    const existing = existingBySlug.get(d.slug);
+    if (existing) {
+      docs.push(existing);
+      console.log(`[sync-docs] preserved existing doc for ${d.slug}`);
+    } else {
+      console.warn(`[sync-docs] skip ${d.file}: file not found and no existing cache`);
+    }
   }
 }
 
-try {
-  mkdirSync(dirname(outFile), { recursive: true });
-  writeFileSync(
-    outFile,
-    JSON.stringify({ generatedAt: new Date().toISOString(), docs }, null, 2) + '\n',
-  );
-  console.log(`[sync-docs] ${docs.length} docs -> src/generated/docs.json`);
-} catch (err) {
-  console.warn('[sync-docs] failed to write docs.json:', err.message);
+const finalDocs = docs.length > 0 ? docs : existingDocs;
+const payload = JSON.stringify({ generatedAt: new Date().toISOString(), docs: finalDocs }, null, 2) + '\n';
+
+for (const target of [outData, outGenerated]) {
+  try {
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, payload);
+    console.log(`[sync-docs] ${finalDocs.length} docs -> ${target.replace(websiteDir, 'kai-website')}`);
+  } catch (err) {
+    console.warn(`[sync-docs] failed to write ${target}:`, err.message);
+  }
 }
