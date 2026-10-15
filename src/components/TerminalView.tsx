@@ -20,11 +20,19 @@ import { loadCommandHistory, recordCommand, saveCommandHistory } from "../servic
 import { TerminalOutputBuffer } from "../services/terminalOutputBuffer";
 import {
   CD_PROBE_DELAYS_MS,
+  CWD_SETTLE_MS,
+  createCwdSettler,
   lineLikelyChangesCwd,
   lineLikelyChangesCodeMode,
+  type CwdSettler,
 } from "../services/cwdCommand";
 import { TERMINAL_MODE_RESET_SEQ, scanAgentFinishedTail } from "../services/terminalModes";
-import { shouldAutoResetModes, stripStuckInputReports } from "../services/terminalModes";
+import {
+  STALE_REPLY_WINDOW_MS,
+  shouldAutoResetModes,
+  stripStaleTerminalReplies,
+  stripStuckInputReports,
+} from "../services/terminalModes";
 // Search UI only mounts on first toggle (Ctrl+Shift+F), so it stays out of
 // the per-pane startup path.
 const SearchBar = lazy(() => import("./SearchBar").then((m) => ({ default: m.SearchBar })));
@@ -238,6 +246,17 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
     onStatusRef.current = onSessionStatusChange;
     const onCwdResolvedRef = useRef(onCwdResolved);
     onCwdResolvedRef.current = onCwdResolved;
+    // Footer path gate: changed directories are held until typing stops and
+    // the candidate settles (see createCwdSettler); deliver() is the only
+    // place that reaches the app. Created once per pane.
+    const lastKeyAtRef = useRef(0);
+    const cwdSettlerRef = useRef<CwdSettler | null>(null);
+    if (!cwdSettlerRef.current) {
+      cwdSettlerRef.current = createCwdSettler((p) => onCwdResolvedRef.current?.(p), {
+        isTyping: () => Date.now() - lastKeyAtRef.current < CWD_SETTLE_MS,
+      });
+    }
+    const settleCwd = (p: string) => cwdSettlerRef.current?.push(p);
     const onCommandSubmittedRef = useRef(onCommandSubmitted);
     onCommandSubmittedRef.current = onCommandSubmitted;
     const onFocusRef = useRef(onFocus);
@@ -260,6 +279,9 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
     // (re)spawn and whenever the alternate screen takes over (fresh TUI).
     const stuckReportCountRef = useRef(0);
     const agentFinishedSeenRef = useRef(false);
+    // Epoch ms until which leftover terminal query replies (DA/CPR/OSC colour)
+    // are dropped; opened when the agent-finished marker is seen.
+    const staleReplyUntilRef = useRef(0);
 
     useImperativeHandle(ref, () => ({
       clear: () => {
@@ -352,6 +374,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       // state so the new session starts unpenalized.
       stuckReportCountRef.current = 0;
       agentFinishedSeenRef.current = false;
+      staleReplyUntilRef.current = 0;
       agentFinishedTailRef.current = "";
       try {
         term.write(TERMINAL_MODE_RESET_SEQ);
@@ -396,7 +419,8 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         setLaunchError(null);
         onStatusRef.current?.("connected");
         if (sessionInfo.cwd) {
-          onCwdResolvedRef.current?.(sessionInfo.cwd);
+          cwdSettlerRef.current?.reset();
+          settleCwd(sessionInfo.cwd);
         }
       } catch (err: unknown) {
         if (mySeq !== initSeqRef.current) return;
@@ -487,7 +511,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         const backendId = backendPtyIdRef.current;
         if (backendId) {
           void PtyService.getPtyCwd(backendId).then((resolved) => {
-            if (resolved) onCwdResolvedRef.current?.(resolved);
+            if (resolved) settleCwd(resolved);
           });
         }
       };
@@ -569,7 +593,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
               p = p.slice(1);
             }
             if (p) {
-              onCwdResolvedRef.current?.(p);
+              settleCwd(p);
             }
           } catch {
             if (data.startsWith("file://")) {
@@ -577,7 +601,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
               if (/^\/[a-zA-Z]:/.test(p)) {
                 p = p.slice(1);
               }
-              if (p) onCwdResolvedRef.current?.(p);
+              if (p) settleCwd(p);
             }
           }
           return false;
@@ -587,7 +611,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         term.parser.registerOscHandler(9, (data) => {
           if (data.startsWith("9;")) {
             const p = data.slice(2);
-            if (p) onCwdResolvedRef.current?.(p);
+            if (p) settleCwd(p);
           }
           return false;
         });
@@ -601,12 +625,13 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         if (!backendId) return;
         void PtyService.getPtyCwd(backendId).then((resolved) => {
           if (resolved) {
-            onCwdResolvedRef.current?.(resolved);
+            settleCwd(resolved);
           }
         });
       };
 
       const inputDisposable = term.onData((data) => {
+        lastKeyAtRef.current = Date.now();
         const backendId = backendPtyIdRef.current;
         if (backendId) {
           // Ghost-typing filter: when a fullscreen TUI dies without
@@ -628,7 +653,15 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
             if (onAlternate) {
               stuckReportCountRef.current = 0;
               agentFinishedSeenRef.current = false;
+              staleReplyUntilRef.current = 0;
             } else {
+              // Replies to terminal queries the (now exited) agent made
+              // would be typed into the shell as garbage and leave a lone
+              // ESC pending; only dropped inside the short post-agent window.
+              if (Date.now() < staleReplyUntilRef.current) {
+                const noReplies = stripStaleTerminalReplies(data);
+                if (noReplies.length !== data.length) data = noReplies;
+              }
               const stripped = stripStuckInputReports(data, false);
               if (stripped.length !== data.length) {
                 forward = stripped;
@@ -805,6 +838,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
                 // focus report (if the CLI-side reset was lost) resets the
                 // emulator immediately instead of waiting for a repeat.
                 agentFinishedSeenRef.current = true;
+                staleReplyUntilRef.current = Date.now() + STALE_REPLY_WINDOW_MS;
                 term.write(TERMINAL_MODE_RESET_SEQ);
               }
             } catch {
@@ -836,7 +870,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       trackUnlisten(
         ptyService.onPtyCwd((payload) => {
           if (payload.id === backendPtyIdRef.current && payload.cwd) {
-            onCwdResolvedRef.current?.(payload.cwd);
+            settleCwd(payload.cwd);
           }
         }),
         (unlisten) => {
@@ -912,6 +946,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
             // Already reaped; safe to ignore.
           });
         }
+        cwdSettlerRef.current?.dispose();
         term.dispose();
       };
       // sessionId scopes the tab lifetime; shell/cwd changes apply on next launch.
@@ -940,7 +975,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         if (backendId) {
           void PtyService.getPtyCwd(backendId).then((resolved) => {
             if (resolved) {
-              onCwdResolvedRef.current?.(resolved);
+              settleCwd(resolved);
             }
           });
         }

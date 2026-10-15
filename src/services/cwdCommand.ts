@@ -114,3 +114,101 @@ export function lineLikelyChangesCodeMode(line: string): boolean {
   }
   return false;
 }
+
+/**
+ * Quiet period before a CHANGED directory reaches the footer path pill.
+ *
+ * Cwd reports arrive from many sources (OSC 7 / 9;9 prompt hooks, backend
+ * probes, focus sync, the 5 s interval, post-`cd` taps) and used to be
+ * applied the instant they arrived, so the path pill flapped and the footer
+ * re-rendered while the user was still typing `cd /a/b/c`. A change is now
+ * held until no keystroke has happened for this long AND the same candidate
+ * has stood still, so only the final, settled directory is shown. 1.5 s is
+ * long enough to ride out typing pauses and fast `cd` hopping, short enough
+ * that the footer still follows a finished `cd` promptly. Same on all OSes.
+ */
+export const CWD_SETTLE_MS = 1500;
+
+function normalizeForSettle(p: string): string {
+  return p
+    .replace(/^\\\\\?\\/, "")
+    .replace(/\\/g, "/")
+    .replace(/\/+$/, "")
+    .toLowerCase();
+}
+
+export interface CwdSettler {
+  /** Report a candidate directory from any source. */
+  push(path: string): void;
+  /** Forget the last shown directory: the next push applies immediately. */
+  reset(): void;
+  /** Drop any held candidate and stop timers (unmount). */
+  dispose(): void;
+}
+
+/**
+ * Debounce directory changes: the first directory (and the first after
+ * `reset()`) is delivered immediately; later changes are delivered only after
+ * {@link CWD_SETTLE_MS} without a newer different candidate and while
+ * `isTyping()` is false. Candidates equal to what is already shown cancel any
+ * held change (e.g. `cd x` then `cd ..` inside the window shows nothing).
+ */
+export function createCwdSettler(
+  deliver: (path: string) => void,
+  opts: { settleMs?: number; isTyping?: () => boolean } = {}
+): CwdSettler {
+  const settleMs = opts.settleMs ?? CWD_SETTLE_MS;
+  let shown: string | null = null;
+  let pending: string | null = null;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+
+  const clear = (): void => {
+    if (timer) clearTimeout(timer);
+    timer = null;
+  };
+  const arm = (): void => {
+    clear();
+    timer = setTimeout(() => {
+      timer = null;
+      if (pending === null) return;
+      if (opts.isTyping?.()) {
+        arm(); // still typing: keep holding, re-check after another window
+        return;
+      }
+      const next = pending;
+      pending = null;
+      shown = next;
+      deliver(next);
+    }, settleMs);
+  };
+
+  return {
+    push(path: string): void {
+      if (!path || !path.trim()) return;
+      if (shown === null) {
+        shown = path;
+        deliver(path);
+        return;
+      }
+      if (normalizeForSettle(path) === normalizeForSettle(shown)) {
+        pending = null;
+        clear();
+        return;
+      }
+      if (pending !== null && normalizeForSettle(path) === normalizeForSettle(pending)) {
+        return; // same candidate re-reported by another source: don't restart
+      }
+      pending = path;
+      arm();
+    },
+    reset(): void {
+      clear();
+      pending = null;
+      shown = null;
+    },
+    dispose(): void {
+      clear();
+      pending = null;
+    },
+  };
+}

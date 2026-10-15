@@ -49,6 +49,32 @@ export function scanAgentFinishedTail(
 // stuck TUI modes leaking mouse/focus movement as "ghost typing".
 const STUCK_INPUT_REPORT_RE = /\x1b\[<[0-9;]*[Mm]|\x1b\[M...|\x1b\[[IO]/g;
 
+// Terminal query REPLIES (emulator -> host) that a TUI asked for at startup:
+// device attributes (DA1/DA2/DA3), cursor position (CPR), DECRQM mode
+// reports, kitty-keyboard query, OSC 4/10/11/12 colour replies and DCS
+// XTVERSION. If the asking agent exits/dies before the reply is delivered,
+// the shell receives the bytes as typed input: visible garbage such as
+// `^[[?1;2c` or `]11;rgb:0000/0000/0000`, and the lone ESC leaves
+// readline/PSReadLine waiting for the rest of a sequence so real typing
+// looks "blocked". Only ever stripped inside the short post-agent window
+// (see STALE_REPLY_WINDOW_MS) because a live non-alt-screen TUI needs them.
+const STALE_TERMINAL_REPLY_RE =
+  // eslint-disable-next-line no-control-regex
+  /\x1b\[[?>=]?[0-9;]*c|\x1b\[[0-9;]*R|\x1b\[\?[0-9;]*\$y|\x1b\[\?[0-9;]*u|\x1b\](?:4;[0-9]+|1[012]);[^\x07\x1b]*(?:\x07|\x1b\\)|\x1bP[>!]?\|[^\x1b]*\x1b\\/g;
+
+/** How long after `[kai] Agent finished` leftover terminal replies are dropped. */
+export const STALE_REPLY_WINDOW_MS = 10_000;
+
+/**
+ * Drop leftover terminal query replies from an xterm onData chunk. Callers
+ * must only apply this while the post-agent window is open and the normal
+ * buffer is active. Pure helper (exported for tests).
+ */
+export function stripStaleTerminalReplies(data: string): string {
+  if (!data.includes("\x1b")) return data;
+  return data.replace(STALE_TERMINAL_REPLY_RE, "");
+}
+
 /**
  * Whether a stripped-report observation should also switch the emulator
  * out of its stuck modes (via TERMINAL_MODE_RESET_SEQ on the output path).

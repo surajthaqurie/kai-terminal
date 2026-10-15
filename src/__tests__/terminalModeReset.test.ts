@@ -4,6 +4,7 @@ import {
   TERMINAL_MODE_RESET_SEQ,
   scanAgentFinishedTail,
   shouldAutoResetModes,
+  stripStaleTerminalReplies,
   stripStuckInputReports,
 } from "../services/terminalModes";
 import { resetTerminalModesAfterAgent } from "../core/codeModeWorkflow";
@@ -154,5 +155,29 @@ describe("resetTerminalModesAfterAgent", () => {
     });
     resetTerminalModesAfterAgent();
     expect(writes).toHaveLength(0);
+  });
+});
+
+describe("stripStaleTerminalReplies (leftover query replies after agent exit)", () => {
+  it("drops DA1/DA2, CPR, DECRQM and kitty-keyboard replies", () => {
+    for (const reply of ["[?1;2c", "[>0;276;0c", "[24;80R", "[?2004;2$y", "[?0u"]) {
+      expect(stripStaleTerminalReplies(reply)).toBe("");
+    }
+  });
+
+  it("drops OSC colour replies (BEL and ST terminated) and XTVERSION", () => {
+    expect(stripStaleTerminalReplies("]11;rgb:0000/0000/0000\x07")).toBe("");
+    expect(stripStaleTerminalReplies("]10;rgb:ffff/ffff/ffff\\")).toBe("");
+    expect(stripStaleTerminalReplies("P>|xterm.js(5.5.0)\\")).toBe("");
+  });
+
+  it("keeps real typing, arrows, Delete and Alt+key untouched", () => {
+    for (const key of ["a", "ls -la", "\r", "[A", "[D", "\x7f", "[3~", "b"]) {
+      expect(stripStaleTerminalReplies(key)).toBe(key);
+    }
+  });
+
+  it("removes only the reply when mixed with typed text", () => {
+    expect(stripStaleTerminalReplies("x[?1;2cy")).toBe("xy");
   });
 });
