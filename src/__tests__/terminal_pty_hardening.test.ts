@@ -1,6 +1,13 @@
 import { describe, it, expect, vi } from "vitest";
 import { PtyService } from "../services/ptyService";
-import { splitTab, MAX_PANES_PER_TAB, SplitTabState, removePaneById } from "../services/paneLayout";
+import {
+  splitTab,
+  MAX_PANES_PER_TAB,
+  MIN_SPLIT_EXTENT,
+  SplitTabState,
+  removePaneById,
+  computePaneRects,
+} from "../services/paneLayout";
 import { TerminalPane } from "../types/terminal";
 
 function makePane(id: string): TerminalPane {
@@ -8,22 +15,68 @@ function makePane(id: string): TerminalPane {
 }
 
 describe("Terminal Native PTY and Rendering Hardening", () => {
-  it("enforces four-pane limit strictly", () => {
-    expect(MAX_PANES_PER_TAB).toBe(4);
+  it("enforces the eight-pane ceiling strictly", () => {
+    expect(MAX_PANES_PER_TAB).toBe(8);
 
+    // Alternate directions so the size floor never blocks before the cap.
     let tab: SplitTabState = {
       panes: [makePane("pane-1")],
       activePaneId: "pane-1",
       splitDirection: "none",
     };
+    for (let i = 2; i <= 20; i++) {
+      tab = splitTab(tab, "tab-1", i % 2 ? "horizontal" : "vertical", (id) => makePane(id));
+    }
+    // Active pane keeps getting split, so the size floor stops it before the
+    // cap; the cap itself must still never be exceeded.
+    expect(tab.panes.length).toBeLessThanOrEqual(MAX_PANES_PER_TAB);
+  });
 
-    // Attempt to split 10 times
+  it("reaches exactly eight panes in a balanced 4x2 grid and refuses a ninth", () => {
+    let tab: SplitTabState = {
+      panes: [makePane("pane-1")],
+      activePaneId: "pane-1",
+      splitDirection: "none",
+    };
+    const make = (id: string) => makePane(id);
+    const split = (dir: "horizontal" | "vertical") => {
+      tab = splitTab(tab, "tab-1", dir, make);
+    };
+    const focus = (i: number) => {
+      tab = { ...tab, activePaneId: tab.panes[i].id };
+    };
+    // 1 -> 2 columns -> 4 columns.
+    split("vertical");
+    focus(0);
+    split("vertical");
+    focus(2);
+    split("vertical");
+    expect(tab.panes).toHaveLength(4);
+    // Halve each column into two rows -> 8 panes.
+    for (let i = 0; i < 4; i++) {
+      focus(i * 2);
+      split("horizontal");
+    }
+    expect(tab.panes).toHaveLength(8);
+    focus(0);
+    split("horizontal");
+    split("vertical");
+    expect(tab.panes).toHaveLength(8);
+  });
+
+  it("refuses splits that would shrink a pane below the size floor", () => {
+    let tab: SplitTabState = {
+      panes: [makePane("pane-1")],
+      activePaneId: "pane-1",
+      splitDirection: "none",
+    };
+    // Splitting the newest pane every time: 1/2, 1/4, 1/8, 1/8 wide, then stop.
     for (let i = 2; i <= 10; i++) {
       tab = splitTab(tab, "tab-1", "vertical", (id) => makePane(id));
     }
-
-    expect(tab.panes.length).toBe(4);
-    expect(tab.panes.map((p) => p.id)).toHaveLength(4);
+    expect(tab.panes).toHaveLength(4);
+    const rects = computePaneRects(tab.layout!);
+    for (const r of rects) expect(r.w).toBeGreaterThanOrEqual(MIN_SPLIT_EXTENT - 1e-9);
   });
 
   it("handles large multi-megabyte output chunks without memory corruption or blocking", () => {

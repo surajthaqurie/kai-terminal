@@ -11,6 +11,7 @@
  */
 
 import type { PaneLayoutNode } from "../types/terminal";
+import { MAX_PANES_PER_TAB } from "./paneLayout";
 
 export interface PersistedPaneV2 {
   shellPath?: string;
@@ -58,7 +59,6 @@ export const LEGACY_WORKSPACES_KEY = "terminal_workspaces_v1";
 export const LEGACY_LAYOUT_KEY = "terminal_tab_layout_v1";
 const MAX_WORKSPACES = 20;
 const MAX_TABS_PER_WORKSPACE = 10;
-const MAX_PANES = 4;
 
 function safeTitle(t: unknown): string {
   return typeof t === "string" && t.trim() ? t.slice(0, 80) : "Terminal";
@@ -81,7 +81,7 @@ function safeColor(v: unknown): string | undefined {
 export function sanitizeTab(raw: unknown): PersistedTabV2 | null {
   if (typeof raw !== "object" || raw === null) return null;
   const r = raw as Record<string, unknown>;
-  const panesRaw = Array.isArray(r.panes) ? r.panes.slice(0, MAX_PANES) : [];
+  const panesRaw = Array.isArray(r.panes) ? r.panes.slice(0, MAX_PANES_PER_TAB) : [];
   const panes: PersistedPaneV2[] | undefined =
     panesRaw.length > 0
       ? panesRaw

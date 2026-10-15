@@ -15,7 +15,7 @@ import {
   saveWorkspaces,
   validateWorkspaceDir,
 } from "../services/workspaces";
-import { resolveTabLayout } from "../services/paneLayout";
+import { resolveTabLayout, MAX_PANES_PER_TAB } from "../services/paneLayout";
 import { SettingsService, DEFAULT_SETTINGS } from "../services/settingsService";
 import {
   findConflicts,
@@ -155,6 +155,18 @@ describe("settings + shortcuts preservation regressions", () => {
       (normalized.keybindings as unknown as Record<string, unknown>).bogusAction
     ).toBeUndefined();
     expect(parseBinding(normalized.keybindings.newTab)).not.toBeNull();
+  });
+
+  it("persists up to the pane ceiling and truncates anything beyond it", () => {
+    const mk = (n: number) => ({
+      title: "Wide",
+      panes: Array.from({ length: n }, (_, i) => ({ cwd: `/work/${i}` })),
+    });
+    expect(sanitizeTab(mk(MAX_PANES_PER_TAB))?.panes).toHaveLength(MAX_PANES_PER_TAB);
+    // A tampered/corrupt payload with too many panes is clipped, not trusted.
+    const clipped = sanitizeTab(mk(MAX_PANES_PER_TAB + 4));
+    expect(clipped?.panes).toHaveLength(MAX_PANES_PER_TAB);
+    expect(clipped?.panes?.[MAX_PANES_PER_TAB - 1].cwd).toBe(`/work/${MAX_PANES_PER_TAB - 1}`);
   });
 
   it("keeps conflict detection and platform modifier behavior", () => {

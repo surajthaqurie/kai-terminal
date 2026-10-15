@@ -65,6 +65,7 @@ import {
   computePaneRects,
   computeSplitDividers,
   resolveTabLayout,
+  MAX_PANES_PER_TAB,
   PaneRect,
   SplitDividerGeometry,
 } from "./services/paneLayout";
@@ -212,7 +213,7 @@ function createDefaultTab(
   const tabId = newTabId();
   const panes: TerminalPane[] =
     persisted?.panes && persisted.panes.length > 1
-      ? persisted.panes.slice(0, 4).map((p, i) => ({
+      ? persisted.panes.slice(0, MAX_PANES_PER_TAB).map((p, i) => ({
           id: `${tabId}-p${i + 1}`,
           shellPath: p.shellPath ?? shellPath,
           cwd: p.cwd ?? cwd,

@@ -5,7 +5,18 @@ import {
   TerminalPane,
 } from "../types/terminal";
 
-export const MAX_PANES_PER_TAB = 4;
+/**
+ * Hard ceiling on panes per tab (a 4x2 / 2x4 grid is still readable on a
+ * 1080p window). Single source of truth: persistence and restore import this.
+ */
+export const MAX_PANES_PER_TAB = 8;
+/**
+ * Smallest share of the pane area (per axis) a split may leave a pane.
+ * Repeatedly splitting the newest pane halves it every time; without this
+ * floor 8 panes could shrink to 1/128 of the window and become unusable.
+ * 1/8 matches the narrowest pane the previous 4-pane cap could ever produce.
+ */
+export const MIN_SPLIT_EXTENT = 0.125;
 export const MIN_PANE_FRACTION = 0.2;
 export const MAX_PANE_FRACTION = 0.8;
 
@@ -41,7 +52,9 @@ export function activePaneIndex(tab: SplitTabState): number {
  * the active pane (not appended at the end), and focus moves to it.
  *
  * Sets the layout split direction to the requested direction (horizontal or vertical)
- * and supports arbitrary N splits up to MAX_PANES_PER_TAB.
+ * and supports arbitrary N splits up to MAX_PANES_PER_TAB. A split that would
+ * leave the active pane narrower/shorter than MIN_SPLIT_EXTENT of the pane
+ * area is refused (tab returned unchanged), same as hitting the pane cap.
  *
  * NOTE: legacy flat helper kept for compat/tests. New UI should prefer the
  * nested tree helpers below (`createPaneLayout` / `splitLayoutNode`), which
@@ -55,20 +68,18 @@ export function splitTab(
 ): SplitTabState {
   if (tab.panes.length >= MAX_PANES_PER_TAB) return tab;
   if (direction !== "horizontal" && direction !== "vertical") return tab;
+  const baseLayout =
+    tab.layout ??
+    layoutFromFlat(
+      tab.panes.map((p) => p.id),
+      tab.splitDirection
+    );
+  if (!paneFitsSplit(baseLayout, tab.activePaneId, direction)) return tab;
   const id = nextPaneId(tabId, tab.panes);
   const pane = makePane(id);
   const at = activePaneIndex(tab);
   const panes = [...tab.panes.slice(0, at + 1), pane, ...tab.panes.slice(at + 1)];
-  const layout = splitLayoutNode(
-    tab.layout ??
-      layoutFromFlat(
-        tab.panes.map((p) => p.id),
-        tab.splitDirection
-      ),
-    tab.activePaneId,
-    direction,
-    id
-  );
+  const layout = splitLayoutNode(baseLayout, tab.activePaneId, direction, id);
   return {
     panes,
     activePaneId: id,
@@ -353,4 +364,21 @@ export function resolveTabLayout(
   }
   if (paneIds.length === 1) return createPaneLayout(paneIds[0]);
   return layoutFromFlat(paneIds, splitDirection === "none" ? "vertical" : splitDirection);
+}
+
+/**
+ * True when splitting `paneId` along `direction` (halving it) leaves both
+ * halves at least MIN_SPLIT_EXTENT of the pane area on that axis. Unknown
+ * pane ids are not blocked here (the split itself is a no-op for them).
+ * Geometry-only; a small epsilon absorbs float error from repeated halving.
+ */
+export function paneFitsSplit(
+  layout: PaneLayoutNode,
+  paneId: string,
+  direction: PaneSplitDirection
+): boolean {
+  const rect = computePaneRects(layout).find((r) => r.paneId === paneId);
+  if (!rect) return true;
+  const extent = direction === "vertical" ? rect.w : rect.h;
+  return extent / 2 >= MIN_SPLIT_EXTENT - 1e-9;
 }
