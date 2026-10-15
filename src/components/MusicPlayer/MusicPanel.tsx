@@ -1,4 +1,4 @@
-import { FC, useEffect, useMemo, useState } from "react";
+import { FC, useEffect, useMemo, useRef, useState } from "react";
 import {
   Search,
   Shuffle,
@@ -12,8 +12,12 @@ import {
 } from "lucide-react";
 import {
   MusicTrack,
+  YOUTUBE_EMBED_ORIGIN,
+  YOUTUBE_LISTENING_HANDSHAKE,
   embedSrcForTrack,
   loadQueue,
+  parseYouTubePlayerMessage,
+  progressPercent,
   resolveInputToTrack,
   saveQueue,
 } from "../../services/musicService";
@@ -23,6 +27,8 @@ interface MusicPanelProps {
   onClose: () => void;
   onTrackChange?: (track: MusicTrack | null, playing: boolean) => void;
   onMutedChange?: (muted: boolean) => void;
+  /** Whole-number playback percentage (0-100), reported only when it changes. */
+  onProgressChange?: (percent: number) => void;
 }
 
 /**
@@ -35,6 +41,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
   onClose,
   onTrackChange,
   onMutedChange,
+  onProgressChange,
 }) => {
   const [query, setQuery] = useState("");
   const [queue, setQueue] = useState<MusicTrack[]>(() => loadQueue());
@@ -45,6 +52,8 @@ export const MusicPanel: FC<MusicPanelProps> = ({
   const [shuffle, setShuffle] = useState(false);
   const [queueOpen, setQueueOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const frameRef = useRef<HTMLIFrameElement | null>(null);
+  const lastPercentRef = useRef(0);
 
   const active = useMemo(() => queue.find((t) => t.id === activeId) ?? null, [queue, activeId]);
   const src = useMemo(() => {
@@ -64,6 +73,55 @@ export const MusicPanel: FC<MusicPanelProps> = ({
   useEffect(() => {
     onMutedChange?.(muted);
   }, [muted, onMutedChange]);
+
+  // Real playback position: the embed (enablejsapi=1) posts currentTime /
+  // duration once it receives the "listening" handshake. Only messages from
+  // our own iframe window at the YouTube origin are trusted.
+  useEffect(() => {
+    const report = (percent: number) => {
+      if (percent === lastPercentRef.current) return;
+      lastPercentRef.current = percent;
+      onProgressChange?.(percent);
+    };
+    if (!src) {
+      report(0);
+      return;
+    }
+    let received = false;
+    let tries = 0;
+    const handshake = () => {
+      frameRef.current?.contentWindow?.postMessage(
+        YOUTUBE_LISTENING_HANDSHAKE,
+        YOUTUBE_EMBED_ORIGIN
+      );
+    };
+    const onMessage = (e: MessageEvent) => {
+      if (e.origin !== YOUTUBE_EMBED_ORIGIN) return;
+      if (!frameRef.current || e.source !== frameRef.current.contentWindow) return;
+      const t = parseYouTubePlayerMessage(e.data);
+      if (!t) return;
+      received = true;
+      if (t.playerState === 0) {
+        report(100);
+      } else if (t.currentTime !== undefined && t.duration !== undefined) {
+        report(progressPercent(t.currentTime, t.duration));
+      }
+    };
+    window.addEventListener("message", onMessage);
+    // The embed may not be listening yet at iframe load; retry briefly.
+    const timer = window.setInterval(() => {
+      if (received || ++tries > 20) {
+        window.clearInterval(timer);
+        return;
+      }
+      handshake();
+    }, 500);
+    return () => {
+      window.removeEventListener("message", onMessage);
+      window.clearInterval(timer);
+      report(0);
+    };
+  }, [src, onProgressChange]);
 
   // Footer + global shortcuts drive the panel via window events so the
   // footer works while the drawer is closed (panel stays mounted).
@@ -165,6 +223,13 @@ export const MusicPanel: FC<MusicPanelProps> = ({
         {src ? (
           <iframe
             key={src}
+            ref={frameRef}
+            onLoad={() =>
+              frameRef.current?.contentWindow?.postMessage(
+                YOUTUBE_LISTENING_HANDSHAKE,
+                YOUTUBE_EMBED_ORIGIN
+              )
+            }
             className="music-video"
             src={src}
             title={active?.title ?? "YouTube player"}

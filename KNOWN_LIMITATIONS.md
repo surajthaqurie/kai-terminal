@@ -8,14 +8,20 @@ This document lists what remains open (section 0), the platform boundaries and i
 
 Last reviewed 2026-10-15. Everything below is still true today; items fixed in code or tooling have been removed from this file.
 
-### 0.1 Open and fixable (not done yet)
+### 0.1 Open and fixable
+
+**A. Needs a code/config change**
 
 | Item | Why it is open | What closes it |
 | :--- | :--- | :--- |
-| `MIN_SUPPORTED_VERSIONS` is empty (§1.6) | The `unsupported_version` gate is implemented, but no vendor-documented minimum version has been established for any catalogued agent | One table entry per agent once a vendor-documented minimum exists |
-| Major dependency upgrades not applied (§4.1) | React 19, Vite 8, xterm 6, Vitest 5, TypeScript 7, etc. are intentionally deferred; an in-range `npm update` was reverted for lockfile churn | A dedicated, separately tested upgrade pass |
+| `MIN_SUPPORTED_VERSIONS` is empty (§1.6) | The `unsupported_version` gate is implemented, but no vendor-documented minimum version has been established for any catalogued agent | One table entry per agent (`src-tauri/src/ai_cli.rs`) once a vendor-documented minimum exists |
+| Snap and Flatpak are not built (§4.2) | Only manifest templates exist in `packaging/` (the snap lacks Node/Rust build packages; neither is built or verified by any workflow) | Complete the manifests, then add build + verify jobs per format on a Linux runner |
+
+**B. Code is in place; only a CI / release run can confirm it**
+
+| Item | Why it is open | What closes it |
+| :--- | :--- | :--- |
 | Windows ARM64, macOS Intel and Linux `.rpm` are unconfirmed (§4.2) | Configured in `ci.yml` + `release.yml` on native runners, but no CI run or tagged release has produced them yet | First green CI run and tagged release |
-| Snap and Flatpak are not built (§4.2) | Only manifest templates exist in `packaging/` | Add build + verify jobs per format |
 | Linux/macOS not re-run locally for this pass | New PTY kill tests and the graph watcher were exercised on Windows only | CI matrix run (configured) |
 
 ### 0.2 Open by design or OS limit (not fixable)
@@ -33,7 +39,6 @@ Last reviewed 2026-10-15. Everything below is still true today; items fixed in c
 - **WSL has no hosted CI runner:** verification is manual-only (§4.2).
 - **Pure-MCP clients** must follow writes with a graph read or `kai_sync_graph`, unless the opt-in `--watch` watcher is on (§5.4).
 - **Music player needs network + OS media codecs:** the optional YouTube embed streams only (nothing is downloaded); plain-text search uses the no-API-key `listType=search` embed, so results match YouTube search ranking, not a local index (by design).
-- **Music progress is display-only:** the footer/panel progress reflects load state, not exact playback position (no YouTube IFrame API wiring yet).
 
 ---
 
@@ -131,10 +136,10 @@ Environment: Windows 11 (win32/x64), Node v24.21.0, npm 11.19.0, git 2.43.0.wind
 
 - `npm run typecheck` (`tsc --noEmit`): PASS, clean.
 - `npm run format:check` (Prettier): PASS, all matched files conform.
-- `npm run test` (full Vitest): 51 files passed, 578 tests passed, 9 skipped (587 total). The skips are the symlink-dependent tests: Windows without Developer Mode/elevation refuses `symlink` (`EPERM`), and the shared `symlinkOrSkip` helper (`src/__tests__/helpers/symlink.ts`) now reports them as explicit Vitest skips with a reason instead of silently passing. Enable Windows Developer Mode (or run elevated) to execute them; only privilege errors skip, any other error fails the test.
+- `npm run test` (full Vitest): 52 files passed, 583 tests passed, 9 skipped (592 total). The skips are the symlink-dependent tests: Windows without Developer Mode/elevation refuses `symlink` (`EPERM`), and the shared `symlinkOrSkip` helper (`src/__tests__/helpers/symlink.ts`) now reports them as explicit Vitest skips with a reason instead of silently passing. Enable Windows Developer Mode (or run elevated) to execute them; only privilege errors skip, any other error fails the test.
 - Security / workspace / git subset (9 files, 102 tests): PASS — `audit_regression` (18), `mcp_security` (29), `audit_production_security` (11), `unregister` (16), `hardening` (5), `workspaces` (7), `workspaceRestore` (8), `gitCache` (3), `gitIntegration` (5).
 - Performance benchmarks: PASS — `performance_benchmarks.test.ts` + `perf_step9_regression.test.ts`, 14/14 (small 15 files: 56 ms cold / 53 ms incremental / 39.75 ms retrieval / 36 KB index; medium 100 files: 181/167/21.61 ms/233 KB; large 400 files: 673/591/17.38 ms/936 KB; 20 concurrent queries 315–405 ms; heap 21–28 MB). Step 9 matrix (`docs/PERF_STEP9.md`): only reproducible wins claimed are terminal-output buffer (~1800x vs old O(n²) path on 10 MB flood), `truncateToTokenBudget` 2.7x, `classifyTask` 2.8x, large-symbol retrieval 7.8x under stress caps; everything else recorded as noise / deliberately left alone.
-- `npm audit --omit=dev --audit-level=high`: PASS, 0 vulnerabilities. `npm outdated` notes newer majors exist (React 19, Vite 8, xterm 6, etc.) — intentionally NOT upgraded in this audit.
+- `npm audit --omit=dev --audit-level=high`: PASS, 0 vulnerabilities. Major upgrades (React 19, Vite 8, xterm 6, Vitest 5, TypeScript 7) are applied.
 - CLI smoke on built bundle (`npm run build:cli` → `dist/cli/index.js` 154.33 kB): PASS — `kai --version` → `kai v0.1.3`; `--help`, `config list`, `code . --no-launch` (191 files / 2178 symbols indexed), `status .` (fresh/ready), `cost .` (~476585 est. tokens, 4000 budget, storage outside repo), `query "Explain PTY lifecycle" .` (renders with omissions + `isEstimate` footer), `bench .` (28 configs, 4 tiers), `mcp .` stdio `initialize` → `{"protocolVersion":"2024-11-05","serverInfo":{"name":"kai-mcp-server","version":"0.1.3"}}`, `doctor` (reports missing desktop binary honestly).
 - Rust: `cargo fmt --check`, `cargo clippy --no-default-features --all-targets -D warnings`, and the new `test_15` / `test_15b` live kill tests pass locally on Windows. The rest of `cargo test` (lib + real PTY) is verified by CI: `.github/workflows/ci.yml` runs it natively per matrix OS (PTY on the same runner), and `release.yml` gates bundles on the same checks. The test counts quoted in sections 1.1–1.8 are historical and were not re-counted here.
 - Desktop installers (`.deb`/`.AppImage`/`.exe`/`.msi`/`.dmg`): not built locally (no Rust/Tauri toolchain); built natively per OS by `release.yml` and published with each GitHub release. `src-tauri/tauri.conf.json` validates (`productName kai`, `identifier com.kai.terminal`, `frontendDist ../dist`, `bundle.active true`, CSP includes `connect-src`, `ipc:`, `http://ipc.localhost`, `img-src data:`); capabilities remain least-privilege (`core:default`, main window only).

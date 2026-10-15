@@ -310,6 +310,7 @@ export function App() {
   const [isMusicOpen, setIsMusicOpen] = useState<boolean>(false);
   const [musicTitle, setMusicTitle] = useState<string | null>(null);
   const [musicPlaying, setMusicPlaying] = useState<boolean>(false);
+  const [musicProgress, setMusicProgress] = useState<number>(0);
   const [musicMuted, setMusicMuted] = useState<boolean>(() =>
     Boolean(SettingsService.loadSettings().musicStartMuted)
   );
@@ -2493,6 +2494,7 @@ export function App() {
                   setMusicPlaying(playing);
                 }}
                 onMutedChange={(m) => setMusicMuted(m)}
+                onProgressChange={setMusicProgress}
               />
             </div>
           </Suspense>
@@ -2575,7 +2577,12 @@ export function App() {
         mode={modeDisplay}
         music={
           userSettings.showMusicPlayer
-            ? { title: musicTitle, playing: musicPlaying, muted: musicMuted, progress: 0 }
+            ? {
+                title: musicTitle,
+                playing: musicPlaying,
+                muted: musicMuted,
+                progress: musicProgress,
+              }
             : null
         }
         onToggleMusicPanel={handleToggleMusicPanel}

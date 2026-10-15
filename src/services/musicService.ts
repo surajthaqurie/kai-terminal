@@ -69,9 +69,74 @@ export function resolveInputToTrack(input: string): MusicTrack | null {
 /** Embed src for a track. Search tracks use listType=search (no API key). */
 export function embedSrcForTrack(track: MusicTrack): string {
   if (track.videoId) {
-    return `https://www.youtube.com/embed/${track.videoId}?autoplay=1&rel=0`;
+    return `https://www.youtube.com/embed/${track.videoId}?autoplay=1&rel=0&enablejsapi=1`;
   }
-  return `https://www.youtube.com/embed?listType=search&list=${encodeURIComponent(track.query)}&autoplay=1`;
+  return `https://www.youtube.com/embed?listType=search&list=${encodeURIComponent(track.query)}&autoplay=1&enablejsapi=1`;
+}
+
+/** Only messages from this origin are trusted as player telemetry. */
+export const YOUTUBE_EMBED_ORIGIN = "https://www.youtube.com";
+
+/**
+ * Handshake an embed with `enablejsapi=1` waits for before it starts posting
+ * `infoDelivery` (currentTime / duration / playerState) messages. This is the
+ * same protocol the official IFrame API script uses, without loading remote
+ * script (CSP keeps `script-src 'self'`).
+ */
+export const YOUTUBE_LISTENING_HANDSHAKE = JSON.stringify({
+  event: "listening",
+  id: 1,
+  channel: "widget",
+});
+
+export interface YouTubePlayerTelemetry {
+  currentTime?: number;
+  duration?: number;
+  /** -1 unstarted, 0 ended, 1 playing, 2 paused, 3 buffering, 5 cued */
+  playerState?: number;
+}
+
+function finiteNumber(v: unknown): number | undefined {
+  return typeof v === "number" && Number.isFinite(v) ? v : undefined;
+}
+
+/**
+ * Parse a postMessage payload from a YouTube embed. Returns null for anything
+ * that is not player telemetry (other origins' payloads, malformed JSON,
+ * unrelated events), so callers can ignore it safely.
+ */
+export function parseYouTubePlayerMessage(data: unknown): YouTubePlayerTelemetry | null {
+  if (typeof data !== "string" || data.length > 8192) return null;
+  let msg: unknown;
+  try {
+    msg = JSON.parse(data);
+  } catch {
+    return null;
+  }
+  if (!msg || typeof msg !== "object") return null;
+  const { event, info } = msg as { event?: unknown; info?: unknown };
+  if (event === "onStateChange") {
+    const playerState = finiteNumber(info);
+    return playerState !== undefined ? { playerState } : null;
+  }
+  if (event === "infoDelivery" && info && typeof info === "object") {
+    const i = info as Record<string, unknown>;
+    const out: YouTubePlayerTelemetry = {};
+    const currentTime = finiteNumber(i.currentTime);
+    const duration = finiteNumber(i.duration);
+    const playerState = finiteNumber(i.playerState);
+    if (currentTime !== undefined) out.currentTime = currentTime;
+    if (duration !== undefined) out.duration = duration;
+    if (playerState !== undefined) out.playerState = playerState;
+    return Object.keys(out).length > 0 ? out : null;
+  }
+  return null;
+}
+
+/** Whole-number playback percentage (0-100); 0 when the duration is unknown. */
+export function progressPercent(currentTime: number, duration: number): number {
+  if (!(duration > 0) || !(currentTime > 0)) return 0;
+  return Math.max(0, Math.min(100, Math.round((currentTime / duration) * 100)));
 }
 
 export function thumbnailForTrack(track: MusicTrack): string | null {
