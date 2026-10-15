@@ -284,9 +284,19 @@ describe("external-agent process lifecycle outcomes", () => {
     expect(r.timedOut).toBe(true);
     expect(r.treeKillAttempted).toBe(true);
     expect(r.descendantsMaySurvive).toBe(true);
-    expect(r.signal).toBe("SIGKILL");
+    if (process.platform === "win32") {
+      // Windows has no POSIX signals: taskkill /T /F reaps the child
+      // without a signal code in the `close` event, and it kills
+      // immediately (no SIGTERM-ignore grace period to escalate past).
+      expect(r.signal).toBeNull();
+      expect(r.exitCode).not.toBeNull();
+    } else {
+      expect(r.signal).toBe("SIGKILL");
+    }
     const elapsed = Date.now() - start;
-    expect(elapsed).toBeGreaterThanOrEqual(2000);
+    // POSIX waits out the 2000ms SIGTERM->SIGKILL escalation; Windows
+    // taskkill lands right after the 700ms timeout.
+    expect(elapsed).toBeGreaterThanOrEqual(process.platform === "win32" ? 500 : 2000);
     expect(elapsed).toBeLessThan(20000);
   });
 

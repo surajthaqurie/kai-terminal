@@ -506,6 +506,9 @@ export const EXTERNAL_COMMANDS = new Set([
   "list",
   "remove",
   "unregister",
+  // Hidden compat for `kai list -c` (already external): keeps the CI smoke
+  // probe `kai config list` working outside Kai Terminal.
+  "config",
   "session",
   "help",
   "--help",
