@@ -965,9 +965,11 @@ fn test_15_close_pty_kills_real_os_processes() {
         .write_to_pty(&session.id, cmd)
         .expect("Failed to start child process");
 
+    // Cold PowerShell start-up on the emulated windows-aarch64 runner can take
+    // well over 20s, so give the child a generous window to report its PID.
     let start = Instant::now();
     let mut child_pid = None;
-    while start.elapsed() < Duration::from_secs(20) {
+    while start.elapsed() < Duration::from_secs(90) {
         child_pid = parse_child_pid(&emitter.get_text());
         if child_pid.is_some() {
             break;
