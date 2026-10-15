@@ -111,4 +111,40 @@ describe("MusicPanel modal implementation", () => {
     closeBtn.click();
     expect(onClose).toHaveBeenCalledTimes(1);
   });
+
+  it("renders random video button and preset chips, and clicking random video plays it", async () => {
+    const onTrackChange = vi.fn();
+    await act(async () => {
+      root.render(
+        <MusicPanel
+          startMuted={false}
+          open={true}
+          onClose={vi.fn()}
+          onTrackChange={onTrackChange}
+        />
+      );
+    });
+
+    const randomBtn = container.querySelector(".music-preset-btn") as HTMLButtonElement;
+    expect(randomBtn).not.toBeNull();
+    expect(randomBtn.textContent).toContain("Play Random Video");
+
+    const chips = container.querySelectorAll(".music-chip");
+    expect(chips.length).toBeGreaterThan(0);
+
+    // Clicking random video should start playback and mount the YouTube iframe
+    await act(async () => {
+      randomBtn.click();
+    });
+
+    expect(onTrackChange).toHaveBeenCalledWith(
+      expect.objectContaining({ videoId: expect.any(String) }),
+      true
+    );
+
+    const iframe = container.querySelector("iframe.music-video") as HTMLIFrameElement;
+    expect(iframe).not.toBeNull();
+    expect(iframe.src).toContain("youtube-nocookie.com/embed/");
+    expect(iframe.src).toContain("autoplay=1");
+  });
 });

@@ -57,10 +57,42 @@ export function isYouTubeUrl(input: string): boolean {
   return s.includes("youtube.com/") || s.includes("youtu.be/") || s.includes("music.youtube.com");
 }
 
+export interface MusicPreset {
+  id: string;
+  title: string;
+  videoId: string;
+}
+
+export const CURATED_PRESETS: MusicPreset[] = [
+  { id: "lofi-girl", title: "Lofi Hip Hop Radio", videoId: "jfKfPfyJRdk" },
+  { id: "synthwave", title: "Synthwave Radio", videoId: "4xDzrJKXOOY" },
+  { id: "chillhop", title: "Chillhop Radio", videoId: "5yx6BWlEVcY" },
+  { id: "coding-focus", title: "Deep Focus Beats", videoId: "e3L1I72K260" },
+];
+
+export function getRandomPreset(): MusicTrack {
+  const item = CURATED_PRESETS[Math.floor(Math.random() * CURATED_PRESETS.length)];
+  return {
+    title: item.title,
+    videoId: item.videoId,
+    playlistId: null,
+    query: item.videoId,
+  };
+}
+
 /** Resolve user input into a playable track (link -> direct, text -> search). */
 export function resolveInputToTrack(input: string): MusicTrack | null {
   const raw = input.trim().slice(0, 300);
   if (!raw) return null;
+  const lower = raw.toLowerCase();
+  if (
+    lower === "random" ||
+    lower === "random video" ||
+    lower === "random music" ||
+    lower === "random song"
+  ) {
+    return getRandomPreset();
+  }
   const videoId = extractVideoId(raw);
   const playlistId = extractPlaylistId(raw);
   if (videoId || playlistId) {

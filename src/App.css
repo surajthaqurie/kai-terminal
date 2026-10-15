@@ -3781,9 +3781,74 @@ select.modal-input {
   color: var(--text-tertiary);
   font-size: var(--text-xs);
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 7px;
+  padding: 8px 10px;
+  text-align: center;
   transition: height 0.2s ease;
+}
+
+.music-empty-title {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.music-presets {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+}
+
+.music-preset-btn {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 4px 12px;
+  border-radius: 12px;
+  background: var(--bg-surface-elevated, #23272e);
+  border: 1px solid var(--border-default, #3b4252);
+  color: var(--text-primary);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.music-preset-btn:hover {
+  background: var(--bg-hover, #2e3440);
+  border-color: var(--color-primary, #6366f1);
+}
+
+.music-preset-chips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 5px;
+}
+
+.music-chip {
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 10px;
+  background: var(--bg-surface, #1e2227);
+  border: 1px solid var(--border-subtle, #2c313a);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+
+.music-chip:hover {
+  color: var(--text-primary);
+  border-color: var(--border-default, #3b4252);
+  background: var(--bg-surface-elevated, #23272e);
 }
 .music-now h3 {
   font-size: var(--text-xs);

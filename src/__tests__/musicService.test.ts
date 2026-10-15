@@ -138,3 +138,17 @@ describe("legacy queue cleanup", () => {
     expect(localStorage.getItem("kai_music_queue_v1")).toBeNull();
   });
 });
+
+describe("curated presets and random playback", () => {
+  it("resolves 'random' and 'random video' to a valid track with a playable videoId", () => {
+    const t1 = resolveInputToTrack("random");
+    expect(t1).not.toBeNull();
+    expect(t1?.videoId).toMatch(/^[\w-]{11}$/);
+    expect(t1?.playlistId).toBeNull();
+    expect(embedSrcForTrack(t1!)).toContain("youtube-nocookie.com/embed/");
+
+    const t2 = resolveInputToTrack("random video");
+    expect(t2).not.toBeNull();
+    expect(t2?.videoId).toMatch(/^[\w-]{11}$/);
+  });
+});

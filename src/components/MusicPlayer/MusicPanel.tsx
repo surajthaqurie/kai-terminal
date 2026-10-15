@@ -23,8 +23,11 @@ import {
 import { isTypingTarget } from "../../services/shortcuts";
 import { openExternalUrl } from "../../services/updateService";
 import {
+  CURATED_PRESETS,
+  MusicPreset,
   MusicTrack,
   isYouTubeEmbedOrigin,
+  getRandomPreset,
   YOUTUBE_LISTENING_HANDSHAKE,
   YouTubeCommand,
   clearLegacyQueue,
@@ -342,6 +345,25 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     setQuery("");
   };
 
+  const playPreset = (preset: MusicPreset) => {
+    setNotice(null);
+    setTrack({
+      title: preset.title,
+      videoId: preset.videoId,
+      playlistId: null,
+      query: preset.videoId,
+    });
+    setPlaying(true);
+    setQuery("");
+  };
+
+  const playRandom = () => {
+    setNotice(null);
+    setTrack(getRandomPreset());
+    setPlaying(true);
+    setQuery("");
+  };
+
   return (
     <div
       id="kai-music-modal"
@@ -459,7 +481,33 @@ export const MusicPanel: FC<MusicPanelProps> = ({
               <small>Paste a video or playlist link to play it here.</small>
             </div>
           ) : (
-            <div className="music-video-empty">Paste a YouTube link to start</div>
+            <div className="music-video-empty">
+              <span className="music-empty-title">Paste a YouTube link or play:</span>
+              <div className="music-presets">
+                <button
+                  type="button"
+                  className="music-preset-btn"
+                  onClick={playRandom}
+                  title="Play a random curated video"
+                  aria-label="Play random video"
+                >
+                  🎲 Play Random Video
+                </button>
+                <div className="music-preset-chips">
+                  {CURATED_PRESETS.map((p) => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      className="music-chip"
+                      onClick={() => playPreset(p)}
+                      title={`Play ${p.title}`}
+                    >
+                      {p.title.replace(" Radio", "").replace(" Beats", "")}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
           )}
           <h3 title={track?.title}>{track?.title ?? "Nothing playing"}</h3>
           <div className="music-controls">
