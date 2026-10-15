@@ -21,6 +21,16 @@ import {
   saveProjectIndex,
 } from "./registry";
 import { retrieveContext } from "./retrieval";
+import {
+  AGENT_FINISHED_MARKER,
+  TERMINAL_MODE_RESET_SEQ,
+  scanAgentFinishedTail,
+} from "../services/terminalModes";
+
+export { AGENT_FINISHED_MARKER, TERMINAL_MODE_RESET_SEQ, scanAgentFinishedTail };
+
+/** Alias kept for call-site readability (single shared implementation). */
+export const scanForAgentFinished = scanAgentFinishedTail;
 
 export type GraphFreshness = "fresh" | "stale" | "unindexed" | "unknown" | "refresh-failed";
 
@@ -1501,6 +1511,23 @@ export function needsShellForCommand(
  * here. Such outcomes set `descendantsMaySurvive` and callers must treat
  * freshness as point-in-time with a follow-up refresh (see `kai run`).
  */
+
+/**
+ * Emit {@link TERMINAL_MODE_RESET_SEQ} so a TUI that died without restoring
+ * terminal modes cannot keep injecting mouse/focus/paste input. Safe to
+ * call on every path (success, timeout, signal, abort): non-TTY stdout
+ * (piped/CI) is skipped so logs stay clean.
+ */
+export function resetTerminalModesAfterAgent(): void {
+  try {
+    const out = process.stdout;
+    if (!out || (out as unknown as { isTTY?: boolean }).isTTY !== true) return;
+    out.write(TERMINAL_MODE_RESET_SEQ);
+  } catch {
+    // Terminal restore is best-effort; never fail the task over it.
+  }
+}
+
 export function runExternalAgentCommand(
   command: string,
   args: string[],

@@ -18,7 +18,13 @@ import { ShellProfile, SessionStatus, UserSettings } from "../types/terminal";
 import { SettingsService, DEFAULT_SETTINGS } from "../services/settingsService";
 import { loadCommandHistory, recordCommand, saveCommandHistory } from "../services/autocomplete";
 import { TerminalOutputBuffer } from "../services/terminalOutputBuffer";
-import { lineLikelyChangesCwd, lineLikelyChangesCodeMode } from "../services/cwdCommand";
+import {
+  CD_PROBE_DELAYS_MS,
+  lineLikelyChangesCwd,
+  lineLikelyChangesCodeMode,
+} from "../services/cwdCommand";
+import { TERMINAL_MODE_RESET_SEQ, scanAgentFinishedTail } from "../services/terminalModes";
+import { shouldAutoResetModes, stripStuckInputReports } from "../services/terminalModes";
 // Search UI only mounts on first toggle (Ctrl+Shift+F), so it stays out of
 // the per-pane startup path.
 const SearchBar = lazy(() => import("./SearchBar").then((m) => ({ default: m.SearchBar })));
@@ -74,12 +80,30 @@ function detachGpuRenderer(slot: { current: WebglAddon | null }): void {
   }
 }
 
+// Terminal input-mode recovery (ghost-typing fix): the shared constants and
+// the chunk scanner live in src/services/terminalModes.ts (same bytes the CLI
+// emits on stdout after an agent run). Re-exported here for tests and callers.
+export {
+  AGENT_FINISHED_MARKER,
+  TERMINAL_MODE_RESET_SEQ,
+  scanAgentFinishedTail,
+  shouldAutoResetModes,
+  stripStuckInputReports,
+} from "../services/terminalModes";
+
 export interface TerminalViewRef {
   clear: () => void;
   copySelection: () => Promise<string>;
   pasteText: (text: string) => void;
   focus: () => void;
   toggleSearch: () => void;
+  /**
+   * Feed the DECSET mode-reset sequence to the emulator (output path).
+   * Recovery for "ghost typing": a dead TUI left mouse/focus/bracketed-
+   * paste reporting on, so every mouse move or window focus injects escape
+   * sequences the shell echoes as stray input. Screen-safe (modes only).
+   */
+  resetModes: () => void;
   /**
    * Re-fit the xterm viewport to its container and push the real cols/rows
    * to the backend PTY. Called when the OS window is restored / refocused /
@@ -227,6 +251,15 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
     // Tracks whether the initial PTY spawn has been scheduled, so tab
     // switches don't re-spawn a live session.
     const initialLaunchScheduledRef = useRef(false);
+    // Cross-chunk tail for AGENT_FINISHED_MARKER detection (the marker can
+    // straddle two PTY output events). Bounded to the marker length.
+    const agentFinishedTailRef = useRef("");
+    // Ghost-typing auto-reset policy state: consecutive stripped input
+    // reports on the normal buffer, plus whether the agent-finished marker
+    // proved the TUI is gone (immediate reset). Both reset on every PTY
+    // (re)spawn and whenever the alternate screen takes over (fresh TUI).
+    const stuckReportCountRef = useRef(0);
+    const agentFinishedSeenRef = useRef(false);
 
     useImperativeHandle(ref, () => ({
       clear: () => {
@@ -278,6 +311,13 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       focus: () => {
         xtermRef.current?.focus();
       },
+      resetModes: () => {
+        try {
+          xtermRef.current?.write(TERMINAL_MODE_RESET_SEQ);
+        } catch {
+          // Terminal disposed; nothing to reset.
+        }
+      },
       toggleSearch: () => {
         setIsSearchVisible((prev) => !prev);
       },
@@ -304,6 +344,20 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
 
       term.clear();
       onStatusRef.current?.("connecting");
+      // Fresh PTY, fresh input modes: the xterm instance is REUSED across
+      // respawns (Retry banner, crash recovery), so a previous TUI's stuck
+      // mouse/focus/bracketed-paste modes would otherwise survive into the
+      // new shell and ghost-type from the first mouse move. Screen-safe
+      // (modes only) and idempotent — also clears the stuck-report policy
+      // state so the new session starts unpenalized.
+      stuckReportCountRef.current = 0;
+      agentFinishedSeenRef.current = false;
+      agentFinishedTailRef.current = "";
+      try {
+        term.write(TERMINAL_MODE_RESET_SEQ);
+      } catch {
+        // Emulator gone; the fresh backend has no stuck modes to inherit.
+      }
 
       try {
         fitAddon.fit();
@@ -555,6 +609,45 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       const inputDisposable = term.onData((data) => {
         const backendId = backendPtyIdRef.current;
         if (backendId) {
+          // Ghost-typing filter: when a fullscreen TUI dies without
+          // restoring its DECSET modes, the emulator keeps translating
+          // every mouse move / focus change into SGR/X10/focus reports
+          // (the "[<35;..." garbage in the screenshot). A shell prompt on
+          // the NORMAL buffer never consumes those, so strip them before
+          // they reach the PTY. Fullscreen TUIs run on the ALTERNATE
+          // screen, where reports pass through untouched and mouse keeps
+          // working — entering it also clears the stuck-report tracking,
+          // so a fresh TUI start is never penalized for old leaks.
+          // The emulator-side reset is gentle (see shouldAutoResetModes):
+          // the first stray report is only dropped, so a TUI that enables
+          // mouse a beat before switching screens never loses its mouse
+          // from one unlucky pointer move during launch.
+          let forward = data;
+          try {
+            const onAlternate = term.buffer.active.type === "alternate";
+            if (onAlternate) {
+              stuckReportCountRef.current = 0;
+              agentFinishedSeenRef.current = false;
+            } else {
+              const stripped = stripStuckInputReports(data, false);
+              if (stripped.length !== data.length) {
+                forward = stripped;
+                stuckReportCountRef.current += 1;
+                if (
+                  shouldAutoResetModes(stuckReportCountRef.current, agentFinishedSeenRef.current)
+                ) {
+                  try {
+                    term.write(TERMINAL_MODE_RESET_SEQ);
+                  } catch {
+                    // Emulator gone; dropping the reports is enough.
+                  }
+                }
+              }
+            }
+          } catch {
+            forward = data;
+          }
+          if (!forward) return;
           // Peek the pending line BEFORE Enter commits/clears it: the
           // post-command cwd probe fires only for directory-changing lines.
           // Previously every Enter (even bare Enter or `ls`) paid 3 IPC
@@ -562,21 +655,24 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
           // input lag on Windows. Other lines rely on the OSC/focus/interval
           // backstops, which stay untouched.
           const submitted =
-            data.includes("\r") || data.includes("\n") ? `${lineBufferRef.current} ${data}` : "";
-          trackInputData(data);
-          ptyService.writeToPty(backendId, data).catch(() => {
+            forward.includes("\r") || forward.includes("\n")
+              ? `${lineBufferRef.current} ${forward}`
+              : "";
+          trackInputData(forward);
+          ptyService.writeToPty(backendId, forward).catch(() => {
             // Backend already reaped the session; status update arrives via pty-exit.
           });
           if (submitted && lineLikelyChangesCwd(submitted)) {
-            // Triple-tap: the shell's next prompt (OSC 9;9 / getPtyCwd
-            // truth) can land well after 250 ms on slow commands and
-            // heavy profiles, and a single early probe reads the pre-cd
-            // directory — the "footer never updates after cd" report.
-            // The extra probes are cheap (one IPC each, cd-gated) and
-            // converge on the post-cd truth.
-            setTimeout(checkLiveCwd, 250);
-            setTimeout(checkLiveCwd, 1000);
-            setTimeout(checkLiveCwd, 2500);
+            // Triple-tap: the shell's next prompt (OSC 7 / OSC 9;9 /
+            // getPtyCwd truth) can land well after 300 ms on slow commands
+            // and heavy profiles, and a single early probe reads the pre-cd
+            // directory — the "footer never updates after cd" report. See
+            // CD_PROBE_DELAYS_MS: each tap lands in its own backend throttle
+            // window, converging on the post-cd truth even when the user
+            // idles afterwards. Cheap (one IPC each, cd-gated).
+            for (const delay of CD_PROBE_DELAYS_MS) {
+              setTimeout(checkLiveCwd, delay);
+            }
           }
           // Notify the app shell about EVERY submitted line (cheap: the
           // handler only re-reads the active-project state file). This is
@@ -692,6 +788,28 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
             // bounds the rendered side as before.
             pendingOutput.append(payload.data);
             scheduleFlush();
+            // Ghost-typing auto-recovery: `kai` Code Mode runs print
+            // "[kai] Agent finished" once the agent child settles. The CLI
+            // already resets terminal modes on its stdout, but when that
+            // reset is lost (killed mid-flush, piped output, older CLI) the
+            // emulator-side mouse/focus/bracketed-paste modes stay stuck and
+            // every mouse move / window focus injects escape sequences the
+            // shell echoes as stray typed text. Re-feed the same DECSET
+            // resets via term.write (output path: parsed as mode changes,
+            // screen-safe) so the pane self-heals without user action.
+            try {
+              const scan = scanAgentFinishedTail(agentFinishedTailRef.current, payload.data);
+              agentFinishedTailRef.current = scan.tail;
+              if (scan.hit) {
+                // Latch proof the agent is gone: the next stray mouse /
+                // focus report (if the CLI-side reset was lost) resets the
+                // emulator immediately instead of waiting for a repeat.
+                agentFinishedSeenRef.current = true;
+                term.write(TERMINAL_MODE_RESET_SEQ);
+              }
+            } catch {
+              // Best-effort hardening; output rendering above already ran.
+            }
           }
         }),
         (unlisten) => {

@@ -9,6 +9,7 @@ pub mod intelligence;
 pub mod kai_cli;
 pub mod pty;
 pub mod shell;
+pub mod updater;
 
 #[cfg(test)]
 pub(crate) mod test_support {
@@ -346,6 +347,10 @@ pub fn run() {
             std::thread::spawn(move || {
                 let resource_dir = handle.path().resource_dir().ok();
                 let _ = kai_cli::ensure_kai_cli(resource_dir);
+                // Sweep leftover update installers (>24h old) off the UI
+                // thread: a Windows file lock can block the immediate
+                // post-install delete, so the next start finishes the job.
+                let _ = crate::updater::cleanup_stale_update_downloads(24 * 60 * 60);
             });
             Ok(())
         })
@@ -392,7 +397,10 @@ pub fn run() {
             get_project_intelligence_cmd,
             get_active_project_cmd,
             kai_cli::get_kai_cli_status_cmd,
-            kai_cli::ensure_kai_cli_cmd
+            kai_cli::ensure_kai_cli_cmd,
+            updater::download_update_asset_cmd,
+            updater::launch_update_installer_cmd,
+            updater::cleanup_update_download_cmd
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

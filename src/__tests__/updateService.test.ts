@@ -13,7 +13,19 @@ import {
   isDismissed,
   UPDATE_LAST_CHECK_KEY,
   UPDATE_DISMISSED_KEY,
+  selectUpdateAsset,
+  describeAsset,
+  type ReleaseAsset,
 } from "../services/updateService";
+
+function asset(name: string): ReleaseAsset {
+  return {
+    name,
+    browser_download_url: `https://github.com/surajthaqurie/kai-terminal/releases/download/v9.9.9/${name}`,
+    size: 1024,
+    content_type: null,
+  };
+}
 
 describe("updateService version compare", () => {
   it("normalizes v prefix and pre-release/build suffixes", () => {
@@ -64,6 +76,18 @@ describe("checkForUpdates", () => {
         status: 200,
       })) as unknown as typeof fetch;
     expect((await checkForUpdates("0.1.1", { fetchFn: withoutAuthor })).releaseAuthor).toBe(
+      "surajthaqurie"
+    );
+  });
+
+  it("credits the repo owner instead of a CI bot author", async () => {
+    // Releases are published by CI, so the API author is github-actions[bot].
+    const botAuthor = (async () =>
+      new Response(
+        JSON.stringify({ tag_name: "v9.9.9", author: { login: "github-actions[bot]" } }),
+        { status: 200 }
+      )) as unknown as typeof fetch;
+    expect((await checkForUpdates("0.1.1", { fetchFn: botAuthor })).releaseAuthor).toBe(
       "surajthaqurie"
     );
   });
@@ -159,5 +183,73 @@ describe("update persistence", () => {
     expect(getDismissedVersion()).toBe("9.9.9");
     expect(isDismissed("v9.9.9")).toBe(true);
     expect(isDismissed("9.9.10")).toBe(false);
+  });
+});
+
+describe("selectUpdateAsset", () => {
+  const assets = [
+    asset("kai_9.9.9_x64-setup.exe"),
+    asset("kai_9.9.9_x64_en-US.msi"),
+    asset("kai_9.9.9_aarch64.dmg"),
+    asset("kai_9.9.9_amd64.deb"),
+    asset("kai_9.9.9_amd64.AppImage"),
+  ];
+
+  it("prefers NSIS exe on Windows", () => {
+    const picked = selectUpdateAsset(assets, {
+      platform: "Win32",
+      userAgent: "Windows NT",
+    });
+    expect(picked?.name).toContain(".exe");
+  });
+
+  it("prefers arm64 dmg on macOS", () => {
+    const picked = selectUpdateAsset(assets, {
+      platform: "MacIntel",
+      userAgent: "Macintosh ARM",
+    });
+    expect(picked?.name).toMatch(/\.dmg$/);
+  });
+
+  it("prefers deb over AppImage on Linux", () => {
+    const picked = selectUpdateAsset(assets, {
+      platform: "Linux x86_64",
+      userAgent: "Linux x86_64",
+    });
+    expect(picked?.name).toMatch(/\.deb$/);
+  });
+
+  it("falls back to AppImage when no deb exists", () => {
+    const picked = selectUpdateAsset([asset("kai_9.9.9_amd64.AppImage")], {
+      platform: "Linux x86_64",
+      userAgent: "Linux",
+    });
+    expect(picked?.name).toMatch(/\.AppImage$/);
+  });
+
+  it("returns null when no assets exist", () => {
+    expect(selectUpdateAsset([], { platform: "Win32", userAgent: "Windows" })).toBeNull();
+  });
+
+  it("exposes installer assets from the release payload", async () => {
+    const fetchFn = (async () =>
+      new Response(
+        JSON.stringify({
+          tag_name: "v9.9.9",
+          assets: [
+            {
+              name: "kai_9.9.9_x64-setup.exe",
+              browser_download_url: "https://github.com/x/y/releases/download/v9.9.9/f.exe",
+              size: 10,
+            },
+            { name: "src.zip", browser_download_url: "https://example.com/s.zip" },
+          ],
+        }),
+        { status: 200 }
+      )) as unknown as typeof fetch;
+    const res = await checkForUpdates("0.1.1", { fetchFn });
+    expect(res.assets.length).toBe(1);
+    expect(res.assets[0].name).toContain(".exe");
+    expect(describeAsset(res.assets[0])).toContain("Windows");
   });
 });

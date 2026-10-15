@@ -50,6 +50,19 @@ export function lineLikelyChangesCwd(line: string): boolean {
 }
 
 /**
+ * Post-`cd` live-cwd probe schedule (ms after Enter).
+ *
+ * Spacing is load-bearing: the backend throttles live-OS probes to one per
+ * 2 s per session (`CWD_PROBE_MIN_INTERVAL` in `src-tauri/src/pty.rs`), so
+ * probes inside the same window return the cached (pre-cd) directory and
+ * the footer looks stuck until the next unrelated action. Each delay here
+ * lands in its own throttle window, converging on the post-cd truth even
+ * when the user idles afterwards. Keep every gap above 2000 ms (see
+ * `cwdCommand.test.ts`) and the first tap prompt-fast. Same on all OSes.
+ */
+export const CD_PROBE_DELAYS_MS: readonly number[] = [300, 2500, 5000];
+
+/**
  * Detects whether a submitted shell line likely changes Code Mode state.
  *
  * Gates the POST-execution Code Mode re-sync: `kai code .` / `kai stop code`

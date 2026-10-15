@@ -16,8 +16,19 @@ import {
   platformLabel,
   eventToBindingString,
 } from "../services/shortcuts";
-import { X, Save, RotateCcw, Palette, Type, Terminal, Keyboard, ArrowUpCircle } from "lucide-react";
-import type { UpdateCheckResult } from "../services/updateService";
+import {
+  X,
+  Save,
+  RotateCcw,
+  Palette,
+  Type,
+  Terminal,
+  Keyboard,
+  ArrowUpCircle,
+  Download,
+  ExternalLink,
+} from "lucide-react";
+import type { UpdateCheckResult, UpdateDownloadState } from "../services/updateService";
 
 export type SettingsTab = "appearance" | "terminal" | "shell" | "shortcuts" | "updates";
 
@@ -138,8 +149,10 @@ interface SettingsModalProps {
   appVersion?: string;
   updateInfo?: UpdateCheckResult | null;
   isCheckingUpdates?: boolean;
+  updateDownload?: UpdateDownloadState | null;
   onCheckUpdates?: () => void;
   onViewUpdate?: () => void;
+  onDownloadAndInstall?: () => void;
 }
 
 export const SettingsModal: FC<SettingsModalProps> = ({
@@ -151,8 +164,10 @@ export const SettingsModal: FC<SettingsModalProps> = ({
   appVersion = "0.1.4",
   updateInfo = null,
   isCheckingUpdates = false,
+  updateDownload = null,
   onCheckUpdates,
   onViewUpdate,
+  onDownloadAndInstall,
 }) => {
   const [formData, setFormData] = useState<UserSettings>(settings);
   const [activeTab, setActiveTab] = useState<SettingsTab>("appearance");
@@ -259,7 +274,7 @@ export const SettingsModal: FC<SettingsModalProps> = ({
     <div className="modal-backdrop" onClick={onClose}>
       <div className="settings-modal settings-tabs-modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
-          <h3>Terminal Settings</h3>
+          <h3>Settings</h3>
           <button className="btn-close" onClick={onClose} title="Close">
             <X size={18} />
           </button>
@@ -784,20 +799,70 @@ export const SettingsModal: FC<SettingsModalProps> = ({
                     <ArrowUpCircle size={14} />
                     <span>{isCheckingUpdates ? "Checking…" : "Check for Updates"}</span>
                   </button>
+                  {updateInfo?.updateAvailable &&
+                    updateInfo.latestVersion &&
+                    updateInfo.selectedAsset &&
+                    onDownloadAndInstall && (
+                      <button
+                        type="button"
+                        className="btn btn-primary btn-small"
+                        onClick={onDownloadAndInstall}
+                        disabled={
+                          updateDownload?.status === "downloading" ||
+                          updateDownload?.status === "installing"
+                        }
+                        title={`Download ${updateInfo.selectedAssetLabel ?? "installer"} and install automatically`}
+                      >
+                        <Download size={14} />
+                        <span>
+                          {updateDownload?.status === "downloading"
+                            ? `Downloading${updateDownload.progress != null ? ` ${Math.round(updateDownload.progress)}%` : "…"}`
+                            : updateDownload?.status === "installing"
+                              ? "Installing…"
+                              : `Download & Install v${updateInfo.latestVersion}`}
+                        </span>
+                      </button>
+                    )}
                   {updateInfo?.updateAvailable && updateInfo.latestVersion && onViewUpdate && (
                     <button
                       type="button"
                       className="btn btn-secondary btn-small"
                       onClick={onViewUpdate}
-                      title="Update now to the latest version"
+                      title={
+                        updateInfo.selectedAsset
+                          ? "Open the release page instead of auto-install"
+                          : "Open the release page to download manually"
+                      }
                     >
-                      <span>Update to v{updateInfo.latestVersion}</span>
+                      <ExternalLink size={14} />
+                      <span>
+                        {updateInfo.selectedAsset
+                          ? "Release notes"
+                          : `Update to v${updateInfo.latestVersion}`}
+                      </span>
                     </button>
                   )}
                 </div>
+                {updateInfo?.selectedAsset && (
+                  <p className="muted-text" role="status">
+                    Detected installer for this device: {updateInfo.selectedAsset.name}
+                    {updateInfo.selectedAssetLabel ? ` (${updateInfo.selectedAssetLabel})` : ""}.
+                  </p>
+                )}
+                {updateDownload?.status === "error" && updateDownload.message && (
+                  <p className="error-text" role="alert">
+                    {updateDownload.message}
+                  </p>
+                )}
+                {updateDownload?.status === "installed" && updateDownload.message && (
+                  <p className="muted-text" role="status">
+                    {updateDownload.message}
+                  </p>
+                )}
                 <p className="muted-text">
-                  Checks the public GitHub releases page for a newer version. If an update is
-                  available, checking will automatically update to the latest version.
+                  Checks the public GitHub releases page for a newer version. When an installer is
+                  available for your OS, Kai downloads it and launches the installer automatically —
+                  otherwise use the release page.
                 </p>
               </div>
 

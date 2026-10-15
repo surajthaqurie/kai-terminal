@@ -38,6 +38,7 @@ import {
   runCodeTaskWithAutoSync,
   runExternalAgentCommand,
   needsShellForCommand,
+  resetTerminalModesAfterAgent,
 } from "../core/codeModeWorkflow";
 import { installCommitMsgHook } from "../core/githooks";
 import packageJson from "../../package.json";
@@ -797,6 +798,12 @@ export async function executeAgentWorkflow(
           signal: controller.signal,
           shell: useShell,
         });
+        // The agent is a fullscreen TUI: restore mouse/focus/paste input
+        // modes NOW (before any further logging) so a killed/crashed agent
+        // that skipped its own DECSET cleanup cannot keep injecting ghost
+        // input on mouse move / window focus. Idempotent; TTY-only. The
+        // outer finally below re-emits it for abort/throw paths.
+        resetTerminalModesAfterAgent();
         agentExitCode = result.exitCode;
         agentTimedOut = result.timedOut;
         agentSignal = result.signal;
@@ -850,6 +857,9 @@ export async function executeAgentWorkflow(
     if (typeof agentExitCode === "number") return agentExitCode;
     return 1;
   } finally {
+    // Guarantee terminal-mode restore on abort/throw paths where the
+    // outcome closure above never ran (idempotent no-op otherwise).
+    resetTerminalModesAfterAgent();
     process.removeListener("SIGINT", onInterrupt);
     process.removeListener("SIGTERM", onInterrupt);
   }

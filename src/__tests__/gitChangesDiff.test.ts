@@ -183,6 +183,104 @@ describe("Project Git Changes Service APIs", () => {
   });
 });
 
+describe("GitChangesModal header", () => {
+  it("shows the branch badge but no full repo path, with a fullscreen toggle", async () => {
+    const React = await import("react");
+    const { createRoot } = await import("react-dom/client");
+    const { GitChangesModal } = await import("../components/GitChangesModal");
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await React.act(async () => {
+      root.render(
+        React.createElement(GitChangesModal, {
+          dir: "/home/user/project",
+          onClose: () => {},
+        })
+      );
+      // Flush the mount-time loadChanges rejection (no Tauri in jsdom).
+      await Promise.resolve();
+    });
+
+    // Title stays; the full-path badge was removed from the header.
+    const title = container.querySelector(".git-changes-title");
+    expect(title?.textContent).toContain("Changes Review");
+    expect(container.querySelector(".git-path-badge")).toBeNull();
+
+    // Windowed by default with an opt-in fullscreen toggle.
+    const modal = container.querySelector(".git-changes-modal");
+    expect(modal?.classList.contains("git-fullscreen")).toBe(false);
+    const toggle = container.querySelector(
+      '[aria-label="Enter fullscreen"]'
+    ) as HTMLButtonElement | null;
+    expect(toggle).not.toBeNull();
+
+    await React.act(async () => {
+      toggle?.click();
+    });
+    expect(modal?.classList.contains("git-fullscreen")).toBe(true);
+    expect(container.querySelector('[aria-label="Exit fullscreen"]')).not.toBeNull();
+
+    root.unmount();
+    container.remove();
+  });
+
+  it("minimizes to a pill that preserves state and restores on click", async () => {
+    const React = await import("react");
+    const { createRoot } = await import("react-dom/client");
+    const { GitChangesModal } = await import("../components/GitChangesModal");
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    let closed = false;
+
+    await React.act(async () => {
+      root.render(
+        React.createElement(GitChangesModal, {
+          dir: "/home/user/project",
+          onClose: () => {
+            closed = true;
+          },
+        })
+      );
+      await Promise.resolve();
+    });
+
+    const minimizeBtn = container.querySelector(
+      '[aria-label="Minimize changes review"]'
+    ) as HTMLButtonElement | null;
+    expect(minimizeBtn).not.toBeNull();
+
+    await React.act(async () => {
+      minimizeBtn?.click();
+    });
+
+    // Backdrop hides, pill shows; nothing closed.
+    const backdrop = container.querySelector(".git-changes-backdrop") as HTMLElement | null;
+    expect(backdrop?.style.display).toBe("none");
+    expect(container.querySelector(".git-minimized-pill")).not.toBeNull();
+    expect(closed).toBe(false);
+
+    // Restore from the pill.
+    const restoreBtn = container.querySelector(
+      '[aria-label="Restore changes review"]'
+    ) as HTMLButtonElement | null;
+    expect(restoreBtn).not.toBeNull();
+    await React.act(async () => {
+      restoreBtn?.click();
+    });
+    expect(container.querySelector(".git-minimized-pill")).toBeNull();
+    const backdropAfter = container.querySelector(".git-changes-backdrop") as HTMLElement | null;
+    expect(backdropAfter?.style.display).not.toBe("none");
+
+    root.unmount();
+    container.remove();
+  });
+});
+
 describe("Active Split Terminal and PaneHeader Component", () => {
   it("renders simple active indicator and triggers focus and changes", async () => {
     const React = await import("react");

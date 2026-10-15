@@ -16,12 +16,14 @@ portable-pty = "0.8"
 tokio = { version = "1.40", features = ["full"] }
 uuid = { version = "1.10", features = ["v4", "fast-rng"] }
 thiserror = "1.0"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"], optional = true }
+futures-util = { version = "0.3", optional = true }
 tauri = { version = "2.1.0", features = [], optional = true }
 tauri-plugin-single-instance = { version = "2", optional = true }
 
 [features]
 default = ["tauri"]
-tauri = ["dep:tauri", "dep:tauri-build", "dep:tauri-plugin-single-instance"]
+tauri = ["dep:tauri", "dep:tauri-build", "dep:tauri-plugin-single-instance", "dep:reqwest", "dep:futures-util"]
 tauri-build = ["dep:tauri-build"]
 
 [profile.release]

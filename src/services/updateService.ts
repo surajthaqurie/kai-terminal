@@ -20,6 +20,13 @@ export const UPDATE_DISMISSED_KEY = "kai_update_dismissed_version";
 export const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24h auto-check
 export const UPDATE_PERIODIC_MS = 6 * 60 * 60 * 1000; // 6h re-check while open
 
+export interface ReleaseAsset {
+  name: string;
+  browser_download_url: string;
+  size: number | null;
+  content_type: string | null;
+}
+
 export interface UpdateCheckResult {
   currentVersion: string;
   latestVersion: string | null;
@@ -28,10 +35,40 @@ export interface UpdateCheckResult {
   releaseName: string | null;
   releaseAuthor: string | null;
   publishedAt: string | null;
+  /** Raw installer assets attached to the GitHub release. */
+  assets: ReleaseAsset[];
+  /** Best installer for this OS/arch, or null when none matches. */
+  selectedAsset: ReleaseAsset | null;
+  /** Human label for the selected asset (e.g. "Windows installer (.exe)"). */
+  selectedAssetLabel: string | null;
   /** Set when the check itself failed (offline, rate limit, no releases). */
   error: string | null;
   checkedAt: number;
 }
+
+export type UpdateDownloadStatus =
+  "idle" | "downloading" | "ready" | "installing" | "installed" | "error";
+
+export interface UpdateDownloadState {
+  status: UpdateDownloadStatus;
+  /** 0-100 while downloading (null when total size unknown). */
+  progress: number | null;
+  receivedBytes: number | null;
+  totalBytes: number | null;
+  /** Local temp path once the installer has downloaded. */
+  localPath: string | null;
+  /** Final human-readable message (launched / error). */
+  message: string | null;
+}
+
+export const INITIAL_UPDATE_DOWNLOAD_STATE: UpdateDownloadState = {
+  status: "idle",
+  progress: null,
+  receivedBytes: null,
+  totalBytes: null,
+  localPath: null,
+  message: null,
+};
 
 /** Strip leading "v", whitespace, and build metadata for comparison. */
 export function normalizeVersion(v: string): string {
@@ -86,6 +123,12 @@ interface GithubRelease {
   html_url?: string;
   published_at?: string;
   author?: { login?: string };
+  assets?: Array<{
+    name?: string;
+    browser_download_url?: string;
+    size?: number;
+    content_type?: string;
+  }>;
 }
 
 async function fetchWithTimeout(url: string, timeoutMs: number): Promise<Response> {
@@ -122,6 +165,9 @@ export async function checkForUpdates(
     // "by <owner>" next to a missing version.
     releaseAuthor: null,
     publishedAt: null,
+    assets: [],
+    selectedAsset: null,
+    selectedAssetLabel: null,
     error: null,
     checkedAt,
   };
@@ -147,10 +193,15 @@ export async function checkForUpdates(
     if (!tag) return { ...base, error: "Release tag missing" };
     const latest = normalizeVersion(tag);
     const updateAvailable = isNewerVersion(tag, currentVersion);
-    const authorLogin =
-      data.author && typeof data.author.login === "string" && data.author.login.trim()
-        ? data.author.login.trim()
-        : GITHUB_OWNER;
+    // Releases are published by CI, so the API author is usually
+    // "github-actions[bot]" — never show a bot as the author. Real users
+    // keep their login; bots (and missing authors) fall back to the repo
+    // owner so Settings always credits a human.
+    const rawLogin =
+      data.author && typeof data.author.login === "string" ? data.author.login.trim() : "";
+    const authorLogin = rawLogin && !/\[bot\]$/i.test(rawLogin) ? rawLogin : GITHUB_OWNER;
+    const assets = parseReleaseAssets(data.assets);
+    const selectedAsset = selectUpdateAsset(assets);
     return {
       ...base,
       latestVersion: latest,
@@ -160,6 +211,9 @@ export async function checkForUpdates(
       releaseName: typeof data.name === "string" ? data.name : tag,
       releaseAuthor: authorLogin,
       publishedAt: typeof data.published_at === "string" ? data.published_at : null,
+      assets,
+      selectedAsset,
+      selectedAssetLabel: selectedAsset ? describeAsset(selectedAsset) : null,
     };
   } catch (err) {
     const msg =
@@ -169,6 +223,218 @@ export async function checkForUpdates(
           ? err.message
           : String(err);
     return { ...base, error: msg || "Update check failed" };
+  }
+}
+
+// --- release asset selection (auto download + install) ---
+
+function parseReleaseAssets(raw: GithubRelease["assets"]): ReleaseAsset[] {
+  if (!Array.isArray(raw)) return [];
+  const out: ReleaseAsset[] = [];
+  for (const a of raw) {
+    const name = typeof a?.name === "string" ? a.name.trim() : "";
+    const url = typeof a?.browser_download_url === "string" ? a.browser_download_url.trim() : "";
+    if (!name || !url) continue;
+    // Only installer artifacts — never source zips / checksums.
+    if (!/\.(exe|msi|dmg|deb|AppImage)$/i.test(name)) continue;
+    if (!/^https:\/\//.test(url)) continue;
+    out.push({
+      name,
+      browser_download_url: url,
+      size: typeof a?.size === "number" && Number.isFinite(a.size) ? a.size : null,
+      content_type: typeof a?.content_type === "string" ? a.content_type : null,
+    });
+  }
+  return out;
+}
+
+export type UpdatePlatform = "windows" | "macos" | "linux" | "unknown";
+
+/** Best-effort OS detection for installer picking (testable via override). */
+export function detectUpdatePlatform(override?: {
+  platform?: string;
+  userAgent?: string;
+}): UpdatePlatform {
+  const plat = (
+    override?.platform ??
+    (typeof navigator !== "undefined" ? navigator.platform : "") ??
+    ""
+  ).toLowerCase();
+  const ua = (
+    override?.userAgent ??
+    (typeof navigator !== "undefined" ? navigator.userAgent : "") ??
+    ""
+  ).toLowerCase();
+  const combined = `${plat} ${ua}`;
+  if (combined.includes("win")) return "windows";
+  if (combined.includes("mac") || combined.includes("darwin")) return "macos";
+  if (combined.includes("linux") || combined.includes("x11") || combined.includes("android"))
+    return "linux";
+  return "unknown";
+}
+
+function archHint(override?: { platform?: string; userAgent?: string }): "arm" | "x64" {
+  const ua = (
+    override?.userAgent ??
+    (typeof navigator !== "undefined" ? navigator.userAgent : "") ??
+    ""
+  ).toLowerCase();
+  if (ua.includes("arm") || ua.includes("aarch64") || combinedAppleSilicon()) return "arm";
+  return "x64";
+}
+
+function combinedAppleSilicon(): boolean {
+  try {
+    if (typeof navigator === "undefined") return false;
+    // Newer browsers expose high-entropy arch via userAgentData; best effort only.
+    const data = (navigator as unknown as { userAgentData?: { platform?: string } })?.userAgentData;
+    return (data?.platform ?? "").toLowerCase() === "macos";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Picks the best installer for this OS/arch from a release asset list.
+ * Windows prefers NSIS `.exe` (currentUser installMode) over MSI;
+ * macOS prefers arm64 `.dmg`; Linux prefers `.deb` over `.AppImage`
+ * (software-center flow; AppImage is the fallback).
+ */
+export function selectUpdateAsset(
+  assets: ReleaseAsset[],
+  override?: { platform?: string; userAgent?: string }
+): ReleaseAsset | null {
+  if (!assets.length) return null;
+  const platform = detectUpdatePlatform(override);
+  const arch = archHint(override);
+  const lower = (s: string) => s.toLowerCase();
+  const byName = (pred: (n: string) => boolean) => assets.find((a) => pred(lower(a.name))) ?? null;
+
+  if (platform === "windows") {
+    // Prefer 64-bit NSIS setup exe, then any setup exe, then MSI.
+    return (
+      byName(
+        (n) =>
+          n.endsWith(".exe") && n.includes("setup") && (n.includes("x64") || n.includes("x86_64"))
+      ) ??
+      byName((n) => n.endsWith(".exe") && n.includes("setup")) ??
+      byName((n) => n.endsWith(".exe")) ??
+      byName((n) => n.endsWith(".msi") && (n.includes("x64") || n.includes("en-us"))) ??
+      byName((n) => n.endsWith(".msi"))
+    );
+  }
+  if (platform === "macos") {
+    const dmgs = assets.filter((a) => lower(a.name).endsWith(".dmg"));
+    if (!dmgs.length) return null;
+    if (arch === "arm") {
+      return (
+        dmgs.find((a) => /aarch64|arm64/i.test(a.name)) ??
+        dmgs.find((a) => !/x86_64|x64|intel/i.test(a.name)) ??
+        dmgs[0]
+      );
+    }
+    return dmgs.find((a) => /x86_64|x64/i.test(a.name)) ?? dmgs[0];
+  }
+  if (platform === "linux") {
+    const isArm = arch === "arm";
+    const debs = assets.filter((a) => lower(a.name).endsWith(".deb"));
+    const images = assets.filter((a) => lower(a.name).endsWith(".appimage"));
+    const pickByArch = (list: ReleaseAsset[]): ReleaseAsset | null => {
+      if (!list.length) return null;
+      if (isArm) {
+        return list.find((a) => /aarch64|arm64/i.test(a.name)) ?? list[0];
+      }
+      return (
+        list.find((a) => /amd64|x86_64/i.test(a.name)) ??
+        list.find((a) => !/aarch64|arm64/i.test(a.name)) ??
+        list[0]
+      );
+    };
+    // .deb first (managed install), AppImage as portable fallback.
+    return pickByArch(debs) ?? pickByArch(images);
+  }
+  // Unknown platform: still offer something sensible rather than nothing.
+  return (
+    byName((n) => n.endsWith(".exe")) ??
+    byName((n) => n.endsWith(".dmg")) ??
+    byName((n) => n.endsWith(".deb")) ??
+    assets[0]
+  );
+}
+
+/** Short human label for the picked installer ("Windows installer (.exe)"). */
+export function describeAsset(a: ReleaseAsset): string {
+  const n = a.name.toLowerCase();
+  if (n.endsWith(".exe")) return "Windows installer (.exe)";
+  if (n.endsWith(".msi")) return "Windows installer (.msi)";
+  if (n.endsWith(".dmg")) return "macOS disk image (.dmg)";
+  if (n.endsWith(".deb")) return "Linux package (.deb)";
+  if (n.endsWith(".appimage")) return "Linux AppImage";
+  return a.name;
+}
+
+export interface DownloadAndInstallHooks {
+  onProgress?: (received: number, total: number | null) => void;
+}
+
+/**
+ * Downloads the selected installer via the Tauri backend and launches it.
+ * The whole flow runs in the background: the async backend streams the
+ * file (progress events keep the UI bar moving) and the installer spawns
+ * detached, so the app never freezes on any OS.
+ * After launch the downloaded file is deleted; when the OS holds a lock
+ * (Windows while the installer runs) the next app start sweeps it.
+ * Returns the backend's human-readable "next step" message.
+ * Throws on failure so the UI can show the error + fall back to the
+ * release page. In a browser build (no Tauri) it opens the release page
+ * instead and returns a message to that effect.
+ */
+export async function downloadAndInstallUpdate(
+  asset: ReleaseAsset,
+  releaseUrl: string | null,
+  hooks?: DownloadAndInstallHooks
+): Promise<string> {
+  const { isTauriAvailable } = await import("./ptyService");
+  if (!isTauriAvailable()) {
+    await openReleasePage(releaseUrl || RELEASES_PAGE_URL);
+    return "Opened the release page in your browser — download the installer for your OS to update.";
+  }
+  const { invoke } = await import("@tauri-apps/api/core");
+  const unlistenProgress: Array<() => void> = [];
+  try {
+    try {
+      const { listen } = await import("@tauri-apps/api/event");
+      const off = await listen<{ received: number; total: number | null }>(
+        "kai-update-progress",
+        (e) => hooks?.onProgress?.(e.payload.received, e.payload.total ?? null)
+      );
+      unlistenProgress.push(off);
+    } catch {
+      // Progress events are best-effort; download still works without them.
+    }
+    const dl = await invoke<{ path: string; filename: string; bytes: number }>(
+      "download_update_asset_cmd",
+      { url: asset.browser_download_url, filename: asset.name }
+    );
+    const msg = await invoke<string>("launch_update_installer_cmd", { path: dl.path });
+    // Best-effort cleanup: never fail the update when the delete is refused
+    // (Windows locks the file while its installer runs — the startup sweep
+    // removes it on the next launch instead).
+    let cleaned = false;
+    try {
+      cleaned = await invoke<boolean>("cleanup_update_download_cmd", { path: dl.path });
+    } catch {
+      cleaned = false;
+    }
+    return cleaned ? `${msg} The downloaded installer was removed.` : msg;
+  } finally {
+    for (const off of unlistenProgress) {
+      try {
+        off();
+      } catch {
+        // ignore
+      }
+    }
   }
 }
 

@@ -1,5 +1,6 @@
 import { FC } from "react";
-import { ArrowUpCircle, ExternalLink, X, Clock } from "lucide-react";
+import { ArrowUpCircle, ExternalLink, X, Clock, Download, Loader2 } from "lucide-react";
+import type { UpdateDownloadState } from "../services/updateService";
 
 interface UpdateBannerProps {
   currentVersion: string;
@@ -7,6 +8,10 @@ interface UpdateBannerProps {
   releaseUrl: string;
   releaseName?: string | null;
   releaseAuthor?: string | null;
+  /** Label for the auto-picked installer, e.g. "Windows installer (.exe)". Null = no direct asset. */
+  assetLabel?: string | null;
+  downloadState: UpdateDownloadState;
+  onDownloadAndInstall: () => void;
   onViewRelease: () => void;
   onDismiss: () => void;
   onLater: () => void;
@@ -21,10 +26,19 @@ export const UpdateBanner: FC<UpdateBannerProps> = ({
   latestVersion,
   releaseName,
   releaseAuthor,
+  assetLabel,
+  downloadState,
+  onDownloadAndInstall,
   onViewRelease,
   onDismiss,
   onLater,
 }) => {
+  const busy = downloadState.status === "downloading" || downloadState.status === "installing";
+  const progress =
+    downloadState.status === "downloading" && downloadState.progress != null
+      ? Math.max(0, Math.min(100, downloadState.progress))
+      : null;
+
   return (
     <div className="update-banner" role="alert" aria-label="Application update available">
       <span className="update-banner-icon" aria-hidden="true">
@@ -42,13 +56,87 @@ export const UpdateBanner: FC<UpdateBannerProps> = ({
         <span className="update-banner-hint">
           {" "}
           A newer version of Kai Terminal is ready{releaseAuthor ? ` by ${releaseAuthor}` : ""}.
+          {assetLabel ? ` ${assetLabel} detected for this device.` : ""}
         </span>
+        {downloadState.status === "downloading" && (
+          <span className="update-banner-hint" role="status">
+            {" "}
+            Downloading{progress != null ? ` ${Math.round(progress)}%` : "…"} — keep Kai open.
+          </span>
+        )}
+        {downloadState.status === "installing" && (
+          <span className="update-banner-hint" role="status">
+            {" "}
+            Launching installer…
+          </span>
+        )}
+        {downloadState.status === "installed" && downloadState.message && (
+          <span className="update-banner-hint" role="status">
+            {" "}
+            {downloadState.message}
+          </span>
+        )}
+        {downloadState.status === "error" && downloadState.message && (
+          <span className="update-banner-hint" role="alert">
+            {" "}
+            {downloadState.message}
+          </span>
+        )}
       </span>
+      {progress != null && (
+        <span
+          className="update-download-progress"
+          role="progressbar"
+          aria-valuenow={Math.round(progress)}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label="Update download progress"
+        >
+          <span className="update-download-progress-fill" style={{ width: `${progress}%` }} />
+        </span>
+      )}
       <div className="update-banner-actions">
-        <button type="button" className="btn btn-primary btn-small" onClick={onViewRelease}>
-          <ExternalLink size={12} />
-          <span>View release</span>
-        </button>
+        {assetLabel ? (
+          <button
+            type="button"
+            className="btn btn-primary btn-small"
+            onClick={onDownloadAndInstall}
+            disabled={busy}
+            title={`Download ${assetLabel} and install automatically`}
+          >
+            {busy ? <Loader2 size={12} className="spin" /> : <Download size={12} />}
+            <span>
+              {downloadState.status === "downloading"
+                ? "Downloading…"
+                : downloadState.status === "installing"
+                  ? "Installing…"
+                  : downloadState.status === "ready"
+                    ? "Install now"
+                    : `Update to v${latestVersion}`}
+            </span>
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="btn btn-primary btn-small"
+            onClick={onViewRelease}
+            title="Open the release page to download manually"
+          >
+            <ExternalLink size={12} />
+            <span>View release</span>
+          </button>
+        )}
+        {assetLabel && (
+          <button
+            type="button"
+            className="btn btn-secondary btn-small"
+            onClick={onViewRelease}
+            title="Open the release page instead"
+          >
+            <ExternalLink size={12} />
+            <span>Release notes</span>
+          </button>
+        )}
         <button
           type="button"
           className="btn btn-secondary btn-small"

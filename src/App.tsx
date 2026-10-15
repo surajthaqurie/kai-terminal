@@ -71,11 +71,14 @@ import {
 } from "./services/paneLayout";
 import {
   APP_VERSION_FALLBACK,
+  INITIAL_UPDATE_DOWNLOAD_STATE,
   RELEASES_PAGE_URL,
   UPDATE_PERIODIC_MS,
   UpdateCheckResult,
+  UpdateDownloadState,
   checkForUpdates,
   dismissVersion,
+  downloadAndInstallUpdate,
   getAppVersion,
   isDismissed,
   openReleasePage,
@@ -118,6 +121,7 @@ import {
   ArrowRight,
   ArrowLeft,
   GitCompare,
+  Wrench,
 } from "lucide-react";
 import "./App.css";
 
@@ -280,6 +284,9 @@ export function App() {
   const [updateInfo, setUpdateInfo] = useState<UpdateCheckResult | null>(null);
   const [isCheckingUpdates, setIsCheckingUpdates] = useState<boolean>(false);
   const [updateBannerVisible, setUpdateBannerVisible] = useState<boolean>(false);
+  const [updateDownload, setUpdateDownload] = useState<UpdateDownloadState>(
+    INITIAL_UPDATE_DOWNLOAD_STATE
+  );
   const [lastError, setLastError] = useState<string | null>(null);
   const [userSettings, setUserSettings] = useState<UserSettings>(() =>
     SettingsService.loadSettings()
@@ -1334,16 +1341,18 @@ export function App() {
         setAppVersion(current);
         const result = await checkForUpdates(current);
         setUpdateInfo(result);
+        // Fresh version → fresh download state (never reuse a stale path).
+        setUpdateDownload(INITIAL_UPDATE_DOWNLOAD_STATE);
         recordCheckTime();
         if (result.updateAvailable && result.latestVersion) {
           // Respect a previous dismiss unless this is a manual re-check.
           if (manual || !isDismissed(result.latestVersion)) {
             setUpdateBannerVisible(true);
           }
-          if (manual) {
-            // Manual check (via settings or footer): automatically open release to update
-            void openReleasePage(result.releaseUrl || RELEASES_PAGE_URL);
-          }
+          // Manual checks no longer yank the browser open: the banner and
+          // Settings now offer one-click "Download & Install" (with the
+          // release page as an explicit fallback). Auto-opening the browser
+          // on every manual check was the reported annoyance.
         } else if (manual && !result.updateAvailable && !result.error) {
           setLastError(null);
         } else if (manual && result.error) {
@@ -1410,8 +1419,70 @@ export function App() {
 
   const handleViewUpdate = useCallback(() => {
     const url = updateInfo?.releaseUrl ?? undefined;
-    void openReleasePage(url ?? "https://github.com/surajthaqurie/kai-terminal/releases/latest");
+    void openReleasePage(url ?? RELEASES_PAGE_URL);
   }, [updateInfo]);
+
+  const handleDownloadAndInstallUpdate = useCallback(async () => {
+    const asset = updateInfo?.selectedAsset;
+    if (!asset) {
+      handleViewUpdate();
+      return;
+    }
+    if (updateDownload.status === "downloading" || updateDownload.status === "installing") {
+      return;
+    }
+    setUpdateDownload({
+      status: "downloading",
+      progress: 0,
+      receivedBytes: 0,
+      totalBytes: asset.size ?? null,
+      localPath: null,
+      message: null,
+    });
+    try {
+      const message = await downloadAndInstallUpdate(asset, updateInfo?.releaseUrl ?? null, {
+        onProgress: (received, total) => {
+          setUpdateDownload((prev) => ({
+            ...prev,
+            status: "downloading",
+            receivedBytes: received,
+            totalBytes: total ?? prev.totalBytes,
+            progress: total && total > 0 ? Math.min(100, (received / total) * 100) : null,
+          }));
+        },
+      });
+      setUpdateDownload((prev) => ({
+        ...prev,
+        status: "installed",
+        progress: 100,
+        message,
+      }));
+      // Windows NSIS cannot overwrite a running app: close Kai so the
+      // launched installer can proceed. Other platforms keep running (dmg
+      // mount / software-center flow returns the user to the app).
+      try {
+        const { isTauriAvailable } = await import("./services/ptyService");
+        if (isTauriAvailable() && /\.exe$/i.test(asset.name)) {
+          const { invoke } = await import("@tauri-apps/api/core");
+          // Give the toast a beat to paint before the window goes away.
+          setTimeout(() => {
+            void invoke("close_app_window").catch(() => undefined);
+          }, 2500);
+        }
+      } catch {
+        // Non-fatal: installer is already launched.
+      }
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : typeof err === "string" ? err : String(err);
+      setUpdateDownload((prev) => ({
+        ...prev,
+        status: "error",
+        message: `${message} You can still update manually from the release page.`,
+      }));
+      setLastError(`Update download: ${message}`);
+    }
+  }, [updateInfo, updateDownload.status, handleViewUpdate]);
 
   const handleDismissUpdate = useCallback(() => {
     if (updateInfo?.latestVersion) {
@@ -1496,6 +1567,16 @@ export function App() {
 
   const handleClearActive = useCallback(() => {
     getActiveTerminal()?.clear();
+  }, [getActiveTerminal]);
+
+  /**
+   * Manual ghost-typing recovery: re-feed the DECSET mode-reset to the
+   * active pane's emulator (output path, screen-safe). Covers TUIs run
+   * outside `kai` (plain `claude`, vim, pagers killed mid-run) that never
+   * print the auto-detected "[kai] Agent finished" marker.
+   */
+  const handleResetTerminalModes = useCallback(() => {
+    getActiveTerminal()?.resetModes();
   }, [getActiveTerminal]);
 
   const handleRestoreWorkspace = useCallback((ws: Workspace) => {
@@ -1801,6 +1882,13 @@ export function App() {
       perform: handleClearActive,
     },
     {
+      id: "reset-terminal-modes",
+      label: "Fix Ghost Typing (Reset Terminal Input Modes)",
+      category: "Terminal",
+      icon: <Wrench size={16} />,
+      perform: handleResetTerminalModes,
+    },
+    {
       id: "ai-cli",
       label: "Open AI CLI Providers",
       category: "AI",
@@ -1937,6 +2025,9 @@ export function App() {
           }
           releaseName={updateInfo.releaseName}
           releaseAuthor={updateInfo.releaseAuthor}
+          assetLabel={updateInfo.selectedAssetLabel}
+          downloadState={updateDownload}
+          onDownloadAndInstall={() => void handleDownloadAndInstallUpdate()}
           onViewRelease={handleViewUpdate}
           onDismiss={handleDismissUpdate}
           onLater={handleLaterUpdate}
@@ -2267,8 +2358,10 @@ export function App() {
           appVersion={appVersion}
           updateInfo={updateInfo}
           isCheckingUpdates={isCheckingUpdates}
+          updateDownload={updateDownload}
           onCheckUpdates={() => void handleCheckUpdates(true)}
           onViewUpdate={handleViewUpdate}
+          onDownloadAndInstall={() => void handleDownloadAndInstallUpdate()}
         />
 
         <WorkspaceModal
