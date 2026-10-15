@@ -1,6 +1,7 @@
 use crate::error::TerminalError;
 #[cfg(feature = "tauri")]
 use std::path::Path;
+#[cfg(feature = "tauri")]
 use std::path::PathBuf;
 #[cfg(feature = "tauri")]
 use tauri::{AppHandle, Emitter};
@@ -32,6 +33,7 @@ pub struct UpdateDownloadResult {
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
+#[cfg(feature = "tauri")]
 struct UpdateProgressEvent {
     received: u64,
     total: Option<u64>,
@@ -96,6 +98,7 @@ pub fn sanitize_update_filename(filename: &str) -> Result<String, TerminalError>
     Ok(trimmed.to_string())
 }
 
+#[cfg(feature = "tauri")]
 fn update_temp_path(filename: &str) -> PathBuf {
     std::env::temp_dir().join(format!("kai-update-{filename}"))
 }

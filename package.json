@@ -28,6 +28,10 @@
     "format": "prettier --write \"src/**/*.{ts,tsx,css,json}\"",
     "format:check": "prettier --check \"src/**/*.{ts,tsx,css,json}\"",
     "check": "npm run typecheck && npm run format:check && npm run test",
+    "rust:fmt": "cargo fmt --manifest-path src-tauri/Cargo.toml --check",
+    "rust:clippy": "cargo clippy --no-default-features --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",
+    "rust:test": "cargo test --no-default-features --manifest-path src-tauri/Cargo.toml --lib",
+    "prepush": "npm run typecheck && npm run format:check && npm run rust:fmt && npm run rust:clippy && npm run rust:test",
     "bench:perf": "vitest run scripts/bench/step9.perf.test.ts",
     "test:docker": "docker compose -f docker-compose.test.yml run --rm kai-test all",
     "test:docker:frontend": "docker compose -f docker-compose.test.yml run --rm kai-test frontend",
@@ -37,7 +41,8 @@
     "tauri": "tauri",
     "changeset": "changeset",
     "version-packages": "changeset version",
-    "release:repoint": "bash scripts/repoint-tag.sh"
+    "release:repoint": "bash scripts/repoint-tag.sh",
+    "prepare": "husky"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.1.1",
@@ -56,6 +61,7 @@
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.3",
+    "husky": "^9.1.7",
     "jsdom": "^25.0.1",
     "prettier": "^3.3.3",
     "typescript": "~5.6.2",
