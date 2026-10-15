@@ -329,6 +329,23 @@ jobs:
           fi
           echo "All expected platform artifacts are present."
 
+      - name: Clear stale assets on same-tag re-run
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ github.ref_name }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Existing release $TAG found — removing old assets so this run replaces them."
+            gh release view "$TAG" --json assets --jq '.assets[].name' | while read -r asset; do
+              [ -n "$asset" ] || continue
+              echo "Deleting stale asset: $asset"
+              gh release delete-asset "$TAG" "$asset" --yes
+            done
+          else
+            echo "No existing release for $TAG — nothing to clear."
+          fi
+
       - name: Create GitHub Release with verified artifacts
         uses: softprops/action-gh-release@v2
         with:
