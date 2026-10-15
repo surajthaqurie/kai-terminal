@@ -1266,10 +1266,7 @@ export interface AgentRemoveResult {
 /**
  * Remove Kai MCP wiring from an agent's configuration file.
  */
-export function removeAgentSetup(
-  agent: string,
-  opts: AgentSetupOptions = {}
-): AgentRemoveResult {
+export function removeAgentSetup(agent: string, opts: AgentSetupOptions = {}): AgentRemoveResult {
   const def = getAgentDefinition(agent);
   if (!def) {
     return {

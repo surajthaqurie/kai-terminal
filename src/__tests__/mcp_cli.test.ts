@@ -16,6 +16,9 @@ beforeEach(() => {
   tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "kai-user-home-"));
   process.env.KAI_HOME = kaiHome;
   process.env.HOME = tempHome;
+  // os.homedir() ignores $HOME on Windows (uses USERPROFILE), so mock it
+  // to keep CLI home-relative writes hermetic on every OS.
+  vi.spyOn(os, "homedir").mockReturnValue(tempHome);
   vi.spyOn(console, "log").mockImplementation(() => {});
   vi.spyOn(console, "error").mockImplementation(() => {});
 });
@@ -128,9 +131,7 @@ describe("kai mcp CLI commands", () => {
       const logSpy = vi.spyOn(console, "log");
       const code = await runCli(["node", "kai", "mcp", "."]);
       expect(code).toBe(0);
-      expect(logSpy).toHaveBeenCalledWith(
-        expect.stringContaining("runs automatically over stdio")
-      );
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("runs automatically over stdio"));
     } finally {
       process.stdin.isTTY = origIsTTY;
     }

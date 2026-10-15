@@ -931,9 +931,7 @@ export async function executeAgentSetupWorkflow(
       else if (r.alreadyConfigured) already++;
       else skipped++;
     }
-    console.log(
-      `[kai] Done: ${wrote} wired, ${already} already configured, ${skipped} skipped.`
-    );
+    console.log(`[kai] Done: ${wrote} wired, ${already} already configured, ${skipped} skipped.`);
     return skipped > 0 && wrote === 0 && already === 0 ? 1 : 0;
   }
 
@@ -1088,8 +1086,7 @@ export async function runCli(argv: string[]): Promise<number> {
     // Removed commands (single redirect, kept for old muscle memory)
     const REMOVED_HINTS: Record<string, string> = {
       code: "'kai code' has been removed. Use 'kai graph init [path]' to index or 'kai <agent>' to run a tool.",
-      clear:
-        "'kai clear' has been removed. Use 'kai stop' to exit Code Mode.",
+      clear: "'kai clear' has been removed. Use 'kai stop' to exit Code Mode.",
       query: "'kai query' has been removed. Use 'kai graph status' or 'kai health'.",
       cost: "'kai cost' has been removed. Use 'kai metrics' for local stats.",
       status:
@@ -1108,12 +1105,7 @@ export async function runCli(argv: string[]): Promise<number> {
       (command === "remove" || command === "unregister") &&
       (args.includes("-m") || args.includes("--mcp") || args.includes("mcp"));
 
-    if (
-      !isInsideKaiTerminal() &&
-      !EXTERNAL_COMMANDS.has(command) &&
-      !isMcpList &&
-      !isMcpRemove
-    ) {
+    if (!isInsideKaiTerminal() && !EXTERNAL_COMMANDS.has(command) && !isMcpList && !isMcpRemove) {
       console.error(`[kai] Error: 'kai ${command}' can only be executed inside Kai Terminal.`);
       console.error(`To open or focus Kai Terminal for your project, run:\n  kai open [path]`);
       return 1;
@@ -1268,7 +1260,8 @@ export async function runCli(argv: string[]): Promise<number> {
           }
 
           const projId =
-            meta?.id || (fs.existsSync(canonicalPath) ? path.basename(canonicalPath) : sessionTarget);
+            meta?.id ||
+            (fs.existsSync(canonicalPath) ? path.basename(canonicalPath) : sessionTarget);
           const projName = meta?.name || path.basename(canonicalPath);
           targetScopeDesc = `project "${projName}" (${canonicalPath})`;
 
@@ -1724,10 +1717,7 @@ export async function runCli(argv: string[]): Promise<number> {
     // 11. kai list [options] (dynamic system detection + resources)
     if (command === "list") {
       const showMcp =
-        args.includes("-m") ||
-        args.includes("--mcp") ||
-        args[1] === "mcp" ||
-        args.includes("mcp");
+        args.includes("-m") || args.includes("--mcp") || args[1] === "mcp" || args.includes("mcp");
       const showIndex = args.includes("-i") || args.includes("--index");
       const showSession = args.includes("-s") || args.includes("--session");
       const showConfig = args.includes("-c") || args.includes("--config");
@@ -1863,10 +1853,7 @@ export async function runCli(argv: string[]): Promise<number> {
     // Group alias for `kai remove -a/--agent <name>` and `kai mcp remove <name>`.
     if (
       (command === "agent" || command === "agents") &&
-      (args[1] === "remove" ||
-        args[1] === "rm" ||
-        args[1] === "unlink" ||
-        args[1] === "unregister")
+      (args[1] === "remove" || args[1] === "rm" || args[1] === "unlink" || args[1] === "unregister")
     ) {
       const rest = args.slice(2);
       const aIdx = rest.findIndex(
