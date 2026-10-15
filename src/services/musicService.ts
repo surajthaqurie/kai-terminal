@@ -77,7 +77,11 @@ export function hasNextItem(track: MusicTrack | null): boolean {
 
 /** Embed src for a track. `muted` only applies at load; later changes use commands. */
 export function embedSrcForTrack(track: MusicTrack, muted = false): string {
-  const tail = `autoplay=1&rel=0&enablejsapi=1${muted ? "&mute=1" : ""}`;
+  const originParam =
+    typeof window !== "undefined" && window.location?.origin
+      ? `&origin=${encodeURIComponent(window.location.origin)}`
+      : "";
+  const tail = `autoplay=1&rel=0&enablejsapi=1${originParam}${muted ? "&mute=1" : ""}`;
   if (track.videoId) {
     const list = track.playlistId ? `&list=${track.playlistId}` : "";
     return `https://www.youtube.com/embed/${track.videoId}?${tail}${list}`;
@@ -86,6 +90,26 @@ export function embedSrcForTrack(track: MusicTrack, muted = false): string {
     return `https://www.youtube.com/embed?listType=playlist&list=${track.playlistId}&${tail}`;
   }
   return `https://www.youtube.com/embed?listType=search&list=${encodeURIComponent(track.query)}&${tail}`;
+}
+
+/**
+ * Searches YouTube for a query string and extracts the first videoId.
+ * Resolving search text to a direct videoId prevents Error 153 caused by deprecated listType=search.
+ */
+export async function searchYouTubeVideoId(query: string): Promise<string | null> {
+  const raw = query.trim();
+  if (!raw) return null;
+  const existingId = extractVideoId(raw);
+  if (existingId) return existingId;
+  try {
+    const res = await fetch(`https://www.youtube.com/results?search_query=${encodeURIComponent(raw)}`);
+    if (!res.ok) return null;
+    const html = await res.text();
+    const m = html.match(/"videoId":"([\w-]{11})"/);
+    return m ? m[1] : null;
+  } catch {
+    return null;
+  }
 }
 
 /**

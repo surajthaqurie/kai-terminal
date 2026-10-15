@@ -3602,47 +3602,76 @@ select.modal-input {
   }
 }
 
-/* Music Time player (Appearance-gated, default OFF) */
+/* YouTube Music player */
 .music-drawer {
   position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: 272px;
+  right: 12px;
+  bottom: 28px;
+  width: auto;
+  height: auto;
+  max-height: calc(100vh - 44px);
   z-index: 40;
   display: none;
-  border-left: 1px solid var(--border-default);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg, 10px);
   background: var(--bg-surface);
-  box-shadow: var(--shadow-lg);
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.06);
+  overflow: hidden;
 }
 .music-drawer.open {
   display: block;
 }
 .music-panel {
-  height: 100%;
   display: flex;
   flex-direction: column;
-  min-height: 0;
   overflow: hidden;
   position: relative;
+  min-width: 280px;
+  max-width: 680px;
+}
+.music-resize-handle {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+  z-index: 10;
+}
+.music-resize-handle::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 5px;
+  height: 5px;
+  border-top: 2px solid var(--text-tertiary);
+  border-left: 2px solid var(--text-tertiary);
+  opacity: 0.6;
 }
 .music-head {
-  padding: 9px 11px;
+  padding: 8px 10px;
   display: flex;
   justify-content: space-between;
   align-items: center;
   border-bottom: 1px solid var(--border-subtle);
+  user-select: none;
 }
 .music-head b {
-  font-size: var(--text-sm);
-  display: block;
-}
-.music-head span {
   font-size: var(--text-xs);
-  color: var(--text-tertiary);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-primary);
+  font-weight: 600;
+}
+.music-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 .music-search {
-  margin: 9px 10px 0;
+  margin: 8px 9px 0;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -3659,41 +3688,46 @@ select.modal-input {
   border: 0;
   outline: 0;
   color: var(--text-primary);
-  font-size: var(--text-sm);
-  padding: 7px 0;
+  font-size: var(--text-xs);
+  padding: 6px 0;
 }
 .music-search-go {
   background: rgba(229, 46, 46, 0.9);
   color: #fff;
   border: 0;
-  padding: 7px 10px;
+  padding: 6px 9px;
   cursor: pointer;
   display: flex;
   align-items: center;
 }
 .music-notice {
-  margin: 6px 10px 0;
+  margin: 5px 9px 0;
   font-size: var(--text-xs);
   color: var(--color-warning);
 }
 .music-now {
-  margin: 9px 10px 0;
+  margin: 8px 9px 9px;
   background: var(--bg-card);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
-  padding: 9px;
+  padding: 7px;
   flex-shrink: 0;
 }
 .music-video {
   width: 100%;
-  height: 112px;
+  height: 130px;
   border: 0;
   border-radius: var(--radius-sm);
   background: #000;
+  transition: height 0.2s ease;
+}
+.music-panel.expanded .music-video,
+.music-panel.expanded .music-video-empty {
+  height: 240px;
 }
 .music-video-empty {
   width: 100%;
-  height: 112px;
+  height: 130px;
   border-radius: var(--radius-sm);
   background: var(--bg-surface-sunken);
   color: var(--text-tertiary);
@@ -3701,24 +3735,26 @@ select.modal-input {
   display: flex;
   align-items: center;
   justify-content: center;
+  transition: height 0.2s ease;
 }
 .music-now h3 {
-  font-size: var(--text-sm);
+  font-size: var(--text-xs);
   margin-top: 6px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  color: var(--text-primary);
 }
 .music-controls {
   display: flex;
   justify-content: center;
   align-items: center;
-  gap: 10px;
-  margin-top: 7px;
+  gap: 8px;
+  margin-top: 6px;
 }
 .music-play {
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   border: 0;
   background: #e52e2e;
@@ -3744,58 +3780,89 @@ select.modal-input {
 .music-offline small {
   color: var(--text-tertiary);
 }
+
+/* Footer Music Mini: borderless, styled like path / git branch */
 .music-mini {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  background: var(--bg-surface);
-  border: 1px solid var(--border-default);
-  border-radius: 12px;
-  padding: 2px 8px 4px 3px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm, 4px);
+  padding: 1px 6px;
+  margin: 0 6px;
+  height: 22px;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  font-family: var(--font-mono);
+  position: relative;
+  user-select: none;
+  touch-action: none;
+  cursor: grab;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+.music-mini:active {
+  cursor: grabbing;
+}
+.music-mini:hover {
+  background: var(--bg-surface-sunken, rgba(255, 255, 255, 0.05));
+  color: var(--text-primary);
+}
+.music-mini-drag {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-tertiary);
+  opacity: 0.6;
+  margin-right: 1px;
+}
+.music-mini:hover .music-mini-drag {
+  opacity: 1;
 }
 .music-mini-top {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
 }
 .music-mini-main {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   background: transparent;
   border: 0;
-  color: var(--text-primary);
+  color: inherit;
   cursor: pointer;
-  min-width: 0;
   padding: 0;
+  font: inherit;
+  font-size: var(--text-xs);
 }
 .music-mini-art {
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, #e52e2e, #7a0d0d);
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 9px;
-  flex-shrink: 0;
+  color: #ef4444;
+  font-size: 11px;
 }
 .music-mini-title {
-  font-size: 11px;
-  max-width: 110px;
+  max-width: 130px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  font-size: var(--text-xs);
 }
 .music-mini-progress {
-  height: 3px;
-  background: rgba(255, 255, 255, 0.15);
+  position: absolute;
+  bottom: 0;
+  left: 6px;
+  right: 6px;
+  height: 2px;
+  background: rgba(255, 255, 255, 0.1);
   border-radius: 99px;
   overflow: hidden;
-  margin-left: 26px;
+  pointer-events: none;
 }
 .music-mini-progress i {
   display: block;
   height: 100%;
-  background: #e52e2e;
+  background: #ef4444;
+  transition: width 0.3s ease;
 }

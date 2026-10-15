@@ -1,4 +1,4 @@
-import { FC, useState } from "react";
+import { FC, useRef, useState } from "react";
 import {
   GitBranch,
   ArrowUpCircle,
@@ -11,6 +11,7 @@ import {
   SkipForward,
   Volume2,
   VolumeX,
+  GripVertical,
 } from "lucide-react";
 
 export interface MusicFooterState {
@@ -91,6 +92,54 @@ export const StatusBar: FC<StatusBarProps> = ({
     } catch {
       // clipboard unavailable: tooltip still shows the full path
     }
+  };
+
+  const [dragX, setDragX] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem("kai_music_footer_drag_x");
+      return saved ? parseFloat(saved) : 0;
+    } catch {
+      return 0;
+    }
+  });
+  const dragStartXRef = useRef<number | null>(null);
+  const dragInitialXRef = useRef<number>(0);
+  const isDraggingRef = useRef(false);
+
+  const onMusicPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if ((e.target as HTMLElement).closest(".status-check-btn")) return;
+    dragStartXRef.current = e.clientX;
+    dragInitialXRef.current = dragX;
+    isDraggingRef.current = false;
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+
+  const onMusicPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (dragStartXRef.current === null) return;
+    const delta = e.clientX - dragStartXRef.current;
+    if (Math.abs(delta) > 3) {
+      isDraggingRef.current = true;
+    }
+    const newX = Math.max(-450, Math.min(250, dragInitialXRef.current + delta));
+    setDragX(newX);
+  };
+
+  const onMusicPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (dragStartXRef.current === null) return;
+    dragStartXRef.current = null;
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+      localStorage.setItem("kai_music_footer_drag_x", String(dragX));
+    } catch {}
+  };
+
+  const handleMusicClick = (e: React.MouseEvent) => {
+    if (isDraggingRef.current) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    onToggleMusicPanel?.();
   };
 
   return (
@@ -193,57 +242,68 @@ export const StatusBar: FC<StatusBarProps> = ({
 
       <div className="status-right">
         {music && (
-          <div className="music-mini" role="group" aria-label="Music mini player">
-            <div className="music-mini-top">
-              <button
-                type="button"
-                className="music-mini-main"
-                onClick={onToggleMusicPanel}
-                title={music.title ?? "Open Music Time"}
-                aria-label="Open Music Time"
-              >
-                <span className="music-mini-art" aria-hidden="true">
-                  ♪
-                </span>
-                <span className="music-mini-title">{music.title ?? "Music"}</span>
-              </button>
-              <button
-                type="button"
-                className="status-check-btn"
-                onClick={onMusicPlayPause}
-                title="Play / pause (music)"
-                aria-label={music.playing ? "Pause music" : "Play music"}
-              >
-                {music.playing ? (
-                  <Pause size={12} aria-hidden="true" />
-                ) : (
-                  <Play size={12} aria-hidden="true" />
-                )}
-              </button>
-              <button
-                type="button"
-                className="status-check-btn"
-                onClick={onMusicNext}
-                title="Next song"
-                aria-label="Next song"
-              >
-                <SkipForward size={12} aria-hidden="true" />
-              </button>
-              <button
-                type="button"
-                className="status-check-btn"
-                onClick={onMusicMute}
-                title="Mute (M)"
-                aria-label={music.muted ? "Unmute music" : "Mute music"}
-                aria-pressed={music.muted}
-              >
-                {music.muted ? (
-                  <VolumeX size={12} aria-hidden="true" />
-                ) : (
-                  <Volume2 size={12} aria-hidden="true" />
-                )}
-              </button>
-            </div>
+          <div
+            className="music-mini"
+            role="group"
+            aria-label="YouTube Music player"
+            onPointerDown={onMusicPointerDown}
+            onPointerMove={onMusicPointerMove}
+            onPointerUp={onMusicPointerUp}
+            onPointerCancel={onMusicPointerUp}
+            style={dragX ? { transform: `translateX(${dragX}px)` } : undefined}
+            title="YouTube Music — click to toggle player, drag to move in footer"
+          >
+            <span className="music-mini-drag" aria-hidden="true" title="Drag to move in footer">
+              <GripVertical size={11} />
+            </span>
+            <button
+              type="button"
+              className="music-mini-main"
+              onClick={handleMusicClick}
+              title={music.title ?? "Open YouTube Music"}
+              aria-label="Open YouTube Music"
+            >
+              <span className="music-mini-art" aria-hidden="true">
+                ♪
+              </span>
+              <span className="music-mini-title">{music.title ?? "YouTube Music"}</span>
+            </button>
+            <button
+              type="button"
+              className="status-check-btn"
+              onClick={onMusicPlayPause}
+              title="Play / pause"
+              aria-label={music.playing ? "Pause music" : "Play music"}
+            >
+              {music.playing ? (
+                <Pause size={12} aria-hidden="true" />
+              ) : (
+                <Play size={12} aria-hidden="true" />
+              )}
+            </button>
+            <button
+              type="button"
+              className="status-check-btn"
+              onClick={onMusicNext}
+              title="Next song"
+              aria-label="Next song"
+            >
+              <SkipForward size={12} aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className="status-check-btn"
+              onClick={onMusicMute}
+              title="Mute / unmute"
+              aria-label={music.muted ? "Unmute music" : "Mute music"}
+              aria-pressed={music.muted}
+            >
+              {music.muted ? (
+                <VolumeX size={12} aria-hidden="true" />
+              ) : (
+                <Volume2 size={12} aria-hidden="true" />
+              )}
+            </button>
             <span className="music-mini-progress" aria-hidden="true">
               <i style={{ width: `${Math.max(0, Math.min(100, music.progress))}%` }} />
             </span>

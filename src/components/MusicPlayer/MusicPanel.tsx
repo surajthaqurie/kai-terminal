@@ -9,6 +9,8 @@ import {
 } from "react";
 import {
   ExternalLink,
+  Maximize2,
+  Minimize2,
   Pause,
   Play,
   Search,
@@ -31,6 +33,7 @@ import {
   parseYouTubePlayerMessage,
   progressPercent,
   resolveInputToTrack,
+  searchYouTubeVideoId,
   watchUrlForTrack,
   youtubeCommand,
 } from "../../services/musicService";
@@ -236,8 +239,65 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     e.preventDefault();
   };
 
-  const submit = () => {
-    const resolved = resolveInputToTrack(query);
+  const [isExpanded, setIsExpanded] = useState(() => {
+    try {
+      return localStorage.getItem("kai_music_expanded") === "true";
+    } catch {
+      return false;
+    }
+  });
+
+  const [panelWidth, setPanelWidth] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem("kai_music_panel_width");
+      if (saved) return parseInt(saved, 10);
+    } catch {}
+    return isExpanded ? 480 : 320;
+  });
+
+  const resizingRef = useRef<{ startX: number; startWidth: number } | null>(null);
+
+  const onResizeStart = (e: React.PointerEvent) => {
+    e.preventDefault();
+    resizingRef.current = { startX: e.clientX, startWidth: panelWidth };
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  };
+
+  const onResizeMove = (e: React.PointerEvent) => {
+    if (!resizingRef.current) return;
+    const delta = resizingRef.current.startX - e.clientX;
+    const newWidth = Math.max(280, Math.min(680, resizingRef.current.startWidth + delta));
+    setPanelWidth(newWidth);
+    setIsExpanded(newWidth >= 420);
+  };
+
+  const onResizeEnd = (e: React.PointerEvent) => {
+    if (!resizingRef.current) return;
+    resizingRef.current = null;
+    try {
+      (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+      localStorage.setItem("kai_music_panel_width", String(panelWidth));
+      localStorage.setItem("kai_music_expanded", String(panelWidth >= 420));
+    } catch {}
+  };
+
+  const toggleExpand = () => {
+    setIsExpanded((prev) => {
+      const next = !prev;
+      const targetWidth = next ? 480 : 320;
+      setPanelWidth(targetWidth);
+      try {
+        localStorage.setItem("kai_music_expanded", String(next));
+        localStorage.setItem("kai_music_panel_width", String(targetWidth));
+      } catch {}
+      return next;
+    });
+  };
+
+  const submit = async () => {
+    const raw = query.trim();
+    if (!raw) return;
+    const resolved = resolveInputToTrack(raw);
     if (!resolved) {
       setNotice("Type a song name or paste a YouTube link.");
       return;
@@ -246,20 +306,57 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     setTrack(resolved);
     setPlaying(true);
     setQuery("");
+
+    // If user searched plain text, resolve to real YouTube videoId to prevent Error 153
+    if (!resolved.videoId && !resolved.playlistId) {
+      try {
+        const vid = await searchYouTubeVideoId(resolved.query);
+        if (vid) {
+          setTrack((curr) => (curr && curr.query === resolved.query ? { ...curr, videoId: vid } : curr));
+        }
+      } catch {}
+    }
   };
 
   return (
     <div
-      className="music-panel"
+      className={`music-panel${isExpanded ? " expanded" : ""}`}
+      style={{ width: `${panelWidth}px` }}
       role="complementary"
-      aria-label="Music Time player"
+      aria-label="YouTube Music player"
       onKeyDown={onPanelKeyDown}
     >
+      <div
+        className="music-resize-handle"
+        onPointerDown={onResizeStart}
+        onPointerMove={onResizeMove}
+        onPointerUp={onResizeEnd}
+        onPointerCancel={onResizeEnd}
+        title="Drag corner to expand or resize player"
+        aria-label="Resize music player"
+      />
       <div className="music-head">
-        <b>Music Time</b>
-        <button className="btn btn-icon" onClick={onClose} aria-label="Close Music Time">
-          <X size={14} />
-        </button>
+        <b>YouTube Music</b>
+        <div className="music-head-actions">
+          <button
+            type="button"
+            className="btn btn-icon"
+            onClick={toggleExpand}
+            title={isExpanded ? "Collapse player" : "Expand player"}
+            aria-label={isExpanded ? "Collapse player" : "Expand player"}
+          >
+            {isExpanded ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+          </button>
+          <button
+            type="button"
+            className="btn btn-icon"
+            onClick={onClose}
+            title="Close player"
+            aria-label="Close YouTube Music"
+          >
+            <X size={14} />
+          </button>
+        </div>
       </div>
 
       <form
@@ -292,6 +389,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
           <iframe
             key={src}
             ref={frameRef}
+            referrerPolicy="strict-origin-when-cross-origin"
             onLoad={() =>
               frameRef.current?.contentWindow?.postMessage(
                 YOUTUBE_LISTENING_HANDSHAKE,
@@ -301,7 +399,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
             className="music-video"
             src={src}
             title={track?.title ?? "YouTube player"}
-            allow="autoplay; encrypted-media; picture-in-picture"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
             allowFullScreen
           />
         ) : track && !online ? (

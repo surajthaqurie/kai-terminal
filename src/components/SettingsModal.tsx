@@ -433,26 +433,9 @@ export const SettingsModal: FC<SettingsModalProps> = ({
                       setFormData({ ...formData, showMusicPlayer: e.target.checked })
                     }
                   />
-                  <span>Show Music Time player</span>
+                  <span>Show music player</span>
                 </label>
-                <p className="muted-text">
-                  Off by default. Adds the Music Time drawer and a small footer player. Search a
-                  song or paste a YouTube link; YouTube does the rest and nothing is saved on this
-                  computer.
-                </p>
-              </div>
-
-              <div className="setting-field checkbox-field">
-                <label className="checkbox-label">
-                  <input
-                    type="checkbox"
-                    checked={Boolean(formData.musicStartMuted)}
-                    onChange={(e) =>
-                      setFormData({ ...formData, musicStartMuted: e.target.checked })
-                    }
-                  />
-                  <span>Start music muted</span>
-                </label>
+                <p className="muted-text">YouTube music player</p>
               </div>
             </div>
           )}
