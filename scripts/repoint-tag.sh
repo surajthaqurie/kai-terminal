@@ -65,7 +65,7 @@ else
 fi
 
 # 2. Sync tags, show where the tag points now.
-git fetch origin --tags --prune
+git fetch origin --tags --prune --force
 if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
   echo "Tag $TAG currently -> $(git rev-parse "$TAG")" "(target: $(git rev-parse "$TAG^{}"))"
 else
