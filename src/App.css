@@ -3615,7 +3615,9 @@ select.modal-input {
   border: 1px solid var(--border-default);
   border-radius: var(--radius-lg, 10px);
   background: var(--bg-surface);
-  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.06);
+  box-shadow:
+    0 10px 32px rgba(0, 0, 0, 0.45),
+    0 0 0 1px rgba(255, 255, 255, 0.06);
   overflow: hidden;
 }
 .music-drawer.open {
@@ -3799,7 +3801,9 @@ select.modal-input {
   user-select: none;
   touch-action: none;
   cursor: grab;
-  transition: background-color 0.15s ease, color 0.15s ease;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
 }
 .music-mini:active {
   cursor: grabbing;

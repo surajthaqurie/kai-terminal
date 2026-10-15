@@ -312,7 +312,9 @@ export const MusicPanel: FC<MusicPanelProps> = ({
       try {
         const vid = await searchYouTubeVideoId(resolved.query);
         if (vid) {
-          setTrack((curr) => (curr && curr.query === resolved.query ? { ...curr, videoId: vid } : curr));
+          setTrack((curr) =>
+            curr && curr.query === resolved.query ? { ...curr, videoId: vid } : curr
+          );
         }
       } catch {}
     }

@@ -1,2 +1,14 @@
+#!/usr/bin/env sh
+set -e
+
+# Pre-commit quality gate (cross-platform: Linux, macOS, Windows)
+# 1. Frontend formatting check (Prettier)
 npm run format:check
-npm run rust:fmt
+
+# 2. TypeScript compilation & lint check
+npm run lint
+
+# 3. Rust formatting check (when Cargo is available)
+if command -v cargo >/dev/null 2>&1; then
+  npm run rust:fmt
+fi

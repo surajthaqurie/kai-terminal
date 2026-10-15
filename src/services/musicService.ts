@@ -102,7 +102,9 @@ export async function searchYouTubeVideoId(query: string): Promise<string | null
   const existingId = extractVideoId(raw);
   if (existingId) return existingId;
   try {
-    const res = await fetch(`https://www.youtube.com/results?search_query=${encodeURIComponent(raw)}`);
+    const res = await fetch(
+      `https://www.youtube.com/results?search_query=${encodeURIComponent(raw)}`
+    );
     if (!res.ok) return null;
     const html = await res.text();
     const m = html.match(/"videoId":"([\w-]{11})"/);
