@@ -39,6 +39,15 @@ jobs:
           - os: macos-14
             target-name: macos-aarch64
             binary-ext: ""
+          - os: macos-15-intel
+            target-name: macos-x86_64
+            binary-ext: ""
+          - os: ubuntu-24.04-arm
+            target-name: linux-aarch64
+            binary-ext: ""
+          - os: windows-11-arm
+            target-name: windows-aarch64
+            binary-ext: ".exe"
 
     steps:
       - name: Checkout repository
@@ -202,6 +211,6 @@ jobs:
           echo "=== Verification scope: ${{ matrix.target-name }} (${{ matrix.os }}) ==="
           echo "- Unit tests prove logic only; interactive native behavior is proven by the PTY step above on this same runner."
           echo "- PTY AI-CLI subtest (test_13) reports NOTE + passes when no AI CLI binary is on PATH."
-          echo "- Symlink-boundary subtests skip gracefully where the runner disallows symlinks."
+          echo "- Symlink-boundary subtests skip (reported as skipped by Vitest, with a reason) where the runner disallows symlinks."
           echo "- WSL: no GitHub-hosted WSL runner exists. WSL2 verification is manual-only (run scripts/docker-test.sh or cargo/vitest natively inside WSL2 + Windows Terminal) and is NOT claimed here."
           echo "- Full Tauri installer bundles (.deb/.AppImage/.msi/.exe/.dmg) are built only by release.yml on native runners; this CI verifies the web bundle + release binary."

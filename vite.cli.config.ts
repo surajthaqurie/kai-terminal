@@ -9,12 +9,12 @@ export default defineConfig({
     emptyOutDir: false,
     // Small + fast CLI: minified single file, no sourcemaps, no gzip-size
     // reporting (build-only cost).
-    minify: "esbuild",
+    minify: "oxc",
     sourcemap: false,
     reportCompressedSize: false,
     chunkSizeWarningLimit: 300,
     lib: {
-      entry: path.resolve(__dirname, "src/cli/index.ts"),
+      entry: path.resolve(import.meta.dirname, "src/cli/index.ts"),
       formats: ["es"],
       fileName: () => "index.js",
     },

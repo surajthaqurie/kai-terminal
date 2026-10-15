@@ -880,3 +880,155 @@ fn test_14_exit_command_terminates_session() {
         "Session must be removed from manager map after shell exits"
     );
 }
+
+// ---------------------------------------------------------------------------
+// 15. Live Kill Test: close_pty / close_all really terminate OS processes
+// ---------------------------------------------------------------------------
+
+/// OS-level liveness probe (does not rely on PtyManager bookkeeping).
+fn process_alive(pid: u32) -> bool {
+    #[cfg(not(target_os = "windows"))]
+    {
+        std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let out = std::process::Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])
+            .output();
+        match out {
+            Ok(o) => String::from_utf8_lossy(&o.stdout).contains(&format!("\"{pid}\"")),
+            Err(_) => false,
+        }
+    }
+}
+
+fn wait_until_dead(pid: u32, timeout_secs: u64) -> bool {
+    let start = Instant::now();
+    while start.elapsed() < Duration::from_secs(timeout_secs) {
+        if !process_alive(pid) {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    !process_alive(pid)
+}
+
+/// Extracts the first `CHILDPID:<digits>` marker from terminal output.
+fn parse_child_pid(text: &str) -> Option<u32> {
+    text.match_indices("CHILDPID:").find_map(|(i, m)| {
+        let digits: String = text[i + m.len()..]
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect();
+        digits.parse().ok()
+    })
+}
+
+#[test]
+fn test_15_close_pty_kills_real_os_processes() {
+    let manager = PtyManager::new();
+    let (emitter, _, _) = TestEventEmitter::new();
+
+    let session = manager
+        .create_pty(
+            Arc::new(emitter.clone()),
+            PtyCreateOptions {
+                shell_path: default_test_shell(),
+                args: None,
+                cwd: None,
+                cols: 80,
+                rows: 24,
+                env: None,
+            },
+        )
+        .expect("Failed to spawn PTY session");
+
+    let shell_pid = session.pid.expect("PTY session must report a shell PID");
+    assert!(
+        process_alive(shell_pid),
+        "Shell PID {shell_pid} must be alive before close"
+    );
+
+    // Start a long-running foreground child that reports its own PID.
+    #[cfg(not(target_os = "windows"))]
+    let cmd = "sh -c 'echo CHILDPID:$$; exec sleep 300'\n";
+    #[cfg(target_os = "windows")]
+    let cmd =
+        "powershell -NoProfile -Command \"Write-Output ('CHILDPID:' + $PID); Start-Sleep 300\"\r\n";
+    manager
+        .write_to_pty(&session.id, cmd)
+        .expect("Failed to start child process");
+
+    let start = Instant::now();
+    let mut child_pid = None;
+    while start.elapsed() < Duration::from_secs(20) {
+        child_pid = parse_child_pid(&emitter.get_text());
+        if child_pid.is_some() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let child_pid = child_pid.expect("Child process never reported its PID");
+    assert!(
+        process_alive(child_pid),
+        "Child PID {child_pid} must be alive before close"
+    );
+
+    manager.close_pty(&session.id).unwrap();
+
+    assert!(
+        wait_until_dead(shell_pid, 10),
+        "Shell PID {shell_pid} must be gone from the OS after close_pty"
+    );
+    assert!(
+        wait_until_dead(child_pid, 10),
+        "Foreground child PID {child_pid} must be gone from the OS after close_pty"
+    );
+}
+
+#[test]
+fn test_15b_close_all_kills_every_shell_process() {
+    let manager = PtyManager::new();
+    let pids: Vec<u32> = (0..3)
+        .map(|_| {
+            let (emitter, _, _) = TestEventEmitter::new();
+            manager
+                .create_pty(
+                    Arc::new(emitter),
+                    PtyCreateOptions {
+                        shell_path: default_test_shell(),
+                        args: None,
+                        cwd: None,
+                        cols: 80,
+                        rows: 24,
+                        env: None,
+                    },
+                )
+                .expect("Failed to spawn PTY session")
+                .pid
+                .expect("PTY session must report a shell PID")
+        })
+        .collect();
+
+    for pid in &pids {
+        assert!(
+            process_alive(*pid),
+            "Shell PID {pid} must be alive before close_all"
+        );
+    }
+
+    manager.close_all();
+
+    for pid in pids {
+        assert!(
+            wait_until_dead(pid, 10),
+            "Shell PID {pid} must be gone from the OS after close_all"
+        );
+    }
+}

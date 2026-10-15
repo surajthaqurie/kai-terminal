@@ -1,8 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "fs";
+import { symlinkOrSkip } from "./helpers/symlink";
 import os from "os";
 import path from "path";
-import { indexProject, isSensitiveContent, matchesIgnorePattern } from "../core/indexer";
+import {
+  detectStaleIndexEntries,
+  indexProject,
+  isSensitiveContent,
+  matchesIgnorePattern,
+} from "../core/indexer";
 import { registerProject, loadProjectIndex } from "../core/registry";
 import { retrieveContext } from "../core/retrieval";
 import { handleMcpMessage } from "../core/mcp";
@@ -93,15 +99,11 @@ describe("audit regression: indexer security & correctness", () => {
     expect(index.totalTokensEstimated).toBeGreaterThan(500);
   });
 
-  it("skips symlinks escaping the project root", async () => {
+  it("skips symlinks escaping the project root", async (ctx) => {
     const outside = fs.mkdtempSync(path.join(os.tmpdir(), "kai-outside-"));
     fs.writeFileSync(path.join(outside, "s.txt"), "outside-secret\n");
     const dir = makeTempProject({ "src/a.ts": "export function a() {}\n" });
-    try {
-      fs.symlinkSync(path.join(outside, "s.txt"), path.join(dir, "src", "evil-link"));
-    } catch {
-      return; // symlink creation unavailable; skip
-    }
+    symlinkOrSkip(ctx, path.join(outside, "s.txt"), path.join(dir, "src", "evil-link"));
     const meta = registerProject(dir);
     const index = await indexProject(meta, { forceRebuild: true });
     expect(index.files["src/evil-link"]).toBeUndefined();
@@ -384,5 +386,42 @@ describe("audit regression: MCP validation", () => {
     // Verify that staleness was actively detected by sha256 mismatch
     expect(contextPackage.projectMeta.indexFreshness).toBe("stale");
     expect(contextPackage.knownLimitations.some((k) => k.includes("modified on disk"))).toBe(true);
+  });
+
+  describe("freshness: same-size edit with restored mtime", () => {
+    async function indexedWithRestoredMtime() {
+      const dir = makeTempProject({ "src/config.ts": "export const mode = 'dev';\n" });
+      const index = await indexProject(registerProject(dir));
+      expect(detectStaleIndexEntries(index).isStale).toBe(false);
+
+      const fullPath = path.join(dir, "src", "config.ts");
+      const before = fs.statSync(fullPath);
+      fs.writeFileSync(fullPath, "export const mode = 'prd';\n"); // same byte length
+      fs.utimesSync(fullPath, before.atime, before.mtime); // restore mtime
+      return { index };
+    }
+
+    it("is caught by the ctime comparison", async () => {
+      const { index } = await indexedWithRestoredMtime();
+      const result = detectStaleIndexEntries(index);
+      expect(result.isStale).toBe(true);
+      expect(result.staleFiles).toContain("src/config.ts");
+    });
+
+    it("is caught by the racy content re-hash even when ctime is unavailable", async () => {
+      const { index } = await indexedWithRestoredMtime();
+      // Simulate a coarse-timestamp filesystem / legacy snapshot with no ctime.
+      for (const f of Object.values(index.files)) delete f.ctimeMs;
+      const result = detectStaleIndexEntries(index);
+      expect(result.isStale).toBe(true);
+      expect(result.staleFiles).toContain("src/config.ts");
+    });
+
+    it("does not re-hash or flag untouched files", async () => {
+      const dir = makeTempProject({ "src/a.ts": "export const a = 1;\n" });
+      const index = await indexProject(registerProject(dir));
+      for (const f of Object.values(index.files)) delete f.ctimeMs;
+      expect(detectStaleIndexEntries(index).isStale).toBe(false);
+    });
   });
 });

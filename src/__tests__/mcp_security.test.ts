@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "fs";
+import { symlinkOrSkip } from "./helpers/symlink";
 import path from "path";
 import os from "os";
 import { handleMcpMessage, BoundedLineTransform, startMcpServer } from "../core/mcp";
@@ -153,7 +154,7 @@ describe("Phase 9 & 10: Security, Sanitization & Concurrency Safeguards", () => 
     lock2.release();
   });
 
-  it("never follows symlinks pointing outside the project root during indexing", async () => {
+  it("never follows symlinks pointing outside the project root during indexing", async (ctx) => {
     const projectRoot = path.join(tmpDir, "safe-project");
     const outsideSecretDir = path.join(tmpDir, "outside-secret");
 
@@ -166,12 +167,7 @@ describe("Phase 9 & 10: Security, Sanitization & Concurrency Safeguards", () => 
     fs.writeFileSync(path.join(projectRoot, "index.ts"), "export const a = 1;");
 
     // Create a symlink inside project pointing outside
-    try {
-      fs.symlinkSync(outsideSecretDir, path.join(projectRoot, "leaked-symlink"), "dir");
-    } catch {
-      // If symlink creation not permitted on this environment, skip symlink assertion
-      return;
-    }
+    symlinkOrSkip(ctx, outsideSecretDir, path.join(projectRoot, "leaked-symlink"), "dir");
 
     const meta = registerProject(projectRoot);
     const index = await indexProject(meta);

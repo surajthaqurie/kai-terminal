@@ -422,6 +422,37 @@ export const SettingsModal: FC<SettingsModalProps> = ({
                   </label>
                 </div>
               </div>
+
+              <div className="setting-field checkbox-field">
+                <label className="checkbox-label">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(formData.showMusicPlayer)}
+                    onChange={(e) =>
+                      setFormData({ ...formData, showMusicPlayer: e.target.checked })
+                    }
+                  />
+                  <span>Show YouTube player</span>
+                </label>
+                <p className="muted-text">
+                  Off by default. Shows the music drawer and the footer mini player (icon, name,
+                  pause, next, mute, progress). Smart search handles YouTube links and plain song
+                  names.
+                </p>
+              </div>
+
+              <div className="setting-field checkbox-field">
+                <label className="checkbox-label">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(formData.musicStartMuted)}
+                    onChange={(e) =>
+                      setFormData({ ...formData, musicStartMuted: e.target.checked })
+                    }
+                  />
+                  <span>Start music muted</span>
+                </label>
+              </div>
             </div>
           )}
 

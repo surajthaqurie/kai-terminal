@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "fs";
+import { symlinkOrSkip } from "./helpers/symlink";
 import path from "path";
 import os from "os";
 import {
@@ -35,7 +36,7 @@ describe("Production Security & Audit Validations", () => {
   });
 
   describe("Symlink Escapes in Rule and Ignore File Loaders", () => {
-    it("refuses to load project rules from symlinks escaping the project root", () => {
+    it("refuses to load project rules from symlinks escaping the project root", (ctx) => {
       const projDir = path.join(tmpDir, "project");
       const outsideDir = path.join(tmpDir, "outside");
       fs.mkdirSync(projDir, { recursive: true });
@@ -44,11 +45,7 @@ describe("Production Security & Audit Validations", () => {
       const secretKeyFile = path.join(outsideDir, "secret_rsa");
       fs.writeFileSync(secretKeyFile, "SUPER_CONFIDENTIAL_OUTSIDE_KEY_MATERIAL\n");
 
-      try {
-        fs.symlinkSync(secretKeyFile, path.join(projDir, "AGENTS.md"));
-      } catch {
-        return; // symlinks not permitted in test environment
-      }
+      symlinkOrSkip(ctx, secretKeyFile, path.join(projDir, "AGENTS.md"));
 
       const rules = loadProjectRules(projDir);
       expect(rules.length).toBe(0);
@@ -66,7 +63,7 @@ describe("Production Security & Audit Validations", () => {
       expect(rules.length).toBe(0);
     });
 
-    it("refuses to load .gitignore from symlinks escaping the project root", () => {
+    it("refuses to load .gitignore from symlinks escaping the project root", (ctx) => {
       const projDir = path.join(tmpDir, "project_git");
       const outsideDir = path.join(tmpDir, "outside_git");
       fs.mkdirSync(projDir, { recursive: true });
@@ -75,11 +72,7 @@ describe("Production Security & Audit Validations", () => {
       const outsideFile = path.join(outsideDir, "outside_ignore");
       fs.writeFileSync(outsideFile, "*.leaked\n");
 
-      try {
-        fs.symlinkSync(outsideFile, path.join(projDir, ".gitignore"));
-      } catch {
-        return;
-      }
+      symlinkOrSkip(ctx, outsideFile, path.join(projDir, ".gitignore"));
 
       const patterns = loadIgnorePatterns(projDir);
       expect(patterns.length).toBe(0);

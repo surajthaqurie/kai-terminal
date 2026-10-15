@@ -2,6 +2,8 @@
 import { describe, it, expect } from "vitest";
 import {
   splitTab,
+  splitRefusal,
+  splitRefusalMessage,
   closePane,
   removePaneById,
   setActivePane,
@@ -47,6 +49,38 @@ describe("pane layout model", () => {
     expect(clampPaneFraction(1)).toBe(0.8);
     expect(clampPaneFraction(0.5)).toBe(0.5);
     expect(clampPaneFraction(NaN)).toBe(0.5);
+  });
+
+  it("explains every refused split instead of failing silently", () => {
+    let tab: SplitTabState = {
+      panes: [pane("t-p1")],
+      activePaneId: "t-p1",
+      splitDirection: "none" as const,
+    };
+    expect(splitRefusal(tab, "vertical")).toBeNull();
+    expect(splitRefusalMessage(null)).toBeNull();
+    expect(splitRefusal(tab, "none")).toBe("invalid-direction");
+    expect(splitRefusalMessage("invalid-direction")).toBeNull();
+
+    // Keep splitting the newest pane on one axis: the size floor trips first.
+    while (splitRefusal(tab, "vertical") === null) {
+      tab = splitTab(tab, "t", "vertical", (id) => pane(id));
+    }
+    expect(splitRefusal(tab, "vertical")).toBe("too-small");
+    expect(splitRefusalMessage("too-small")).toMatch(/too small/i);
+    // The refusal must agree with what splitTab actually does.
+    expect(splitTab(tab, "t", "vertical", (id) => pane(id))).toBe(tab);
+
+    // A tab already at the cap reports the cap, not the size floor.
+    const full: SplitTabState = {
+      panes: Array.from({ length: MAX_PANES_PER_TAB }, (_, i) => pane(`f-p${i + 1}`)),
+      activePaneId: "f-p1",
+      splitDirection: "vertical" as const,
+    };
+    expect(splitRefusal(full, "vertical")).toBe("max-panes");
+    expect(splitRefusal(full, "horizontal")).toBe("max-panes");
+    expect(splitRefusalMessage("max-panes")).toContain(String(MAX_PANES_PER_TAB));
+    expect(splitTab(full, "f", "vertical", (id) => pane(id))).toBe(full);
   });
 
   it("routes focus to one pane and closes only the active pane", () => {

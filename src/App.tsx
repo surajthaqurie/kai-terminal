@@ -19,6 +19,9 @@ const AiCliPanel = lazy(() =>
 const DiagnosticsModal = lazy(() =>
   import("./components/DiagnosticsModal").then((m) => ({ default: m.DiagnosticsModal }))
 );
+const MusicPanel = lazy(() =>
+  import("./components/MusicPlayer/MusicPanel").then((m) => ({ default: m.MusicPanel }))
+);
 const WorkspaceModal = lazy(() =>
   import("./components/WorkspaceModal").then((m) => ({ default: m.WorkspaceModal }))
 );
@@ -58,6 +61,8 @@ import {
 } from "./services/shortcuts";
 import {
   splitTab,
+  splitRefusal,
+  splitRefusalMessage,
   closePane,
   removePaneById,
   setLayoutSplitRatio,
@@ -288,6 +293,13 @@ export function App() {
     INITIAL_UPDATE_DOWNLOAD_STATE
   );
   const [lastError, setLastError] = useState<string | null>(null);
+  // Transient, non-error notice shown when a pane split is refused.
+  const [paneNotice, setPaneNotice] = useState<string | null>(null);
+  useEffect(() => {
+    if (!paneNotice) return;
+    const timer = setTimeout(() => setPaneNotice(null), 4000);
+    return () => clearTimeout(timer);
+  }, [paneNotice]);
   const [userSettings, setUserSettings] = useState<UserSettings>(() =>
     SettingsService.loadSettings()
   );
@@ -295,6 +307,12 @@ export function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState<boolean>(false);
   const [isAiCliOpen, setIsAiCliOpen] = useState<boolean>(false);
+  const [isMusicOpen, setIsMusicOpen] = useState<boolean>(false);
+  const [musicTitle, setMusicTitle] = useState<string | null>(null);
+  const [musicPlaying, setMusicPlaying] = useState<boolean>(false);
+  const [musicMuted, setMusicMuted] = useState<boolean>(() =>
+    Boolean(SettingsService.loadSettings().musicStartMuted)
+  );
   const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState<boolean>(false);
   const [isWorkspaceOpen, setIsWorkspaceOpen] = useState<boolean>(false);
 
@@ -613,9 +631,25 @@ export function App() {
         );
       }
       setUserSettings(next);
+      setMusicMuted(Boolean(next.musicStartMuted));
     },
     [shells, userSettings.defaultShellId, userSettings.launchAtStartup]
   );
+
+  // Music player: footer + shortcuts dispatch window events that the
+  // (always-mounted while enabled) MusicPanel listens to, so playback
+  // survives panel close and footer works while the drawer is hidden.
+  const dispatchMusicEvent = useCallback((name: string) => {
+    try {
+      window.dispatchEvent(new CustomEvent(name));
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const handleToggleMusicPanel = useCallback(() => {
+    setIsMusicOpen((prev) => !prev);
+  }, []);
 
   // On startup, reconcile the stored launch-at-startup preference with the
   // real OS state (user may have toggled it in OS settings outside the app).
@@ -1081,6 +1115,16 @@ export function App() {
   const handleSplitPane = useCallback(
     (direction: SplitDirection) => {
       if (direction !== "horizontal" && direction !== "vertical") return;
+      // A refused split used to be a silent no-op; say why (limit / size floor).
+      const liveTab = tabsRef.current.find((t) => t.id === activeTabId);
+      if (liveTab) {
+        const refusal = splitRefusal(liveTab, direction);
+        if (refusal) {
+          setPaneNotice(splitRefusalMessage(refusal));
+          return;
+        }
+      }
+      setPaneNotice(null);
       const base = shells.find((s) => s.id === selectedShellId);
       const custom = userSettings.customShellPath?.trim();
       const effPath = custom || base?.path;
@@ -1689,6 +1733,18 @@ export function App() {
           }
           break;
         }
+        case "toggleMusic":
+          setIsMusicOpen((prev) => !prev);
+          break;
+        case "musicPlayPause":
+          dispatchMusicEvent("kai-music-toggle-play");
+          break;
+        case "musicNext":
+          dispatchMusicEvent("kai-music-next");
+          break;
+        case "musicMute":
+          dispatchMusicEvent("kai-music-mute");
+          break;
       }
     };
 
@@ -1705,6 +1761,7 @@ export function App() {
     handleToggleSearch,
     handleSplitPane,
     handleClosePane,
+    dispatchMusicEvent,
   ]);
 
   // Resolve effective shell
@@ -1811,6 +1868,14 @@ export function App() {
       shortcut: platformLabel(kb.closePane, isMac),
       icon: <XCircle size={16} />,
       perform: handleClosePane,
+    },
+    {
+      id: "toggle-music",
+      label: "Toggle Music Player",
+      category: "Music",
+      shortcut: platformLabel(kb.toggleMusic, isMac),
+      icon: <Activity size={16} />,
+      perform: () => setIsMusicOpen((prev) => !prev),
     },
     {
       id: "rename-session",
@@ -2059,6 +2124,20 @@ export function App() {
                 onClick={handleDismissRestore}
               >
                 Start fresh
+              </button>
+            </div>
+          </div>
+        )}
+        {paneNotice && (
+          <div className="session-restore-banner" role="status" aria-label="Pane split unavailable">
+            <span className="session-restore-text">{paneNotice}</span>
+            <div className="session-restore-actions">
+              <button
+                type="button"
+                className="btn btn-secondary btn-small"
+                onClick={() => setPaneNotice(null)}
+              >
+                Dismiss
               </button>
             </div>
           </div>
@@ -2402,6 +2481,22 @@ export function App() {
           onClose={() => setIsDiagnosticsOpen(false)}
           lastError={lastError}
         />
+
+        {userSettings.showMusicPlayer && (
+          <Suspense fallback={null}>
+            <div className={`music-drawer${isMusicOpen ? " open" : ""}`} aria-hidden={!isMusicOpen}>
+              <MusicPanel
+                startMuted={musicMuted}
+                onClose={() => setIsMusicOpen(false)}
+                onTrackChange={(track, playing) => {
+                  setMusicTitle(track?.title ?? null);
+                  setMusicPlaying(playing);
+                }}
+                onMutedChange={(m) => setMusicMuted(m)}
+              />
+            </div>
+          </Suspense>
+        )}
       </Suspense>
 
       {renameModalTab && (
@@ -2475,10 +2570,18 @@ export function App() {
         isCheckingUpdates={isCheckingUpdates}
         onCheckUpdates={() => handleCheckUpdates(true)}
         onViewUpdate={handleViewUpdate}
-        onGitAction={(action) => void handleGitActionRun(action)}
         onRefreshGit={handleRefreshGit}
         isRefreshingGit={isRefreshingGit}
         mode={modeDisplay}
+        music={
+          userSettings.showMusicPlayer
+            ? { title: musicTitle, playing: musicPlaying, muted: musicMuted, progress: 0 }
+            : null
+        }
+        onToggleMusicPanel={handleToggleMusicPanel}
+        onMusicPlayPause={() => dispatchMusicEvent("kai-music-toggle-play")}
+        onMusicNext={() => dispatchMusicEvent("kai-music-next")}
+        onMusicMute={() => dispatchMusicEvent("kai-music-mute")}
       />
     </div>
   );

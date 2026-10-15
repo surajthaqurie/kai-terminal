@@ -23,6 +23,18 @@ function splitNotes(text: string) {
   };
 }
 
+const norm = (s: string) =>
+  s.toLowerCase().replace(/`+/g, '').replace(/[*_~#>/\\[\]()]/g, '').replace(/\s+/g, ' ').trim();
+
+/* "Kai v0.1.5 — New `kai mcp`…" → "New `kai mcp`…". Keeps inline code,
+   drops the redundant version prefix so the card title isn't a second heading. */
+function cleanTitle(name: string, tag: string): string {
+  let t = (name || '').trim();
+  t = t.replace(/^kai\s+v?\d+\.\d+\.\d+\s*[—–-]\s*/i, '').trim();
+  t = t.replace(new RegExp(`^${tag.replace(/\./g, '\\.')}\\s*[—–-]?\\s*`, 'i'), '').trim();
+  return t || `Release ${tag}`;
+}
+
 export function Changelog({ limit = 6, showHead = true }: { limit?: number; showHead?: boolean }) {
   const releases = usePublishedReleases(limit);
 
@@ -33,7 +45,7 @@ export function Changelog({ limit = 6, showHead = true }: { limit?: number; show
         <Badge tone="cyan"><ScrollText size={14} /> What's new</Badge>
         <h2 className="t-section-title">What's new in Kai</h2>
         <p className="t-section-sub">
-          Latest updates and improvements. Simple list, newest first.
+          Release notes, newest first. Full history lives on GitHub Releases.
         </p>
       </div>
       )}
@@ -43,41 +55,44 @@ export function Changelog({ limit = 6, showHead = true }: { limit?: number; show
           <ul className="t-log-list">
             {releases.map((r, idx) => {
               const { head, bullets } = splitNotes(r.notes);
+              const title = cleanTitle(r.name, r.tag);
+              // The GitHub release title usually repeats the first bullet
+              // ("New `kai mcp` command family…") — drop the duplicate so the
+              // card reads: version + title + remaining bullets.
+              const items = bullets.filter((b, i) => i > 0 || norm(b) !== norm(title));
               return (
-                <li key={r.tag} className="t-log-row" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', flexWrap: 'wrap', gap: '0.5rem' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
-                      <span className="t-version" style={{ fontSize: '0.88rem', padding: '0.2rem 0.65rem' }}>{r.tag}</span>
+                <li key={r.tag} className="t-log-row t-log-card">
+                  <div className="t-log-top">
+                    <div className="t-log-tags">
+                      <span className="t-version t-version--lg">{r.tag}</span>
                       {idx === 0 && (
-                        <span className="t-pill" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
+                        <span className="t-pill t-pill--latest">
                           <Sparkles size={11} /> Latest Release
                         </span>
                       )}
                     </div>
-                    {r.date ? <span className="t-log-date">{fmtDate(r.date)}</span> : null}
+                    {r.date ? (
+                      <time className="t-log-date" dateTime={r.date}>{fmtDate(r.date)}</time>
+                    ) : null}
                   </div>
 
-                  <div className="t-log-main" style={{ width: '100%' }}>
-                    <div className="t-log-head" style={{ marginBottom: '0.5rem' }}>
-                      <b style={{ fontSize: '1.05rem' }} dangerouslySetInnerHTML={{ __html: renderInline(r.name) }} />
-                    </div>
-                    {head && <p className="t-log-notes" style={{ margin: '0 0 0.5rem' }} dangerouslySetInnerHTML={{ __html: renderInline(head) }} />}
-                    {bullets.length > 0 && (
+                  <div className="t-log-main">
+                    <h3 className="t-log-title" dangerouslySetInnerHTML={{ __html: renderInline(title) }} />
+                    {head && <p className="t-log-notes" dangerouslySetInnerHTML={{ __html: renderInline(head) }} />}
+                    {items.length > 0 && (
                       <ul className="t-log-bullets">
-                        {bullets.map((b, bIdx) => (
+                        {items.map((b, bIdx) => (
                           <li key={bIdx} dangerouslySetInnerHTML={{ __html: renderInline(b) }} />
                         ))}
                       </ul>
                     )}
                   </div>
 
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', paddingTop: '0.5rem', borderTop: '1px solid var(--border-subtle)', flexWrap: 'wrap', gap: '0.5rem' }}>
-                    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                      <Link to="/download" className="t-btn t-btn--secondary t-btn--sm" style={{ padding: '0.25rem 0.6rem', fontSize: '0.75rem' }}>
-                        Direct Downloads
-                      </Link>
-                    </div>
-                    <a className="t-link" href={r.url} target="_blank" rel="noreferrer" style={{ fontSize: '0.8rem' }}>
+                  <div className="t-log-foot">
+                    <Link to="/download" className="t-btn t-btn--secondary t-btn--sm t-log-btn">
+                      Direct Downloads
+                    </Link>
+                    <a className="t-link" href={r.url} target="_blank" rel="noreferrer">
                       GitHub Release Notes <ExternalLink size={13} />
                     </a>
                   </div>

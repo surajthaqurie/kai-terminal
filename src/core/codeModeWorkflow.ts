@@ -1478,10 +1478,10 @@ export interface ExternalCommandResult {
 /**
  * Whether `command` needs shell evaluation for the target platform.
  * Restricted to Windows `.cmd`/`.bat` batch files only: POSIX never uses
- * a shell (direct argv, no string evaluation), and `.ps1` scripts are
- * intentionally NOT auto-elevated — invoke them explicitly via
- * `powershell -File`. Pure function of (command, platform) so the
- * Windows branch is unit-testable on any OS.
+ * a shell (direct argv, no string evaluation). `.ps1` scripts never use a
+ * shell either; see {@link resolveSpawnTarget} for how they are launched.
+ * Pure function of (command, platform) so the Windows branch is
+ * unit-testable on any OS.
  */
 export function needsShellForCommand(
   command: string,
@@ -1489,6 +1489,36 @@ export function needsShellForCommand(
 ): boolean {
   if (platform !== "win32") return false;
   return /\.(cmd|bat)$/i.test((command ?? "").trim());
+}
+
+export interface SpawnTarget {
+  command: string;
+  args: string[];
+  shell: boolean;
+}
+
+/**
+ * Resolves the (command, args, shell) triple `runExternalAgentCommand` should
+ * spawn. Windows `.ps1` scripts cannot be executed directly, so they run via
+ * `powershell.exe -NoProfile -File <script> ...args` — still no shell (argv
+ * stays an array) and WITHOUT `-ExecutionPolicy Bypass`, so the user's
+ * execution policy is respected rather than silently overridden. Everything
+ * else is unchanged: `.cmd`/`.bat` opt into a shell, all else spawns directly.
+ * Pure function of (command, args, platform) so it is unit-testable anywhere.
+ */
+export function resolveSpawnTarget(
+  command: string,
+  args: string[],
+  platform: string = process.platform
+): SpawnTarget {
+  if (platform === "win32" && /\.ps1$/i.test((command ?? "").trim())) {
+    return {
+      command: "powershell.exe",
+      args: ["-NoProfile", "-File", command.trim(), ...args],
+      shell: false,
+    };
+  }
+  return { command, args, shell: needsShellForCommand(command, platform) };
 }
 
 /**

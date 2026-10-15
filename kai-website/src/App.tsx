@@ -28,7 +28,7 @@ function Routes() {
           : path === '/download' ? <DownloadPage rel={rel} />
           : path === '/changelog' ? <ChangelogPage />
           : path === '/guide' ? <GuidePage />
-          : path === '/manual' ? <ManualPage />
+          : path === '/manual' || path === '/commands' ? <ManualPage />
           : path === '/mcp' ? <McpPage />
           : path === '/docs' ? <DocsIndexPage />
           : docSlug && docSlug !== 'mcp' ? <DocDetailPage slug={docSlug} />

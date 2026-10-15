@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "fs";
+import { symlinkOrSkip } from "./helpers/symlink";
 import path from "path";
 import os from "os";
 import {
@@ -257,16 +258,12 @@ describe("Project Intelligence Comprehensive Improvements", () => {
   });
 
   describe("5. Symlinks and Project Boundary Enforcement", () => {
-    it("indexes files linked via internal symlinks inside project boundary", async () => {
+    it("indexes files linked via internal symlinks inside project boundary", async (ctx) => {
       const repo = makeProject({
         "src/real.ts": "export function realSymbol() {}",
       });
       // Internal symlink: src/link.ts -> src/real.ts
-      try {
-        fs.symlinkSync(path.join(repo, "src", "real.ts"), path.join(repo, "src", "link.ts"));
-      } catch {
-        return; // symlinks not permitted in test environment
-      }
+      symlinkOrSkip(ctx, path.join(repo, "src", "real.ts"), path.join(repo, "src", "link.ts"));
 
       const meta = registerProject(repo);
       const index = await indexProject(meta);
@@ -276,7 +273,7 @@ describe("Project Intelligence Comprehensive Improvements", () => {
       expect(index.symbolIndex["realSymbol"]).toBeDefined();
     });
 
-    it("rejects symlinks that point outside the project boundary", async () => {
+    it("rejects symlinks that point outside the project boundary", async (ctx) => {
       const outsideDir = path.join(tmpDir, "outside_secret");
       fs.mkdirSync(outsideDir, { recursive: true });
       fs.writeFileSync(path.join(outsideDir, "secret.ts"), "export const SECRET = 123;");
@@ -285,11 +282,11 @@ describe("Project Intelligence Comprehensive Improvements", () => {
         "src/app.ts": "export const app = true;",
       });
       // Symlink to outside file
-      try {
-        fs.symlinkSync(path.join(outsideDir, "secret.ts"), path.join(repo, "src", "sym_secret.ts"));
-      } catch {
-        return; // symlinks not permitted in test environment
-      }
+      symlinkOrSkip(
+        ctx,
+        path.join(outsideDir, "secret.ts"),
+        path.join(repo, "src", "sym_secret.ts")
+      );
 
       const meta = registerProject(repo);
       const index = await indexProject(meta);
@@ -298,16 +295,12 @@ describe("Project Intelligence Comprehensive Improvements", () => {
       expect(index.files["src/app.ts"]).toBeDefined();
     });
 
-    it("handles circular directory symlinks safely without infinite recursion", async () => {
+    it("handles circular directory symlinks safely without infinite recursion", async (ctx) => {
       const repo = makeProject({
         "src/main.ts": "export const main = 1;",
       });
       // Symlink pointing back to root or parent: src/cycle -> repo
-      try {
-        fs.symlinkSync(repo, path.join(repo, "src", "cycle"));
-      } catch {
-        return; // symlinks not permitted in test environment
-      }
+      symlinkOrSkip(ctx, repo, path.join(repo, "src", "cycle"));
 
       const meta = registerProject(repo);
       const index = await indexProject(meta);
@@ -316,18 +309,14 @@ describe("Project Intelligence Comprehensive Improvements", () => {
       expect(Object.keys(index.files).length).toBe(1);
     });
 
-    it("enforces boundary checks on ignore and rules files", () => {
+    it("enforces boundary checks on ignore and rules files", (ctx) => {
       const outsideDir = path.join(tmpDir, "outside_rules");
       fs.mkdirSync(outsideDir, { recursive: true });
       fs.writeFileSync(path.join(outsideDir, "evil.md"), "malicious rules");
 
       const repo = makeProject({});
       // Symlink AGENTS.md pointing outside
-      try {
-        fs.symlinkSync(path.join(outsideDir, "evil.md"), path.join(repo, "AGENTS.md"));
-      } catch {
-        return; // symlinks not permitted in test environment
-      }
+      symlinkOrSkip(ctx, path.join(outsideDir, "evil.md"), path.join(repo, "AGENTS.md"));
 
       const meta = registerProject(repo);
       expect(

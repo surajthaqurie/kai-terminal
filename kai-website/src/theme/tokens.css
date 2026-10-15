@@ -17,8 +17,8 @@
   color-scheme: dark;
 
   /* ——— Typography ——— */
-  --font-sans: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
-  --font-mono: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-sans: 'Space Grotesk', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 
   --text-display: clamp(2.4rem, 5vw, 3.75rem);
   --text-h2: clamp(1.75rem, 3.2vw, 2.5rem);

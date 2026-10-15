@@ -8,12 +8,14 @@ This guide explains how to install pre-built packages of Kai Terminal or build t
 
 | Operating System | Minimum Version | Package Formats | Build Status |
 | :--- | :--- | :--- | :--- |
-| **Linux (x86_64)** | Ubuntu 22.04 LTS (glibc >= 2.35) | `.deb`, `.AppImage` | Verified native build |
-| **Linux (ARM64)** | Ubuntu 24.04 LTS | `.deb`, `.AppImage` | Verified native build |
+| **Linux (x86_64)** | Ubuntu 22.04 LTS (glibc >= 2.35) | `.deb`, `.AppImage`, `.rpm` | Verified native build (`.rpm` added to release.yml; first published with the next tag) |
+| **Linux (ARM64)** | Ubuntu 24.04 LTS | `.deb`, `.AppImage`, `.rpm` | Verified native build (`.rpm` as above) |
 | **Windows** | Windows 10 (build 17763 / 1809+) or Windows 11 | `.exe` (NSIS), `.msi` | Verified native build |
-| **macOS** | macOS 12 (Monterey) or later (Apple Silicon) | `.dmg` | Verified native build |
+| **Windows (ARM64)** | Windows 11 ARM64 | `.exe` (NSIS) | Configured in CI + release.yml on a native `windows-11-arm` runner; not yet confirmed by a published release |
+| **macOS (Apple Silicon)** | macOS 12 (Monterey) or later | `.dmg` | Verified native build |
+| **macOS (Intel x86_64)** | macOS 12 (Monterey) or later | `.dmg` | Configured in CI + release.yml on a native `macos-15-intel` runner; not yet confirmed by a published release |
 
-*Note: Windows ARM64 and macOS Intel (x86_64) are not currently built or tested.*
+*Note: the Windows ARM64 and macOS Intel rows become "verified" once their CI jobs and the next tagged release build pass. Snap and Flatpak remain manifest templates only (see `packaging/`).*
 
 ---
 

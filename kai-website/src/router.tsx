@@ -24,6 +24,10 @@ export const ROUTE_META: Record<string, { title: string; description: string }> 
     title: 'Commands — Kai',
     description: 'Every Kai command, grouped by topic.',
   },
+  '/commands': {
+    title: 'Commands — Kai',
+    description: 'Every Kai command, grouped by topic.',
+  },
   '/mcp': {
     title: 'MCP reference — Kai',
     description: 'Local MCP server: start command and tool reference.',
@@ -126,7 +130,9 @@ export function useRouteMeta() {
   const path = usePath();
   useEffect(() => {
     const meta = ROUTE_META[path] ?? ROUTE_META['/404'];
-    const url = `${SITE_URL}${path === '/' ? '/' : path}`;
+    // Aliases share one canonical URL so search engines see a single page.
+    const canonicalPath = path === '/commands' ? '/manual' : path;
+    const url = `${SITE_URL}${canonicalPath === '/' ? '/' : canonicalPath}`;
     document.title = meta.title;
     document.querySelector('meta[name="description"]')?.setAttribute('content', meta.description);
     document.querySelector('link[rel="canonical"]')?.setAttribute('href', url);

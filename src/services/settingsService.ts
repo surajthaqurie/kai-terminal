@@ -20,6 +20,10 @@ export const DEFAULT_KEYBINDINGS: KeybindingsConfig = {
   nextTab: "Ctrl+Shift+]",
   prevTab: "Ctrl+Shift+[",
   nextPane: "Ctrl+Alt+]",
+  toggleMusic: "Ctrl+Alt+M",
+  musicPlayPause: "Ctrl+Alt+Space",
+  musicNext: "Ctrl+Alt+N",
+  musicMute: "Ctrl+Alt+U",
 };
 
 export const DEFAULT_SETTINGS: UserSettings = {
@@ -37,6 +41,8 @@ export const DEFAULT_SETTINGS: UserSettings = {
   autoRestoreSession: false,
   autoCheckUpdates: true,
   skipShellProfile: false,
+  showMusicPlayer: false,
+  musicStartMuted: false,
   keybindings: DEFAULT_KEYBINDINGS,
 };
 
@@ -139,6 +145,8 @@ export class SettingsService {
     merged.launchAtStartup = Boolean(merged.launchAtStartup);
     merged.autoRestoreSession = Boolean(merged.autoRestoreSession);
     merged.skipShellProfile = Boolean(merged.skipShellProfile);
+    merged.showMusicPlayer = Boolean(merged.showMusicPlayer);
+    merged.musicStartMuted = Boolean(merged.musicStartMuted);
     merged.autoCheckUpdates =
       merged.autoCheckUpdates === undefined ? true : Boolean(merged.autoCheckUpdates);
     return merged;

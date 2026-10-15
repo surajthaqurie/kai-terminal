@@ -195,6 +195,10 @@ export interface KeybindingsConfig {
   nextTab: string;
   prevTab: string;
   nextPane: string;
+  toggleMusic: string;
+  musicPlayPause: string;
+  musicNext: string;
+  musicMute: string;
 }
 
 /**
@@ -225,6 +229,10 @@ export interface UserSettings {
    * Applies to PowerShell / pwsh only; other shells are unaffected.
    */
   skipShellProfile?: boolean;
+  /** Show the YouTube player (Appearance, default OFF). */
+  showMusicPlayer?: boolean;
+  /** Start muted when the player loads. */
+  musicStartMuted?: boolean;
   /** Customizable keyboard shortcut map. */
   keybindings: KeybindingsConfig;
 }

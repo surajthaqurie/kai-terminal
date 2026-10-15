@@ -246,13 +246,39 @@ export const GitChangesModal: FC<GitChangesModalProps> = ({ dir, onClose }) => {
   const [confirmDiscardFile, setConfirmDiscardFile] = useState<GitFileChange | null>(null);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [sidebarWidth, setSidebarWidth] = useState(320);
-  // Windowed by default (resizable via the corner handle); fullscreen is
-  // opt-in per session. Applies on every OS — pure CSS + state, no native APIs.
+  // Windowed by default, resizable from any edge/corner like a normal
+  // terminal window (custom pointer-drag handles — NOT the native
+  // `resize: both` corner, whose browser-written inline size used to stick
+  // around and override `.git-fullscreen`, breaking fullscreen after a
+  // manual resize). Fullscreen is opt-in per session. Applies on every OS —
+  // pure CSS + state, no native APIs.
   const [isFullscreen, setIsFullscreen] = useState(false);
-  // Minimized: the modal collapses to a small floating pill (state is kept,
-  // nothing is lost). Restoring returns to the previous size.
-  const [isMinimized, setIsMinimized] = useState(false);
+  // Custom window size from edge/corner drags. Deliberately NOT applied
+  // while fullscreen so entering fullscreen always fills the viewport and
+  // exiting restores the exact pre-fullscreen size.
+  const [modalSize, setModalSize] = useState<{ width: number; height: number } | null>(null);
   const sidebarDragRef = useRef<{ startX: number; baseW: number } | null>(null);
+  const modalDragRef = useRef<{
+    dir: string;
+    startX: number;
+    startY: number;
+    baseW: number;
+    baseH: number;
+  } | null>(null);
+  const modalRef = useRef<HTMLDivElement>(null);
+  // In-flight window drag listeners (sidebar + dialog resizes). A drag can
+  // outlive the modal — e.g. Esc closes it mid-drag — so the cleanup is
+  // tracked here and run on unmount; otherwise every aborted drag leaks two
+  // window listeners and a stale ref.
+  const dragCleanupRef = useRef<(() => void) | null>(null);
+  useEffect(() => () => dragCleanupRef.current?.(), []);
+  /** Register a drag cleanup, aborting any previous drag first (defensive:
+   * pointer capture makes overlaps rare, but a stuck ref must never keep
+   * resizing after a new drag starts). */
+  const trackDragCleanup = (cleanup: () => void) => {
+    dragCleanupRef.current?.();
+    dragCleanupRef.current = cleanup;
+  };
 
   const showStatusBanner = (msg: string) => {
     setStatusMsg(msg);
@@ -415,600 +441,625 @@ export const GitChangesModal: FC<GitChangesModalProps> = ({ dir, onClose }) => {
       if (!r) return;
       setSidebarWidth(Math.min(560, Math.max(230, r.baseW + (ev.clientX - r.startX))));
     };
-    const up = () => {
+    const stop = () => {
       sidebarDragRef.current = null;
       window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointercancel", stop);
+      if (dragCleanupRef.current === stop) dragCleanupRef.current = null;
     };
+    trackDragCleanup(stop);
     window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
+    window.addEventListener("pointerup", stop);
+    window.addEventListener("pointercancel", stop);
   };
 
-  return (
-    <>
-      {isMinimized && (
-        <div className="git-minimized-pill" role="status" aria-label="Changes review minimized">
-          <GitCompare size={14} aria-hidden="true" />
-          <span className="git-minimized-title">Changes Review &amp; Diff</span>
-          {typeof totalCount === "number" && totalCount > 0 && (
-            <span className="git-minimized-count" title={`${totalCount} changed files`}>
-              {totalCount}
-            </span>
-          )}
-          <button
-            type="button"
-            className="btn-close"
-            onClick={() => setIsMinimized(false)}
-            title="Restore changes review"
-            aria-label="Restore changes review"
-          >
-            <Maximize2 size={14} />
-          </button>
-          <button
-            type="button"
-            className="btn-close"
-            onClick={onClose}
-            title="Close changes review"
-            aria-label="Close changes review"
-          >
-            <X size={14} />
-          </button>
-        </div>
-      )}
-      <div
-        className="modal-backdrop git-changes-backdrop"
-        role="dialog"
-        aria-modal="true"
-        aria-label={`Source Control and Diff Viewer for ${dir}`}
-        style={isMinimized ? { display: "none" } : undefined}
-      >
-        <div
-          className={`git-changes-modal${isFullscreen ? " git-fullscreen" : ""}`}
-          role="document"
-        >
-          {/* Header */}
-          <div className="git-changes-header">
-            <div className="git-changes-title-group">
-              <GitCompare size={18} className="title-icon" aria-hidden="true" />
-              <h3 className="git-changes-title">Changes Review &amp; Diff</h3>
-              {summary?.branch && (
-                <span className="git-branch-badge" title={`Branch: ${summary.branch}`}>
-                  <GitBranch size={12} aria-hidden="true" />
-                  <span>{summary.branch}</span>
-                </span>
-              )}
-            </div>
+  const beginModalResize = (dir: string) => (e: React.PointerEvent) => {
+    if (isFullscreen) return;
+    e.preventDefault();
+    e.stopPropagation();
+    // Measured from the dialog ref (never a class-string DOM search), falling
+    // back to the last drag size and then the CSS default.
+    const rect = modalRef.current?.getBoundingClientRect();
+    const baseW = modalSize?.width ?? rect?.width ?? 1180;
+    const baseH = modalSize?.height ?? rect?.height ?? 820;
+    modalDragRef.current = { dir, startX: e.clientX, startY: e.clientY, baseW, baseH };
+    const move = (ev: PointerEvent) => {
+      const r = modalDragRef.current;
+      if (!r) return;
+      const dx = ev.clientX - r.startX;
+      const dy = ev.clientY - r.startY;
+      // Dragging any edge/corner resizes like a normal terminal window.
+      // N/W edges grow when dragged outward (negative delta grows the box).
+      let w = r.baseW;
+      let h = r.baseH;
+      if (r.dir.includes("e")) w = r.baseW + dx;
+      if (r.dir.includes("w")) w = r.baseW - dx;
+      if (r.dir.includes("s")) h = r.baseH + dy;
+      if (r.dir.includes("n")) h = r.baseH - dy;
+      const maxW = window.innerWidth - 40;
+      const maxH = window.innerHeight - 40;
+      w = Math.min(maxW, Math.max(720, w));
+      h = Math.min(maxH, Math.max(480, h));
+      setModalSize({ width: Math.round(w), height: Math.round(h) });
+    };
+    const stop = () => {
+      modalDragRef.current = null;
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointercancel", stop);
+      if (dragCleanupRef.current === stop) dragCleanupRef.current = null;
+    };
+    trackDragCleanup(stop);
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop);
+    window.addEventListener("pointercancel", stop);
+  };
 
-            <div className="git-changes-header-actions">
-              <button
-                type="button"
-                className="btn btn-secondary btn-small refresh-btn"
-                onClick={() => void loadChanges(true)}
-                title="Refresh changes"
-                disabled={loading}
-                aria-label="Refresh changes"
-              >
-                <RefreshCw size={13} className={loading ? "spin" : ""} />
-                <span>Refresh</span>
-              </button>
-              <button
-                type="button"
-                className="btn-close"
-                onClick={() => setIsMinimized(true)}
-                title="Minimize changes review"
-                aria-label="Minimize changes review"
-              >
-                <Minus size={16} />
-              </button>
-              <button
-                type="button"
-                className="btn-close"
-                onClick={() => setIsFullscreen((v) => !v)}
-                title={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
-                aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
-                aria-pressed={isFullscreen}
-              >
-                {isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
-              </button>
-              <button
-                type="button"
-                className="btn-close"
-                onClick={onClose}
-                title="Close (Esc)"
-                aria-label="Close changes modal"
-              >
-                <X size={18} />
-              </button>
-            </div>
+  const toggleFullscreen = useCallback(() => {
+    // Size stays in state but is ignored while fullscreen, so the stale-size
+    // bug (manual resize breaking fullscreen) cannot recur.
+    setIsFullscreen((v) => !v);
+  }, []);
+
+  return (
+    <div
+      className="modal-backdrop git-changes-backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Source Control and Diff Viewer for ${dir}`}
+    >
+      <div
+        className={`git-changes-modal${isFullscreen ? " git-fullscreen" : ""}`}
+        role="document"
+        ref={modalRef}
+        style={
+          !isFullscreen && modalSize
+            ? { width: `${modalSize.width}px`, height: `${modalSize.height}px` }
+            : undefined
+        }
+      >
+        {/* Resize from any edge/corner like a normal terminal window. */}
+        {!isFullscreen &&
+          (["n", "s", "e", "w", "ne", "nw", "se", "sw"] as const).map((d) => (
+            <div
+              key={d}
+              className={`git-resize-handle git-resize-${d}`}
+              aria-hidden="true"
+              onPointerDown={beginModalResize(d)}
+            />
+          ))}
+        {/* Header */}
+        <div className="git-changes-header">
+          <div className="git-changes-title-group">
+            <GitCompare size={18} className="title-icon" aria-hidden="true" />
+            <h3 className="git-changes-title">Changes Review &amp; Diff</h3>
+            {summary?.branch && (
+              <span className="git-branch-badge" title={`Branch: ${summary.branch}`}>
+                <GitBranch size={12} aria-hidden="true" />
+                <span>{summary.branch}</span>
+              </span>
+            )}
           </div>
 
-          {/* Temporary status alert */}
-          {statusMsg && <div className="git-action-banner">{statusMsg}</div>}
-          {error && (
-            <div className="git-error-banner">
-              <AlertCircle size={14} />
-              <span>{error}</span>
-            </div>
-          )}
-
-          {/* Main Body: Two-panel VS Code layout */}
-          <div className="git-changes-content">
-            {/* Left Panel: File Changes Explorer (drag the divider to resize) */}
-            <div
-              className="git-changes-sidebar"
-              role="region"
-              aria-label="Source Control Changes"
-              style={{ width: `${sidebarWidth}px`, flex: `0 0 ${sidebarWidth}px` }}
+          <div className="git-changes-header-actions">
+            <button
+              type="button"
+              className="btn btn-secondary btn-small refresh-btn"
+              onClick={() => void loadChanges(true)}
+              title="Refresh changes"
+              disabled={loading}
+              aria-label="Refresh changes"
             >
-              <div className="sidebar-filter-row">
-                <input
-                  type="text"
-                  className="sidebar-filter-input"
-                  placeholder="Filter changed files..."
-                  value={filterText}
-                  onChange={(e) => setFilterText(e.target.value)}
-                  aria-label="Filter changed files"
-                />
-                <span className="total-changes-count" title="Total changed files">
-                  {totalCount} {totalCount === 1 ? "file" : "files"}
-                </span>
-              </div>
+              <RefreshCw size={13} className={loading ? "spin" : ""} />
+              <span>Refresh</span>
+            </button>
+            <button
+              type="button"
+              className="btn-close"
+              onClick={toggleFullscreen}
+              title={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+              aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+              aria-pressed={isFullscreen}
+            >
+              {isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+            </button>
+            <button
+              type="button"
+              className="btn-close"
+              onClick={onClose}
+              title="Close (Esc)"
+              aria-label="Close changes modal"
+            >
+              <X size={18} />
+            </button>
+          </div>
+        </div>
 
-              <div className="changes-tree-list">
-                {/* STAGED CHANGES */}
-                {summary && summary.staged.length > 0 && (
-                  <div className="changes-section">
-                    <div className="section-header">
-                      <span className="section-title">
-                        Staged Changes ({summary.staged.length})
-                      </span>
-                      <button
-                        type="button"
-                        className="section-action-btn"
-                        onClick={handleUnstageAll}
-                        title="Unstage all changes"
-                        aria-label="Unstage all changes"
-                      >
-                        <Minus size={12} />
-                        <span>Unstage All</span>
-                      </button>
-                    </div>
-                    <div className="file-list">
-                      {filteredStaged.map((f) => {
-                        const { fileName, dirPath } = splitPath(f.path);
-                        const badge = getStatusBadge(f.status, true);
-                        const isSelected =
-                          selectedFile?.path === f.path && selectedFile?.staged === true;
-                        return (
-                          <div
-                            key={`staged-${f.path}`}
-                            className={`file-row ${isSelected ? "selected" : ""}`}
-                            onClick={() => setSelectedFile(f)}
-                            role="button"
-                            tabIndex={0}
-                            aria-selected={isSelected}
-                          >
-                            <span className="file-icon-wrap">{getFileIcon(f.status)}</span>
-                            <span className="file-name" title={f.path}>
-                              {fileName}
-                              {dirPath && <span className="file-dir"> {dirPath}</span>}
-                            </span>
-                            <span className={`file-badge ${badge.className}`} title={badge.title}>
-                              {badge.label}
-                            </span>
-                            <div className="file-row-actions">
-                              <button
-                                type="button"
-                                className="file-action-btn"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  void handleUnstageFile(f);
-                                }}
-                                title="Unstage change"
-                                aria-label={`Unstage ${f.path}`}
-                              >
-                                <Minus size={12} />
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
+        {/* Temporary status alert */}
+        {statusMsg && <div className="git-action-banner">{statusMsg}</div>}
+        {error && (
+          <div className="git-error-banner">
+            <AlertCircle size={14} />
+            <span>{error}</span>
+          </div>
+        )}
 
-                {/* WORKING TREE CHANGES */}
-                {summary && summary.working_tree.length > 0 && (
-                  <div className="changes-section">
-                    <div className="section-header">
-                      <span className="section-title">Changes ({summary.working_tree.length})</span>
-                      <button
-                        type="button"
-                        className="section-action-btn"
-                        onClick={handleStageAll}
-                        title="Stage all changes"
-                        aria-label="Stage all changes"
-                      >
-                        <Plus size={12} />
-                        <span>Stage All</span>
-                      </button>
-                    </div>
-                    <div className="file-list">
-                      {filteredWorking.map((f) => {
-                        const { fileName, dirPath } = splitPath(f.path);
-                        const badge = getStatusBadge(f.status, false);
-                        const isSelected =
-                          selectedFile?.path === f.path && selectedFile?.staged === false;
-                        return (
-                          <div
-                            key={`working-${f.path}`}
-                            className={`file-row ${isSelected ? "selected" : ""}`}
-                            onClick={() => setSelectedFile(f)}
-                            role="button"
-                            tabIndex={0}
-                            aria-selected={isSelected}
-                          >
-                            <span className="file-icon-wrap">{getFileIcon(f.status)}</span>
-                            <span className="file-name" title={f.path}>
-                              {fileName}
-                              {dirPath && <span className="file-dir"> {dirPath}</span>}
-                            </span>
-                            <span className={`file-badge ${badge.className}`} title={badge.title}>
-                              {badge.label}
-                            </span>
-                            <div className="file-row-actions">
-                              <button
-                                type="button"
-                                className="file-action-btn"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  void handleStageFile(f);
-                                }}
-                                title="Stage changes"
-                                aria-label={`Stage ${f.path}`}
-                              >
-                                <Plus size={12} />
-                              </button>
-                              <button
-                                type="button"
-                                className="file-action-btn danger"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setConfirmDiscardFile(f);
-                                }}
-                                title="Discard changes"
-                                aria-label={`Discard changes in ${f.path}`}
-                              >
-                                <RotateCcw size={12} />
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-
-                {/* UNTRACKED FILES */}
-                {summary && summary.untracked.length > 0 && (
-                  <div className="changes-section">
-                    <div className="section-header">
-                      <span className="section-title">
-                        Untracked Files ({summary.untracked.length})
-                      </span>
-                    </div>
-                    <div className="file-list">
-                      {filteredUntracked.map((f) => {
-                        const { fileName, dirPath } = splitPath(f.path);
-                        const badge = getStatusBadge("U", false);
-                        const isSelected =
-                          selectedFile?.path === f.path && selectedFile?.staged === false;
-                        return (
-                          <div
-                            key={`untracked-${f.path}`}
-                            className={`file-row ${isSelected ? "selected" : ""}`}
-                            onClick={() => setSelectedFile(f)}
-                            role="button"
-                            tabIndex={0}
-                            aria-selected={isSelected}
-                          >
-                            <span className="file-icon-wrap">{getFileIcon("U")}</span>
-                            <span className="file-name" title={f.path}>
-                              {fileName}
-                              {dirPath && <span className="file-dir"> {dirPath}</span>}
-                            </span>
-                            <span className={`file-badge ${badge.className}`} title={badge.title}>
-                              {badge.label}
-                            </span>
-                            <div className="file-row-actions">
-                              <button
-                                type="button"
-                                className="file-action-btn"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  void handleStageFile(f);
-                                }}
-                                title="Track file (Stage)"
-                                aria-label={`Stage ${f.path}`}
-                              >
-                                <Plus size={12} />
-                              </button>
-                              <button
-                                type="button"
-                                className="file-action-btn danger"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setConfirmDiscardFile(f);
-                                }}
-                                title="Delete untracked file"
-                                aria-label={`Delete ${f.path}`}
-                              >
-                                <Trash2 size={12} />
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-
-                {/* Clean tree message */}
-                {summary && summary.clean && (
-                  <div className="changes-clean-state">
-                    <CheckCircle2 size={36} className="clean-icon" />
-                    <h4>Working Tree Clean</h4>
-                    <p className="muted-text">
-                      No uncommitted changes detected. Any manual edits or changes made by AI agents
-                      will automatically appear here.
-                    </p>
-                  </div>
-                )}
-              </div>
+        {/* Main Body: Two-panel VS Code layout */}
+        <div className="git-changes-content">
+          {/* Left Panel: File Changes Explorer (drag the divider to resize) */}
+          <div
+            className="git-changes-sidebar"
+            role="region"
+            aria-label="Source Control Changes"
+            style={{ width: `${sidebarWidth}px`, flex: `0 0 ${sidebarWidth}px` }}
+          >
+            <div className="sidebar-filter-row">
+              <input
+                type="text"
+                className="sidebar-filter-input"
+                placeholder="Filter changed files..."
+                value={filterText}
+                onChange={(e) => setFilterText(e.target.value)}
+                aria-label="Filter changed files"
+              />
+              <span className="total-changes-count" title="Total changed files">
+                {totalCount} {totalCount === 1 ? "file" : "files"}
+              </span>
             </div>
 
-            {/* Sidebar / diff divider (drag to resize file list) */}
-            <div
-              className="git-changes-divider"
-              role="separator"
-              aria-orientation="vertical"
-              aria-label="Resize file list"
-              onPointerDown={beginSidebarResize}
-            />
-
-            {/* Right Panel: VS Code Diff Viewer */}
-            <div className="git-diff-viewer" role="region" aria-label="Diff Viewer">
-              {selectedFile ? (
-                <div className="diff-container">
-                  {/* Diff Viewer Top Toolbar */}
-                  <div className="diff-toolbar">
-                    <div className="diff-file-meta">
-                      <span className="diff-file-icon">{getFileIcon(selectedFile.status)}</span>
-                      <span className="diff-file-path" title={selectedFile.path}>
-                        {selectedFile.path}
-                      </span>
-                      <span className="diff-stage-tag">
-                        {selectedFile.staged ? "Staged" : "Working Tree"}
-                      </span>
-                      {(parsedDiff.additions > 0 || parsedDiff.deletions > 0) && (
-                        <span className="diff-stats-badge">
-                          <span className="diff-add-stat">+{parsedDiff.additions}</span>
-                          <span className="diff-del-stat">-{parsedDiff.deletions}</span>
-                        </span>
-                      )}
-                    </div>
-
-                    <div className="diff-view-controls">
-                      {/* Mode Toggle: Unified vs Side-by-Side */}
-                      <div className="mode-toggle-group">
-                        <button
-                          type="button"
-                          className={`toggle-btn ${viewMode === "unified" ? "active" : ""}`}
-                          onClick={() => setViewMode("unified")}
-                          title="Unified Diff View"
-                          aria-label="Unified diff"
-                        >
-                          <AlignLeft size={13} />
-                          <span>Unified</span>
-                        </button>
-                        <button
-                          type="button"
-                          className={`toggle-btn ${viewMode === "split" ? "active" : ""}`}
-                          onClick={() => setViewMode("split")}
-                          title="Split (Side-by-Side) Diff View"
-                          aria-label="Split diff"
-                        >
-                          <Columns size={13} />
-                          <span>Split</span>
-                        </button>
-                      </div>
-
-                      {/* Stage / Unstage Button */}
-                      {selectedFile.staged ? (
-                        <button
-                          type="button"
-                          className="btn btn-secondary btn-small"
-                          onClick={() => void handleUnstageFile(selectedFile)}
-                          title="Unstage this file"
-                        >
-                          <Minus size={13} />
-                          <span>Unstage</span>
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          className="btn btn-primary btn-small"
-                          onClick={() => void handleStageFile(selectedFile)}
-                          title="Stage this file"
-                        >
-                          <Plus size={13} />
-                          <span>Stage</span>
-                        </button>
-                      )}
-
-                      {/* Discard button */}
-                      {!selectedFile.staged && (
-                        <button
-                          type="button"
-                          className="btn btn-secondary btn-small btn-discard"
-                          onClick={() => setConfirmDiscardFile(selectedFile)}
-                          title="Discard changes in this file"
-                        >
-                          <RotateCcw size={13} />
-                          <span>Discard</span>
-                        </button>
-                      )}
-                    </div>
+            <div className="changes-tree-list">
+              {/* STAGED CHANGES */}
+              {summary && summary.staged.length > 0 && (
+                <div className="changes-section">
+                  <div className="section-header">
+                    <span className="section-title">Staged Changes ({summary.staged.length})</span>
+                    <button
+                      type="button"
+                      className="section-action-btn"
+                      onClick={handleUnstageAll}
+                      title="Unstage all changes"
+                      aria-label="Unstage all changes"
+                    >
+                      <Minus size={12} />
+                      <span>Unstage All</span>
+                    </button>
                   </div>
-
-                  {/* Confirm Discard Modal Overlay */}
-                  {confirmDiscardFile && confirmDiscardFile.path === selectedFile.path && (
-                    <div className="discard-confirm-box">
-                      <p>
-                        <strong>Discard changes in &quot;{confirmDiscardFile.path}&quot;?</strong>
-                        <br />
-                        This will revert your local modifications and cannot be undone.
-                      </p>
-                      <div className="discard-confirm-actions">
-                        <button
-                          type="button"
-                          className="btn btn-danger btn-small"
-                          onClick={() => void handleDiscardFile(confirmDiscardFile)}
+                  <div className="file-list">
+                    {filteredStaged.map((f) => {
+                      const { fileName, dirPath } = splitPath(f.path);
+                      const badge = getStatusBadge(f.status, true);
+                      const isSelected =
+                        selectedFile?.path === f.path && selectedFile?.staged === true;
+                      return (
+                        <div
+                          key={`staged-${f.path}`}
+                          className={`file-row ${isSelected ? "selected" : ""}`}
+                          onClick={() => setSelectedFile(f)}
+                          role="button"
+                          tabIndex={0}
+                          aria-selected={isSelected}
                         >
-                          Confirm Discard
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-secondary btn-small"
-                          onClick={() => setConfirmDiscardFile(null)}
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Diff Viewer Body */}
-                  <div className="diff-editor-body" tabIndex={0} aria-label="Diff contents">
-                    {loadingDiff ? (
-                      <div className="diff-loading">
-                        <RefreshCw size={20} className="spin" />
-                        <span>Loading diff...</span>
-                      </div>
-                    ) : parsedDiff.hunks.length === 0 ? (
-                      <div className="diff-empty-state">
-                        <FileCode size={32} />
-                        <p>
-                          {rawDiff
-                            ? rawDiff
-                            : "No text differences to display. File may be empty or newly created."}
-                        </p>
-                      </div>
-                    ) : viewMode === "unified" ? (
-                      /* Unified Mode */
-                      <div className="diff-unified-view">
-                        {parsedDiff.hunks.map((hunk, hIdx) => (
-                          <div key={`hunk-${hIdx}`} className="diff-hunk">
-                            <div className="hunk-header-row">
-                              <span className="hunk-header-label">{hunk.header}</span>
-                            </div>
-                            {hunk.lines.map((line, lIdx) => (
-                              <div
-                                key={`line-${hIdx}-${lIdx}`}
-                                className={`diff-line-row diff-line-${line.type}`}
-                              >
-                                <span className="diff-line-num old-num">
-                                  {line.oldLineNumber ?? ""}
-                                </span>
-                                <span className="diff-line-num new-num">
-                                  {line.newLineNumber ?? ""}
-                                </span>
-                                <span className="diff-line-marker">
-                                  {line.type === "add" ? "+" : line.type === "delete" ? "-" : " "}
-                                </span>
-                                <span className="diff-line-content">{line.content}</span>
-                              </div>
-                            ))}
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      /* Split Mode (Side by Side) */
-                      <div className="diff-split-view">
-                        <div className="diff-split-column-headers">
-                          <div className="split-header-col left-header">
-                            <span className="split-header-tag">Original (Previous)</span>
-                          </div>
-                          <div className="split-header-col right-header">
-                            <span className="split-header-tag">Modified (Working / Current)</span>
+                          <span className="file-icon-wrap">{getFileIcon(f.status)}</span>
+                          <span className="file-name" title={f.path}>
+                            {fileName}
+                            {dirPath && <span className="file-dir"> {dirPath}</span>}
+                          </span>
+                          <span className={`file-badge ${badge.className}`} title={badge.title}>
+                            {badge.label}
+                          </span>
+                          <div className="file-row-actions">
+                            <button
+                              type="button"
+                              className="file-action-btn"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void handleUnstageFile(f);
+                              }}
+                              title="Unstage change"
+                              aria-label={`Unstage ${f.path}`}
+                            >
+                              <Minus size={12} />
+                            </button>
                           </div>
                         </div>
-                        {parsedDiff.hunks.map((hunk, hIdx) => {
-                          const splitRows = buildSplitRows(hunk);
-                          return (
-                            <div key={`split-hunk-${hIdx}`} className="diff-split-hunk">
-                              <div className="hunk-header-row">
-                                <span className="hunk-header-label">{hunk.header}</span>
-                              </div>
-                              <div className="split-rows-table">
-                                {splitRows.map((row, rIdx) => (
-                                  <div key={`split-row-${hIdx}-${rIdx}`} className="split-row">
-                                    {/* Left pane: Original / Deletions */}
-                                    <div
-                                      className={`split-col left-col ${
-                                        row.left ? `diff-line-${row.left.type}` : "empty-col"
-                                      }`}
-                                    >
-                                      <span className="diff-line-num">
-                                        {row.left?.lineNumber ?? ""}
-                                      </span>
-                                      <span className="diff-line-marker">
-                                        {row.left?.type === "delete" ? "-" : " "}
-                                      </span>
-                                      <span className="diff-line-content">
-                                        {row.left?.content ?? ""}
-                                      </span>
-                                    </div>
-
-                                    {/* Right pane: Modified / Additions */}
-                                    <div
-                                      className={`split-col right-col ${
-                                        row.right ? `diff-line-${row.right.type}` : "empty-col"
-                                      }`}
-                                    >
-                                      <span className="diff-line-num">
-                                        {row.right?.lineNumber ?? ""}
-                                      </span>
-                                      <span className="diff-line-marker">
-                                        {row.right?.type === "add" ? "+" : " "}
-                                      </span>
-                                      <span className="diff-line-content">
-                                        {row.right?.content ?? ""}
-                                      </span>
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
+                      );
+                    })}
                   </div>
                 </div>
-              ) : (
-                <div className="diff-unselected-state">
-                  <GitCompare size={40} className="muted-icon" />
-                  <h4>No File Selected</h4>
+              )}
+
+              {/* WORKING TREE CHANGES */}
+              {summary && summary.working_tree.length > 0 && (
+                <div className="changes-section">
+                  <div className="section-header">
+                    <span className="section-title">Changes ({summary.working_tree.length})</span>
+                    <button
+                      type="button"
+                      className="section-action-btn"
+                      onClick={handleStageAll}
+                      title="Stage all changes"
+                      aria-label="Stage all changes"
+                    >
+                      <Plus size={12} />
+                      <span>Stage All</span>
+                    </button>
+                  </div>
+                  <div className="file-list">
+                    {filteredWorking.map((f) => {
+                      const { fileName, dirPath } = splitPath(f.path);
+                      const badge = getStatusBadge(f.status, false);
+                      const isSelected =
+                        selectedFile?.path === f.path && selectedFile?.staged === false;
+                      return (
+                        <div
+                          key={`working-${f.path}`}
+                          className={`file-row ${isSelected ? "selected" : ""}`}
+                          onClick={() => setSelectedFile(f)}
+                          role="button"
+                          tabIndex={0}
+                          aria-selected={isSelected}
+                        >
+                          <span className="file-icon-wrap">{getFileIcon(f.status)}</span>
+                          <span className="file-name" title={f.path}>
+                            {fileName}
+                            {dirPath && <span className="file-dir"> {dirPath}</span>}
+                          </span>
+                          <span className={`file-badge ${badge.className}`} title={badge.title}>
+                            {badge.label}
+                          </span>
+                          <div className="file-row-actions">
+                            <button
+                              type="button"
+                              className="file-action-btn"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void handleStageFile(f);
+                              }}
+                              title="Stage changes"
+                              aria-label={`Stage ${f.path}`}
+                            >
+                              <Plus size={12} />
+                            </button>
+                            <button
+                              type="button"
+                              className="file-action-btn danger"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setConfirmDiscardFile(f);
+                              }}
+                              title="Discard changes"
+                              aria-label={`Discard changes in ${f.path}`}
+                            >
+                              <RotateCcw size={12} />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* UNTRACKED FILES */}
+              {summary && summary.untracked.length > 0 && (
+                <div className="changes-section">
+                  <div className="section-header">
+                    <span className="section-title">
+                      Untracked Files ({summary.untracked.length})
+                    </span>
+                  </div>
+                  <div className="file-list">
+                    {filteredUntracked.map((f) => {
+                      const { fileName, dirPath } = splitPath(f.path);
+                      const badge = getStatusBadge("U", false);
+                      const isSelected =
+                        selectedFile?.path === f.path && selectedFile?.staged === false;
+                      return (
+                        <div
+                          key={`untracked-${f.path}`}
+                          className={`file-row ${isSelected ? "selected" : ""}`}
+                          onClick={() => setSelectedFile(f)}
+                          role="button"
+                          tabIndex={0}
+                          aria-selected={isSelected}
+                        >
+                          <span className="file-icon-wrap">{getFileIcon("U")}</span>
+                          <span className="file-name" title={f.path}>
+                            {fileName}
+                            {dirPath && <span className="file-dir"> {dirPath}</span>}
+                          </span>
+                          <span className={`file-badge ${badge.className}`} title={badge.title}>
+                            {badge.label}
+                          </span>
+                          <div className="file-row-actions">
+                            <button
+                              type="button"
+                              className="file-action-btn"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void handleStageFile(f);
+                              }}
+                              title="Track file (Stage)"
+                              aria-label={`Stage ${f.path}`}
+                            >
+                              <Plus size={12} />
+                            </button>
+                            <button
+                              type="button"
+                              className="file-action-btn danger"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setConfirmDiscardFile(f);
+                              }}
+                              title="Delete untracked file"
+                              aria-label={`Delete ${f.path}`}
+                            >
+                              <Trash2 size={12} />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Clean tree message */}
+              {summary && summary.clean && (
+                <div className="changes-clean-state">
+                  <CheckCircle2 size={36} className="clean-icon" />
+                  <h4>Working Tree Clean</h4>
                   <p className="muted-text">
-                    Select a changed file from the sidebar to review its additions and deletions.
+                    No uncommitted changes detected. Any manual edits or changes made by AI agents
+                    will automatically appear here.
                   </p>
                 </div>
               )}
             </div>
           </div>
+
+          {/* Sidebar / diff divider (drag to resize file list) */}
+          <div
+            className="git-changes-divider"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize file list"
+            onPointerDown={beginSidebarResize}
+          />
+
+          {/* Right Panel: VS Code Diff Viewer */}
+          <div className="git-diff-viewer" role="region" aria-label="Diff Viewer">
+            {selectedFile ? (
+              <div className="diff-container">
+                {/* Diff Viewer Top Toolbar */}
+                <div className="diff-toolbar">
+                  <div className="diff-file-meta">
+                    <span className="diff-file-icon">{getFileIcon(selectedFile.status)}</span>
+                    <span className="diff-file-path" title={selectedFile.path}>
+                      {selectedFile.path}
+                    </span>
+                    <span className="diff-stage-tag">
+                      {selectedFile.staged ? "Staged" : "Working Tree"}
+                    </span>
+                    {(parsedDiff.additions > 0 || parsedDiff.deletions > 0) && (
+                      <span className="diff-stats-badge">
+                        <span className="diff-add-stat">+{parsedDiff.additions}</span>
+                        <span className="diff-del-stat">-{parsedDiff.deletions}</span>
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="diff-view-controls">
+                    {/* Mode Toggle: Unified vs Side-by-Side */}
+                    <div className="mode-toggle-group">
+                      <button
+                        type="button"
+                        className={`toggle-btn ${viewMode === "unified" ? "active" : ""}`}
+                        onClick={() => setViewMode("unified")}
+                        title="Unified Diff View"
+                        aria-label="Unified diff"
+                      >
+                        <AlignLeft size={13} />
+                        <span>Unified</span>
+                      </button>
+                      <button
+                        type="button"
+                        className={`toggle-btn ${viewMode === "split" ? "active" : ""}`}
+                        onClick={() => setViewMode("split")}
+                        title="Split (Side-by-Side) Diff View"
+                        aria-label="Split diff"
+                      >
+                        <Columns size={13} />
+                        <span>Split</span>
+                      </button>
+                    </div>
+
+                    {/* Stage / Unstage Button */}
+                    {selectedFile.staged ? (
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-small"
+                        onClick={() => void handleUnstageFile(selectedFile)}
+                        title="Unstage this file"
+                      >
+                        <Minus size={13} />
+                        <span>Unstage</span>
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className="btn btn-primary btn-small"
+                        onClick={() => void handleStageFile(selectedFile)}
+                        title="Stage this file"
+                      >
+                        <Plus size={13} />
+                        <span>Stage</span>
+                      </button>
+                    )}
+
+                    {/* Discard button */}
+                    {!selectedFile.staged && (
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-small btn-discard"
+                        onClick={() => setConfirmDiscardFile(selectedFile)}
+                        title="Discard changes in this file"
+                      >
+                        <RotateCcw size={13} />
+                        <span>Discard</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Confirm Discard Modal Overlay */}
+                {confirmDiscardFile && confirmDiscardFile.path === selectedFile.path && (
+                  <div className="discard-confirm-box">
+                    <p>
+                      <strong>Discard changes in &quot;{confirmDiscardFile.path}&quot;?</strong>
+                      <br />
+                      This will revert your local modifications and cannot be undone.
+                    </p>
+                    <div className="discard-confirm-actions">
+                      <button
+                        type="button"
+                        className="btn btn-danger btn-small"
+                        onClick={() => void handleDiscardFile(confirmDiscardFile)}
+                      >
+                        Confirm Discard
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-small"
+                        onClick={() => setConfirmDiscardFile(null)}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Diff Viewer Body */}
+                <div className="diff-editor-body" tabIndex={0} aria-label="Diff contents">
+                  {loadingDiff ? (
+                    <div className="diff-loading">
+                      <RefreshCw size={20} className="spin" />
+                      <span>Loading diff...</span>
+                    </div>
+                  ) : parsedDiff.hunks.length === 0 ? (
+                    <div className="diff-empty-state">
+                      <FileCode size={32} />
+                      <p>
+                        {rawDiff
+                          ? rawDiff
+                          : "No text differences to display. File may be empty or newly created."}
+                      </p>
+                    </div>
+                  ) : viewMode === "unified" ? (
+                    /* Unified Mode */
+                    <div className="diff-unified-view">
+                      {parsedDiff.hunks.map((hunk, hIdx) => (
+                        <div key={`hunk-${hIdx}`} className="diff-hunk">
+                          <div className="hunk-header-row">
+                            <span className="hunk-header-label">{hunk.header}</span>
+                          </div>
+                          {hunk.lines.map((line, lIdx) => (
+                            <div
+                              key={`line-${hIdx}-${lIdx}`}
+                              className={`diff-line-row diff-line-${line.type}`}
+                            >
+                              <span className="diff-line-num old-num">
+                                {line.oldLineNumber ?? ""}
+                              </span>
+                              <span className="diff-line-num new-num">
+                                {line.newLineNumber ?? ""}
+                              </span>
+                              <span className="diff-line-marker">
+                                {line.type === "add" ? "+" : line.type === "delete" ? "-" : " "}
+                              </span>
+                              <span className="diff-line-content">{line.content}</span>
+                            </div>
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    /* Split Mode (Side by Side) */
+                    <div className="diff-split-view">
+                      <div className="diff-split-column-headers">
+                        <div className="split-header-col left-header">
+                          <span className="split-header-tag">Original (Previous)</span>
+                        </div>
+                        <div className="split-header-col right-header">
+                          <span className="split-header-tag">Modified (Working / Current)</span>
+                        </div>
+                      </div>
+                      {parsedDiff.hunks.map((hunk, hIdx) => {
+                        const splitRows = buildSplitRows(hunk);
+                        return (
+                          <div key={`split-hunk-${hIdx}`} className="diff-split-hunk">
+                            <div className="hunk-header-row">
+                              <span className="hunk-header-label">{hunk.header}</span>
+                            </div>
+                            <div className="split-rows-table">
+                              {splitRows.map((row, rIdx) => (
+                                <div key={`split-row-${hIdx}-${rIdx}`} className="split-row">
+                                  {/* Left pane: Original / Deletions */}
+                                  <div
+                                    className={`split-col left-col ${
+                                      row.left ? `diff-line-${row.left.type}` : "empty-col"
+                                    }`}
+                                  >
+                                    <span className="diff-line-num">
+                                      {row.left?.lineNumber ?? ""}
+                                    </span>
+                                    <span className="diff-line-marker">
+                                      {row.left?.type === "delete" ? "-" : " "}
+                                    </span>
+                                    <span className="diff-line-content">
+                                      {row.left?.content ?? ""}
+                                    </span>
+                                  </div>
+
+                                  {/* Right pane: Modified / Additions */}
+                                  <div
+                                    className={`split-col right-col ${
+                                      row.right ? `diff-line-${row.right.type}` : "empty-col"
+                                    }`}
+                                  >
+                                    <span className="diff-line-num">
+                                      {row.right?.lineNumber ?? ""}
+                                    </span>
+                                    <span className="diff-line-marker">
+                                      {row.right?.type === "add" ? "+" : " "}
+                                    </span>
+                                    <span className="diff-line-content">
+                                      {row.right?.content ?? ""}
+                                    </span>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="diff-unselected-state">
+                <GitCompare size={40} className="muted-icon" />
+                <h4>No File Selected</h4>
+                <p className="muted-text">
+                  Select a changed file from the sidebar to review its additions and deletions.
+                </p>
+              </div>
+            )}
+          </div>
         </div>
       </div>
-    </>
+    </div>
   );
 };

@@ -15,6 +15,10 @@ export const SHORTCUT_ACTION_LABELS: Record<ShortcutActionId, string> = {
   nextTab: "Next tab",
   prevTab: "Previous tab",
   nextPane: "Next active pane",
+  toggleMusic: "Toggle music player",
+  musicPlayPause: "Music play / pause",
+  musicNext: "Music next track",
+  musicMute: "Music mute / unmute",
 };
 
 export interface ParsedBinding {

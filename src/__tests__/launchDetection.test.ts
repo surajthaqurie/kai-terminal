@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import fs from "fs";
+import { symlinkOrSkip } from "./helpers/symlink";
 import os from "os";
 import path from "path";
 import { isKaiDesktopProcessLine, isKaiCliShim, findKaiAppBinary } from "../cli/index";
@@ -41,16 +42,12 @@ describe("isKaiDesktopProcessLine (cross-OS duplicate-window guard)", () => {
 });
 
 describe("isKaiCliShim (CLI/desktop PATH collision guard, all OS)", () => {
-  it("detects symlink shims pointing at bin/kai.js", () => {
+  it("detects symlink shims pointing at bin/kai.js", (ctx) => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kai-shim-"));
     const target = path.join(dir, "kai.js");
     fs.writeFileSync(target, "cli");
     const link = path.join(dir, "kai");
-    try {
-      fs.symlinkSync(target, link);
-    } catch {
-      return; // symlinks not permitted in test environment (Windows without Developer Mode)
-    }
+    symlinkOrSkip(ctx, target, link);
     expect(isKaiCliShim(link)).toBe(true);
   });
 

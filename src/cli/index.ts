@@ -37,7 +37,7 @@ import {
   detectChangedFilesFromDisk,
   runCodeTaskWithAutoSync,
   runExternalAgentCommand,
-  needsShellForCommand,
+  resolveSpawnTarget,
   resetTerminalModesAfterAgent,
 } from "../core/codeModeWorkflow";
 import { installCommitMsgHook } from "../core/githooks";
@@ -535,6 +535,8 @@ Options:
   --force                         Overwrite existing Kai MCP entry
   --project                       Write to project-scoped config if supported
   --global                        Write to global user config
+  --watch                         (server) Keep the graph fresh in the background while
+                                  serving (or set KAI_MCP_WATCH=1); off by default
 
 Examples:
   kai mcp claude                  Connect Claude Code to Kai MCP
@@ -791,12 +793,12 @@ export async function executeAgentWorkflow(
     const outcome = await runCodeTaskWithAutoSync(
       meta,
       async () => {
-        const useShell = needsShellForCommand(binaryToRun!);
-        const result = await runExternalAgentCommand(binaryToRun!, finalArgs, {
+        const target = resolveSpawnTarget(binaryToRun!, finalArgs);
+        const result = await runExternalAgentCommand(target.command, target.args, {
           cwd: meta.canonicalPath,
           timeoutMs: opts.timeoutMs,
           signal: controller.signal,
-          shell: useShell,
+          shell: target.shell,
         });
         // The agent is a fullscreen TUI: restore mouse/focus/paste input
         // modes NOW (before any further logging) so a killed/crashed agent
@@ -1612,7 +1614,11 @@ export async function runCli(argv: string[]): Promise<number> {
         return await executeAgentSetupWorkflow(setupTarget, args);
       }
 
-      if (sub === "." || sub === "start") {
+      // Opt-in graph watcher for pure-MCP clients (default off).
+      const mcpWatch = args.includes("--watch") || process.env.KAI_MCP_WATCH === "1";
+      const mcpPathArg = args.slice(1).find((a) => a !== "--watch");
+
+      if (sub === "." || sub === "start" || sub === "--watch") {
         if (process.stdin.isTTY) {
           console.log(
             `[kai] Note: The MCP server runs automatically over stdio for connected AI coding tools.`
@@ -1622,14 +1628,14 @@ export async function runCli(argv: string[]): Promise<number> {
           );
           return 0;
         }
-        await startMcpServer(process.cwd());
+        await startMcpServer(process.cwd(), process.stdin, process.stdout, { watch: mcpWatch });
         return 0;
       }
 
-      const targetPath = args[1] || process.cwd();
-      if (args[1] && !fs.existsSync(resolveCanonicalPath(targetPath))) {
+      const targetPath = mcpPathArg || process.cwd();
+      if (mcpPathArg && !fs.existsSync(resolveCanonicalPath(targetPath))) {
         console.error(
-          `[kai] Error: "${args[1]}" is neither an existing directory nor a recognized agent/command.`
+          `[kai] Error: "${mcpPathArg}" is neither an existing directory nor a recognized agent/command.`
         );
         console.error(
           `Run 'kai mcp --help' or 'kai mcp list' to see available options and agents.`
@@ -1647,7 +1653,7 @@ export async function runCli(argv: string[]): Promise<number> {
         return 0;
       }
 
-      await startMcpServer(targetPath);
+      await startMcpServer(targetPath, process.stdin, process.stdout, { watch: mcpWatch });
       return 0;
     }
 

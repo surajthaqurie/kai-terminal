@@ -227,7 +227,7 @@ describe("GitChangesModal header", () => {
     container.remove();
   });
 
-  it("minimizes to a pill that preserves state and restores on click", async () => {
+  it("minimize affordance is removed; dialog resizes from any edge and fullscreen still works", async () => {
     const React = await import("react");
     const { createRoot } = await import("react-dom/client");
     const { GitChangesModal } = await import("../components/GitChangesModal");
@@ -235,46 +235,116 @@ describe("GitChangesModal header", () => {
     const container = document.createElement("div");
     document.body.appendChild(container);
     const root = createRoot(container);
-    let closed = false;
 
     await React.act(async () => {
       root.render(
         React.createElement(GitChangesModal, {
           dir: "/home/user/project",
-          onClose: () => {
-            closed = true;
-          },
+          onClose: () => {},
         })
       );
       await Promise.resolve();
     });
 
-    const minimizeBtn = container.querySelector(
-      '[aria-label="Minimize changes review"]'
-    ) as HTMLButtonElement | null;
-    expect(minimizeBtn).not.toBeNull();
-
-    await React.act(async () => {
-      minimizeBtn?.click();
-    });
-
-    // Backdrop hides, pill shows; nothing closed.
-    const backdrop = container.querySelector(".git-changes-backdrop") as HTMLElement | null;
-    expect(backdrop?.style.display).toBe("none");
-    expect(container.querySelector(".git-minimized-pill")).not.toBeNull();
-    expect(closed).toBe(false);
-
-    // Restore from the pill.
-    const restoreBtn = container.querySelector(
-      '[aria-label="Restore changes review"]'
-    ) as HTMLButtonElement | null;
-    expect(restoreBtn).not.toBeNull();
-    await React.act(async () => {
-      restoreBtn?.click();
-    });
+    // No minimize button or pill anymore.
+    expect(container.querySelector('[aria-label="Minimize changes review"]')).toBeNull();
     expect(container.querySelector(".git-minimized-pill")).toBeNull();
-    const backdropAfter = container.querySelector(".git-changes-backdrop") as HTMLElement | null;
-    expect(backdropAfter?.style.display).not.toBe("none");
+
+    // Resize grips on all edges/corners like a normal terminal window.
+    for (const d of ["n", "s", "e", "w", "ne", "nw", "se", "sw"]) {
+      expect(container.querySelector(`.git-resize-${d}`)).not.toBeNull();
+    }
+
+    // Fullscreen toggle still works.
+    const modal = container.querySelector(".git-changes-modal");
+    const toggle = container.querySelector(
+      '[aria-label="Enter fullscreen"]'
+    ) as HTMLButtonElement | null;
+    expect(toggle).not.toBeNull();
+    await React.act(async () => {
+      toggle?.click();
+    });
+    expect(modal?.classList.contains("git-fullscreen")).toBe(true);
+    // Handles hide in fullscreen; inline windowed size is not applied.
+    expect(container.querySelector(".git-resize-se")).toBeNull();
+    expect((modal as HTMLElement)?.style.width).toBe("");
+
+    root.unmount();
+    container.remove();
+  });
+
+  it("regression: fullscreen still fills the viewport after a manual corner resize", async () => {
+    const React = await import("react");
+    const { createRoot } = await import("react-dom/client");
+    const { GitChangesModal } = await import("../components/GitChangesModal");
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await React.act(async () => {
+      root.render(
+        React.createElement(GitChangesModal, {
+          dir: "/home/user/project",
+          onClose: () => {},
+        })
+      );
+      await Promise.resolve();
+    });
+
+    const modal = container.querySelector(".git-changes-modal") as HTMLElement | null;
+    const se = container.querySelector(".git-resize-se") as HTMLElement | null;
+    expect(modal).not.toBeNull();
+    expect(se).not.toBeNull();
+
+    // Plain Events with assigned coords: works with or without a jsdom
+    // PointerEvent constructor, since React reads clientX off the native event.
+    const pointer = (type: string, x: number, y: number) => {
+      const ev = new Event(type, { bubbles: true, cancelable: true });
+      (ev as unknown as { clientX: number }).clientX = x;
+      (ev as unknown as { clientY: number }).clientY = y;
+      return ev;
+    };
+
+    // Drag the SE corner outward: jsdom measures the dialog at 0x0, so the
+    // size clamps to the viewport caps (innerWidth - 40 / innerHeight - 40).
+    const expectW = `${window.innerWidth - 40}px`;
+    const expectH = `${window.innerHeight - 40}px`;
+    await React.act(async () => {
+      se?.dispatchEvent(pointer("pointerdown", 0, 0));
+    });
+    await React.act(async () => {
+      window.dispatchEvent(pointer("pointermove", window.innerWidth, window.innerHeight));
+    });
+    await React.act(async () => {
+      window.dispatchEvent(pointer("pointerup", window.innerWidth, window.innerHeight));
+    });
+    expect(modal?.style.width).toBe(expectW);
+    expect(modal?.style.height).toBe(expectH);
+
+    // The reported bug: this stale inline size used to override fullscreen.
+    const enter = container.querySelector(
+      '[aria-label="Enter fullscreen"]'
+    ) as HTMLButtonElement | null;
+    expect(enter).not.toBeNull();
+    await React.act(async () => {
+      enter?.click();
+    });
+    expect(modal?.classList.contains("git-fullscreen")).toBe(true);
+    expect(modal?.style.width).toBe("");
+    expect(modal?.style.height).toBe("");
+
+    // Exiting fullscreen restores the exact pre-fullscreen manual size.
+    const exit = container.querySelector(
+      '[aria-label="Exit fullscreen"]'
+    ) as HTMLButtonElement | null;
+    expect(exit).not.toBeNull();
+    await React.act(async () => {
+      exit?.click();
+    });
+    expect(modal?.classList.contains("git-fullscreen")).toBe(false);
+    expect(modal?.style.width).toBe(expectW);
+    expect(modal?.style.height).toBe(expectH);
 
     root.unmount();
     container.remove();
@@ -417,7 +487,6 @@ describe("StatusBar Footer with Active Split Directory, Mode and Git", () => {
           appVersion: "1.0.0",
           updateAvailable: false,
           onViewUpdate: () => {},
-          onGitAction: () => {},
           mode: "code",
         })
       );
@@ -449,6 +518,10 @@ describe("StatusBar Footer with Active Split Directory, Mode and Git", () => {
     expect(statusLeftChildren[1]?.classList.contains("status-git-wrap")).toBe(true);
     expect(statusLeftChildren[2]?.classList.contains("status-dir")).toBe(true);
 
+    // 6. Footer git menu removed: branch is display-only, no Changes menu.
+    expect(container.querySelector(".status-git-menu")).toBeNull();
+    expect(container.querySelector("button.status-git-btn")).toBeNull();
+
     root.unmount();
     container.remove();
   });
@@ -472,7 +545,6 @@ describe("StatusBar Footer with Active Split Directory, Mode and Git", () => {
           appVersion: "1.0.0",
           updateAvailable: false,
           onViewUpdate: () => {},
-          onGitAction: () => {},
           mode: "terminal",
         })
       );

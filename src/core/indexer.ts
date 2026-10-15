@@ -634,12 +634,25 @@ export function loadProjectRules(projectRoot: string): string[] {
 }
 
 /**
+ * Files whose mtime/ctime fall within this window before the index snapshot
+ * was stamped are "racily clean" (the git term): a same-size edit landing in
+ * the same coarse filesystem timestamp tick would be invisible to a
+ * mtime/size/ctime comparison, so their content hash is re-verified instead.
+ * 2 s covers FAT-style granularity; the rest is slack for hashing lag during
+ * the build. The set is bounded by RACY_REHASH_MAX_FILES per check.
+ */
+export const RACY_TIMESTAMP_WINDOW_MS = 5000;
+const RACY_REHASH_MAX_FILES = 200;
+
+/**
  * Fast detection of stale index entries after external filesystem changes.
  *
- * Covers modified/deleted tracked files (mtime/size/ctime), case-only
- * renames (realpath basename mismatch on case-insensitive filesystems),
- * and untracked new files (bounded readdir-only walk with the same
- * exclusion rules as the indexer, so excluded files never mark stale).
+ * Covers modified/deleted tracked files (mtime/size/ctime, plus a content
+ * re-hash for racily-clean files so a same-size edit with a preserved or
+ * coarse timestamp is still caught), case-only renames (realpath basename
+ * mismatch on case-insensitive filesystems), and untracked new files
+ * (bounded readdir-only walk with the same exclusion rules as the indexer,
+ * so excluded files never mark stale).
  */
 export function detectStaleIndexEntries(index: ProjectIndex): {
   isStale: boolean;
@@ -650,6 +663,8 @@ export function detectStaleIndexEntries(index: ProjectIndex): {
   const canonicalRoot = resolveCanonicalPath(index.meta.canonicalPath);
   const staleFiles: string[] = [];
   const deletedFiles: string[] = [];
+  const snapshotMs = Date.parse(index.generatedAt);
+  let racyRehashes = 0;
 
   for (const [relPath, file] of Object.entries(index.files)) {
     const fullPath = path.join(canonicalRoot, relPath);
@@ -662,6 +677,38 @@ export function detectStaleIndexEntries(index: ProjectIndex): {
       if (stat.mtimeMs !== file.mtimeMs || stat.size !== file.sizeBytes) {
         staleFiles.push(relPath);
         continue;
+      }
+      // ctime cannot be set by user-space tools, so it exposes edits that
+      // restored mtime (e.g. `touch -r`, utimes) at the same size.
+      if (
+        file.ctimeMs !== undefined &&
+        stat.ctimeMs !== undefined &&
+        stat.ctimeMs !== file.ctimeMs
+      ) {
+        staleFiles.push(relPath);
+        continue;
+      }
+      // Racily clean: timestamps too close to the snapshot to prove the
+      // content is unchanged, so compare the actual bytes.
+      if (
+        Number.isFinite(snapshotMs) &&
+        snapshotMs - Math.max(file.mtimeMs, file.ctimeMs ?? 0) < RACY_TIMESTAMP_WINDOW_MS &&
+        racyRehashes < RACY_REHASH_MAX_FILES
+      ) {
+        racyRehashes++;
+        try {
+          const live = crypto
+            .createHash("sha256")
+            .update(fs.readFileSync(fullPath, "utf-8"))
+            .digest("hex");
+          if (live !== file.sha256) {
+            staleFiles.push(relPath);
+            continue;
+          }
+        } catch {
+          staleFiles.push(relPath);
+          continue;
+        }
       }
       // Case-only rename on case-insensitive filesystems: the old key
       // still resolves but the on-disk case differs.

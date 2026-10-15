@@ -137,6 +137,10 @@ To remove the hook later, delete
 
 The status bar in the app shows the indexed project, file/symbol counts and last query cost.
 
+### Music player (optional, off by default)
+
+Enable **Settings → Appearance → Show YouTube player**. One smart search takes a YouTube link or a plain song name (backend decides, always video, no API key). The footer mini pill before the version keeps icon + title + pause + next + mute with a bottom progress bar; the `☰` queue opens as a slide-over. Shortcuts: `Ctrl+Alt+M` panel, `Ctrl+Alt+Space` play/pause, `Ctrl+Alt+N` next, `Ctrl+Alt+U` mute.
+
 ### Privacy and limits
 
 - Indexed source files are never executed.

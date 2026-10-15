@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
@@ -12,5 +13,11 @@ export default defineConfig({
     watch: {
       ignored: ['**/src-tauri/**'],
     },
+  },
+  test: {
+    // Lock-contention and crash-recovery tests block synchronously for ~6 s by
+    // design (bounded retry loops); Vitest 5 enforces the timeout on elapsed
+    // time even for synchronous blocking, so the 5 s default is too tight.
+    testTimeout: 30000,
   },
 });

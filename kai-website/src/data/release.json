@@ -6,7 +6,7 @@
     {
       "tag": "v0.1.5",
       "name": "Kai v0.1.5 — New `kai mcp` command family for the local MCP server and agent wiring",
-      "date": "2026-10-14T19:41:15.326Z",
+      "date": "2026-10-15T12:00:00.000Z",
       "url": "https://github.com/surajthaqurie/kai-terminal/releases/tag/v0.1.5",
       "notes": "- New `kai mcp` command family for the local MCP server and agent wiring\n- `kai mcp <agent|all>` wires an agent (with `--print`, `--dry-run`, `--force`), `kai mcp list` shows server info and connection state, `kai mcp remove <agent>` unwires. Connected agents run the stdio MCP server automatically.\n- `kai list -m` / `kai list --mcp` reports MCP server state and tool connections; `kai remove -m <agent>` / `kai remove --mcp <agent>` disconnects a tool.\n- CLI help regrouped (Outside / Run / Manage / Check) to match the rewritten command reference.\n- Website: command reference grouped by topic (Open and close, Run tool, Setup & MCP, Project graph with init/update/status, Check), dedicated MCP page, floating Topics index with scroll-spy, and an inline GitHub link in the manual hero."
     },

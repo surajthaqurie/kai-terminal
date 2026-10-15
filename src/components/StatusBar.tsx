@@ -1,4 +1,4 @@
-import { FC, useEffect, useRef, useState } from "react";
+import { FC, useState } from "react";
 import {
   GitBranch,
   ArrowUpCircle,
@@ -6,8 +6,19 @@ import {
   Code,
   Terminal,
   RefreshCw,
-  GitCompare,
+  Pause,
+  Play,
+  SkipForward,
+  Volume2,
+  VolumeX,
 } from "lucide-react";
+
+export interface MusicFooterState {
+  title: string | null;
+  playing: boolean;
+  muted: boolean;
+  progress: number;
+}
 
 interface StatusBarProps {
   gitBranch: string | null;
@@ -20,8 +31,6 @@ interface StatusBarProps {
   isCheckingUpdates?: boolean;
   onCheckUpdates?: () => void;
   onViewUpdate: () => void;
-  /** Footer git menu is intentionally minimal: status list + changes diff. */
-  onGitAction: (action: "status" | "changes") => void;
   mode?: string;
   /** Re-probe git for the active pane + re-sync Code Mode (footer refresh button). */
   onRefreshGit?: () => void;
@@ -30,11 +39,16 @@ interface StatusBarProps {
    * via the CLI (`kai code <path>` / `kai stop code`), so the badge is
    * display-only and this callback is unused. */
   onToggleMode?: () => void;
+  music?: MusicFooterState | null;
+  onToggleMusicPanel?: () => void;
+  onMusicPlayPause?: () => void;
+  onMusicNext?: () => void;
+  onMusicMute?: () => void;
 }
 
 /**
- * Always-visible bottom status bar: git branch (with dirty dot + quick
- * actions) on the left, app version + update check on the right.
+ * Always-visible bottom status bar: git branch (display-only dirty dot)
+ * on the left, app version + update check on the right.
  */
 export const StatusBar: FC<StatusBarProps> = ({
   gitBranch,
@@ -47,32 +61,16 @@ export const StatusBar: FC<StatusBarProps> = ({
   isCheckingUpdates = false,
   onCheckUpdates,
   onViewUpdate,
-  onGitAction,
   mode = "terminal",
   onRefreshGit,
   isRefreshingGit = false,
+  music = null,
+  onToggleMusicPanel,
+  onMusicPlayPause,
+  onMusicNext,
+  onMusicMute,
 }) => {
-  const [gitMenuOpen, setGitMenuOpen] = useState(false);
   const [copiedPath, setCopiedPath] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!gitMenuOpen) return;
-    const onDown = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setGitMenuOpen(false);
-      }
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setGitMenuOpen(false);
-    };
-    window.addEventListener("mousedown", onDown);
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("mousedown", onDown);
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [gitMenuOpen]);
 
   const repoName = gitRepoRoot
     ? gitRepoRoot.split(/[/\\]/).filter(Boolean).pop() || gitRepoRoot
@@ -93,11 +91,6 @@ export const StatusBar: FC<StatusBarProps> = ({
     } catch {
       // clipboard unavailable: tooltip still shows the full path
     }
-  };
-
-  const runAction = (action: "status" | "changes") => {
-    setGitMenuOpen(false);
-    onGitAction(action);
   };
 
   return (
@@ -125,19 +118,14 @@ export const StatusBar: FC<StatusBarProps> = ({
           )
         )}
         {gitBranch ? (
-          <div ref={menuRef} className="status-git-wrap">
-            <button
-              type="button"
-              className={`status-git-btn${gitDirty ? " is-dirty" : " is-clean"}`}
-              onClick={() => setGitMenuOpen((v) => !v)}
+          <div className="status-git-wrap">
+            <span
+              className={`status-git-btn${gitDirty ? " is-dirty" : " is-clean"} is-display`}
               title={
                 `Git branch: ${gitBranch}${gitDirty ? " (uncommitted changes)" : " (clean)"}` +
-                (gitRepoRoot ? `\nRepo: ${gitRepoRoot}` : "") +
-                "\nClick for git actions"
+                (gitRepoRoot ? `\nRepo: ${gitRepoRoot}` : "")
               }
-              aria-label={`Git branch ${gitBranch}${gitDirty ? ", uncommitted changes" : ", clean"}. Open git actions`}
-              aria-haspopup="menu"
-              aria-expanded={gitMenuOpen}
+              aria-label={`Git branch ${gitBranch}${gitDirty ? ", uncommitted changes" : ", clean"}`}
             >
               <GitBranch size={13} aria-hidden="true" />
               <span className="status-git-branch">{gitBranch}</span>
@@ -149,15 +137,7 @@ export const StatusBar: FC<StatusBarProps> = ({
                 ●
               </span>
               {repoName && <span className="status-git-repo">({repoName})</span>}
-            </button>
-            {gitMenuOpen && (
-              <div className="status-git-menu" role="menu" aria-label="Git actions">
-                <button type="button" role="menuitem" onClick={() => runAction("changes")}>
-                  <GitCompare size={13} />
-                  <span>Changes</span>
-                </button>
-              </div>
-            )}
+            </span>
             {onRefreshGit && (
               <button
                 type="button"
@@ -212,6 +192,63 @@ export const StatusBar: FC<StatusBarProps> = ({
       </div>
 
       <div className="status-right">
+        {music && (
+          <div className="music-mini" role="group" aria-label="Music mini player">
+            <div className="music-mini-top">
+              <button
+                type="button"
+                className="music-mini-main"
+                onClick={onToggleMusicPanel}
+                title={music.title ?? "Open music player"}
+                aria-label="Open music player"
+              >
+                <span className="music-mini-art" aria-hidden="true">
+                  ♪
+                </span>
+                <span className="music-mini-title">{music.title ?? "Music"}</span>
+              </button>
+              <button
+                type="button"
+                className="status-check-btn"
+                onClick={onMusicPlayPause}
+                title="Play / pause (music)"
+                aria-label={music.playing ? "Pause music" : "Play music"}
+              >
+                {music.playing ? (
+                  <Pause size={12} aria-hidden="true" />
+                ) : (
+                  <Play size={12} aria-hidden="true" />
+                )}
+              </button>
+              <button
+                type="button"
+                className="status-check-btn"
+                onClick={onMusicNext}
+                title="Next song"
+                aria-label="Next song"
+              >
+                <SkipForward size={12} aria-hidden="true" />
+              </button>
+              <button
+                type="button"
+                className="status-check-btn"
+                onClick={onMusicMute}
+                title="Mute (M)"
+                aria-label={music.muted ? "Unmute music" : "Mute music"}
+                aria-pressed={music.muted}
+              >
+                {music.muted ? (
+                  <VolumeX size={12} aria-hidden="true" />
+                ) : (
+                  <Volume2 size={12} aria-hidden="true" />
+                )}
+              </button>
+            </div>
+            <span className="music-mini-progress" aria-hidden="true">
+              <i style={{ width: `${Math.max(0, Math.min(100, music.progress))}%` }} />
+            </span>
+          </div>
+        )}
         {updateAvailable && latestVersion ? (
           <button
             type="button"

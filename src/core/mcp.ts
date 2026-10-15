@@ -21,6 +21,7 @@ import {
   ensureFreshIndex,
   planCodeTask,
 } from "./codeModeWorkflow";
+import { startGraphWatcher } from "./graphWatcher";
 import type { TaskCategory } from "./types";
 import packageJson from "../../package.json";
 
@@ -1196,7 +1197,8 @@ export function safeWrite(stream: NodeJS.WritableStream, data: string): boolean 
 export async function startMcpServer(
   projectRoot: string = process.cwd(),
   inputStream: NodeJS.ReadableStream = process.stdin,
-  outputStream: NodeJS.WritableStream = process.stdout
+  outputStream: NodeJS.WritableStream = process.stdout,
+  options: { watch?: boolean } = {}
 ): Promise<void> {
   let canonicalRoot: string;
   try {
@@ -1215,6 +1217,11 @@ export async function startMcpServer(
 
   // Protocol on stdout ONLY. Diagnostic messages on stderr.
   process.stderr.write(`[kai-mcp] Starting MCP stdio server for root: ${canonicalRoot}\n`);
+
+  // Opt-in (default off): keep the graph fresh for pure-MCP clients that edit
+  // files without calling a graph read or kai_sync_graph. See graphWatcher.ts.
+  const graphWatcher = options.watch ? startGraphWatcher(canonicalRoot) : null;
+  if (graphWatcher) process.stderr.write("[kai-mcp] Graph watcher enabled (--watch).\n");
 
   let isTerminated = false;
   const sessionCancelledRequests = new Set<string | number>();
@@ -1285,6 +1292,7 @@ export async function startMcpServer(
       );
     }
   } finally {
+    graphWatcher?.close();
     rl.close();
     process.stderr.write("[kai-mcp] Server closed.\n");
   }

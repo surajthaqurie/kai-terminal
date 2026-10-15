@@ -47,6 +47,37 @@ export function activePaneIndex(tab: SplitTabState): number {
   return idx >= 0 ? idx : 0;
 }
 
+export type SplitRefusal = "invalid-direction" | "max-panes" | "too-small";
+
+/**
+ * Why `splitTab` would refuse to split the active pane, or null when the
+ * split is allowed. Single decision point shared by `splitTab` and the UI, so
+ * the on-screen message can never disagree with what the split actually did.
+ */
+export function splitRefusal(tab: SplitTabState, direction: SplitDirection): SplitRefusal | null {
+  if (direction !== "horizontal" && direction !== "vertical") return "invalid-direction";
+  if (tab.panes.length >= MAX_PANES_PER_TAB) return "max-panes";
+  const baseLayout =
+    tab.layout ??
+    layoutFromFlat(
+      tab.panes.map((p) => p.id),
+      tab.splitDirection
+    );
+  if (!paneFitsSplit(baseLayout, tab.activePaneId, direction)) return "too-small";
+  return null;
+}
+
+/** User-facing text for a refused split; null for refusals that need none. */
+export function splitRefusalMessage(reason: SplitRefusal | null): string | null {
+  if (reason === "max-panes") {
+    return `Pane limit reached (${MAX_PANES_PER_TAB} per tab). Close a pane to split again.`;
+  }
+  if (reason === "too-small") {
+    return "This pane is too small to split further. Resize or close a pane first.";
+  }
+  return null;
+}
+
 /**
  * Splits ONLY the active pane: the new pane is inserted immediately after
  * the active pane (not appended at the end), and focus moves to it.
@@ -66,15 +97,13 @@ export function splitTab(
   direction: SplitDirection,
   makePane: (id: string) => TerminalPane
 ): SplitTabState {
-  if (tab.panes.length >= MAX_PANES_PER_TAB) return tab;
-  if (direction !== "horizontal" && direction !== "vertical") return tab;
+  if (direction === "none" || splitRefusal(tab, direction)) return tab;
   const baseLayout =
     tab.layout ??
     layoutFromFlat(
       tab.panes.map((p) => p.id),
       tab.splitDirection
     );
-  if (!paneFitsSplit(baseLayout, tab.activePaneId, direction)) return tab;
   const id = nextPaneId(tabId, tab.panes);
   const pane = makePane(id);
   const at = activePaneIndex(tab);

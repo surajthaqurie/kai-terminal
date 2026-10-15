@@ -24,6 +24,7 @@ import {
   runExternalAgentCommand,
   runCodeTaskWithAutoSync,
   needsShellForCommand,
+  resolveSpawnTarget,
 } from "../core/codeModeWorkflow";
 
 let tmpHome = "";
@@ -365,6 +366,37 @@ describe("external-agent process lifecycle outcomes", () => {
     expect(needsShellForCommand("script.ps1", "win32")).toBe(false);
     expect(needsShellForCommand("node", "win32")).toBe(false);
     expect(needsShellForCommand("claude", "linux")).toBe(false);
+  });
+
+  it("resolveSpawnTarget runs Windows .ps1 via powershell -File, never a shell or policy bypass", () => {
+    const ps = resolveSpawnTarget("C:\\tools\\run me.ps1", ["--flag", "a b; calc"], "win32");
+    expect(ps.command).toBe("powershell.exe");
+    expect(ps.shell).toBe(false);
+    expect(ps.args).toEqual([
+      "-NoProfile",
+      "-File",
+      "C:\\tools\\run me.ps1",
+      "--flag",
+      "a b; calc",
+    ]);
+    expect(ps.args.join(" ")).not.toMatch(/ExecutionPolicy|Bypass/i);
+    expect(resolveSpawnTarget("X.PS1", [], "win32").command).toBe("powershell.exe");
+    // Other platforms and targets are untouched.
+    expect(resolveSpawnTarget("script.ps1", ["x"], "linux")).toEqual({
+      command: "script.ps1",
+      args: ["x"],
+      shell: false,
+    });
+    expect(resolveSpawnTarget("build.cmd", ["x"], "win32")).toEqual({
+      command: "build.cmd",
+      args: ["x"],
+      shell: true,
+    });
+    expect(resolveSpawnTarget("node", ["-v"], "win32")).toEqual({
+      command: "node",
+      args: ["-v"],
+      shell: false,
+    });
   });
 });
 

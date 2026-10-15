@@ -169,6 +169,7 @@ describe("stripStaleTerminalReplies (leftover query replies after agent exit)", 
     expect(stripStaleTerminalReplies("]11;rgb:0000/0000/0000\x07")).toBe("");
     expect(stripStaleTerminalReplies("]10;rgb:ffff/ffff/ffff\\")).toBe("");
     expect(stripStaleTerminalReplies("P>|xterm.js(5.5.0)\\")).toBe("");
+    expect(stripStaleTerminalReplies("P>|xterm.js(6.0.0)\\")).toBe("");
   });
 
   it("keeps real typing, arrows, Delete and Alt+key untouched", () => {
