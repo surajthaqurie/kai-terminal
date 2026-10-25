@@ -7,6 +7,7 @@ import {
   hasNextItem,
   parseYouTubePlayerMessage,
   resolveInputToTrack,
+  searchYouTubeVideoId,
   watchUrlForTrack,
   youtubeCommand,
 } from "../services/musicService";
@@ -150,5 +151,12 @@ describe("curated presets and random playback", () => {
     const t2 = resolveInputToTrack("random video");
     expect(t2).not.toBeNull();
     expect(t2?.videoId).toMatch(/^[\w-]{11}$/);
+  });
+
+  it("extracts existing video id immediately in searchYouTubeVideoId", async () => {
+    const id = await searchYouTubeVideoId("dQw4w9WgXcQ");
+    expect(id).toBe("dQw4w9WgXcQ");
+    const empty = await searchYouTubeVideoId("   ");
+    expect(empty).toBeNull();
   });
 });

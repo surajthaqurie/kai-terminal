@@ -8,26 +8,26 @@ import {
   useState,
 } from "react";
 import {
-  ExternalLink,
-  Maximize2,
-  Minimize2,
+  Minus,
   Pause,
+  Pin,
+  PinOff,
   Play,
+  Repeat,
+  Repeat1,
   Search,
   SkipForward,
+  Volume1,
   Volume2,
   VolumeX,
   WifiOff,
   X,
+  ExternalLink,
 } from "lucide-react";
 import { isTypingTarget } from "../../services/shortcuts";
-import { openExternalUrl } from "../../services/updateService";
 import {
-  CURATED_PRESETS,
-  MusicPreset,
   MusicTrack,
   isYouTubeEmbedOrigin,
-  getRandomPreset,
   YOUTUBE_LISTENING_HANDSHAKE,
   YouTubeCommand,
   clearLegacyQueue,
@@ -36,9 +36,11 @@ import {
   parseYouTubePlayerMessage,
   progressPercent,
   resolveInputToTrack,
+  searchYouTubeVideos,
   watchUrlForTrack,
   youtubeCommand,
 } from "../../services/musicService";
+import { openExternalUrl } from "../../services/updateService";
 
 interface MusicPanelProps {
   startMuted: boolean;
@@ -71,8 +73,26 @@ export const MusicPanel: FC<MusicPanelProps> = ({
 }) => {
   const [query, setQuery] = useState("");
   const [track, setTrack] = useState<MusicTrack | null>(null);
+  const [queue, setQueue] = useState<MusicTrack[]>([]);
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(startMuted);
+  const [isPinned, setIsPinned] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("kai_music_pinned") === "true";
+    } catch {
+      return false;
+    }
+  });
+  const [volume, setVolume] = useState<number>(() => {
+    try {
+      const v = localStorage.getItem("kai_music_volume");
+      if (v !== null) return Math.max(0, Math.min(100, parseInt(v, 10)));
+    } catch {}
+    return 75;
+  });
+  const [loop, setLoop] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
   const [online, setOnline] = useState(isOnline);
   const [notice, setNotice] = useState<string | null>(null);
   const frameRef = useRef<HTMLIFrameElement | null>(null);
@@ -80,6 +100,10 @@ export const MusicPanel: FC<MusicPanelProps> = ({
   const lastPercentRef = useRef(0);
   const mutedRef = useRef(muted);
   mutedRef.current = muted;
+  const loopRef = useRef(loop);
+  loopRef.current = loop;
+  const queueRef = useRef(queue);
+  queueRef.current = queue;
 
   // Focus the search box whenever the drawer opens so the footer toggle
   // feels like opening a real panel (and keyboard users land in context).
@@ -109,14 +133,14 @@ export const MusicPanel: FC<MusicPanelProps> = ({
   // Mute is applied at load through the URL and afterwards through commands,
   // so toggling it never reloads (restarts) the video.
   const src = useMemo(
-    () => (track && online ? embedSrcForTrack(track, mutedRef.current) : null),
-    // Only the track's identity reloads the embed; a title update must not.
+    () => (track && online ? embedSrcForTrack(track, mutedRef.current, loop) : null),
+    // Only the track's identity and loop reloads the embed; a title update must not.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [track?.videoId, track?.playlistId, track?.query, online]
+    [track?.videoId, track?.playlistId, track?.query, online, loop]
   );
 
-  const sendCommand = useCallback((func: YouTubeCommand) => {
-    frameRef.current?.contentWindow?.postMessage(youtubeCommand(func), "*");
+  const sendCommand = useCallback((func: YouTubeCommand | string, args: unknown = "") => {
+    frameRef.current?.contentWindow?.postMessage(youtubeCommand(func, args), "*");
   }, []);
 
   // Older versions saved a queue locally; this version keeps nothing.
@@ -171,15 +195,24 @@ export const MusicPanel: FC<MusicPanelProps> = ({
       const t = parseYouTubePlayerMessage(e.data);
       if (!t) return;
       received = true;
+      if (t.currentTime !== undefined) setCurrentTime(t.currentTime);
+      if (t.duration !== undefined) setDuration(t.duration);
       if (t.playerState === 1) setPlaying(true);
-      else if (t.playerState === 2 || t.playerState === 0) setPlaying(false);
+      else if (t.playerState === 2) setPlaying(false);
+      else if (t.playerState === 0) {
+        setPlaying(false);
+        report(100);
+        if (loopRef.current) {
+          sendCommand("seekTo", [0, true]);
+          sendCommand("playVideo");
+          setPlaying(true);
+        }
+      }
       if (t.title) {
         const title = t.title;
         setTrack((prev) => (prev && prev.title !== title ? { ...prev, title } : prev));
       }
-      if (t.playerState === 0) {
-        report(100);
-      } else if (t.currentTime !== undefined && t.duration !== undefined) {
+      if (t.currentTime !== undefined && t.duration !== undefined) {
         report(progressPercent(t.currentTime, t.duration));
       }
     };
@@ -197,7 +230,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
       window.clearInterval(timer);
       report(0);
     };
-  }, [src, onProgressChange]);
+  }, [src, onProgressChange, sendCommand]);
 
   const togglePlay = () => {
     if (!src) return;
@@ -205,16 +238,107 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     setPlaying((v) => !v);
   };
 
-  const next = () => {
-    if (!src || !hasNextItem(track)) return;
-    sendCommand("nextVideo");
+  const next = async () => {
+    if (queueRef.current.length > 0) {
+      const [nextItem, ...remaining] = queueRef.current;
+      setTrack(nextItem);
+      setQueue(remaining);
+      setPlaying(true);
+      setCurrentTime(0);
+      return;
+    }
+    if (!src) return;
+    if (hasNextItem(track)) {
+      sendCommand("nextVideo");
+      setPlaying(true);
+      return;
+    }
+    // No more queued songs: search for next songs related to the current track
+    const searchSeed = track?.query || track?.title;
+    if (searchSeed && searchSeed !== "YouTube video") {
+      try {
+        const results = await searchYouTubeVideos(searchSeed, 6);
+        const filtered = results.filter((r) => r.videoId !== track?.videoId);
+        if (filtered.length > 0) {
+          const [nextItem, ...remaining] = filtered.map((r) => ({
+            title: r.title,
+            videoId: r.videoId,
+            playlistId: null,
+            query: r.title,
+          }));
+          setTrack(nextItem);
+          setQueue(remaining);
+          setPlaying(true);
+          setCurrentTime(0);
+          return;
+        }
+      } catch {
+        // ignore
+      }
+    }
+    // Fallback: replay current video from start
+    sendCommand("seekTo", [0, true]);
+    sendCommand("playVideo");
     setPlaying(true);
+  };
+
+  const playQueueIndex = (index: number) => {
+    if (index < 0 || index >= queue.length) return;
+    const selected = queue[index];
+    const remaining = queue.filter((_, i) => i !== index);
+    setTrack(selected);
+    setQueue(remaining);
+    setPlaying(true);
+    setCurrentTime(0);
+  };
+
+  const toggleLoop = () => {
+    setLoop((v) => !v);
+  };
+
+  const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!src || duration <= 0) return;
+    const pct = Number(e.target.value);
+    const targetSec = (pct / 100) * duration;
+    setCurrentTime(targetSec);
+    sendCommand("seekTo", [targetSec, true]);
+  };
+
+  const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = Math.max(0, Math.min(100, Number(e.target.value)));
+    setVolume(val);
+    try {
+      localStorage.setItem("kai_music_volume", String(val));
+    } catch {}
+    if (val === 0) {
+      setMuted(true);
+      onMutedChange?.(true);
+      sendCommand("mute");
+    } else {
+      if (muted) {
+        setMuted(false);
+        onMutedChange?.(false);
+        sendCommand("unMute");
+      }
+      sendCommand("setVolume", [val]);
+    }
+  };
+
+  const formatTime = (sec: number): string => {
+    if (!Number.isFinite(sec) || sec <= 0) return "0:00";
+    const m = Math.floor(sec / 60);
+    const s = Math.floor(sec % 60);
+    return `${m}:${s < 10 ? "0" : ""}${s}`;
   };
 
   const toggleMute = () => {
     const nextMuted = !muted;
     setMuted(nextMuted);
+    onMutedChange?.(nextMuted);
     sendCommand(nextMuted ? "mute" : "unMute");
+    if (!nextMuted && volume > 0) {
+      sendCommand("setVolume", [volume]);
+    }
   };
 
   const openInBrowser = () => {
@@ -223,23 +347,26 @@ export const MusicPanel: FC<MusicPanelProps> = ({
 
   // Footer + global shortcuts drive the panel via window events so the
   // footer works while the drawer is closed (panel stays mounted).
-  const actionsRef = useRef({ togglePlay, next, toggleMute });
-  actionsRef.current = { togglePlay, next, toggleMute };
+  const actionsRef = useRef({ togglePlay, next, toggleMute, toggleLoop });
+  actionsRef.current = { togglePlay, next, toggleMute, toggleLoop };
   useEffect(() => {
     const onTogglePlay = () => actionsRef.current.togglePlay();
     const onNext = () => actionsRef.current.next();
     const onMute = () => actionsRef.current.toggleMute();
+    const onLoop = () => actionsRef.current.toggleLoop();
     window.addEventListener("kai-music-toggle-play", onTogglePlay);
     window.addEventListener("kai-music-next", onNext);
     window.addEventListener("kai-music-mute", onMute);
+    window.addEventListener("kai-music-toggle-loop", onLoop);
     return () => {
       window.removeEventListener("kai-music-toggle-play", onTogglePlay);
       window.removeEventListener("kai-music-next", onNext);
       window.removeEventListener("kai-music-mute", onMute);
+      window.removeEventListener("kai-music-toggle-loop", onLoop);
     };
   }, []);
 
-  // Panel-scoped keys: Space play / pause, N next, M mute, Esc closes the
+  // Panel-scoped keys: Space play / pause, N next, M mute, L loop, Esc closes the
   // drawer. Only plain keys, never while typing in the search box, and Space
   // is left to a focused button so it doesn't toggle twice.
   const onPanelKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
@@ -253,6 +380,10 @@ export const MusicPanel: FC<MusicPanelProps> = ({
       case "n":
       case "N":
         next();
+        break;
+      case "l":
+      case "L":
+        toggleLoop();
         break;
       case "m":
       case "M":
@@ -309,20 +440,41 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     } catch {}
   };
 
-  const toggleExpand = () => {
-    setIsExpanded((prev) => {
+  const [searching, setSearching] = useState(false);
+
+  const handleFullCloseAndReset = () => {
+    sendCommand("pauseVideo");
+    setTrack(null);
+    setQueue([]);
+    setPlaying(false);
+    setCurrentTime(0);
+    setDuration(0);
+    setNotice(null);
+    setQuery("");
+    onTrackChange?.(null, false);
+    onProgressChange?.(0);
+    onClose();
+  };
+
+  const handleMinimize = () => {
+    setIsPinned(false);
+    try {
+      localStorage.setItem("kai_music_pinned", "false");
+    } catch {}
+    onClose();
+  };
+
+  const togglePin = () => {
+    setIsPinned((prev) => {
       const next = !prev;
-      const targetWidth = next ? 540 : 360;
-      setPanelWidth(targetWidth);
       try {
-        localStorage.setItem("kai_music_expanded", String(next));
-        localStorage.setItem("kai_music_panel_width", String(targetWidth));
+        localStorage.setItem("kai_music_pinned", String(next));
       } catch {}
       return next;
     });
   };
 
-  const submit = () => {
+  const submit = async () => {
     const raw = query.trim();
     if (!raw) return;
     const resolved = resolveInputToTrack(raw);
@@ -331,51 +483,88 @@ export const MusicPanel: FC<MusicPanelProps> = ({
       return;
     }
     setNotice(null);
-    // Plain song names have no videoId/playlistId and cannot be embedded
-    // (YouTube retired search embeds); they stay a browser-search action
-    // instead of guessing a random video.
-    if (!resolved.videoId && !resolved.playlistId) {
+    if (resolved.videoId || resolved.playlistId) {
       setTrack(resolved);
-      setPlaying(false);
+      setPlaying(true);
       setQuery("");
+      // In background, fetch related songs for queue and real title
+      void searchYouTubeVideos(resolved.videoId || raw, 6).then((results) => {
+        const matchingCurrent = results.find((r) => r.videoId === resolved.videoId);
+        if (matchingCurrent && matchingCurrent.title) {
+          setTrack((prev) =>
+            prev && prev.videoId === resolved.videoId
+              ? { ...prev, title: matchingCurrent.title }
+              : prev
+          );
+        }
+        const filtered = results.filter((r) => r.videoId !== resolved.videoId);
+        if (filtered.length > 0) {
+          setQueue(
+            filtered.map((r) => ({
+              title: r.title,
+              videoId: r.videoId,
+              playlistId: null,
+              query: r.title,
+            }))
+          );
+        }
+      });
       return;
     }
+
+    // Plain song names: try resolving to YouTube videos via backend search
+    setSearching(true);
+    setNotice(`Searching for “${raw}”…`);
+    try {
+      const results = await searchYouTubeVideos(raw, 8);
+      if (results.length > 0) {
+        setNotice(null);
+        const [first, ...rest] = results;
+        setTrack({
+          title: first.title,
+          videoId: first.videoId,
+          playlistId: null,
+          query: raw,
+        });
+        setQueue(
+          rest.map((r) => ({
+            title: r.title,
+            videoId: r.videoId,
+            playlistId: null,
+            query: r.title,
+          }))
+        );
+        setPlaying(true);
+        setQuery("");
+        return;
+      }
+    } catch {
+      // ignore
+    } finally {
+      setSearching(false);
+    }
+
+    // Fallback if search could not find a video or in browser/mock environment
+    setNotice(null);
     setTrack(resolved);
-    setPlaying(true);
-    setQuery("");
-  };
-
-  const playPreset = (preset: MusicPreset) => {
-    setNotice(null);
-    setTrack({
-      title: preset.title,
-      videoId: preset.videoId,
-      playlistId: null,
-      query: preset.videoId,
-    });
-    setPlaying(true);
-    setQuery("");
-  };
-
-  const playRandom = () => {
-    setNotice(null);
-    setTrack(getRandomPreset());
-    setPlaying(true);
+    setPlaying(false);
     setQuery("");
   };
 
   return (
     <div
       id="kai-music-modal"
-      className={`modal-backdrop music-modal-backdrop ${open ? "open" : "closed"}`}
-      onClick={onClose}
+      className={`music-modal-backdrop ${open ? "open" : "closed"} ${isPinned ? "pinned" : ""}`}
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !isPinned) onClose();
+      }}
       role="dialog"
-      aria-modal={open}
+      aria-modal="true"
       aria-label="YouTube Music player"
       aria-hidden={!open}
     >
       <div
-        className={`settings-modal music-modal-dialog music-panel ${isExpanded ? "expanded" : ""}`}
+        className={`music-modal-dialog music-panel ${isExpanded ? "expanded" : ""}`}
         style={{ width: `${panelWidth}px` }}
         onClick={(e) => e.stopPropagation()}
         role="document"
@@ -387,7 +576,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
           onPointerMove={onResizeMove}
           onPointerUp={onResizeEnd}
           onPointerCancel={onResizeEnd}
-          title="Drag corner to expand or resize player"
+          title="Drag border to resize player"
           aria-label="Resize music player"
         />
         <div className="modal-header music-head">
@@ -400,18 +589,28 @@ export const MusicPanel: FC<MusicPanelProps> = ({
           <div className="music-head-actions">
             <button
               type="button"
-              className="btn btn-icon"
-              onClick={toggleExpand}
-              title={isExpanded ? "Collapse player" : "Expand player"}
-              aria-label={isExpanded ? "Collapse player" : "Expand player"}
+              className={`btn btn-icon ${isPinned ? "music-control-active" : ""}`}
+              onClick={togglePin}
+              title={isPinned ? "Unpin player" : "Pin player (stay open)"}
+              aria-label={isPinned ? "Unpin player" : "Pin player"}
+              aria-pressed={isPinned}
             >
-              {isExpanded ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+              {isPinned ? <PinOff size={13} /> : <Pin size={13} />}
+            </button>
+            <button
+              type="button"
+              className="btn btn-icon"
+              onClick={handleMinimize}
+              title="Minimize to status bar"
+              aria-label="Minimize player"
+            >
+              <Minus size={13} />
             </button>
             <button
               type="button"
               className="btn-close"
-              onClick={onClose}
-              title="Close player"
+              onClick={handleFullCloseAndReset}
+              title="Close and reset player"
               aria-label="Close YouTube Music"
             >
               <X size={15} />
@@ -435,7 +634,13 @@ export const MusicPanel: FC<MusicPanelProps> = ({
             placeholder="Paste a YouTube link, or type a song to search"
             aria-label="Song name or YouTube link"
           />
-          <button type="submit" className="music-search-go" title="Play" aria-label="Search">
+          <button
+            type="submit"
+            className="music-search-go"
+            title="Play"
+            aria-label="Search"
+            disabled={searching}
+          >
             <Search size={13} />
           </button>
         </form>
@@ -451,9 +656,15 @@ export const MusicPanel: FC<MusicPanelProps> = ({
               key={src}
               ref={frameRef}
               referrerPolicy="strict-origin-when-cross-origin"
-              onLoad={() =>
-                frameRef.current?.contentWindow?.postMessage(YOUTUBE_LISTENING_HANDSHAKE, "*")
-              }
+              onLoad={() => {
+                frameRef.current?.contentWindow?.postMessage(YOUTUBE_LISTENING_HANDSHAKE, "*");
+                sendCommand("setVolume", [volume]);
+                if (mutedRef.current) {
+                  sendCommand("mute");
+                } else {
+                  sendCommand("unMute");
+                }
+              }}
               className="music-video"
               src={src}
               title={track?.title ?? "YouTube player"}
@@ -482,34 +693,34 @@ export const MusicPanel: FC<MusicPanelProps> = ({
             </div>
           ) : (
             <div className="music-video-empty">
-              <span className="music-empty-title">Paste a YouTube link or play:</span>
-              <div className="music-presets">
-                <button
-                  type="button"
-                  className="music-preset-btn"
-                  onClick={playRandom}
-                  title="Play a random curated video"
-                  aria-label="Play random video"
-                >
-                  🎲 Play Random Video
-                </button>
-                <div className="music-preset-chips">
-                  {CURATED_PRESETS.map((p) => (
-                    <button
-                      key={p.id}
-                      type="button"
-                      className="music-chip"
-                      onClick={() => playPreset(p)}
-                      title={`Play ${p.title}`}
-                    >
-                      {p.title.replace(" Radio", "").replace(" Beats", "")}
-                    </button>
-                  ))}
-                </div>
-              </div>
+              <span className="music-empty-badge" aria-hidden="true">
+                ♪
+              </span>
+              <span className="music-empty-title">Ready to play</span>
+              <small className="muted-text">Paste a YouTube link or type a song to search</small>
             </div>
           )}
-          <h3 title={track?.title}>{track?.title ?? "Nothing playing"}</h3>
+          <div className="music-track-title-bar">
+            <h3 className="music-track-title" title={track?.title ?? "Nothing playing"}>
+              {track?.title ?? "Nothing playing"}
+            </h3>
+          </div>
+
+          <div className="music-progress-wrap">
+            <span className="music-time-label">{formatTime(currentTime)}</span>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              value={duration > 0 ? progressPercent(currentTime, duration) : 0}
+              onChange={handleSeek}
+              className="music-progress-slider"
+              disabled={!src}
+              aria-label="Seek track position"
+            />
+            <span className="music-time-label">{formatTime(duration)}</span>
+          </div>
+
           <div className="music-controls">
             <button
               type="button"
@@ -523,27 +734,56 @@ export const MusicPanel: FC<MusicPanelProps> = ({
             </button>
             <button
               type="button"
-              className="btn btn-icon"
+              className="btn btn-icon music-ctrl-btn"
               onClick={next}
-              disabled={!src || !hasNextItem(track)}
-              title="Next song (N)"
+              disabled={!src && queue.length === 0}
+              title={queue.length > 0 ? `Next: ${queue[0].title} (N)` : "Next song / replay (N)"}
               aria-label="Next song"
             >
               <SkipForward size={14} />
             </button>
             <button
               type="button"
-              className="btn btn-icon"
-              onClick={toggleMute}
-              title="Mute (M)"
-              aria-label={muted ? "Unmute" : "Mute"}
-              aria-pressed={muted}
+              className={`btn btn-icon music-ctrl-btn ${loop ? "music-control-active" : ""}`}
+              onClick={toggleLoop}
+              title={loop ? "Disable loop (L)" : "Enable loop (L)"}
+              aria-label={loop ? "Disable loop" : "Enable loop"}
+              aria-pressed={loop}
             >
-              {muted ? <VolumeX size={14} /> : <Volume2 size={14} />}
+              {loop ? <Repeat1 size={14} /> : <Repeat size={14} />}
             </button>
+
+            <div className="music-volume-group" title={`Volume: ${muted ? 0 : volume}%`}>
+              <button
+                type="button"
+                className="btn btn-icon music-ctrl-btn"
+                onClick={toggleMute}
+                title={muted ? "Unmute (M)" : "Mute (M)"}
+                aria-label={muted ? "Unmute" : "Mute"}
+                aria-pressed={muted}
+              >
+                {muted || volume === 0 ? (
+                  <VolumeX size={14} />
+                ) : volume < 50 ? (
+                  <Volume1 size={14} />
+                ) : (
+                  <Volume2 size={14} />
+                )}
+              </button>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                value={muted ? 0 : volume}
+                onChange={handleVolumeChange}
+                className="music-volume-slider"
+                aria-label="Volume slider"
+              />
+            </div>
+
             <button
               type="button"
-              className="btn btn-icon"
+              className="btn btn-icon music-ctrl-btn"
               onClick={openInBrowser}
               disabled={!track}
               title="Open in browser"
@@ -552,6 +792,36 @@ export const MusicPanel: FC<MusicPanelProps> = ({
               <ExternalLink size={14} />
             </button>
           </div>
+
+          {queue.length > 0 && (
+            <div className="music-queue-section">
+              <div className="music-queue-header">
+                <span className="music-queue-title">Song List ({queue.length})</span>
+                <button
+                  type="button"
+                  className="music-queue-clear"
+                  onClick={() => setQueue([])}
+                  title="Clear song list"
+                >
+                  Clear
+                </button>
+              </div>
+              <div className="music-queue-list">
+                {queue.map((item, idx) => (
+                  <button
+                    key={`${item.videoId}-${idx}`}
+                    type="button"
+                    className="music-queue-item"
+                    onClick={() => playQueueIndex(idx)}
+                    title={`Play ${item.title}`}
+                  >
+                    <Play size={10} className="music-queue-play-ico" />
+                    <span className="music-queue-name">{item.title}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

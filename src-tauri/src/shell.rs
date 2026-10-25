@@ -1146,6 +1146,127 @@ pub fn open_external_url(url: &str) -> Result<(), TerminalError> {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct YouTubeVideoItem {
+    pub video_id: String,
+    pub title: String,
+}
+
+/// Extracts YouTube videos (videoId and title) from search results HTML.
+pub fn extract_videos_from_search_html(html: &str, limit: usize) -> Vec<YouTubeVideoItem> {
+    let mut items = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let vid_renderer_pattern = "\"videoRenderer\":{\"videoId\":\"";
+    let fallback_vid_pattern = "\"videoId\":\"";
+    let title_pattern = "\"title\":{\"runs\":[{\"text\":\"";
+
+    let pattern = if html.contains(vid_renderer_pattern) {
+        vid_renderer_pattern
+    } else {
+        fallback_vid_pattern
+    };
+
+    let mut offset = 0;
+    while let Some(idx) = html[offset..].find(pattern) {
+        let vid_start = offset + idx + pattern.len();
+        if html.len() < vid_start + 11 {
+            break;
+        }
+        let candidate_id = &html[vid_start..vid_start + 11];
+        if candidate_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        {
+            let search_chunk_end = (vid_start + 1500).min(html.len());
+            let chunk = &html[vid_start..search_chunk_end];
+            let raw_title = if let Some(t_idx) = chunk.find(title_pattern) {
+                let t_start = t_idx + title_pattern.len();
+                if let Some(t_end) = chunk[t_start..].find('"') {
+                    &chunk[t_start..t_start + t_end]
+                } else {
+                    candidate_id
+                }
+            } else {
+                candidate_id
+            };
+
+            let clean_title = raw_title
+                .replace("\\u0026", "&")
+                .replace("\\\"", "\"")
+                .replace("\\'", "'");
+
+            if !seen.contains(candidate_id) {
+                seen.insert(candidate_id.to_string());
+                items.push(YouTubeVideoItem {
+                    video_id: candidate_id.to_string(),
+                    title: if clean_title.trim().is_empty() {
+                        candidate_id.to_string()
+                    } else {
+                        clean_title
+                    },
+                });
+                if items.len() >= limit {
+                    break;
+                }
+            }
+        }
+        offset = vid_start;
+    }
+    items
+}
+
+/// Extracts the first 11-char YouTube videoId from search results HTML.
+pub fn extract_video_id_from_search_html(html: &str) -> Option<String> {
+    extract_videos_from_search_html(html, 1)
+        .first()
+        .map(|v| v.video_id.clone())
+}
+
+/// Searches YouTube for a query and extracts multiple matching videos (videoId and title).
+#[cfg(feature = "tauri")]
+pub async fn search_youtube_videos(
+    query: &str,
+    limit: usize,
+) -> Result<Vec<YouTubeVideoItem>, TerminalError> {
+    let clean = query.trim();
+    if clean.is_empty() || clean.len() > 200 {
+        return Err(TerminalError::IoError("Invalid search query".to_string()));
+    }
+    let encoded = clean.replace(' ', "+");
+    let url = format!("https://www.youtube.com/results?search_query={encoded}");
+    let client = reqwest::Client::builder()
+        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        .timeout(std::time::Duration::from_secs(8))
+        .build()
+        .map_err(|e| TerminalError::IoError(format!("Search client error: {e}")))?;
+
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| TerminalError::IoError(format!("Search request failed: {e}")))?;
+    let html = resp
+        .text()
+        .await
+        .map_err(|e| TerminalError::IoError(format!("Failed to read search response: {e}")))?;
+
+    let results = extract_videos_from_search_html(&html, limit.clamp(1, 20));
+    if results.is_empty() {
+        return Err(TerminalError::IoError(
+            "No video found for search query".to_string(),
+        ));
+    }
+    Ok(results)
+}
+
+/// Searches YouTube for a query and extracts the first matching videoId.
+/// Performs request via backend reqwest client to avoid browser CORS limitations.
+#[cfg(feature = "tauri")]
+pub async fn search_youtube_video(query: &str) -> Result<String, TerminalError> {
+    let videos = search_youtube_videos(query, 1).await?;
+    Ok(videos[0].video_id.clone())
+}
+
 /// Returns true for Windows script shims that `CreateProcess` cannot run
 /// directly (`.cmd`, `.bat`, `.ps1` — e.g. VS Code's `code.cmd` on PATH).
 #[cfg(target_os = "windows")]
@@ -1738,5 +1859,19 @@ mod tests {
         assert!(!config.font_family.is_empty());
         assert!(!config.theme.is_empty());
         assert!(config.opacity >= 0.2 && config.opacity <= 1.0);
+    }
+
+    #[test]
+    fn test_extract_video_id_from_search_html() {
+        let sample = r#"{"responseContext":{},"contents":[{"item":{"videoId":"dQw4w9WgXcQ","title":"Test"}}]}"#;
+        assert_eq!(
+            extract_video_id_from_search_html(sample),
+            Some("dQw4w9WgXcQ".to_string())
+        );
+        assert_eq!(extract_video_id_from_search_html("no matches here"), None);
+        assert_eq!(
+            extract_video_id_from_search_html(r#""videoId":"short""#),
+            None
+        );
     }
 }

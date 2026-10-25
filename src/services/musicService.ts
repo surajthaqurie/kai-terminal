@@ -67,7 +67,7 @@ export const CURATED_PRESETS: MusicPreset[] = [
   { id: "lofi-girl", title: "Lofi Hip Hop Radio", videoId: "jfKfPfyJRdk" },
   { id: "synthwave", title: "Synthwave Radio", videoId: "4xDzrJKXOOY" },
   { id: "chillhop", title: "Chillhop Radio", videoId: "5yx6BWlEVcY" },
-  { id: "coding-focus", title: "Deep Focus Beats", videoId: "e3L1I72K260" },
+  { id: "coding-focus", title: "Deep Focus Beats", videoId: "0w80F8FffQ4" },
 ];
 
 export function getRandomPreset(): MusicTrack {
@@ -119,7 +119,7 @@ export function hasNextItem(track: MusicTrack | null): boolean {
  * `listType=search` embed renders Error 153, so callers must offer the
  * browser-search fallback instead of embedding a guess.
  */
-export function embedSrcForTrack(track: MusicTrack, muted = false): string | null {
+export function embedSrcForTrack(track: MusicTrack, muted = false, loop = false): string | null {
   // Only pass `origin` if it is a standard web HTTP/HTTPS origin (e.g. dev server).
   // In desktop webviews (Tauri), `window.location.origin` is `tauri://localhost` or `tauri://`,
   // which causes YouTube's embed configuration validator to crash with Error 153.
@@ -132,7 +132,8 @@ export function embedSrcForTrack(track: MusicTrack, muted = false): string | nul
     ? `&origin=${encodeURIComponent(window.location.origin)}`
     : `&widget_referrer=${encodeURIComponent("https://www.youtube-nocookie.com")}`;
 
-  const tail = `autoplay=1&rel=0&enablejsapi=1${originParam}${muted ? "&mute=1" : ""}`;
+  const loopParam = loop && track.videoId ? `&loop=1&playlist=${track.videoId}` : "";
+  const tail = `autoplay=1&rel=0&controls=0&enablejsapi=1${originParam}${muted ? "&mute=1" : ""}${loopParam}`;
   if (track.videoId) {
     const list = track.playlistId ? `&list=${track.playlistId}` : "";
     return `https://www.youtube-nocookie.com/embed/${track.videoId}?${tail}${list}`;
@@ -141,6 +142,77 @@ export function embedSrcForTrack(track: MusicTrack, muted = false): string | nul
     return `https://www.youtube-nocookie.com/embed?listType=playlist&list=${track.playlistId}&${tail}`;
   }
   return null;
+}
+
+export interface YouTubeVideoResult {
+  videoId: string;
+  title: string;
+}
+
+/**
+ * Searches YouTube for a query string via backend Tauri invoke (avoiding WebView CORS)
+ * with automatic fallback to dev-server proxy in browser environment.
+ * Returns up to `limit` items with videoId and title.
+ */
+export async function searchYouTubeVideos(query: string, limit = 8): Promise<YouTubeVideoResult[]> {
+  const raw = query.trim();
+  if (!raw) return [];
+  const existingId = extractVideoId(raw);
+  if (existingId) {
+    return [{ videoId: existingId, title: "YouTube Video" }];
+  }
+  try {
+    const { isTauriAvailable } = await import("./ptyService");
+    if (isTauriAvailable()) {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const list = await invoke<{ video_id: string; title: string }[]>(
+        "search_youtube_videos_cmd",
+        { query: raw, limit }
+      );
+      if (Array.isArray(list) && list.length > 0) {
+        return list
+          .filter((item) => item?.video_id && /^[\w-]{11}$/.test(item.video_id))
+          .map((item) => ({
+            videoId: item.video_id,
+            title: item.title,
+          }));
+      }
+    }
+  } catch {
+    // Backend search failed or Tauri unavailable
+  }
+
+  // Fallback for browser / dev-server environment (via Vite dev server middleware)
+  try {
+    if (typeof fetch !== "undefined") {
+      const res = await fetch(`/api/youtube-search?q=${encodeURIComponent(raw)}`);
+      if (res.ok) {
+        const list = (await res.json()) as { videoId: string; title: string }[];
+        if (Array.isArray(list) && list.length > 0) {
+          return list
+            .filter((item) => item?.videoId && /^[\w-]{11}$/.test(item.videoId))
+            .slice(0, limit);
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  return [];
+}
+
+/**
+ * Searches YouTube for a query string via backend Tauri invoke (avoiding WebView CORS).
+ * Returns the 11-char videoId or null if search failed/unavailable.
+ */
+export async function searchYouTubeVideoId(query: string): Promise<string | null> {
+  const raw = query.trim();
+  if (!raw) return null;
+  const existingId = extractVideoId(raw);
+  if (existingId) return existingId;
+  const results = await searchYouTubeVideos(raw, 1);
+  return results[0]?.videoId ?? null;
 }
 
 /**
@@ -182,11 +254,12 @@ export const YOUTUBE_LISTENING_HANDSHAKE = JSON.stringify({
   channel: "widget",
 });
 
-export type YouTubeCommand = "playVideo" | "pauseVideo" | "nextVideo" | "mute" | "unMute";
+export type YouTubeCommand =
+  "playVideo" | "pauseVideo" | "nextVideo" | "mute" | "unMute" | "seekTo";
 
 /** Control message for an embed that was loaded with `enablejsapi=1`. */
-export function youtubeCommand(func: YouTubeCommand): string {
-  return JSON.stringify({ event: "command", func, args: "" });
+export function youtubeCommand(func: YouTubeCommand | string, args: unknown = ""): string {
+  return JSON.stringify({ event: "command", func, args });
 }
 
 export interface YouTubePlayerTelemetry {

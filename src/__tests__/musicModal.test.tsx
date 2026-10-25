@@ -100,19 +100,62 @@ describe("MusicPanel modal implementation", () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
-  it("calls onClose when clicking the close button", async () => {
+  it("calls onClose and resets playback when clicking the close button", async () => {
+    const onClose = vi.fn();
+    const onTrackChange = vi.fn();
+    await act(async () => {
+      root.render(
+        <MusicPanel
+          startMuted={false}
+          open={true}
+          onClose={onClose}
+          onTrackChange={onTrackChange}
+        />
+      );
+    });
+
+    const closeBtn = container.querySelector(".btn-close") as HTMLButtonElement;
+    expect(closeBtn).not.toBeNull();
+    await act(async () => {
+      closeBtn.click();
+    });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onTrackChange).toHaveBeenCalledWith(null, false);
+  });
+
+  it("supports pinning and minimize unpins the player", async () => {
     const onClose = vi.fn();
     await act(async () => {
       root.render(<MusicPanel startMuted={false} open={true} onClose={onClose} />);
     });
 
-    const closeBtn = container.querySelector(".btn-close") as HTMLButtonElement;
-    expect(closeBtn).not.toBeNull();
-    closeBtn.click();
+    const pinBtn = container.querySelector("button[aria-label='Pin player']") as HTMLButtonElement;
+    expect(pinBtn).not.toBeNull();
+
+    // Clicking pin pins the player
+    await act(async () => {
+      pinBtn.click();
+    });
+    expect(localStorage.getItem("kai_music_pinned")).toBe("true");
+
+    // Clicking backdrop while pinned does NOT close player
+    const backdrop = container.querySelector(".music-modal-backdrop") as HTMLElement;
+    backdrop.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(onClose).not.toHaveBeenCalled();
+
+    // Clicking minimize unpins and calls onClose
+    const minimizeBtn = container.querySelector(
+      "button[aria-label='Minimize player']"
+    ) as HTMLButtonElement;
+    expect(minimizeBtn).not.toBeNull();
+    await act(async () => {
+      minimizeBtn.click();
+    });
+    expect(localStorage.getItem("kai_music_pinned")).toBe("false");
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("renders random video button and preset chips, and clicking random video plays it", async () => {
+  it("does not render preset chips or random button, and provides search input, progress scrubber, loop and next controls", async () => {
     const onTrackChange = vi.fn();
     await act(async () => {
       root.render(
@@ -125,26 +168,73 @@ describe("MusicPanel modal implementation", () => {
       );
     });
 
-    const randomBtn = container.querySelector(".music-preset-btn") as HTMLButtonElement;
-    expect(randomBtn).not.toBeNull();
-    expect(randomBtn.textContent).toContain("Play Random Video");
+    // Preset buttons and chips should be removed
+    expect(container.querySelector(".music-preset-btn")).toBeNull();
+    expect(container.querySelector(".music-chip")).toBeNull();
 
-    const chips = container.querySelectorAll(".music-chip");
-    expect(chips.length).toBeGreaterThan(0);
+    // Progress slider, Volume slider, Next button, and Loop button should be rendered
+    const slider = container.querySelector(".music-progress-slider") as HTMLInputElement;
+    expect(slider).not.toBeNull();
 
-    // Clicking random video should start playback and mount the YouTube iframe
+    const volumeSlider = container.querySelector(".music-volume-slider") as HTMLInputElement;
+    expect(volumeSlider).not.toBeNull();
+
+    // Changing volume slider adjusts the volume
     await act(async () => {
-      randomBtn.click();
+      const nativeSetter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        "value"
+      )?.set;
+      nativeSetter?.call(volumeSlider, "40");
+      volumeSlider.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(localStorage.getItem("kai_music_volume")).toBe("40");
+
+    const nextBtn = container.querySelector("button[aria-label='Next song']") as HTMLButtonElement;
+    expect(nextBtn).not.toBeNull();
+
+    const loopBtn = container.querySelector(
+      "button[aria-label='Enable loop']"
+    ) as HTMLButtonElement;
+    expect(loopBtn).not.toBeNull();
+    expect(loopBtn.getAttribute("aria-pressed")).toBe("false");
+
+    // Clicking loop button should toggle loop
+    await act(async () => {
+      loopBtn.click();
+    });
+    expect(loopBtn.getAttribute("aria-pressed")).toBe("true");
+    expect(loopBtn.getAttribute("aria-label")).toBe("Disable loop");
+    expect(loopBtn.classList.contains("music-control-active")).toBe(true);
+
+    // Submitting a YouTube link plays the track and mounts the iframe
+    const searchInput = container.querySelector(".music-search input") as HTMLInputElement;
+    const searchForm = container.querySelector(".music-search") as HTMLFormElement;
+    expect(searchInput).not.toBeNull();
+
+    await act(async () => {
+      const nativeSetter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        "value"
+      )?.set;
+      nativeSetter?.call(searchInput, "https://www.youtube.com/watch?v=0w80F8FffQ4");
+      searchInput.dispatchEvent(new Event("input", { bubbles: true }));
+      searchInput.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    await act(async () => {
+      searchForm.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     });
 
     expect(onTrackChange).toHaveBeenCalledWith(
-      expect.objectContaining({ videoId: expect.any(String) }),
+      expect.objectContaining({ videoId: "0w80F8FffQ4" }),
       true
     );
 
     const iframe = container.querySelector("iframe.music-video") as HTMLIFrameElement;
     expect(iframe).not.toBeNull();
-    expect(iframe.src).toContain("youtube-nocookie.com/embed/");
+    expect(iframe.src).toContain("youtube-nocookie.com/embed/0w80F8FffQ4");
     expect(iframe.src).toContain("autoplay=1");
+    expect(iframe.src).toContain("loop=1");
   });
 });

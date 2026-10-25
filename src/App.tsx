@@ -1768,7 +1768,7 @@ export function App() {
           break;
         }
         case "toggleMusic":
-          setIsMusicOpen((prev) => !prev);
+          handleToggleMusicPanel();
           break;
         case "musicPlayPause":
           dispatchMusicEvent("kai-music-toggle-play");
@@ -1909,7 +1909,7 @@ export function App() {
       category: "Music",
       shortcut: platformLabel(kb.toggleMusic, isMac),
       icon: <Activity size={16} />,
-      perform: () => setIsMusicOpen((prev) => !prev),
+      perform: handleToggleMusicPanel,
     },
     {
       id: "rename-session",
@@ -2516,16 +2516,16 @@ export function App() {
           lastError={lastError}
         />
 
-        {userSettings.showMusicPlayer && (
+        {(userSettings.showMusicPlayer || isMusicOpen) && (
           <Suspense
             fallback={
               isMusicOpen ? (
                 <div
-                  className="modal-backdrop music-modal-backdrop open"
+                  className="music-modal-backdrop open"
                   role="dialog"
                   aria-label="Loading music player"
                 >
-                  <div className="settings-modal music-modal-dialog music-panel" role="document">
+                  <div className="music-modal-dialog music-panel" role="document">
                     <div className="modal-header music-head">
                       <div className="music-head-title">
                         <span className="music-head-badge" aria-hidden="true">
