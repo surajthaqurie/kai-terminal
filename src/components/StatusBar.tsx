@@ -109,6 +109,10 @@ export const StatusBar: FC<StatusBarProps> = ({
   const dragXRef = useRef<number>(dragX);
   const dragStartXRef = useRef<number | null>(null);
   const dragInitialXRef = useRef<number>(0);
+  // Drag bounds measured at drag start so the pill never overlaps the other
+  // footer widgets (left cluster on the left, version/update on the right).
+  const dragMinXRef = useRef(0);
+  const dragMaxXRef = useRef(0);
   // True once a pointer gesture moved more than 2px — used to swallow the
   // trailing click so dragging never opens the player panel.
   const didDragRef = useRef(false);
@@ -126,6 +130,17 @@ export const StatusBar: FC<StatusBarProps> = ({
     didDragRef.current = false;
     dragStartXRef.current = e.clientX;
     dragInitialXRef.current = dragXRef.current;
+    // Drag bounds: right limit is the original slot (version/update widgets
+    // live there), left limit is the measured left-cluster edge.
+    const pillRect = e.currentTarget.getBoundingClientRect();
+    const footer = e.currentTarget.closest(".status-bar");
+    const leftCluster = footer?.querySelector(".status-left");
+    const leftEdge = leftCluster ? leftCluster.getBoundingClientRect().right + 12 : -Infinity;
+    dragMinXRef.current = Math.min(
+      dragInitialXRef.current,
+      dragInitialXRef.current + Math.min(0, leftEdge - pillRect.left)
+    );
+    dragMaxXRef.current = 0;
     try {
       e.currentTarget.setPointerCapture(e.pointerId);
     } catch {
@@ -137,7 +152,10 @@ export const StatusBar: FC<StatusBarProps> = ({
     if (dragStartXRef.current === null) return;
     const delta = e.clientX - dragStartXRef.current;
     if (Math.abs(delta) > 2) didDragRef.current = true;
-    const newX = Math.max(-450, Math.min(250, dragInitialXRef.current + delta));
+    const newX = Math.max(
+      dragMinXRef.current,
+      Math.min(dragMaxXRef.current, dragInitialXRef.current + delta)
+    );
     dragXRef.current = newX;
     setDragX(newX);
   };

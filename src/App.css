@@ -4484,13 +4484,17 @@ select.modal-input {
   user-select: none;
   touch-action: none;
   cursor: pointer;
+  /* Dimmed at rest; full strength on hover, focus or interaction. */
+  opacity: 0.68;
   transition:
     background-color 0.15s ease,
-    color 0.15s ease;
+    color 0.15s ease,
+    opacity 0.2s ease;
 }
-.music-mini:hover {
-  background: var(--bg-surface-sunken, rgba(255, 255, 255, 0.05));
-  color: var(--text-primary);
+.music-mini:hover,
+.music-mini:focus-within,
+.music-mini:active {
+  opacity: 1;
 }
 .music-mini-main {
   display: inline-flex;
@@ -4523,8 +4527,8 @@ select.modal-input {
   bottom: 0;
   left: 6px;
   right: 6px;
-  height: 2px;
-  background: rgba(255, 255, 255, 0.1);
+  height: 3px;
+  background: rgba(255, 255, 255, 0.25);
   border-radius: 99px;
   overflow: hidden;
   pointer-events: none;
@@ -4532,6 +4536,8 @@ select.modal-input {
 .music-mini-progress i {
   display: block;
   height: 100%;
-  background: var(--accent-primary);
+  min-width: 3px;
+  background: linear-gradient(90deg, var(--accent-primary), var(--accent-hover, #8b5cf6));
+  box-shadow: 0 0 5px var(--accent-glow, rgba(99, 102, 241, 0.6));
   transition: width 0.3s ease;
 }
