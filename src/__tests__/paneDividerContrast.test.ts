@@ -125,4 +125,11 @@ describe("Split divider visibility (no invisible seams)", () => {
       ).toBeGreaterThanOrEqual(1.6);
     });
   }
+
+  it("ensures xterm internal viewport and scrollable shadows do not bleed black over themes", () => {
+    expect(css).toContain(".terminal-xterm-host .xterm .xterm-viewport,");
+    expect(css).toContain("background-color: transparent !important;");
+    expect(css).toContain(".terminal-xterm-host .xterm .xterm-scrollable-element > .shadow");
+    expect(css).toContain("display: none !important;");
+  });
 });

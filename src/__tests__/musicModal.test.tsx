@@ -481,6 +481,18 @@ describe("MusicPanel modal implementation", () => {
     });
     expect(container.querySelector(".music-queue-drawer.open")).toBeNull();
 
+    // Re-opening drawer and clicking backdrop overlay closes it
+    await act(async () => {
+      nextListBtn.click();
+    });
+    expect(container.querySelector(".music-queue-drawer.open")).not.toBeNull();
+    const backdrop = container.querySelector(".music-drawer-backdrop") as HTMLElement;
+    expect(backdrop).not.toBeNull();
+    await act(async () => {
+      backdrop.click();
+    });
+    expect(container.querySelector(".music-queue-drawer.open")).toBeNull();
+
     vi.unstubAllGlobals();
   });
 
@@ -527,17 +539,184 @@ describe("MusicPanel modal implementation", () => {
     expect(cssContent).toContain("background-color: transparent !important;");
     expect(cssContent).toContain("box-shadow: none !important;");
 
-    // Glassy right-side slider
+    // Glassy bottom slider
     expect(cssContent).toContain(".music-queue-drawer");
     expect(cssContent).toContain("backdrop-filter: blur(");
-    expect(cssContent).toContain("transform: translateX(100%);");
+    expect(cssContent).toContain("transform: translateY(100%);");
     expect(cssContent).toContain(".music-queue-drawer.open");
-    expect(cssContent).toContain("transform: translateX(0);");
+    expect(cssContent).toContain("transform: translateY(0);");
 
     // Pinned player elevation above Settings, Git modals, etc.
     expect(cssContent).toContain(".music-modal-backdrop.pinned");
     expect(cssContent).toContain("z-index: 2100 !important;");
     expect(cssContent).toContain(".music-modal-backdrop.pinned .music-modal-dialog");
     expect(cssContent).toContain("z-index: 2101 !important;");
+  });
+
+  it("renders professional Lucide music icon instead of raw text ♪ in panel and status bar", async () => {
+    const { StatusBar } = await import("../components/StatusBar");
+
+    await act(async () => {
+      root.render(<MusicPanel startMuted={false} open={true} onClose={vi.fn()} />);
+    });
+
+    // Panel header badge contains an SVG music icon, not text "♪"
+    const headBadge = container.querySelector(".music-head-badge");
+    expect(headBadge).not.toBeNull();
+    expect(headBadge?.querySelector("svg")).not.toBeNull();
+    expect(headBadge?.textContent?.trim()).not.toBe("♪");
+
+    // Empty state badge contains an SVG music icon, not text "♪"
+    const emptyBadge = container.querySelector(".music-empty-badge");
+    expect(emptyBadge).not.toBeNull();
+    expect(emptyBadge?.querySelector("svg")).not.toBeNull();
+    expect(emptyBadge?.textContent?.trim()).not.toBe("♪");
+
+    // Status bar mini pill contains SVG music icon, not text "♪"
+    await act(async () => {
+      root.render(
+        <StatusBar
+          gitBranch="main"
+          gitDirty={false}
+          projectDir="/test"
+          appVersion="1.0.0"
+          updateAvailable={false}
+          onViewUpdate={vi.fn()}
+          music={{
+            title: "Test Track",
+            playing: true,
+            muted: false,
+            progress: 30,
+          }}
+        />
+      );
+    });
+
+    const miniArt = container.querySelector(".music-mini-art");
+    expect(miniArt).not.toBeNull();
+    expect(miniArt?.querySelector("svg")).not.toBeNull();
+    expect(miniArt?.textContent?.trim()).not.toBe("♪");
+
+    // When thumbnail is provided, status bar renders the thumbnail image
+    await act(async () => {
+      root.render(
+        <StatusBar
+          gitBranch="main"
+          gitDirty={false}
+          projectDir="/test"
+          appVersion="1.0.0"
+          updateAvailable={false}
+          onViewUpdate={vi.fn()}
+          music={{
+            title: "Long Title Song With Thumbnail",
+            videoId: "jfKfPfyJRdk",
+            thumbnail: "https://i.ytimg.com/vi/jfKfPfyJRdk/mqdefault.jpg",
+            playing: true,
+            muted: false,
+            progress: 50,
+          }}
+        />
+      );
+    });
+
+    const thumbImg = container.querySelector(".music-mini-thumb") as HTMLImageElement;
+    expect(thumbImg).not.toBeNull();
+    expect(thumbImg.src).toContain("jfKfPfyJRdk");
+
+    const miniTitle = container.querySelector(".music-mini-title");
+    expect(miniTitle?.textContent).toBe("Long Title Song With Thumbnail");
+
+    // If thumbnail fails to load, falls back to the SVG music icon
+    await act(async () => {
+      thumbImg.dispatchEvent(new Event("error"));
+    });
+    const fallbackArt = container.querySelector(".music-mini-art");
+    expect(fallbackArt?.querySelector("svg")).not.toBeNull();
+  });
+
+  it("supports dim opacity toggle and resetting to default player dimensions", async () => {
+    localStorage.removeItem("kai_music_dimmed");
+    localStorage.setItem("kai_music_panel_width", "600");
+    localStorage.setItem("kai_music_panel_height", "700");
+
+    await act(async () => {
+      root.render(<MusicPanel startMuted={false} open={true} onClose={vi.fn()} />);
+    });
+
+    const dialog = container.querySelector(".music-modal-dialog") as HTMLElement;
+    expect(dialog).not.toBeNull();
+    expect(dialog.classList.contains("is-dimmed")).toBe(false);
+
+    // Dim button opens popover slider without automatically forcing dim on
+    const dimBtn = container.querySelector(
+      "button[aria-label^='Dim player opacity']"
+    ) as HTMLButtonElement;
+    expect(dimBtn).not.toBeNull();
+
+    await act(async () => {
+      dimBtn.click();
+    });
+    // Popover is open while dim remains off until user explicitly selects preset or toggles on
+    expect(dialog.classList.contains("is-dimmed")).toBe(false);
+    expect(localStorage.getItem("kai_music_dimmed")).toBeNull();
+
+    // Popover is visible and has percentage slider and presets
+    const popover = container.querySelector(".music-dim-popover");
+    expect(popover).not.toBeNull();
+    const slider = container.querySelector(".music-dim-slider") as HTMLInputElement;
+    expect(slider).not.toBeNull();
+
+    // Changing percentage via preset enables dimming, updates dimPercent and storage
+    const preset60 = Array.from(container.querySelectorAll(".music-dim-preset-chip")).find(
+      (el) => el.textContent?.trim() === "60%"
+    ) as HTMLButtonElement;
+    expect(preset60).not.toBeNull();
+
+    await act(async () => {
+      preset60.click();
+    });
+    expect(dialog.classList.contains("is-dimmed")).toBe(true);
+    expect(localStorage.getItem("kai_music_dimmed")).toBe("true");
+    expect(localStorage.getItem("kai_music_dim_percent")).toBe("60");
+    expect(container.querySelector(".music-dim-val")?.textContent).toBe("60%");
+
+    // Disable dimming via the "Off" button in footer
+    const offBtn = Array.from(container.querySelectorAll(".music-dim-footer button")).find(
+      (el) => el.textContent?.trim() === "Off"
+    ) as HTMLButtonElement;
+    expect(offBtn).not.toBeNull();
+
+    await act(async () => {
+      offBtn.click();
+    });
+    expect(dialog.classList.contains("is-dimmed")).toBe(false);
+    expect(localStorage.getItem("kai_music_dimmed")).toBe("false");
+    expect(offBtn.textContent?.trim()).toBe("On");
+
+    // Clicking "On" enables dimming again
+    await act(async () => {
+      offBtn.click();
+    });
+    expect(dialog.classList.contains("is-dimmed")).toBe(true);
+    expect(localStorage.getItem("kai_music_dimmed")).toBe("true");
+
+    // Action buttons inside .music-controls are always present
+    const controls = container.querySelector(".music-controls");
+    expect(controls).not.toBeNull();
+    expect(controls?.querySelector(".music-play")).not.toBeNull();
+
+    // Screen resize button toggles between expanded and default 360x540 size
+    const screenBtn = container.querySelector(
+      "button[aria-label='Reset player to default size'], button[aria-label='Expand player screen']"
+    ) as HTMLButtonElement;
+    expect(screenBtn).not.toBeNull();
+
+    await act(async () => {
+      screenBtn.click();
+    });
+    expect(dialog.style.width).toBe("360px");
+    expect(dialog.style.height).toBe("540px");
+    expect(localStorage.getItem("kai_music_panel_width")).toBe("360");
+    expect(localStorage.getItem("kai_music_panel_height")).toBe("540");
   });
 });

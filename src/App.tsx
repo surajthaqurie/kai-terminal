@@ -130,6 +130,7 @@ import {
   ArrowLeft,
   GitCompare,
   Wrench,
+  Music,
 } from "lucide-react";
 import "./App.css";
 
@@ -318,6 +319,8 @@ export function App() {
     }
   });
   const [musicTitle, setMusicTitle] = useState<string | null>(null);
+  const [musicVideoId, setMusicVideoId] = useState<string | null>(null);
+  const [musicThumbnail, setMusicThumbnail] = useState<string | null>(null);
   const [musicPlaying, setMusicPlaying] = useState<boolean>(false);
   const [musicProgress, setMusicProgress] = useState<number>(0);
   const [musicMuted, setMusicMuted] = useState<boolean>(() =>
@@ -777,9 +780,10 @@ export function App() {
     });
   }, []);
 
-  // Synchronize active theme to documentElement, color-scheme, and theme-color meta
+  // Synchronize active theme to documentElement, body, color-scheme, and theme-color meta
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", userSettings.theme);
+    document.body.setAttribute("data-theme", userSettings.theme);
     document.documentElement.style.colorScheme =
       userSettings.theme === "solarized-light" ? "light" : "dark";
     const meta = document.querySelector('meta[name="theme-color"]');
@@ -2071,7 +2075,7 @@ export function App() {
   };
 
   return (
-    <div className="app-layout">
+    <div className="app-layout" data-theme={userSettings.theme}>
       <div className="app-header">
         <TabBar
           tabs={tabs}
@@ -2187,7 +2191,7 @@ export function App() {
             className="session-restore-banner"
             role="alert"
             aria-label="Shell keeps exiting"
-            style={{ borderColor: "#f38ba8" }}
+            style={{ borderColor: "var(--color-danger)" }}
           >
             <span className="session-restore-text">{loopFault.message}</span>
             <div className="session-restore-actions">
@@ -2535,7 +2539,7 @@ export function App() {
                     <div className="modal-header music-head">
                       <div className="music-head-title">
                         <span className="music-head-badge" aria-hidden="true">
-                          ♪
+                          <Music size={14} aria-hidden="true" />
                         </span>
                         <h3>YouTube Music</h3>
                       </div>
@@ -2552,6 +2556,13 @@ export function App() {
               onClose={() => setIsMusicOpen(false)}
               onTrackChange={(track, playing) => {
                 setMusicTitle(track?.title ?? null);
+                setMusicVideoId(track?.videoId ?? null);
+                setMusicThumbnail(
+                  track?.thumbnail ??
+                    (track?.videoId
+                      ? `https://i.ytimg.com/vi/${encodeURIComponent(track.videoId)}/mqdefault.jpg`
+                      : null)
+                );
                 setMusicPlaying(playing);
               }}
               onMutedChange={(m) => setMusicMuted(m)}
@@ -2639,6 +2650,8 @@ export function App() {
           userSettings.showMusicPlayer
             ? {
                 title: musicTitle,
+                videoId: musicVideoId,
+                thumbnail: musicThumbnail,
                 playing: musicPlaying,
                 muted: musicMuted,
                 progress: musicProgress,

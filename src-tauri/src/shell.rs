@@ -1267,6 +1267,117 @@ pub async fn search_youtube_video(query: &str) -> Result<String, TerminalError> 
     Ok(videos[0].video_id.clone())
 }
 
+/// Validates a YouTube playlist id (`list=` value): 10-64 chars of
+/// [A-Za-z0-9_-]. Covers `PL…`, `OL…`, `LL…`, `RD…`, `UULF…` and similar.
+pub fn is_valid_playlist_id(id: &str) -> bool {
+    let len = id.len();
+    (10..=64).contains(&len)
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
+/// Extracts playlist videos (videoId + title) IN PLAYLIST ORDER from a
+/// `playlist?list=…` page. Repeat entries (the same videoId appears multiple
+/// times in the JSON) keep only their first occurrence.
+pub fn extract_videos_from_playlist_html(html: &str, limit: usize) -> Vec<YouTubeVideoItem> {
+    let mut items = Vec::new();
+    let renderer_pattern = "\"playlistVideoRenderer\":{\"videoId\":\"";
+    let fallback_vid_pattern = "\"videoId\":\"";
+    let title_pattern = "\"title\":{\"runs\":[{\"text\":\"";
+
+    let pattern = if html.contains(renderer_pattern) {
+        renderer_pattern
+    } else {
+        fallback_vid_pattern
+    };
+
+    let mut offset = 0;
+    while let Some(idx) = html[offset..].find(pattern) {
+        let vid_start = offset + idx + pattern.len();
+        if html.len() < vid_start + 11 {
+            break;
+        }
+        let candidate_id = &html[vid_start..vid_start + 11];
+        if candidate_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+            && !items
+                .iter()
+                .any(|v: &YouTubeVideoItem| v.video_id.as_str() == candidate_id)
+        {
+            let chunk_end = (vid_start + 1500).min(html.len());
+            let chunk = &html[vid_start..chunk_end];
+            let raw_title = if let Some(t_idx) = chunk.find(title_pattern) {
+                let t_start = t_idx + title_pattern.len();
+                if let Some(t_end) = chunk[t_start..].find('"') {
+                    &chunk[t_start..t_start + t_end]
+                } else {
+                    candidate_id
+                }
+            } else {
+                candidate_id
+            };
+
+            let clean_title = raw_title
+                .replace("\\u0026", "&")
+                .replace("\\\"", "\"")
+                .replace("\\'", "'");
+
+            items.push(YouTubeVideoItem {
+                video_id: candidate_id.to_string(),
+                title: if clean_title.trim().is_empty() {
+                    candidate_id.to_string()
+                } else {
+                    clean_title
+                },
+            });
+            if items.len() >= limit {
+                break;
+            }
+        }
+        offset = vid_start;
+    }
+    items
+}
+
+/// Fetches the ordered video list of a YouTube playlist (videoId + title)
+/// via the backend reqwest client, avoiding browser CORS limitations.
+#[cfg(feature = "tauri")]
+pub async fn fetch_youtube_playlist(
+    playlist_id: &str,
+    limit: usize,
+) -> Result<Vec<YouTubeVideoItem>, TerminalError> {
+    let clean = playlist_id.trim();
+    if !is_valid_playlist_id(clean) {
+        return Err(TerminalError::IoError("Invalid playlist id".to_string()));
+    }
+    let url = format!("https://www.youtube.com/playlist?list={clean}");
+    let client = reqwest::Client::builder()
+        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        .timeout(std::time::Duration::from_secs(8))
+        .build()
+        .map_err(|e| TerminalError::IoError(format!("Playlist client error: {e}")))?;
+
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| TerminalError::IoError(format!("Playlist request failed: {e}")))?;
+    let html = resp
+        .text()
+        .await
+        .map_err(|e| TerminalError::IoError(format!("Failed to read playlist response: {e}")))?;
+
+    let results = extract_videos_from_playlist_html(&html, limit.clamp(1, 500));
+    if results.is_empty() {
+        return Err(TerminalError::IoError(
+            "No playlist videos found (playlist may be empty or private)".to_string(),
+        ));
+    }
+    Ok(results)
+}
+
 /// Returns true for Windows script shims that `CreateProcess` cannot run
 /// directly (`.cmd`, `.bat`, `.ps1` — e.g. VS Code's `code.cmd` on PATH).
 #[cfg(target_os = "windows")]
@@ -1873,5 +1984,31 @@ mod tests {
             extract_video_id_from_search_html(r#""videoId":"short""#),
             None
         );
+    }
+
+    #[test]
+    fn test_extract_videos_from_playlist_html_keeps_order_and_dedups() {
+        // Two playlist entries with titles, plus a repeat of the first video
+        // id that must be dropped (first occurrence wins).
+        let sample = concat!(
+            "\"playlistVideoRenderer\":{\"videoId\":\"AAAAAAAAAAA\",\"thumbnail\":{},\"title\":{\"runs\":[{\"text\":\"First Song\"}]}}",
+            "\"playlistVideoRenderer\":{\"videoId\":\"BBBBBBBBBBB\",\"thumbnail\":{},\"title\":{\"runs\":[{\"text\":\"Second Song\"}]}}",
+            "\"playlistVideoRenderer\":{\"videoId\":\"AAAAAAAAAAA\",\"thumbnail\":{},\"title\":{\"runs\":[{\"text\":\"First Song\"}]}}",
+        );
+        let videos = extract_videos_from_playlist_html(sample, 10);
+        assert_eq!(videos.len(), 2);
+        assert_eq!(videos[0].video_id, "AAAAAAAAAAA");
+        assert_eq!(videos[0].title, "First Song");
+        assert_eq!(videos[1].video_id, "BBBBBBBBBBB");
+        assert_eq!(videos[1].title, "Second Song");
+
+        // limit is respected
+        assert_eq!(extract_videos_from_playlist_html(sample, 1).len(), 1);
+        // garbage ids (short) are skipped
+        assert!(extract_videos_from_playlist_html(
+            "\"playlistVideoRenderer\":{\"videoId\":\"ab\"",
+            10
+        )
+        .is_empty());
     }
 }

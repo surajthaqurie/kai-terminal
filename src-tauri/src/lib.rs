@@ -97,6 +97,15 @@ async fn search_youtube_videos_cmd(
 
 #[cfg(feature = "tauri")]
 #[tauri::command(async)]
+async fn fetch_youtube_playlist_cmd(
+    playlist_id: String,
+    limit: Option<usize>,
+) -> Result<Vec<shell::YouTubeVideoItem>, error::TerminalError> {
+    shell::fetch_youtube_playlist(&playlist_id, limit.unwrap_or(24)).await
+}
+
+#[cfg(feature = "tauri")]
+#[tauri::command(async)]
 fn get_available_shells() -> Vec<ShellProfile> {
     detect_available_shells()
 }
@@ -399,6 +408,7 @@ pub fn run() {
             open_external_url_cmd,
             search_youtube_video_cmd,
             search_youtube_videos_cmd,
+            fetch_youtube_playlist_cmd,
             get_diagnostics,
             create_pty,
             write_to_pty,

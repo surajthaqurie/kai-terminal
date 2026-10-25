@@ -9,8 +9,12 @@ import {
 } from "react";
 import {
   ChevronLeft,
+  Contrast,
   ListMusic,
+  Maximize2,
+  Minimize2,
   Minus,
+  Music,
   Pause,
   Pin,
   PinOff,
@@ -33,6 +37,7 @@ import {
   YouTubeCommand,
   clearLegacyQueue,
   embedSrcForTrack,
+  fetchPlaylistVideos,
   hasNextItem,
   parseYouTubePlayerMessage,
   progressPercent,
@@ -56,6 +61,9 @@ function isOnline(): boolean {
   return typeof navigator === "undefined" || navigator.onLine !== false;
 }
 
+/** Songs shown per page in the playlist drawer before "Load more". */
+const PLAYLIST_PAGE_SIZE = 12;
+
 /**
  * Music Time drawer (272px): one search box, the YouTube video, and four
  * buttons (play/pause, next, mute, open in browser). YouTube owns search,
@@ -74,6 +82,12 @@ export const MusicPanel: FC<MusicPanelProps> = ({
   const [track, setTrack] = useState<MusicTrack | null>(null);
   const [searchResults, setSearchResults] = useState<MusicTrack[]>([]);
   const [queue, setQueue] = useState<MusicTrack[]>([]);
+  // Fetched YouTube playlist songs (drawer in playlist mode), paginated in
+  // windows of PLAYLIST_PAGE_SIZE via the "Load more" control.
+  const [playlistItems, setPlaylistItems] = useState<MusicTrack[]>([]);
+  const [playlistLoading, setPlaylistLoading] = useState(false);
+  const [playlistVisible, setPlaylistVisible] = useState(PLAYLIST_PAGE_SIZE);
+  const [suggestLoading, setSuggestLoading] = useState(false);
   const [showNextList, setShowNextList] = useState<boolean>(false);
   const [drawerOpen, setDrawerOpen] = useState<boolean>(false);
   const [drawerMode, setDrawerMode] = useState<"queue" | "search">("queue");
@@ -294,6 +308,101 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     setPlaying(true);
   };
 
+  // Playlist drawer browsing is session-scoped: items stay visible while the
+  // drawer is open (even if a song from the list takes over playback as a
+  // standalone video), and reset when the drawer closes via closeDrawer.
+  const playlistIdRef = useRef<string | null>(null);
+  const playlistItemsRef = useRef<MusicTrack[]>(playlistItems);
+
+  const loadPlaylistItems = async (playlistId: string, force = false) => {
+    if (!force && playlistIdRef.current === playlistId && playlistItemsRef.current.length > 0) {
+      return;
+    }
+    setPlaylistLoading(true);
+    try {
+      const results = await fetchPlaylistVideos(playlistId, 200);
+      const items: MusicTrack[] = results.map((r) => ({
+        title: r.title,
+        videoId: r.videoId,
+        playlistId: null,
+        query: r.title,
+        thumbnail: r.videoId
+          ? `https://i.ytimg.com/vi/${encodeURIComponent(r.videoId)}/mqdefault.jpg`
+          : null,
+      }));
+      playlistIdRef.current = playlistId;
+      playlistItemsRef.current = items;
+      setPlaylistItems(items);
+      setPlaylistVisible(PLAYLIST_PAGE_SIZE);
+    } catch {
+      playlistIdRef.current = playlistId;
+      playlistItemsRef.current = [];
+      setPlaylistItems([]);
+    } finally {
+      setPlaylistLoading(false);
+    }
+  };
+
+  // Closing the drawer always returns it to a clean queue-session state.
+  const closeDrawer = () => {
+    setDrawerOpen(false);
+    setShowNextList(false);
+    setDrawerMode("queue");
+    setPlaylistItems([]);
+    setPlaylistVisible(PLAYLIST_PAGE_SIZE);
+    playlistIdRef.current = null;
+    playlistItemsRef.current = [];
+  };
+
+  /** Plays a fetched playlist item as a standalone video (predictable, and
+   * it cannot restart the whole playlist like `listType=playlist` would). */
+  const playPlaylistItem = (item: MusicTrack) => {
+    if (item.videoId && item.videoId === track?.videoId) {
+      replayCurrent();
+      return;
+    }
+    setTrack(item);
+    setPlaying(true);
+    setCurrentTime(0);
+    setNotice(null);
+  };
+
+  /** Pagination for the suggestions queue: fetches a wider related-videos
+   * page for the current song and appends only the not-yet-queued ones. */
+  const loadMoreSuggestions = async () => {
+    if (suggestLoading) return;
+    const seed = track?.query || track?.title;
+    if (!seed || seed === "YouTube video") return;
+    setSuggestLoading(true);
+    try {
+      const results = await searchYouTubeVideos(seed, 20);
+      const known = new Set<string>([track?.videoId ?? ""]);
+      for (const item of queueRef.current) {
+        if (item.videoId) known.add(item.videoId);
+      }
+      const fresh = results
+        .filter((r) => !known.has(r.videoId))
+        .map((r) => ({
+          title: r.title,
+          videoId: r.videoId,
+          playlistId: null,
+          query: r.title,
+          thumbnail: r.videoId
+            ? `https://i.ytimg.com/vi/${encodeURIComponent(r.videoId)}/mqdefault.jpg`
+            : null,
+        }));
+      if (fresh.length > 0) {
+        setQueue((prev) => [...prev, ...fresh]);
+      } else {
+        setNotice("No more suggestions available for this song.");
+      }
+    } catch {
+      setNotice("Could not load more suggestions.");
+    } finally {
+      setSuggestLoading(false);
+    }
+  };
+
   const replayCurrent = () => {
     if (!src) return;
     sendCommand("seekTo", [0, true]);
@@ -316,8 +425,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     setQueue(remaining);
     setPlaying(true);
     setCurrentTime(0);
-    setDrawerOpen(false);
-    setShowNextList(false);
+    closeDrawer();
   };
 
   const toggleLoop = () => {
@@ -329,9 +437,11 @@ export const MusicPanel: FC<MusicPanelProps> = ({
       setDrawerMode("queue");
       setDrawerOpen(true);
       setShowNextList(true);
-      // Auto-fill suggestions from the current song's context. Native
-      // playlists own their own order, so don't overlay a fake queue there.
-      if (queue.length === 0 && track && !track.playlistId) {
+      if (track?.playlistId) {
+        // Real playlist: show its actual ordered song list (paginated).
+        void loadPlaylistItems(track.playlistId);
+      } else if (queue.length === 0 && track) {
+        // Non-playlist: seed the suggestions queue from the song context.
         const seed = track.query || track.title;
         if (seed && seed !== "YouTube video") {
           try {
@@ -344,6 +454,9 @@ export const MusicPanel: FC<MusicPanelProps> = ({
                   videoId: r.videoId,
                   playlistId: null,
                   query: r.title,
+                  thumbnail: r.videoId
+                    ? `https://i.ytimg.com/vi/${encodeURIComponent(r.videoId)}/mqdefault.jpg`
+                    : null,
                 }))
               );
             }
@@ -353,8 +466,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
         }
       }
     } else {
-      setDrawerOpen(false);
-      setShowNextList(false);
+      closeDrawer();
     }
   };
 
@@ -469,15 +581,105 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     }
   });
 
+  const DEFAULT_PANEL_WIDTH = 360;
+  const DEFAULT_PANEL_HEIGHT = 540;
+  const MIN_PANEL_WIDTH = 300;
+  const MIN_PANEL_HEIGHT = 320;
+
+  const [dimPercent, setDimPercent] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem("kai_music_dim_percent");
+      if (saved) {
+        const parsed = parseInt(saved, 10);
+        if (Number.isFinite(parsed) && parsed >= 15 && parsed <= 100) return parsed;
+      }
+    } catch {}
+    return 40;
+  });
+
+  const [isDimmed, setIsDimmed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("kai_music_dimmed") === "true";
+    } catch {
+      return false;
+    }
+  });
+
+  const [showDimPopover, setShowDimPopover] = useState(false);
+  const dimPopoverRef = useRef<HTMLDivElement | null>(null);
+
+  const enableDim = (percent?: number) => {
+    if (typeof percent === "number") {
+      const clamped = Math.max(15, Math.min(100, percent));
+      setDimPercent(clamped);
+      try {
+        localStorage.setItem("kai_music_dim_percent", String(clamped));
+      } catch {}
+    }
+    setIsDimmed(true);
+    try {
+      localStorage.setItem("kai_music_dimmed", "true");
+    } catch {}
+  };
+
+  const disableDim = () => {
+    setIsDimmed(false);
+    try {
+      localStorage.setItem("kai_music_dimmed", "false");
+    } catch {}
+  };
+
+  const handleDimPercentChange = (val: number) => {
+    enableDim(val);
+  };
+
+  useEffect(() => {
+    if (!showDimPopover) return;
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (dimPopoverRef.current && !dimPopoverRef.current.contains(e.target as Node)) {
+        setShowDimPopover(false);
+      }
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setShowDimPopover(false);
+      }
+    };
+    window.addEventListener("mousedown", handleOutsideClick);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("mousedown", handleOutsideClick);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [showDimPopover]);
+
+  const drawerRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!drawerOpen) return;
+    const handleOutsideClick = (e: MouseEvent) => {
+      if ((e.target as HTMLElement).closest("button[aria-label='Next playing list']")) {
+        return;
+      }
+      if (drawerRef.current && !drawerRef.current.contains(e.target as Node)) {
+        closeDrawer();
+      }
+    };
+    window.addEventListener("mousedown", handleOutsideClick);
+    return () => {
+      window.removeEventListener("mousedown", handleOutsideClick);
+    };
+  }, [drawerOpen]);
+
   const [panelWidth, setPanelWidth] = useState<number>(() => {
     try {
       const saved = localStorage.getItem("kai_music_panel_width");
       if (saved) {
         const parsed = parseInt(saved, 10);
-        if (Number.isFinite(parsed) && parsed >= 300) return parsed;
+        if (Number.isFinite(parsed) && parsed >= MIN_PANEL_WIDTH) return parsed;
       }
     } catch {}
-    return isExpanded ? 520 : 360;
+    return isExpanded ? 520 : DEFAULT_PANEL_WIDTH;
   });
 
   const [panelHeight, setPanelHeight] = useState<number>(() => {
@@ -485,11 +687,38 @@ export const MusicPanel: FC<MusicPanelProps> = ({
       const saved = localStorage.getItem("kai_music_panel_height");
       if (saved) {
         const parsed = parseInt(saved, 10);
-        if (Number.isFinite(parsed) && parsed >= 340) return parsed;
+        if (Number.isFinite(parsed) && parsed >= MIN_PANEL_HEIGHT) return parsed;
       }
     } catch {}
-    return 540;
+    return DEFAULT_PANEL_HEIGHT;
   });
+
+  const EXPANDED_PANEL_WIDTH = 520;
+  const EXPANDED_PANEL_HEIGHT = 680;
+
+  const handleToggleExpand = () => {
+    if (isExpanded || panelWidth >= 460) {
+      setPanelWidth(DEFAULT_PANEL_WIDTH);
+      setPanelHeight(DEFAULT_PANEL_HEIGHT);
+      setIsExpanded(false);
+      panelDimensionsRef.current = { width: DEFAULT_PANEL_WIDTH, height: DEFAULT_PANEL_HEIGHT };
+      try {
+        localStorage.setItem("kai_music_panel_width", String(DEFAULT_PANEL_WIDTH));
+        localStorage.setItem("kai_music_panel_height", String(DEFAULT_PANEL_HEIGHT));
+        localStorage.setItem("kai_music_expanded", "false");
+      } catch {}
+    } else {
+      setPanelWidth(EXPANDED_PANEL_WIDTH);
+      setPanelHeight(EXPANDED_PANEL_HEIGHT);
+      setIsExpanded(true);
+      panelDimensionsRef.current = { width: EXPANDED_PANEL_WIDTH, height: EXPANDED_PANEL_HEIGHT };
+      try {
+        localStorage.setItem("kai_music_panel_width", String(EXPANDED_PANEL_WIDTH));
+        localStorage.setItem("kai_music_panel_height", String(EXPANDED_PANEL_HEIGHT));
+        localStorage.setItem("kai_music_expanded", "true");
+      } catch {}
+    }
+  };
 
   const [activeResizeEdge, setActiveResizeEdge] = useState<"left" | "top" | "corner" | null>(null);
 
@@ -529,7 +758,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
       if (current.edge === "left" || current.edge === "corner") {
         const deltaX = current.startX - ev.clientX;
         const maxW = Math.min(840, typeof window !== "undefined" ? window.innerWidth - 20 : 800);
-        const newWidth = Math.max(300, Math.min(maxW, current.startWidth + deltaX));
+        const newWidth = Math.max(MIN_PANEL_WIDTH, Math.min(maxW, current.startWidth + deltaX));
         setPanelWidth(newWidth);
         setIsExpanded(newWidth >= 460);
         panelDimensionsRef.current.width = newWidth;
@@ -538,7 +767,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
       if (current.edge === "top" || current.edge === "corner") {
         const deltaY = current.startY - ev.clientY;
         const maxH = Math.min(960, typeof window !== "undefined" ? window.innerHeight - 46 : 800);
-        const newHeight = Math.max(340, Math.min(maxH, current.startHeight + deltaY));
+        const newHeight = Math.max(MIN_PANEL_HEIGHT, Math.min(maxH, current.startHeight + deltaY));
         setPanelHeight(newHeight);
         panelDimensionsRef.current.height = newHeight;
       }
@@ -638,6 +867,9 @@ export const MusicPanel: FC<MusicPanelProps> = ({
               videoId: r.videoId,
               playlistId: null,
               query: r.title,
+              thumbnail: r.videoId
+                ? `https://i.ytimg.com/vi/${encodeURIComponent(r.videoId)}/mqdefault.jpg`
+                : null,
             }))
           );
         }
@@ -657,6 +889,9 @@ export const MusicPanel: FC<MusicPanelProps> = ({
           videoId: r.videoId,
           playlistId: null,
           query: r.title,
+          thumbnail: r.videoId
+            ? `https://i.ytimg.com/vi/${encodeURIComponent(r.videoId)}/mqdefault.jpg`
+            : null,
         }));
         setSearchResults(items);
         setDrawerMode("search");
@@ -696,6 +931,10 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     setDrawerMode("queue");
     setDrawerOpen(false);
     setShowNextList(false);
+    setPlaylistItems([]);
+    setPlaylistVisible(PLAYLIST_PAGE_SIZE);
+    playlistIdRef.current = null;
+    playlistItemsRef.current = [];
   };
 
   return (
@@ -713,10 +952,13 @@ export const MusicPanel: FC<MusicPanelProps> = ({
       <div
         className={`music-modal-dialog music-panel ${isExpanded ? "expanded" : ""} ${
           activeResizeEdge ? `resizing-${activeResizeEdge} is-resizing` : ""
-        }`}
+        } ${isDimmed ? "is-dimmed" : ""} ${showDimPopover ? "popover-open" : ""}`}
         style={{
           width: `${panelWidth}px`,
           height: `${panelHeight}px`,
+          ...(isDimmed
+            ? ({ "--music-custom-opacity": String(dimPercent / 100) } as React.CSSProperties)
+            : {}),
         }}
         onClick={(e) => e.stopPropagation()}
         role="document"
@@ -743,11 +985,109 @@ export const MusicPanel: FC<MusicPanelProps> = ({
         <div className="modal-header music-head">
           <div className="music-head-title">
             <span className="music-head-badge" aria-hidden="true">
-              ♪
+              <Music size={14} aria-hidden="true" />
             </span>
             <h3>YouTube Music</h3>
           </div>
           <div className="music-head-actions">
+            <div className="music-dim-group">
+              <button
+                type="button"
+                className={`btn btn-icon ${isDimmed ? "music-control-active" : ""}`}
+                onClick={() => {
+                  setShowDimPopover((prev) => !prev);
+                }}
+                title={`Dim opacity (${dimPercent}%)${isDimmed ? " — On" : " — Off"}`}
+                aria-label={`Dim player opacity (${dimPercent}%)`}
+                aria-pressed={isDimmed}
+              >
+                <Contrast size={13} />
+              </button>
+              {showDimPopover && (
+                <div
+                  ref={dimPopoverRef}
+                  className="music-dim-popover"
+                  role="dialog"
+                  aria-label="Adjust dim opacity"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="music-dim-header">
+                    <div className="music-dim-title">
+                      <Contrast size={13} aria-hidden="true" />
+                      <span>Dim Opacity</span>
+                    </div>
+                    <span className={`music-dim-status-badge ${isDimmed ? "on" : "off"}`}>
+                      {isDimmed ? "ON" : "OFF"}
+                    </span>
+                  </div>
+                  <div className="music-dim-body">
+                    <div className="music-dim-level-row">
+                      <span className="music-dim-level-label">Level</span>
+                      <span className="music-dim-val">{dimPercent}%</span>
+                    </div>
+                    <div className="music-dim-slider-row">
+                      <input
+                        type="range"
+                        min={15}
+                        max={100}
+                        step={5}
+                        value={dimPercent}
+                        onChange={(e) => handleDimPercentChange(Number(e.target.value))}
+                        className="music-dim-slider"
+                        aria-label="Dim opacity percentage slider"
+                      />
+                    </div>
+                    <div className="music-dim-range-labels" aria-hidden="true">
+                      <span>15%</span>
+                      <span>100%</span>
+                    </div>
+                    <div className="music-dim-presets">
+                      {[25, 40, 60, 80, 100].map((pct) => (
+                        <button
+                          key={pct}
+                          type="button"
+                          className={`music-dim-preset-chip ${dimPercent === pct && isDimmed ? "active" : ""}`}
+                          onClick={() => enableDim(pct)}
+                        >
+                          {pct}%
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="music-dim-footer">
+                    <span className="music-dim-hint">
+                      {isDimmed ? "Dimming active" : "Dimming off"}
+                    </span>
+                    <button
+                      type="button"
+                      className={`btn btn-small ${isDimmed ? "btn-secondary" : "btn-primary"}`}
+                      onClick={isDimmed ? disableDim : () => enableDim()}
+                      title={isDimmed ? "Disable dim opacity (Off)" : "Enable dim opacity (On)"}
+                      aria-label={isDimmed ? "Disable dim opacity" : "Enable dim opacity"}
+                    >
+                      {isDimmed ? "Off" : "On"}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+            <button
+              type="button"
+              className={`btn btn-icon ${isExpanded || panelWidth >= 460 ? "music-control-active" : ""}`}
+              onClick={handleToggleExpand}
+              title={
+                isExpanded || panelWidth >= 460
+                  ? "Restore compact size (360×540)"
+                  : "Expand player screen (520×680)"
+              }
+              aria-label={
+                isExpanded || panelWidth >= 460
+                  ? "Reset player to default size"
+                  : "Expand player screen"
+              }
+            >
+              {isExpanded || panelWidth >= 460 ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+            </button>
             <button
               type="button"
               className={`btn btn-icon ${isPinned ? "music-control-active" : ""}`}
@@ -842,7 +1182,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
             ) : (
               <div className="music-video-empty">
                 <span className="music-empty-badge" aria-hidden="true">
-                  ♪
+                  <Music size={28} aria-hidden="true" />
                 </span>
                 <span className="music-empty-title">Ready to play</span>
                 <small className="muted-text">Paste a YouTube link or type a song to search</small>
@@ -944,8 +1284,14 @@ export const MusicPanel: FC<MusicPanelProps> = ({
           </div>
         </div>
 
-        {/* Right-side slider with glassy opacity */}
+        {/* Backdrop overlay: clicking outside the bottom slider drawer closes it */}
+        {drawerOpen && (
+          <div className="music-drawer-backdrop" onClick={closeDrawer} aria-hidden="true" />
+        )}
+
+        {/* Bottom-side slider drawer for Next Playing and Search Results */}
         <div
+          ref={drawerRef}
           className={`music-queue-drawer ${drawerMode === "search" ? "music-search-results" : "music-next-section music-queue-section"} ${drawerOpen ? "open" : ""}`}
           aria-hidden={!drawerOpen}
         >
@@ -953,47 +1299,17 @@ export const MusicPanel: FC<MusicPanelProps> = ({
             <button
               type="button"
               className="music-drawer-back"
-              onClick={() => {
-                setDrawerOpen(false);
-                setShowNextList(false);
-              }}
-              title="Back to playing"
-              aria-label="Back to playing"
+              onClick={closeDrawer}
+              title="Back"
+              aria-label="Back to player"
             >
               <ChevronLeft size={16} />
-              <span>Playing</span>
             </button>
             <span className="music-drawer-title">
               {drawerMode === "search"
                 ? `Search Results (${searchResults.length})`
                 : `Next Playing (${queue.length})`}
             </span>
-            {drawerMode === "search" ? (
-              <button
-                type="button"
-                className="music-list-clear"
-                onClick={() => {
-                  setSearchResults([]);
-                  setDrawerOpen(false);
-                }}
-                title="Dismiss search results"
-              >
-                Dismiss
-              </button>
-            ) : (
-              <button
-                type="button"
-                className="music-list-clear"
-                onClick={() => {
-                  setQueue([]);
-                  setDrawerOpen(false);
-                  setShowNextList(false);
-                }}
-                title="Clear next playing list"
-              >
-                Clear
-              </button>
-            )}
           </div>
 
           <div className="music-drawer-list music-track-list">
@@ -1080,50 +1396,126 @@ export const MusicPanel: FC<MusicPanelProps> = ({
                   </button>
                 )}
                 {track?.playlistId && queue.length === 0 ? (
-                  <div className="music-drawer-empty">
-                    <span>Playing a YouTube playlist</span>
-                    <small className="muted-text">Next advances inside the playlist itself.</small>
-                  </div>
+                  playlistLoading ? (
+                    <div className="music-drawer-empty">
+                      <span>Loading playlist…</span>
+                    </div>
+                  ) : playlistItems.length > 0 ? (
+                    <>
+                      {playlistItems.slice(0, playlistVisible).map((item, idx) => {
+                        const isCurrent = Boolean(item.videoId && item.videoId === track?.videoId);
+                        return (
+                          <button
+                            key={`${item.videoId || idx}-${idx}`}
+                            type="button"
+                            className={`music-track-item music-queue-item${isCurrent ? " music-item-playing" : ""}`}
+                            onClick={() => playPlaylistItem(item)}
+                            title={isCurrent ? "Restart this song" : `Play ${item.title}`}
+                          >
+                            <span className="music-item-index">{idx + 1}</span>
+                            {item.videoId ? (
+                              <img
+                                src={`https://i.ytimg.com/vi/${encodeURIComponent(item.videoId)}/mqdefault.jpg`}
+                                alt=""
+                                loading="lazy"
+                                className="music-item-thumb"
+                                onError={(e) => {
+                                  (e.currentTarget as HTMLImageElement).style.display = "none";
+                                }}
+                              />
+                            ) : (
+                              <div className="music-item-thumb-placeholder" aria-hidden="true">
+                                <Play size={10} />
+                              </div>
+                            )}
+                            <span className="music-item-name music-queue-name">{item.title}</span>
+                            {isCurrent ? (
+                              <span className="music-eq" aria-label="Now playing">
+                                <i />
+                                <i />
+                                <i />
+                              </span>
+                            ) : (
+                              <Play
+                                size={10}
+                                className="music-item-play-ico music-queue-play-ico"
+                              />
+                            )}
+                          </button>
+                        );
+                      })}
+                      {playlistVisible < playlistItems.length && (
+                        <button
+                          type="button"
+                          className="music-list-clear"
+                          style={{ margin: "8px auto", display: "block" }}
+                          onClick={() => setPlaylistVisible((v) => v + PLAYLIST_PAGE_SIZE)}
+                        >
+                          Load more
+                        </button>
+                      )}
+                    </>
+                  ) : (
+                    <div className="music-drawer-empty">
+                      <span>Playing a YouTube playlist</span>
+                      <small className="muted-text">
+                        Next advances inside the playlist itself.
+                      </small>
+                    </div>
+                  )
                 ) : (
-                  queue.map((item, idx) => {
-                    const isCurrent = Boolean(item.videoId && item.videoId === track?.videoId);
-                    return (
+                  <>
+                    {queue.map((item, idx) => {
+                      const isCurrent = Boolean(item.videoId && item.videoId === track?.videoId);
+                      return (
+                        <button
+                          key={`${item.videoId || idx}-${idx}`}
+                          type="button"
+                          className={`music-track-item music-queue-item${isCurrent ? " music-item-playing" : ""}`}
+                          onClick={() => playQueueIndex(idx)}
+                          title={isCurrent ? "Restart this song" : `Play ${item.title}`}
+                        >
+                          <span className="music-item-index">{idx + 1}</span>
+                          {item.videoId ? (
+                            <img
+                              src={`https://i.ytimg.com/vi/${encodeURIComponent(item.videoId)}/mqdefault.jpg`}
+                              alt=""
+                              loading="lazy"
+                              className="music-item-thumb"
+                              onError={(e) => {
+                                (e.currentTarget as HTMLImageElement).style.display = "none";
+                              }}
+                            />
+                          ) : (
+                            <div className="music-item-thumb-placeholder" aria-hidden="true">
+                              <Play size={10} />
+                            </div>
+                          )}
+                          <span className="music-item-name music-queue-name">{item.title}</span>
+                          {isCurrent ? (
+                            <span className="music-eq" aria-label="Now playing">
+                              <i />
+                              <i />
+                              <i />
+                            </span>
+                          ) : (
+                            <Play size={10} className="music-item-play-ico music-queue-play-ico" />
+                          )}
+                        </button>
+                      );
+                    })}
+                    {queue.length > 0 && !track?.playlistId && (
                       <button
-                        key={`${item.videoId || idx}-${idx}`}
                         type="button"
-                        className={`music-track-item music-queue-item${isCurrent ? " music-item-playing" : ""}`}
-                        onClick={() => playQueueIndex(idx)}
-                        title={isCurrent ? "Restart this song" : `Play ${item.title}`}
+                        className="music-list-clear"
+                        style={{ margin: "8px auto", display: "block" }}
+                        disabled={suggestLoading}
+                        onClick={loadMoreSuggestions}
                       >
-                        <span className="music-item-index">{idx + 1}</span>
-                        {item.videoId ? (
-                          <img
-                            src={`https://i.ytimg.com/vi/${encodeURIComponent(item.videoId)}/mqdefault.jpg`}
-                            alt=""
-                            loading="lazy"
-                            className="music-item-thumb"
-                            onError={(e) => {
-                              (e.currentTarget as HTMLImageElement).style.display = "none";
-                            }}
-                          />
-                        ) : (
-                          <div className="music-item-thumb-placeholder" aria-hidden="true">
-                            <Play size={10} />
-                          </div>
-                        )}
-                        <span className="music-item-name music-queue-name">{item.title}</span>
-                        {isCurrent ? (
-                          <span className="music-eq" aria-label="Now playing">
-                            <i />
-                            <i />
-                            <i />
-                          </span>
-                        ) : (
-                          <Play size={10} className="music-item-play-ico music-queue-play-ico" />
-                        )}
+                        {suggestLoading ? "Loading…" : "Load more suggestions"}
                       </button>
-                    );
-                  })
+                    )}
+                  </>
                 )}
               </>
             )}

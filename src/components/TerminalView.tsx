@@ -486,6 +486,8 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       term.options.scrollback = settings.scrollback;
       term.options.theme = SettingsService.getThemeColors(settings.theme, settings.opacity ?? 1.0);
       try {
+        term.clearTextureAtlas?.();
+        term.refresh(0, Math.max(0, term.rows - 1));
         fitAddonRef.current?.fit();
       } catch {
         // ignore hidden-tab layout errors

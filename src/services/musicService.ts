@@ -18,6 +18,7 @@ export interface MusicTrack {
   videoId: string | null;
   playlistId: string | null;
   query: string;
+  thumbnail?: string | null;
 }
 
 /** Key of the queue older versions persisted; removed on first run. */
@@ -77,6 +78,7 @@ export function getRandomPreset(): MusicTrack {
     videoId: item.videoId,
     playlistId: null,
     query: item.videoId,
+    thumbnail: `https://i.ytimg.com/vi/${encodeURIComponent(item.videoId)}/mqdefault.jpg`,
   };
 }
 
@@ -101,6 +103,9 @@ export function resolveInputToTrack(input: string): MusicTrack | null {
       videoId,
       playlistId,
       query: raw,
+      thumbnail: videoId
+        ? `https://i.ytimg.com/vi/${encodeURIComponent(videoId)}/mqdefault.jpg`
+        : null,
     };
   }
   if (isYouTubeUrl(raw)) return null; // unparseable link
@@ -199,6 +204,60 @@ export async function searchYouTubeVideos(query: string, limit = 8): Promise<You
     // ignore
   }
 
+  return [];
+}
+
+/**
+ * Fetches the ordered song list of a YouTube playlist (videoId + title).
+ * Uses the backend Tauri command first (video/ playlist page), falls back to
+ * the Vite dev-server middleware when Tauri is not available (browser/dev).
+ * Returns [] when the playlist cannot be fetched (private, empty, blocked).
+ */
+export async function fetchPlaylistVideos(
+  playlistId: string,
+  limit = 48
+): Promise<YouTubeVideoResult[]> {
+  const clean = playlistId.trim();
+  if (!/^[A-Za-z0-9_-]{10,64}$/.test(clean)) return [];
+  const toResults = (rows: { video_id?: string; videoId?: string; title?: string }[]) =>
+    rows
+      .filter((r) => r?.title && (r.video_id ?? r.videoId))
+      .map((r) => ({
+        videoId: String(r.video_id ?? r.videoId),
+        title: r.title as string,
+      }))
+      .filter((r) => /^[\w-]{11}$/.test(r.videoId))
+      .slice(0, limit);
+
+  try {
+    const { isTauriAvailable } = await import("./ptyService");
+    if (isTauriAvailable()) {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const list = await invoke<{ video_id: string; title: string }[]>(
+        "fetch_youtube_playlist_cmd",
+        { playlistId: clean, limit }
+      );
+      const mapped = toResults(Array.isArray(list) ? list : []);
+      if (mapped.length > 0) return mapped;
+    }
+  } catch {
+    // Backend playlist fetch failed or Tauri unavailable
+  }
+
+  // Fallback for browser / dev-server environment (Vite dev middleware)
+  try {
+    if (typeof fetch !== "undefined") {
+      const res = await fetch(
+        `/api/youtube-playlist?list=${encodeURIComponent(clean)}&limit=${limit}`
+      );
+      if (res.ok) {
+        const mapped = toResults((await res.json()) as { videoId: string; title: string }[]);
+        if (mapped.length > 0) return mapped;
+      }
+    }
+  } catch {
+    // ignore
+  }
   return [];
 }
 

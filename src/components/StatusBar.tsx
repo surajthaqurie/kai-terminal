@@ -11,10 +11,13 @@ import {
   SkipForward,
   Volume2,
   VolumeX,
+  Music,
 } from "lucide-react";
 
 export interface MusicFooterState {
   title: string | null;
+  videoId?: string | null;
+  thumbnail?: string | null;
   playing: boolean;
   muted: boolean;
   progress: number;
@@ -30,7 +33,7 @@ interface StatusBarProps {
   latestVersion?: string | null;
   isCheckingUpdates?: boolean;
   onCheckUpdates?: () => void;
-  onViewUpdate: () => void;
+  onViewUpdate?: () => void;
   mode?: string;
   /** Re-probe git for the active pane + re-sync Code Mode (footer refresh button). */
   onRefreshGit?: () => void;
@@ -175,6 +178,20 @@ export const StatusBar: FC<StatusBarProps> = ({
     onToggleMusicPanel?.();
   };
 
+  const thumbUrl =
+    music?.thumbnail ||
+    (music?.videoId
+      ? `https://i.ytimg.com/vi/${encodeURIComponent(music.videoId)}/mqdefault.jpg`
+      : null);
+  const [thumbError, setThumbError] = useState(false);
+  const prevThumbRef = useRef<string | null>(null);
+  if (thumbUrl !== prevThumbRef.current) {
+    prevThumbRef.current = thumbUrl;
+    if (thumbError) {
+      setThumbError(false);
+    }
+  }
+
   return (
     <footer className="status-bar" role="status" aria-label="Application status bar">
       <div className="status-left">
@@ -316,7 +333,16 @@ export const StatusBar: FC<StatusBarProps> = ({
               aria-controls="kai-music-modal"
             >
               <span className="music-mini-art" aria-hidden="true">
-                ♪
+                {thumbUrl && !thumbError ? (
+                  <img
+                    src={thumbUrl}
+                    alt=""
+                    className="music-mini-thumb"
+                    onError={() => setThumbError(true)}
+                  />
+                ) : (
+                  <Music size={12} aria-hidden="true" />
+                )}
               </span>
               <span className="music-mini-title">{music.title ?? "YouTube Music"}</span>
             </button>

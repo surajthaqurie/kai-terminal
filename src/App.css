@@ -1158,6 +1158,7 @@ select.modal-input {
   height: 100%;
   position: relative;
   overflow: hidden;
+  background-color: transparent !important;
 }
 
 .terminal-xterm-host .xterm {
@@ -1165,6 +1166,36 @@ select.modal-input {
   width: 100%;
   padding: 4px 6px;
   box-sizing: border-box;
+  background-color: transparent !important;
+}
+
+/* Ensure xterm's internal viewport, screen, and scrollable container seamlessly
+   inherit transparency so the theme background fills the full pane edge-to-edge.
+   This permanently eliminates black bars/padding on the top, left, and bottom across
+   all themes (Solarized, Nord, Catppuccin, Kali, etc.). */
+.terminal-xterm-host .xterm .xterm-viewport,
+.terminal-xterm-host .xterm .xterm-screen,
+.terminal-xterm-host .xterm .xterm-scrollable-element {
+  background-color: transparent !important;
+}
+
+/* Remove xterm 6's hardcoded black inset shadows on top, left, and corners */
+.terminal-xterm-host .xterm .xterm-scrollable-element > .shadow,
+.terminal-xterm-host .xterm .xterm-scrollable-element > .shadow.top,
+.terminal-xterm-host .xterm .xterm-scrollable-element > .shadow.left,
+.terminal-xterm-host .xterm .xterm-scrollable-element > .shadow.top-left-corner,
+.terminal-xterm-host .xterm .xterm-scrollable-element > .shadow.top.left {
+  display: none !important;
+  box-shadow: none !important;
+}
+
+.terminal-xterm-host .xterm .xterm-scrollable-element > .scrollbar {
+  background: transparent !important;
+}
+
+.terminal-xterm-host .xterm .composition-view {
+  background: var(--bg-surface-elevated, #1a2233) !important;
+  color: var(--text-primary, #ffffff) !important;
 }
 
 /* xterm 6 draws its own VS Code-style scrollbar (.xterm-scrollable-element)
@@ -3658,7 +3689,7 @@ select.modal-input {
   bottom: 30px !important;
   pointer-events: auto;
   max-width: min(840px, calc(100vw - 20px));
-  min-height: 340px;
+  min-height: 320px;
   max-height: calc(100vh - 46px);
   box-shadow:
     -4px 0 24px rgba(0, 0, 0, 0.4),
@@ -3673,7 +3704,7 @@ select.modal-input {
   flex-direction: column;
   overflow: hidden;
   transform: translateX(100%);
-  opacity: 0.62;
+  opacity: 1;
   transition:
     transform 0.25s cubic-bezier(0.16, 1, 0.3, 1),
     opacity 0.22s ease;
@@ -3683,6 +3714,16 @@ select.modal-input {
 .music-modal-dialog:focus-within,
 .music-modal-dialog.is-resizing {
   opacity: 1 !important;
+}
+
+/* Inactive dimming baseline fallback: opacity: 0.62; */
+.music-modal-dialog.is-dimmed {
+  opacity: var(--music-custom-opacity, 0.4) !important;
+}
+
+.music-modal-dialog.popover-open,
+.music-modal-dialog.is-dimmed.popover-open {
+  opacity: 0.98 !important;
 }
 
 .music-modal-dialog.is-resizing {
@@ -3788,7 +3829,7 @@ select.modal-input {
 }
 
 .music-head {
-  padding: 10px 14px;
+  padding: 8px 12px;
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -3800,7 +3841,7 @@ select.modal-input {
 .music-head-title {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .music-head-badge {
@@ -3822,7 +3863,219 @@ select.modal-input {
 .music-head-actions {
   display: flex;
   align-items: center;
+  gap: 2px;
+}
+
+.music-head-actions .btn-icon,
+.music-head-actions .btn-close {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm, 6px);
+}
+
+.music-dim-group {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.music-dim-badge {
+  font-size: 9px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  margin-left: 2px;
+  line-height: 1;
+}
+
+.music-dim-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: -114px;
+  width: 236px;
+  box-sizing: border-box;
+  background: var(--bg-surface-elevated, #23272e);
+  border: 1px solid var(--border-default, #3b4252);
+  border-radius: var(--radius-md, 8px);
+  box-shadow:
+    0 12px 32px rgba(0, 0, 0, 0.6),
+    0 0 0 1px var(--border-subtle, rgba(255, 255, 255, 0.08));
+  padding: 12px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  user-select: none;
+}
+
+.music-dim-popover::before {
+  content: "";
+  position: absolute;
+  top: -5px;
+  right: 122px;
+  width: 9px;
+  height: 9px;
+  transform: rotate(45deg);
+  background: var(--bg-surface-elevated, #23272e);
+  border-top: 1px solid var(--border-default, #3b4252);
+  border-left: 1px solid var(--border-default, #3b4252);
+  z-index: 1;
+}
+
+.music-dim-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+}
+
+.music-dim-title {
+  display: inline-flex;
+  align-items: center;
   gap: 6px;
+  font-size: var(--text-xs, 12px);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.music-dim-status-badge {
+  font-size: 9px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  line-height: 1;
+}
+
+.music-dim-status-badge.on {
+  background: var(--accent-subtle, rgba(137, 180, 250, 0.2));
+  color: var(--accent-primary, #89b4fa);
+  border: 1px solid var(--accent-primary, #89b4fa);
+}
+
+.music-dim-status-badge.off {
+  background: var(--bg-surface-sunken, #11111b);
+  color: var(--text-tertiary);
+  border: 1px solid var(--border-subtle, #313244);
+}
+
+.music-dim-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.music-dim-level-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+}
+
+.music-dim-level-label {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.music-dim-val {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: var(--accent-primary);
+  font-size: 11px;
+}
+
+.music-dim-slider-row {
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.music-dim-slider {
+  width: 100%;
+  height: 4px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: var(--bg-surface-sunken, #11111b);
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+
+.music-dim-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent-primary);
+  box-shadow: 0 0 6px var(--accent-glow);
+  cursor: pointer;
+  border: 2px solid var(--bg-surface-elevated, #23272e);
+}
+
+.music-dim-range-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 9px;
+  font-family: var(--font-mono);
+  color: var(--text-tertiary);
+  margin-top: -4px;
+}
+
+.music-dim-presets {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.music-dim-preset-chip {
+  flex: 1;
+  padding: 3px 0;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  background: var(--bg-surface, #1e2227);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  border-radius: 4px;
+  cursor: pointer;
+  text-align: center;
+  transition: all 0.15s ease;
+}
+
+.music-dim-preset-chip:hover {
+  color: var(--text-primary);
+  border-color: var(--border-default);
+  background: var(--bg-hover);
+}
+
+.music-dim-preset-chip.active {
+  background: var(--accent-subtle);
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+  font-weight: 700;
+}
+
+.music-dim-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 6px;
+  border-top: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+}
+
+.music-dim-hint {
+  font-size: 10px;
+  color: var(--text-tertiary);
 }
 .music-search {
   margin: 8px 9px 0;
@@ -3878,30 +4131,38 @@ select.modal-input {
   overflow-x: hidden;
   padding: 8px 9px 10px;
   gap: 8px;
+  min-height: 0;
 }
 .music-now {
   margin: 0;
   background: var(--bg-card);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
-  padding: 7px;
-  flex-shrink: 0;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: hidden;
 }
 .music-video {
   width: 100%;
-  height: 130px;
+  height: 100%;
+  min-height: 120px;
   border: 0;
   border-radius: var(--radius-sm);
   background: #000;
-  transition: height 0.2s ease;
+  flex: 1 1 0;
+  transition: min-height 0.2s ease;
 }
 .music-panel.expanded .music-video,
 .music-panel.expanded .music-video-empty {
-  height: 240px;
+  min-height: 200px;
 }
 .music-video-empty {
   width: 100%;
-  height: 130px;
+  height: 100%;
+  min-height: 120px;
   border-radius: var(--radius-sm);
   background: var(--bg-surface-sunken);
   color: var(--text-tertiary);
@@ -3913,7 +4174,8 @@ select.modal-input {
   gap: 7px;
   padding: 8px 10px;
   text-align: center;
-  transition: height 0.2s ease;
+  flex: 1 1 0;
+  transition: min-height 0.2s ease;
 }
 
 .music-empty-title {
@@ -3977,16 +4239,18 @@ select.modal-input {
   background: var(--bg-surface-elevated, #23272e);
 }
 .music-empty-badge {
-  font-size: 24px;
-  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   color: var(--accent-primary);
-  margin-bottom: 2px;
+  margin-bottom: 4px;
 }
 .music-track-title-bar {
-  margin-top: 8px;
+  margin-top: 6px;
   padding: 0 4px;
   display: flex;
   align-items: center;
+  flex-shrink: 0;
 }
 .music-track-title-bar h3,
 .music-track-title {
@@ -4004,8 +4268,9 @@ select.modal-input {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-top: 8px;
+  margin-top: 6px;
   padding: 0 4px;
+  flex-shrink: 0;
 }
 .music-time-label {
   font-size: 10px;
@@ -4058,6 +4323,7 @@ select.modal-input {
   align-items: center;
   gap: 8px;
   margin-top: 8px;
+  flex-shrink: 0;
 }
 .music-ctrl-btn {
   width: 28px;
@@ -4119,24 +4385,40 @@ select.modal-input {
   cursor: pointer;
   border: none;
 }
-/* Right-side slider / drawer for Next Playing and Search Results.
-   It slides in as a partial panel on the right so the video keeps playing
-   visible on the left — it never covers the whole player. */
-.music-queue-drawer {
+/* Backdrop overlay: covers player content when bottom drawer is open so clicking outside closes it */
+.music-drawer-backdrop {
   position: absolute;
   top: 0;
+  left: 0;
   right: 0;
   bottom: 0;
-  width: min(240px, 80%);
-  background: var(--bg-surface-glass, rgba(11, 18, 32, 0.86));
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  border-left: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.1));
-  border-top-left-radius: 10px;
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+  z-index: 34;
+  cursor: pointer;
+}
+
+/* Bottom slider / drawer for Next Playing and Search Results */
+.music-queue-drawer {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100%;
+  height: 62%;
+  max-height: 75%;
+  background: var(--bg-surface-glass, var(--bg-surface));
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border-top: 1px solid var(--border-default);
+  border-top-left-radius: var(--radius-lg, 12px);
+  border-top-right-radius: var(--radius-lg, 12px);
+  box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.45);
   display: flex;
   flex-direction: column;
   z-index: 35;
-  transform: translateX(100%);
+  transform: translateY(100%);
   opacity: 0;
   pointer-events: none;
   transition:
@@ -4146,7 +4428,7 @@ select.modal-input {
 }
 
 .music-queue-drawer.open {
-  transform: translateX(0);
+  transform: translateY(0);
   opacity: 1;
   pointer-events: auto;
 }
@@ -4155,10 +4437,10 @@ select.modal-input {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 7px 10px;
+  padding: 8px 12px;
   background: var(--bg-header, var(--bg-surface-elevated));
   border-bottom: 1px solid var(--border-subtle);
-  gap: 6px;
+  gap: 8px;
   user-select: none;
   flex-shrink: 0;
 }
@@ -4166,23 +4448,25 @@ select.modal-input {
 .music-drawer-back {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
-  background: transparent;
-  border: none;
-  color: var(--accent-primary);
-  font-size: 11px;
-  font-weight: 600;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  background: var(--bg-surface, transparent);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
   cursor: pointer;
-  padding: 4px 6px;
-  border-radius: var(--radius-sm, 4px);
+  padding: 0;
+  border-radius: var(--radius-sm, 6px);
   transition:
     background-color 0.15s ease,
+    border-color 0.15s ease,
     color 0.15s ease;
 }
 
 .music-drawer-back:hover {
   background: var(--bg-hover);
-  color: var(--accent-hover);
+  color: var(--accent-primary);
+  border-color: var(--border-default);
 }
 
 .music-drawer-title {
@@ -4515,8 +4799,16 @@ select.modal-input {
   color: var(--accent-primary);
   font-size: 11px;
 }
+.music-mini-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  object-fit: cover;
+  flex-shrink: 0;
+  display: block;
+}
 .music-mini-title {
-  max-width: 130px;
+  max-width: 220px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

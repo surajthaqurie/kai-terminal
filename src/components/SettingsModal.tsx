@@ -189,6 +189,33 @@ export const SettingsModal: FC<SettingsModalProps> = ({
     setSelectedEditorPreset(matchedEditor ? matchedEditor.value : currentEditor ? "custom" : "");
   }, [settings, isOpen]);
 
+  // Live theme preview while choosing theme in Settings
+  useEffect(() => {
+    if (!isOpen) return;
+    if (formData.theme) {
+      document.documentElement.setAttribute("data-theme", formData.theme);
+      document.body.setAttribute("data-theme", formData.theme);
+      document.documentElement.style.colorScheme =
+        formData.theme === "solarized-light" ? "light" : "dark";
+      const meta = document.querySelector('meta[name="theme-color"]');
+      if (meta) {
+        meta.setAttribute("content", SettingsService.getThemeCanvasColor(formData.theme));
+      }
+    }
+  }, [formData.theme, isOpen]);
+
+  const handleCancel = () => {
+    document.documentElement.setAttribute("data-theme", settings.theme);
+    document.body.setAttribute("data-theme", settings.theme);
+    document.documentElement.style.colorScheme =
+      settings.theme === "solarized-light" ? "light" : "dark";
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) {
+      meta.setAttribute("content", SettingsService.getThemeCanvasColor(settings.theme));
+    }
+    onClose();
+  };
+
   if (!isOpen) return null;
 
   const conflicts = findConflicts(formData.keybindings);
@@ -263,6 +290,9 @@ export const SettingsModal: FC<SettingsModalProps> = ({
   const handleReset = () => {
     setFormData(DEFAULT_SETTINGS);
     setBindingErrors({});
+    document.documentElement.setAttribute("data-theme", DEFAULT_SETTINGS.theme);
+    document.body.setAttribute("data-theme", DEFAULT_SETTINGS.theme);
+    document.documentElement.style.colorScheme = "dark";
     const matchedFont = FONT_PRESETS.find((p) => p.value === DEFAULT_SETTINGS.fontFamily);
     setSelectedFontPreset(matchedFont ? matchedFont.value : "custom");
     setSelectedEditorPreset("");
@@ -272,11 +302,11 @@ export const SettingsModal: FC<SettingsModalProps> = ({
   const currentOpacityPercent = Math.round((formData.opacity ?? 1.0) * 100);
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <div className="modal-backdrop" onClick={handleCancel}>
       <div className="settings-modal settings-tabs-modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <h3>Settings</h3>
-          <button className="btn-close" onClick={onClose} title="Close">
+          <button className="btn-close" onClick={handleCancel} title="Close">
             <X size={18} />
           </button>
         </div>
@@ -920,7 +950,7 @@ export const SettingsModal: FC<SettingsModalProps> = ({
             <span>Reset Defaults</span>
           </button>
           <div className="footer-actions">
-            <button className="btn" onClick={onClose}>
+            <button className="btn" onClick={handleCancel}>
               Cancel
             </button>
             <button className="btn btn-primary" onClick={handleSave} disabled={hasBindingErrors}>
