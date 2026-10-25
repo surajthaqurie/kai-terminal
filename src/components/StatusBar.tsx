@@ -11,7 +11,6 @@ import {
   SkipForward,
   Volume2,
   VolumeX,
-  GripVertical,
 } from "lucide-react";
 
 export interface MusicFooterState {
@@ -110,34 +109,40 @@ export const StatusBar: FC<StatusBarProps> = ({
   const dragXRef = useRef<number>(dragX);
   const dragStartXRef = useRef<number | null>(null);
   const dragInitialXRef = useRef<number>(0);
+  // True once a pointer gesture moved more than 2px — used to swallow the
+  // trailing click so dragging never opens the player panel.
+  const didDragRef = useRef(false);
 
-  // Drag starts ONLY on the grip handle — never on the whole pill — so
-  // clicking the title or the playback buttons can never be swallowed by
-  // pointer capture or mistaken for a drag. Capture is held by the grip
-  // itself, leaving every button's click path untouched.
-  const onGripPointerDown = (e: React.PointerEvent<HTMLSpanElement>) => {
+  // Drag starts on the pill itself (not on the buttons) so the mini player
+  // can be moved from anywhere along its surface, with the cursor left as
+  // the normal default — no grab/grabbing indicator while dragging.
+  const onMiniPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     // Only the primary button starts a drag.
     if (e.button !== 0) return;
+    // Never steal events from the playback buttons.
+    if ((e.target as HTMLElement).closest("button")) return;
+    didDragRef.current = false;
     dragStartXRef.current = e.clientX;
     dragInitialXRef.current = dragXRef.current;
     try {
       e.currentTarget.setPointerCapture(e.pointerId);
     } catch {
-      // No capture: move/up on the grip still work for mouse.
+      // No capture: move/up on the pill still work for mouse.
     }
     e.preventDefault();
     e.stopPropagation();
   };
 
-  const onGripPointerMove = (e: React.PointerEvent<HTMLSpanElement>) => {
+  const onMiniPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     if (dragStartXRef.current === null) return;
     const delta = e.clientX - dragStartXRef.current;
+    if (Math.abs(delta) > 2) didDragRef.current = true;
     const newX = Math.max(-450, Math.min(250, dragInitialXRef.current + delta));
     dragXRef.current = newX;
     setDragX(newX);
   };
 
-  const endGripDrag = (e: React.PointerEvent<HTMLSpanElement>) => {
+  const endMiniDrag = (e: React.PointerEvent<HTMLDivElement>) => {
     if (dragStartXRef.current === null) return;
     dragStartXRef.current = null;
     try {
@@ -257,28 +262,24 @@ export const StatusBar: FC<StatusBarProps> = ({
             role="group"
             aria-label="YouTube Music player"
             style={dragX ? { transform: `translateX(${dragX}px)` } : undefined}
-            title="YouTube Music — click to open player, drag the grip to move it in the footer"
+            title="YouTube Music — click to open player, drag to move it in the footer"
+            onPointerDown={onMiniPointerDown}
+            onPointerMove={onMiniPointerMove}
+            onPointerUp={endMiniDrag}
+            onPointerCancel={endMiniDrag}
             onClick={(e) => {
+              // A drag must never register as a click (panel would open).
+              if (didDragRef.current) {
+                didDragRef.current = false;
+                return;
+              }
               const target = e.target as HTMLElement;
-              if (target.closest(".music-mini-drag") || target.closest(".status-check-btn")) {
+              if (target.closest("button") || target.closest(".status-check-btn")) {
                 return;
               }
               handleMusicToggle();
             }}
           >
-            <span
-              className="music-mini-drag"
-              role="separator"
-              aria-orientation="vertical"
-              aria-label="Drag to move YouTube Music in footer"
-              title="Drag to move in footer"
-              onPointerDown={onGripPointerDown}
-              onPointerMove={onGripPointerMove}
-              onPointerUp={endGripDrag}
-              onPointerCancel={endGripDrag}
-            >
-              <GripVertical size={11} />
-            </span>
             <button
               type="button"
               className="music-mini-main"

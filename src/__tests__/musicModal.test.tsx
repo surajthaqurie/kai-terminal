@@ -364,10 +364,20 @@ describe("MusicPanel modal implementation", () => {
       true
     );
 
-    // Search results are cleared after user plays a song
+    // Search results are cleared after user plays a song, and screen returns to playing view (drawer closed)
     expect(container.querySelectorAll(".music-search-item").length).toBe(0);
+    expect(container.querySelector(".music-queue-drawer.open")).toBeNull();
+
+    // Clicking the Next Playing list button opens the upcoming songs in the right-side drawer
+    const nextListBtn = container.querySelector(
+      "button[aria-label='Next playing list']"
+    ) as HTMLButtonElement;
+    await act(async () => {
+      nextListBtn.click();
+    });
 
     // The other 2 items become queued in the Song List with thumbnail images
+    expect(container.querySelector(".music-queue-drawer.open")).not.toBeNull();
     const queueItems = container.querySelectorAll(".music-queue-item");
     expect(queueItems.length).toBe(2);
     expect(queueItems[0].textContent).toContain("Lofi Study Beats");
@@ -389,7 +399,7 @@ describe("MusicPanel modal implementation", () => {
     vi.unstubAllGlobals();
   });
 
-  it("provides next playing button to toggle upcoming items list right inside the player card", async () => {
+  it("slides right-side drawer when next playing button is clicked, and selecting a track plays it and returns to playing screen", async () => {
     const mockResults = [
       { videoId: "trackAAAAAA", title: "Alpha Song" },
       { videoId: "trackBBBBBB", title: "Beta Song" },
@@ -435,21 +445,36 @@ describe("MusicPanel modal implementation", () => {
       (resultItems[0] as HTMLElement).click();
     });
 
-    // Upcoming queue is displayed inside .music-now
-    expect(container.querySelector(".music-next-section")).not.toBeNull();
+    // Track 0 is played; drawer closes returning to the playing screen
+    expect(container.querySelector(".music-queue-drawer.open")).toBeNull();
+
+    // Clicking next playing button slides the right-side drawer open
+    await act(async () => {
+      nextListBtn.click();
+    });
+    expect(container.querySelector(".music-queue-drawer.open")).not.toBeNull();
     expect(container.querySelectorAll(".music-queue-item").length).toBe(1);
 
-    // Clicking next playing button toggles the list visibility
+    // Clicking a song in the queue plays it and returns to the playing view (drawer closes)
+    const queueItem = container.querySelector(".music-queue-item") as HTMLElement;
     await act(async () => {
-      nextListBtn.click();
+      queueItem.click();
     });
-    expect(container.querySelector(".music-next-section")).toBeNull();
+    expect(container.querySelector(".music-queue-drawer.open")).toBeNull();
 
-    // Clicking it again re-opens the upcoming list
+    // Re-opening the drawer shows empty state or new upcoming
     await act(async () => {
       nextListBtn.click();
     });
-    expect(container.querySelector(".music-next-section")).not.toBeNull();
+    expect(container.querySelector(".music-queue-drawer.open")).not.toBeNull();
+
+    // Clicking back button in drawer returns to playing screen
+    const backBtn = container.querySelector(".music-drawer-back") as HTMLButtonElement;
+    expect(backBtn).not.toBeNull();
+    await act(async () => {
+      backBtn.click();
+    });
+    expect(container.querySelector(".music-queue-drawer.open")).toBeNull();
 
     vi.unstubAllGlobals();
   });
@@ -479,5 +504,29 @@ describe("MusicPanel modal implementation", () => {
     // Verify no separate muted paragraph underneath
     const parentField = musicLabel?.closest(".setting-field");
     expect(parentField?.querySelector("p")).toBeNull();
+  });
+
+  it("includes CSS for inactive dimming, invisible resize handles, and glassy right-side slider", async () => {
+    const fs = await import("fs");
+    const path = await import("path");
+    const cssPath = path.resolve(__dirname, "../App.css");
+    const cssContent = fs.readFileSync(cssPath, "utf-8");
+
+    // Inactive dimming & active brightness
+    expect(cssContent).toContain("opacity: 0.62;");
+    expect(cssContent).toContain(".music-modal-dialog:hover");
+    expect(cssContent).toContain("opacity: 1 !important;");
+
+    // Resize grips are transparent with no border or box-shadow highlight
+    expect(cssContent).toContain(".music-resize-left,");
+    expect(cssContent).toContain("background-color: transparent !important;");
+    expect(cssContent).toContain("box-shadow: none !important;");
+
+    // Glassy right-side slider
+    expect(cssContent).toContain(".music-queue-drawer");
+    expect(cssContent).toContain("backdrop-filter: blur(");
+    expect(cssContent).toContain("transform: translateX(100%);");
+    expect(cssContent).toContain(".music-queue-drawer.open");
+    expect(cssContent).toContain("transform: translateX(0);");
   });
 });

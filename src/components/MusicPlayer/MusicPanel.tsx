@@ -8,6 +8,7 @@ import {
   useState,
 } from "react";
 import {
+  ChevronLeft,
   ListMusic,
   Minus,
   Pause,
@@ -73,7 +74,9 @@ export const MusicPanel: FC<MusicPanelProps> = ({
   const [track, setTrack] = useState<MusicTrack | null>(null);
   const [searchResults, setSearchResults] = useState<MusicTrack[]>([]);
   const [queue, setQueue] = useState<MusicTrack[]>([]);
-  const [showNextList, setShowNextList] = useState<boolean>(true);
+  const [showNextList, setShowNextList] = useState<boolean>(false);
+  const [drawerOpen, setDrawerOpen] = useState<boolean>(false);
+  const [drawerMode, setDrawerMode] = useState<"queue" | "search">("queue");
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(startMuted);
   const [isPinned, setIsPinned] = useState<boolean>(() => {
@@ -290,6 +293,8 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     setQueue(remaining);
     setPlaying(true);
     setCurrentTime(0);
+    setDrawerOpen(false);
+    setShowNextList(false);
   };
 
   const toggleLoop = () => {
@@ -297,28 +302,34 @@ export const MusicPanel: FC<MusicPanelProps> = ({
   };
 
   const toggleNextList = async () => {
-    const nextState = !showNextList;
-    setShowNextList(nextState);
-    if (nextState && queue.length === 0 && track) {
-      const seed = track.query || track.title;
-      if (seed && seed !== "YouTube video") {
-        try {
-          const results = await searchYouTubeVideos(seed, 8);
-          const filtered = results.filter((r) => r.videoId !== track.videoId);
-          if (filtered.length > 0) {
-            setQueue(
-              filtered.map((r) => ({
-                title: r.title,
-                videoId: r.videoId,
-                playlistId: null,
-                query: r.title,
-              }))
-            );
+    if (!drawerOpen || drawerMode !== "queue") {
+      setDrawerMode("queue");
+      setDrawerOpen(true);
+      setShowNextList(true);
+      if (queue.length === 0 && track) {
+        const seed = track.query || track.title;
+        if (seed && seed !== "YouTube video") {
+          try {
+            const results = await searchYouTubeVideos(seed, 8);
+            const filtered = results.filter((r) => r.videoId !== track.videoId);
+            if (filtered.length > 0) {
+              setQueue(
+                filtered.map((r) => ({
+                  title: r.title,
+                  videoId: r.videoId,
+                  playlistId: null,
+                  query: r.title,
+                }))
+              );
+            }
+          } catch {
+            // ignore
           }
-        } catch {
-          // ignore
         }
       }
+    } else {
+      setDrawerOpen(false);
+      setShowNextList(false);
     }
   };
 
@@ -533,6 +544,8 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     setTrack(null);
     setQueue([]);
     setSearchResults([]);
+    setDrawerOpen(false);
+    setShowNextList(false);
     setPlaying(false);
     setCurrentTime(0);
     setDuration(0);
@@ -616,6 +629,9 @@ export const MusicPanel: FC<MusicPanelProps> = ({
           query: r.title,
         }));
         setSearchResults(items);
+        setDrawerMode("search");
+        setDrawerOpen(true);
+        setShowNextList(false);
         setNotice(`Found ${results.length} results for “${raw}”. Click a song to play:`);
         setQuery("");
         return;
@@ -637,12 +653,14 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     setCurrentTime(0);
     setDuration(0);
     setNotice(null);
-    setShowNextList(true);
     // Remaining search results become the queue for next song playback
     const remaining = searchResults.filter((_, i) => i !== index);
     setQueue(remaining);
     // Clear search results now that the user selected and played a song
     setSearchResults([]);
+    setDrawerMode("queue");
+    setDrawerOpen(false);
+    setShowNextList(false);
   };
 
   return (
@@ -888,97 +906,127 @@ export const MusicPanel: FC<MusicPanelProps> = ({
                 />
               </div>
             </div>
+          </div>
+        </div>
 
-            {searchResults.length > 0 && (
-              <div className="music-search-results">
-                <div className="music-list-header">
-                  <span className="music-list-title">Search Results ({searchResults.length})</span>
-                  <button
-                    type="button"
-                    className="music-list-clear"
-                    onClick={() => setSearchResults([])}
-                    title="Dismiss search results"
-                  >
-                    Dismiss
-                  </button>
-                </div>
-                <div className="music-track-list">
-                  {searchResults.map((item, idx) => (
-                    <button
-                      key={`${item.videoId || idx}-${idx}`}
-                      type="button"
-                      className="music-track-item music-search-item"
-                      onClick={() => playSearchResult(item, idx)}
-                      title={`Play ${item.title}`}
-                    >
-                      <span className="music-item-index">{idx + 1}</span>
-                      {item.videoId ? (
-                        <img
-                          src={`https://i.ytimg.com/vi/${encodeURIComponent(item.videoId)}/mqdefault.jpg`}
-                          alt=""
-                          loading="lazy"
-                          className="music-item-thumb"
-                          onError={(e) => {
-                            (e.currentTarget as HTMLImageElement).style.display = "none";
-                          }}
-                        />
-                      ) : (
-                        <div className="music-item-thumb-placeholder" aria-hidden="true">
-                          <Play size={10} />
-                        </div>
-                      )}
-                      <span className="music-item-name">{item.title}</span>
-                      <Play size={10} className="music-item-play-ico" />
-                    </button>
-                  ))}
-                </div>
-              </div>
+        {/* Right-side slider with glassy opacity */}
+        <div
+          className={`music-queue-drawer ${drawerMode === "search" ? "music-search-results" : "music-next-section music-queue-section"} ${drawerOpen ? "open" : ""}`}
+          aria-hidden={!drawerOpen}
+        >
+          <div className="music-drawer-header">
+            <button
+              type="button"
+              className="music-drawer-back"
+              onClick={() => {
+                setDrawerOpen(false);
+                setShowNextList(false);
+              }}
+              title="Back to playing"
+              aria-label="Back to playing"
+            >
+              <ChevronLeft size={16} />
+              <span>Playing</span>
+            </button>
+            <span className="music-drawer-title">
+              {drawerMode === "search"
+                ? `Search Results (${searchResults.length})`
+                : `Next Playing (${queue.length})`}
+            </span>
+            {drawerMode === "search" ? (
+              <button
+                type="button"
+                className="music-list-clear"
+                onClick={() => {
+                  setSearchResults([]);
+                  setDrawerOpen(false);
+                }}
+                title="Dismiss search results"
+              >
+                Dismiss
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="music-list-clear"
+                onClick={() => {
+                  setQueue([]);
+                  setDrawerOpen(false);
+                  setShowNextList(false);
+                }}
+                title="Clear next playing list"
+              >
+                Clear
+              </button>
             )}
+          </div>
 
-            {showNextList && queue.length > 0 && (
-              <div className="music-next-section music-queue-section">
-                <div className="music-list-header">
-                  <span className="music-list-title">Next Playing ({queue.length})</span>
-                  <button
-                    type="button"
-                    className="music-list-clear"
-                    onClick={() => setQueue([])}
-                    title="Clear next playing list"
-                  >
-                    Clear
-                  </button>
-                </div>
-                <div className="music-track-list music-queue-list">
-                  {queue.map((item, idx) => (
-                    <button
-                      key={`${item.videoId || idx}-${idx}`}
-                      type="button"
-                      className="music-track-item music-queue-item"
-                      onClick={() => playQueueIndex(idx)}
-                      title={`Play ${item.title}`}
-                    >
-                      <span className="music-item-index">{idx + 1}</span>
-                      {item.videoId ? (
-                        <img
-                          src={`https://i.ytimg.com/vi/${encodeURIComponent(item.videoId)}/mqdefault.jpg`}
-                          alt=""
-                          loading="lazy"
-                          className="music-item-thumb"
-                          onError={(e) => {
-                            (e.currentTarget as HTMLImageElement).style.display = "none";
-                          }}
-                        />
-                      ) : (
-                        <div className="music-item-thumb-placeholder" aria-hidden="true">
-                          <Play size={10} />
-                        </div>
-                      )}
-                      <span className="music-item-name music-queue-name">{item.title}</span>
-                      <Play size={10} className="music-item-play-ico music-queue-play-ico" />
-                    </button>
-                  ))}
-                </div>
+          <div className="music-drawer-list music-track-list">
+            {drawerMode === "search" ? (
+              searchResults.map((item, idx) => (
+                <button
+                  key={`${item.videoId || idx}-${idx}`}
+                  type="button"
+                  className="music-track-item music-search-item"
+                  onClick={() => playSearchResult(item, idx)}
+                  title={`Play ${item.title}`}
+                >
+                  <span className="music-item-index">{idx + 1}</span>
+                  {item.videoId ? (
+                    <img
+                      src={`https://i.ytimg.com/vi/${encodeURIComponent(item.videoId)}/mqdefault.jpg`}
+                      alt=""
+                      loading="lazy"
+                      className="music-item-thumb"
+                      onError={(e) => {
+                        (e.currentTarget as HTMLImageElement).style.display = "none";
+                      }}
+                    />
+                  ) : (
+                    <div className="music-item-thumb-placeholder" aria-hidden="true">
+                      <Play size={10} />
+                    </div>
+                  )}
+                  <span className="music-item-name">{item.title}</span>
+                  <Play size={10} className="music-item-play-ico" />
+                </button>
+              ))
+            ) : queue.length === 0 ? (
+              <div className="music-drawer-empty">
+                <span>No upcoming songs in list</span>
+                <small className="muted-text">
+                  Search for a song or click Next to add suggestions
+                </small>
               </div>
+            ) : (
+              queue.map((item, idx) => (
+                <button
+                  key={`${item.videoId || idx}-${idx}`}
+                  type="button"
+                  className="music-track-item music-queue-item"
+                  onClick={() => playQueueIndex(idx)}
+                  title={`Play ${item.title}`}
+                >
+                  <span className="music-item-index">{idx + 1}</span>
+                  {item.videoId ? (
+                    <img
+                      src={`https://i.ytimg.com/vi/${encodeURIComponent(item.videoId)}/mqdefault.jpg`}
+                      alt=""
+                      loading="lazy"
+                      className="music-item-thumb"
+                      onError={(e) => {
+                        (e.currentTarget as HTMLImageElement).style.display = "none";
+                      }}
+                    />
+                  ) : (
+                    <div className="music-item-thumb-placeholder" aria-hidden="true">
+                      <Play size={10} />
+                    </div>
+                  )}
+                  <span className="music-item-name music-queue-name">{item.title}</span>
+                  <Play size={10} className="music-item-play-ico music-queue-play-ico" />
+                </button>
+              ))
             )}
           </div>
         </div>
