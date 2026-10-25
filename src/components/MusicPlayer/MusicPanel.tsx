@@ -1016,9 +1016,30 @@ export const MusicPanel: FC<MusicPanelProps> = ({
                       <Contrast size={13} aria-hidden="true" />
                       <span>Dim Opacity</span>
                     </div>
-                    <span className={`music-dim-status-badge ${isDimmed ? "on" : "off"}`}>
-                      {isDimmed ? "ON" : "OFF"}
-                    </span>
+                    <div
+                      className="music-dim-toggle-switch"
+                      role="group"
+                      aria-label="Toggle dim opacity"
+                    >
+                      <button
+                        type="button"
+                        className={`music-dim-toggle-btn ${!isDimmed ? "active" : ""}`}
+                        onClick={disableDim}
+                        aria-pressed={!isDimmed}
+                        aria-label="Turn off dimming"
+                      >
+                        Off
+                      </button>
+                      <button
+                        type="button"
+                        className={`music-dim-toggle-btn ${isDimmed ? "active active-on" : ""}`}
+                        onClick={() => enableDim()}
+                        aria-pressed={isDimmed}
+                        aria-label="Turn on dimming"
+                      >
+                        On
+                      </button>
+                    </div>
                   </div>
                   <div className="music-dim-body">
                     <div className="music-dim-level-row">
@@ -1053,20 +1074,6 @@ export const MusicPanel: FC<MusicPanelProps> = ({
                         </button>
                       ))}
                     </div>
-                  </div>
-                  <div className="music-dim-footer">
-                    <span className="music-dim-hint">
-                      {isDimmed ? "Dimming active" : "Dimming off"}
-                    </span>
-                    <button
-                      type="button"
-                      className={`btn btn-small ${isDimmed ? "btn-secondary" : "btn-primary"}`}
-                      onClick={isDimmed ? disableDim : () => enableDim()}
-                      title={isDimmed ? "Disable dim opacity (Off)" : "Enable dim opacity (On)"}
-                      aria-label={isDimmed ? "Disable dim opacity" : "Enable dim opacity"}
-                    >
-                      {isDimmed ? "Off" : "On"}
-                    </button>
                   </div>
                 </div>
               )}

@@ -680,8 +680,8 @@ describe("MusicPanel modal implementation", () => {
     expect(localStorage.getItem("kai_music_dim_percent")).toBe("60");
     expect(container.querySelector(".music-dim-val")?.textContent).toBe("60%");
 
-    // Disable dimming via the "Off" button in footer
-    const offBtn = Array.from(container.querySelectorAll(".music-dim-footer button")).find(
+    // Disable dimming via the "Off" button in the header toggle switch
+    const offBtn = Array.from(container.querySelectorAll(".music-dim-toggle-switch button")).find(
       (el) => el.textContent?.trim() === "Off"
     ) as HTMLButtonElement;
     expect(offBtn).not.toBeNull();
@@ -691,14 +691,20 @@ describe("MusicPanel modal implementation", () => {
     });
     expect(dialog.classList.contains("is-dimmed")).toBe(false);
     expect(localStorage.getItem("kai_music_dimmed")).toBe("false");
-    expect(offBtn.textContent?.trim()).toBe("On");
+    expect(offBtn.classList.contains("active")).toBe(true);
 
     // Clicking "On" enables dimming again
+    const onBtn = Array.from(container.querySelectorAll(".music-dim-toggle-switch button")).find(
+      (el) => el.textContent?.trim() === "On"
+    ) as HTMLButtonElement;
+    expect(onBtn).not.toBeNull();
+
     await act(async () => {
-      offBtn.click();
+      onBtn.click();
     });
     expect(dialog.classList.contains("is-dimmed")).toBe(true);
     expect(localStorage.getItem("kai_music_dimmed")).toBe("true");
+    expect(onBtn.classList.contains("active-on")).toBe(true);
 
     // Action buttons inside .music-controls are always present
     const controls = container.querySelector(".music-controls");

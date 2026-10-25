@@ -3944,27 +3944,42 @@ select.modal-input {
   color: var(--text-primary);
 }
 
-.music-dim-status-badge {
-  font-size: 9px;
-  font-family: var(--font-mono);
-  font-weight: 700;
-  padding: 2px 6px;
-  border-radius: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  line-height: 1;
-}
-
-.music-dim-status-badge.on {
-  background: var(--accent-subtle, rgba(137, 180, 250, 0.2));
-  color: var(--accent-primary, #89b4fa);
-  border: 1px solid var(--accent-primary, #89b4fa);
-}
-
-.music-dim-status-badge.off {
+.music-dim-toggle-switch {
+  display: inline-flex;
+  align-items: center;
   background: var(--bg-surface-sunken, #11111b);
-  color: var(--text-tertiary);
   border: 1px solid var(--border-subtle, #313244);
+  border-radius: 12px;
+  padding: 2px;
+  gap: 2px;
+}
+
+.music-dim-toggle-btn {
+  border: none;
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 9px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  line-height: 1.2;
+}
+
+.music-dim-toggle-btn:hover {
+  color: var(--text-primary);
+}
+
+.music-dim-toggle-btn.active {
+  background: var(--bg-surface, #313244);
+  color: var(--text-primary);
+}
+
+.music-dim-toggle-btn.active-on {
+  background: var(--accent-primary, #89b4fa);
+  color: #11111b;
+  font-weight: 700;
 }
 
 .music-dim-body {
@@ -4065,18 +4080,6 @@ select.modal-input {
   font-weight: 700;
 }
 
-.music-dim-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding-top: 6px;
-  border-top: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
-}
-
-.music-dim-hint {
-  font-size: 10px;
-  color: var(--text-tertiary);
-}
 .music-search {
   margin: 8px 9px 0;
   display: flex;
