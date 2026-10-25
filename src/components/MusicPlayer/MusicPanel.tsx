@@ -8,6 +8,7 @@ import {
   useState,
 } from "react";
 import {
+  ListMusic,
   Minus,
   Pause,
   Pin,
@@ -22,7 +23,6 @@ import {
   VolumeX,
   WifiOff,
   X,
-  ExternalLink,
 } from "lucide-react";
 import { isTypingTarget } from "../../services/shortcuts";
 import {
@@ -37,10 +37,8 @@ import {
   progressPercent,
   resolveInputToTrack,
   searchYouTubeVideos,
-  watchUrlForTrack,
   youtubeCommand,
 } from "../../services/musicService";
-import { openExternalUrl } from "../../services/updateService";
 
 interface MusicPanelProps {
   startMuted: boolean;
@@ -73,7 +71,9 @@ export const MusicPanel: FC<MusicPanelProps> = ({
 }) => {
   const [query, setQuery] = useState("");
   const [track, setTrack] = useState<MusicTrack | null>(null);
+  const [searchResults, setSearchResults] = useState<MusicTrack[]>([]);
   const [queue, setQueue] = useState<MusicTrack[]>([]);
+  const [showNextList, setShowNextList] = useState<boolean>(true);
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(startMuted);
   const [isPinned, setIsPinned] = useState<boolean>(() => {
@@ -296,6 +296,32 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     setLoop((v) => !v);
   };
 
+  const toggleNextList = async () => {
+    const nextState = !showNextList;
+    setShowNextList(nextState);
+    if (nextState && queue.length === 0 && track) {
+      const seed = track.query || track.title;
+      if (seed && seed !== "YouTube video") {
+        try {
+          const results = await searchYouTubeVideos(seed, 8);
+          const filtered = results.filter((r) => r.videoId !== track.videoId);
+          if (filtered.length > 0) {
+            setQueue(
+              filtered.map((r) => ({
+                title: r.title,
+                videoId: r.videoId,
+                playlistId: null,
+                query: r.title,
+              }))
+            );
+          }
+        } catch {
+          // ignore
+        }
+      }
+    }
+  };
+
   const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!src || duration <= 0) return;
     const pct = Number(e.target.value);
@@ -339,10 +365,6 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     if (!nextMuted && volume > 0) {
       sendCommand("setVolume", [volume]);
     }
-  };
-
-  const openInBrowser = () => {
-    if (track) void openExternalUrl(watchUrlForTrack(track));
   };
 
   // Footer + global shortcuts drive the panel via window events so the
@@ -409,35 +431,99 @@ export const MusicPanel: FC<MusicPanelProps> = ({
   const [panelWidth, setPanelWidth] = useState<number>(() => {
     try {
       const saved = localStorage.getItem("kai_music_panel_width");
-      if (saved) return parseInt(saved, 10);
+      if (saved) {
+        const parsed = parseInt(saved, 10);
+        if (Number.isFinite(parsed) && parsed >= 300) return parsed;
+      }
     } catch {}
     return isExpanded ? 520 : 360;
   });
 
-  const resizingRef = useRef<{ startX: number; startWidth: number } | null>(null);
-
-  const onResizeStart = (e: React.PointerEvent) => {
-    e.preventDefault();
-    resizingRef.current = { startX: e.clientX, startWidth: panelWidth };
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-  };
-
-  const onResizeMove = (e: React.PointerEvent) => {
-    if (!resizingRef.current) return;
-    const delta = resizingRef.current.startX - e.clientX;
-    const newWidth = Math.max(300, Math.min(720, resizingRef.current.startWidth + delta));
-    setPanelWidth(newWidth);
-    setIsExpanded(newWidth >= 460);
-  };
-
-  const onResizeEnd = (e: React.PointerEvent) => {
-    if (!resizingRef.current) return;
-    resizingRef.current = null;
+  const [panelHeight, setPanelHeight] = useState<number>(() => {
     try {
-      (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
-      localStorage.setItem("kai_music_panel_width", String(panelWidth));
-      localStorage.setItem("kai_music_expanded", String(panelWidth >= 460));
+      const saved = localStorage.getItem("kai_music_panel_height");
+      if (saved) {
+        const parsed = parseInt(saved, 10);
+        if (Number.isFinite(parsed) && parsed >= 340) return parsed;
+      }
     } catch {}
+    return 540;
+  });
+
+  const [activeResizeEdge, setActiveResizeEdge] = useState<"left" | "top" | "corner" | null>(null);
+
+  const panelDimensionsRef = useRef({ width: panelWidth, height: panelHeight });
+  panelDimensionsRef.current = { width: panelWidth, height: panelHeight };
+
+  const resizingRef = useRef<{
+    edge: "left" | "top" | "corner";
+    startX: number;
+    startY: number;
+    startWidth: number;
+    startHeight: number;
+  } | null>(null);
+
+  const onResizeStart = (edge: "left" | "top" | "corner") => (e: React.PointerEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const startWidth = panelDimensionsRef.current.width;
+    const startHeight = panelDimensionsRef.current.height;
+    const targetEl = e.currentTarget as HTMLElement | null;
+    resizingRef.current = { edge, startX, startY, startWidth, startHeight };
+    setActiveResizeEdge(edge);
+
+    if (targetEl && typeof targetEl.setPointerCapture === "function") {
+      try {
+        targetEl.setPointerCapture(e.pointerId);
+      } catch {}
+    }
+
+    const handleMove = (ev: PointerEvent) => {
+      const current = resizingRef.current;
+      if (!current) return;
+      ev.preventDefault();
+
+      if (current.edge === "left" || current.edge === "corner") {
+        const deltaX = current.startX - ev.clientX;
+        const maxW = Math.min(840, typeof window !== "undefined" ? window.innerWidth - 20 : 800);
+        const newWidth = Math.max(300, Math.min(maxW, current.startWidth + deltaX));
+        setPanelWidth(newWidth);
+        setIsExpanded(newWidth >= 460);
+        panelDimensionsRef.current.width = newWidth;
+      }
+
+      if (current.edge === "top" || current.edge === "corner") {
+        const deltaY = current.startY - ev.clientY;
+        const maxH = Math.min(960, typeof window !== "undefined" ? window.innerHeight - 46 : 800);
+        const newHeight = Math.max(340, Math.min(maxH, current.startHeight + deltaY));
+        setPanelHeight(newHeight);
+        panelDimensionsRef.current.height = newHeight;
+      }
+    };
+
+    const handleUp = (ev: PointerEvent) => {
+      resizingRef.current = null;
+      setActiveResizeEdge(null);
+      if (targetEl && typeof targetEl.releasePointerCapture === "function") {
+        try {
+          targetEl.releasePointerCapture(ev.pointerId);
+        } catch {}
+      }
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", handleUp);
+      window.removeEventListener("pointercancel", handleUp);
+      try {
+        localStorage.setItem("kai_music_panel_width", String(panelDimensionsRef.current.width));
+        localStorage.setItem("kai_music_panel_height", String(panelDimensionsRef.current.height));
+        localStorage.setItem("kai_music_expanded", String(panelDimensionsRef.current.width >= 460));
+      } catch {}
+    };
+
+    window.addEventListener("pointermove", handleMove);
+    window.addEventListener("pointerup", handleUp);
+    window.addEventListener("pointercancel", handleUp);
   };
 
   const [searching, setSearching] = useState(false);
@@ -446,6 +532,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     sendCommand("pauseVideo");
     setTrack(null);
     setQueue([]);
+    setSearchResults([]);
     setPlaying(false);
     setCurrentTime(0);
     setDuration(0);
@@ -483,9 +570,12 @@ export const MusicPanel: FC<MusicPanelProps> = ({
       return;
     }
     setNotice(null);
+
+    // Direct YouTube link or playlist
     if (resolved.videoId || resolved.playlistId) {
       setTrack(resolved);
       setPlaying(true);
+      setSearchResults([]);
       setQuery("");
       // In background, fetch related songs for queue and real title
       void searchYouTubeVideos(resolved.videoId || raw, 6).then((results) => {
@@ -512,43 +602,47 @@ export const MusicPanel: FC<MusicPanelProps> = ({
       return;
     }
 
-    // Plain song names: try resolving to YouTube videos via backend search
+    // Plain song name: do NOT auto-play. Fetch search results and list them so user can select
     setSearching(true);
     setNotice(`Searching for “${raw}”…`);
     try {
-      const results = await searchYouTubeVideos(raw, 8);
+      const results = await searchYouTubeVideos(raw, 10);
       if (results.length > 0) {
         setNotice(null);
-        const [first, ...rest] = results;
-        setTrack({
-          title: first.title,
-          videoId: first.videoId,
+        const items: MusicTrack[] = results.map((r) => ({
+          title: r.title,
+          videoId: r.videoId,
           playlistId: null,
-          query: raw,
-        });
-        setQueue(
-          rest.map((r) => ({
-            title: r.title,
-            videoId: r.videoId,
-            playlistId: null,
-            query: r.title,
-          }))
-        );
-        setPlaying(true);
+          query: r.title,
+        }));
+        setSearchResults(items);
+        setNotice(`Found ${results.length} results for “${raw}”. Click a song to play:`);
         setQuery("");
         return;
+      } else {
+        setSearchResults([]);
+        setNotice(`No songs found for “${raw}”.`);
       }
     } catch {
-      // ignore
+      setSearchResults([]);
+      setNotice(`Could not complete search for “${raw}”.`);
     } finally {
       setSearching(false);
     }
+  };
 
-    // Fallback if search could not find a video or in browser/mock environment
+  const playSearchResult = (item: MusicTrack, index: number) => {
+    setTrack(item);
+    setPlaying(true);
+    setCurrentTime(0);
+    setDuration(0);
     setNotice(null);
-    setTrack(resolved);
-    setPlaying(false);
-    setQuery("");
+    setShowNextList(true);
+    // Remaining search results become the queue for next song playback
+    const remaining = searchResults.filter((_, i) => i !== index);
+    setQueue(remaining);
+    // Clear search results now that the user selected and played a song
+    setSearchResults([]);
   };
 
   return (
@@ -564,19 +658,33 @@ export const MusicPanel: FC<MusicPanelProps> = ({
       aria-hidden={!open}
     >
       <div
-        className={`music-modal-dialog music-panel ${isExpanded ? "expanded" : ""}`}
-        style={{ width: `${panelWidth}px` }}
+        className={`music-modal-dialog music-panel ${isExpanded ? "expanded" : ""} ${
+          activeResizeEdge ? `resizing-${activeResizeEdge} is-resizing` : ""
+        }`}
+        style={{
+          width: `${panelWidth}px`,
+          height: `${panelHeight}px`,
+        }}
         onClick={(e) => e.stopPropagation()}
         role="document"
         onKeyDown={onPanelKeyDown}
       >
         <div
-          className="music-resize-handle"
-          onPointerDown={onResizeStart}
-          onPointerMove={onResizeMove}
-          onPointerUp={onResizeEnd}
-          onPointerCancel={onResizeEnd}
-          title="Drag border to resize player"
+          className="music-resize-handle music-resize-left"
+          onPointerDown={onResizeStart("left")}
+          title="Drag border to resize width"
+          aria-label="Resize music player width"
+        />
+        <div
+          className="music-resize-top"
+          onPointerDown={onResizeStart("top")}
+          title="Drag border to resize height"
+          aria-label="Resize music player height"
+        />
+        <div
+          className="music-resize-corner"
+          onPointerDown={onResizeStart("corner")}
+          title="Drag corner to resize player"
           aria-label="Resize music player"
         />
         <div className="modal-header music-head">
@@ -637,7 +745,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
           <button
             type="submit"
             className="music-search-go"
-            title="Play"
+            title="Search songs"
             aria-label="Search"
             disabled={searching}
           >
@@ -650,178 +758,229 @@ export const MusicPanel: FC<MusicPanelProps> = ({
           </div>
         )}
 
-        <div className="music-now">
-          {src ? (
-            <iframe
-              key={src}
-              ref={frameRef}
-              referrerPolicy="strict-origin-when-cross-origin"
-              onLoad={() => {
-                frameRef.current?.contentWindow?.postMessage(YOUTUBE_LISTENING_HANDSHAKE, "*");
-                sendCommand("setVolume", [volume]);
-                if (mutedRef.current) {
-                  sendCommand("mute");
-                } else {
-                  sendCommand("unMute");
-                }
-              }}
-              className="music-video"
-              src={src}
-              title={track?.title ?? "YouTube player"}
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-              allowFullScreen
-            />
-          ) : track && !online ? (
-            <div className="music-video-empty music-offline" role="status">
-              <WifiOff size={16} aria-hidden="true" />
-              <span>No internet connection</span>
-              <small>Music comes back when you do.</small>
+        <div className="music-body">
+          <div className="music-now">
+            {src ? (
+              <iframe
+                key={src}
+                ref={frameRef}
+                referrerPolicy="strict-origin-when-cross-origin"
+                onLoad={() => {
+                  frameRef.current?.contentWindow?.postMessage(YOUTUBE_LISTENING_HANDSHAKE, "*");
+                  sendCommand("setVolume", [volume]);
+                  if (mutedRef.current) {
+                    sendCommand("mute");
+                  } else {
+                    sendCommand("unMute");
+                  }
+                }}
+                className="music-video"
+                src={src}
+                title={track?.title ?? "YouTube player"}
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                allowFullScreen
+              />
+            ) : track && !online ? (
+              <div className="music-video-empty music-offline" role="status">
+                <WifiOff size={16} aria-hidden="true" />
+                <span>No internet connection</span>
+                <small>Music comes back when you do.</small>
+              </div>
+            ) : (
+              <div className="music-video-empty">
+                <span className="music-empty-badge" aria-hidden="true">
+                  ♪
+                </span>
+                <span className="music-empty-title">Ready to play</span>
+                <small className="muted-text">Paste a YouTube link or type a song to search</small>
+              </div>
+            )}
+            <div className="music-track-title-bar">
+              <h3 className="music-track-title" title={track?.title ?? "Nothing playing"}>
+                {track?.title ?? "Nothing playing"}
+              </h3>
             </div>
-          ) : track && !track.videoId && !track.playlistId && online ? (
-            <div className="music-video-empty music-search-only" role="status">
-              <span>YouTube search can't play inside Kai — open the results in your browser.</span>
-              <button
-                type="button"
-                className="btn btn-secondary btn-small"
-                onClick={openInBrowser}
-                title="Open YouTube search in browser"
-              >
-                <ExternalLink size={13} aria-hidden="true" />
-                <span>Search YouTube for “{track.title}”</span>
-              </button>
-              <small>Paste a video or playlist link to play it here.</small>
-            </div>
-          ) : (
-            <div className="music-video-empty">
-              <span className="music-empty-badge" aria-hidden="true">
-                ♪
-              </span>
-              <span className="music-empty-title">Ready to play</span>
-              <small className="muted-text">Paste a YouTube link or type a song to search</small>
-            </div>
-          )}
-          <div className="music-track-title-bar">
-            <h3 className="music-track-title" title={track?.title ?? "Nothing playing"}>
-              {track?.title ?? "Nothing playing"}
-            </h3>
-          </div>
 
-          <div className="music-progress-wrap">
-            <span className="music-time-label">{formatTime(currentTime)}</span>
-            <input
-              type="range"
-              min={0}
-              max={100}
-              value={duration > 0 ? progressPercent(currentTime, duration) : 0}
-              onChange={handleSeek}
-              className="music-progress-slider"
-              disabled={!src}
-              aria-label="Seek track position"
-            />
-            <span className="music-time-label">{formatTime(duration)}</span>
-          </div>
-
-          <div className="music-controls">
-            <button
-              type="button"
-              className="music-play"
-              onClick={togglePlay}
-              disabled={!src}
-              title="Play / pause (Space)"
-              aria-label={playing ? "Pause" : "Play"}
-            >
-              {playing ? <Pause size={14} /> : <Play size={14} />}
-            </button>
-            <button
-              type="button"
-              className="btn btn-icon music-ctrl-btn"
-              onClick={next}
-              disabled={!src && queue.length === 0}
-              title={queue.length > 0 ? `Next: ${queue[0].title} (N)` : "Next song / replay (N)"}
-              aria-label="Next song"
-            >
-              <SkipForward size={14} />
-            </button>
-            <button
-              type="button"
-              className={`btn btn-icon music-ctrl-btn ${loop ? "music-control-active" : ""}`}
-              onClick={toggleLoop}
-              title={loop ? "Disable loop (L)" : "Enable loop (L)"}
-              aria-label={loop ? "Disable loop" : "Enable loop"}
-              aria-pressed={loop}
-            >
-              {loop ? <Repeat1 size={14} /> : <Repeat size={14} />}
-            </button>
-
-            <div className="music-volume-group" title={`Volume: ${muted ? 0 : volume}%`}>
-              <button
-                type="button"
-                className="btn btn-icon music-ctrl-btn"
-                onClick={toggleMute}
-                title={muted ? "Unmute (M)" : "Mute (M)"}
-                aria-label={muted ? "Unmute" : "Mute"}
-                aria-pressed={muted}
-              >
-                {muted || volume === 0 ? (
-                  <VolumeX size={14} />
-                ) : volume < 50 ? (
-                  <Volume1 size={14} />
-                ) : (
-                  <Volume2 size={14} />
-                )}
-              </button>
+            <div className="music-progress-wrap">
+              <span className="music-time-label">{formatTime(currentTime)}</span>
               <input
                 type="range"
                 min={0}
                 max={100}
-                value={muted ? 0 : volume}
-                onChange={handleVolumeChange}
-                className="music-volume-slider"
-                aria-label="Volume slider"
+                value={duration > 0 ? progressPercent(currentTime, duration) : 0}
+                onChange={handleSeek}
+                className="music-progress-slider"
+                disabled={!src}
+                aria-label="Seek track position"
               />
+              <span className="music-time-label">{formatTime(duration)}</span>
             </div>
 
-            <button
-              type="button"
-              className="btn btn-icon music-ctrl-btn"
-              onClick={openInBrowser}
-              disabled={!track}
-              title="Open in browser"
-              aria-label="Open in browser"
-            >
-              <ExternalLink size={14} />
-            </button>
-          </div>
+            <div className="music-controls">
+              <button
+                type="button"
+                className="music-play"
+                onClick={togglePlay}
+                disabled={!src}
+                title="Play / pause (Space)"
+                aria-label={playing ? "Pause" : "Play"}
+              >
+                {playing ? <Pause size={14} /> : <Play size={14} />}
+              </button>
+              <button
+                type="button"
+                className="btn btn-icon music-ctrl-btn"
+                onClick={next}
+                disabled={!src && queue.length === 0}
+                title={
+                  queue.length > 0 ? `Play next: ${queue[0].title} (N)` : "Next song / replay (N)"
+                }
+                aria-label="Next song"
+              >
+                <SkipForward size={14} />
+              </button>
+              <button
+                type="button"
+                className={`btn btn-icon music-ctrl-btn ${showNextList && queue.length > 0 ? "music-control-active" : ""}`}
+                onClick={toggleNextList}
+                title={showNextList ? "Hide next playing list" : "Show next playing list"}
+                aria-label="Next playing list"
+                aria-pressed={showNextList}
+              >
+                <ListMusic size={14} />
+              </button>
+              <button
+                type="button"
+                className={`btn btn-icon music-ctrl-btn ${loop ? "music-control-active" : ""}`}
+                onClick={toggleLoop}
+                title={loop ? "Disable loop (L)" : "Enable loop (L)"}
+                aria-label={loop ? "Disable loop" : "Enable loop"}
+                aria-pressed={loop}
+              >
+                {loop ? <Repeat1 size={14} /> : <Repeat size={14} />}
+              </button>
 
-          {queue.length > 0 && (
-            <div className="music-queue-section">
-              <div className="music-queue-header">
-                <span className="music-queue-title">Song List ({queue.length})</span>
+              <div className="music-volume-group" title={`Volume: ${muted ? 0 : volume}%`}>
                 <button
                   type="button"
-                  className="music-queue-clear"
-                  onClick={() => setQueue([])}
-                  title="Clear song list"
+                  className="btn btn-icon music-ctrl-btn"
+                  onClick={toggleMute}
+                  title={muted ? "Unmute (M)" : "Mute (M)"}
+                  aria-label={muted ? "Unmute" : "Mute"}
+                  aria-pressed={muted}
                 >
-                  Clear
+                  {muted || volume === 0 ? (
+                    <VolumeX size={14} />
+                  ) : volume < 50 ? (
+                    <Volume1 size={14} />
+                  ) : (
+                    <Volume2 size={14} />
+                  )}
                 </button>
-              </div>
-              <div className="music-queue-list">
-                {queue.map((item, idx) => (
-                  <button
-                    key={`${item.videoId}-${idx}`}
-                    type="button"
-                    className="music-queue-item"
-                    onClick={() => playQueueIndex(idx)}
-                    title={`Play ${item.title}`}
-                  >
-                    <Play size={10} className="music-queue-play-ico" />
-                    <span className="music-queue-name">{item.title}</span>
-                  </button>
-                ))}
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  value={muted ? 0 : volume}
+                  onChange={handleVolumeChange}
+                  className="music-volume-slider"
+                  aria-label="Volume slider"
+                />
               </div>
             </div>
-          )}
+
+            {searchResults.length > 0 && (
+              <div className="music-search-results">
+                <div className="music-list-header">
+                  <span className="music-list-title">Search Results ({searchResults.length})</span>
+                  <button
+                    type="button"
+                    className="music-list-clear"
+                    onClick={() => setSearchResults([])}
+                    title="Dismiss search results"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+                <div className="music-track-list">
+                  {searchResults.map((item, idx) => (
+                    <button
+                      key={`${item.videoId || idx}-${idx}`}
+                      type="button"
+                      className="music-track-item music-search-item"
+                      onClick={() => playSearchResult(item, idx)}
+                      title={`Play ${item.title}`}
+                    >
+                      <span className="music-item-index">{idx + 1}</span>
+                      {item.videoId ? (
+                        <img
+                          src={`https://i.ytimg.com/vi/${encodeURIComponent(item.videoId)}/mqdefault.jpg`}
+                          alt=""
+                          loading="lazy"
+                          className="music-item-thumb"
+                          onError={(e) => {
+                            (e.currentTarget as HTMLImageElement).style.display = "none";
+                          }}
+                        />
+                      ) : (
+                        <div className="music-item-thumb-placeholder" aria-hidden="true">
+                          <Play size={10} />
+                        </div>
+                      )}
+                      <span className="music-item-name">{item.title}</span>
+                      <Play size={10} className="music-item-play-ico" />
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {showNextList && queue.length > 0 && (
+              <div className="music-next-section music-queue-section">
+                <div className="music-list-header">
+                  <span className="music-list-title">Next Playing ({queue.length})</span>
+                  <button
+                    type="button"
+                    className="music-list-clear"
+                    onClick={() => setQueue([])}
+                    title="Clear next playing list"
+                  >
+                    Clear
+                  </button>
+                </div>
+                <div className="music-track-list music-queue-list">
+                  {queue.map((item, idx) => (
+                    <button
+                      key={`${item.videoId || idx}-${idx}`}
+                      type="button"
+                      className="music-track-item music-queue-item"
+                      onClick={() => playQueueIndex(idx)}
+                      title={`Play ${item.title}`}
+                    >
+                      <span className="music-item-index">{idx + 1}</span>
+                      {item.videoId ? (
+                        <img
+                          src={`https://i.ytimg.com/vi/${encodeURIComponent(item.videoId)}/mqdefault.jpg`}
+                          alt=""
+                          loading="lazy"
+                          className="music-item-thumb"
+                          onError={(e) => {
+                            (e.currentTarget as HTMLImageElement).style.display = "none";
+                          }}
+                        />
+                      ) : (
+                        <div className="music-item-thumb-placeholder" aria-hidden="true">
+                          <Play size={10} />
+                        </div>
+                      )}
+                      <span className="music-item-name music-queue-name">{item.title}</span>
+                      <Play size={10} className="music-item-play-ico music-queue-play-ico" />
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>

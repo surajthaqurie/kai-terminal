@@ -433,9 +433,8 @@ export const SettingsModal: FC<SettingsModalProps> = ({
                       setFormData({ ...formData, showMusicPlayer: e.target.checked })
                     }
                   />
-                  <span>Show music player</span>
+                  <span>YouTube music player</span>
                 </label>
-                <p className="muted-text">YouTube music player</p>
               </div>
             </div>
           )}
