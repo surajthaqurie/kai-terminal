@@ -142,7 +142,12 @@ describe("MusicPanel modal implementation", () => {
 
     // Clicking backdrop while pinned does NOT close player
     const backdrop = container.querySelector(".music-modal-backdrop") as HTMLElement;
+    expect(backdrop.classList.contains("pinned")).toBe(true);
     backdrop.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(onClose).not.toHaveBeenCalled();
+
+    // Global Escape key while pinned does NOT close the player (so users can close other modals)
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     expect(onClose).not.toHaveBeenCalled();
 
     // Clicking minimize unpins and calls onClose
@@ -528,5 +533,11 @@ describe("MusicPanel modal implementation", () => {
     expect(cssContent).toContain("transform: translateX(100%);");
     expect(cssContent).toContain(".music-queue-drawer.open");
     expect(cssContent).toContain("transform: translateX(0);");
+
+    // Pinned player elevation above Settings, Git modals, etc.
+    expect(cssContent).toContain(".music-modal-backdrop.pinned");
+    expect(cssContent).toContain("z-index: 2100 !important;");
+    expect(cssContent).toContain(".music-modal-backdrop.pinned .music-modal-dialog");
+    expect(cssContent).toContain("z-index: 2101 !important;");
   });
 });

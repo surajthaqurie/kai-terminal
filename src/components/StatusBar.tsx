@@ -113,14 +113,16 @@ export const StatusBar: FC<StatusBarProps> = ({
   // trailing click so dragging never opens the player panel.
   const didDragRef = useRef(false);
 
-  // Drag starts on the pill itself (not on the buttons) so the mini player
-  // can be moved from anywhere along its surface, with the cursor left as
-  // the normal default — no grab/grabbing indicator while dragging.
+  // Drag starts on the pill itself — including the title button, which is
+  // the widest surface — while the three control buttons (play/next/mute)
+  // stay click-only. A gesture that moves >2px sets didDragRef, and every
+  // click path checks it so dragging never opens the player. The cursor is
+  // left as the normal default; no grab/grabbing indicator is shown.
   const onMiniPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     // Only the primary button starts a drag.
     if (e.button !== 0) return;
-    // Never steal events from the playback buttons.
-    if ((e.target as HTMLElement).closest("button")) return;
+    // The small control buttons are click-only: never start a drag on them.
+    if ((e.target as HTMLElement).closest(".status-check-btn")) return;
     didDragRef.current = false;
     dragStartXRef.current = e.clientX;
     dragInitialXRef.current = dragXRef.current;
@@ -129,8 +131,6 @@ export const StatusBar: FC<StatusBarProps> = ({
     } catch {
       // No capture: move/up on the pill still work for mouse.
     }
-    e.preventDefault();
-    e.stopPropagation();
   };
 
   const onMiniPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -284,6 +284,11 @@ export const StatusBar: FC<StatusBarProps> = ({
               type="button"
               className="music-mini-main"
               onClick={(e) => {
+                // A drag that started on this button must not open the player.
+                if (didDragRef.current) {
+                  didDragRef.current = false;
+                  return;
+                }
                 e.stopPropagation();
                 handleMusicToggle();
               }}

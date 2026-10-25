@@ -310,7 +310,13 @@ export function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState<boolean>(false);
   const [isAiCliOpen, setIsAiCliOpen] = useState<boolean>(false);
-  const [isMusicOpen, setIsMusicOpen] = useState<boolean>(false);
+  const [isMusicOpen, setIsMusicOpen] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("kai_music_pinned") === "true";
+    } catch {
+      return false;
+    }
+  });
   const [musicTitle, setMusicTitle] = useState<string | null>(null);
   const [musicPlaying, setMusicPlaying] = useState<boolean>(false);
   const [musicProgress, setMusicProgress] = useState<number>(0);

@@ -119,9 +119,11 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     return undefined;
   }, [open]);
 
-  // Global Escape key dismisses the modal dialog
+  // Global Escape key dismisses the modal dialog when NOT pinned.
+  // When pinned, the player stays pinned open while other modals/dialogs (Settings, Git, etc.)
+  // can consume Escape to close themselves without dismissing the music player.
   useEffect(() => {
-    if (!open) return;
+    if (!open || isPinned) return;
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault();
@@ -131,7 +133,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [open, onClose]);
+  }, [open, isPinned, onClose]);
 
   // Mute is applied at load through the URL and afterwards through commands,
   // so toggling it never reloads (restarts) the video.
@@ -242,6 +244,13 @@ export const MusicPanel: FC<MusicPanelProps> = ({
   };
 
   const next = async () => {
+    // Native playlist embeds own the Next action: let YouTube advance within
+    // the list instead of consuming the suggestion queue.
+    if (track?.playlistId) {
+      sendCommand("nextVideo");
+      setPlaying(true);
+      return;
+    }
     if (queueRef.current.length > 0) {
       const [nextItem, ...remaining] = queueRef.current;
       setTrack(nextItem);
@@ -285,9 +294,23 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     setPlaying(true);
   };
 
+  const replayCurrent = () => {
+    if (!src) return;
+    sendCommand("seekTo", [0, true]);
+    sendCommand("playVideo");
+    setPlaying(true);
+    setCurrentTime(0);
+  };
+
   const playQueueIndex = (index: number) => {
     if (index < 0 || index >= queue.length) return;
     const selected = queue[index];
+    // The currently playing song lives in the list too: clicking it simply
+    // restarts playback instead of lifting it out of the queue.
+    if (selected.videoId && selected.videoId === track?.videoId) {
+      replayCurrent();
+      return;
+    }
     const remaining = queue.filter((_, i) => i !== index);
     setTrack(selected);
     setQueue(remaining);
@@ -306,7 +329,9 @@ export const MusicPanel: FC<MusicPanelProps> = ({
       setDrawerMode("queue");
       setDrawerOpen(true);
       setShowNextList(true);
-      if (queue.length === 0 && track) {
+      // Auto-fill suggestions from the current song's context. Native
+      // playlists own their own order, so don't overlay a fake queue there.
+      if (queue.length === 0 && track && !track.playlistId) {
         const seed = track.query || track.title;
         if (seed && seed !== "YouTube video") {
           try {
@@ -423,7 +448,12 @@ export const MusicPanel: FC<MusicPanelProps> = ({
         toggleMute();
         break;
       case "Escape":
-        onClose();
+        if (drawerOpen) {
+          setDrawerOpen(false);
+          setShowNextList(false);
+        } else {
+          onClose();
+        }
         break;
       default:
         return;
@@ -648,6 +678,11 @@ export const MusicPanel: FC<MusicPanelProps> = ({
   };
 
   const playSearchResult = (item: MusicTrack, index: number) => {
+    // Clicking the song that is already playing simply restarts it.
+    if (item.videoId && item.videoId === track?.videoId) {
+      replayCurrent();
+      return;
+    }
     setTrack(item);
     setPlaying(true);
     setCurrentTime(0);
@@ -963,35 +998,46 @@ export const MusicPanel: FC<MusicPanelProps> = ({
 
           <div className="music-drawer-list music-track-list">
             {drawerMode === "search" ? (
-              searchResults.map((item, idx) => (
-                <button
-                  key={`${item.videoId || idx}-${idx}`}
-                  type="button"
-                  className="music-track-item music-search-item"
-                  onClick={() => playSearchResult(item, idx)}
-                  title={`Play ${item.title}`}
-                >
-                  <span className="music-item-index">{idx + 1}</span>
-                  {item.videoId ? (
-                    <img
-                      src={`https://i.ytimg.com/vi/${encodeURIComponent(item.videoId)}/mqdefault.jpg`}
-                      alt=""
-                      loading="lazy"
-                      className="music-item-thumb"
-                      onError={(e) => {
-                        (e.currentTarget as HTMLImageElement).style.display = "none";
-                      }}
-                    />
-                  ) : (
-                    <div className="music-item-thumb-placeholder" aria-hidden="true">
-                      <Play size={10} />
-                    </div>
-                  )}
-                  <span className="music-item-name">{item.title}</span>
-                  <Play size={10} className="music-item-play-ico" />
-                </button>
-              ))
-            ) : queue.length === 0 ? (
+              searchResults.map((item, idx) => {
+                const isCurrent = Boolean(item.videoId && item.videoId === track?.videoId);
+                return (
+                  <button
+                    key={`${item.videoId || idx}-${idx}`}
+                    type="button"
+                    className={`music-track-item music-search-item${isCurrent ? " music-item-playing" : ""}`}
+                    onClick={() => playSearchResult(item, idx)}
+                    title={isCurrent ? "Restart this song" : `Play ${item.title}`}
+                  >
+                    <span className="music-item-index">{idx + 1}</span>
+                    {item.videoId ? (
+                      <img
+                        src={`https://i.ytimg.com/vi/${encodeURIComponent(item.videoId)}/mqdefault.jpg`}
+                        alt=""
+                        loading="lazy"
+                        className="music-item-thumb"
+                        onError={(e) => {
+                          (e.currentTarget as HTMLImageElement).style.display = "none";
+                        }}
+                      />
+                    ) : (
+                      <div className="music-item-thumb-placeholder" aria-hidden="true">
+                        <Play size={10} />
+                      </div>
+                    )}
+                    <span className="music-item-name">{item.title}</span>
+                    {isCurrent ? (
+                      <span className="music-eq" aria-label="Now playing">
+                        <i />
+                        <i />
+                        <i />
+                      </span>
+                    ) : (
+                      <Play size={10} className="music-item-play-ico" />
+                    )}
+                  </button>
+                );
+              })
+            ) : queue.length === 0 && !track ? (
               <div className="music-drawer-empty">
                 <span>No upcoming songs in list</span>
                 <small className="muted-text">
@@ -999,34 +1045,87 @@ export const MusicPanel: FC<MusicPanelProps> = ({
                 </small>
               </div>
             ) : (
-              queue.map((item, idx) => (
-                <button
-                  key={`${item.videoId || idx}-${idx}`}
-                  type="button"
-                  className="music-track-item music-queue-item"
-                  onClick={() => playQueueIndex(idx)}
-                  title={`Play ${item.title}`}
-                >
-                  <span className="music-item-index">{idx + 1}</span>
-                  {item.videoId ? (
-                    <img
-                      src={`https://i.ytimg.com/vi/${encodeURIComponent(item.videoId)}/mqdefault.jpg`}
-                      alt=""
-                      loading="lazy"
-                      className="music-item-thumb"
-                      onError={(e) => {
-                        (e.currentTarget as HTMLImageElement).style.display = "none";
-                      }}
-                    />
-                  ) : (
-                    <div className="music-item-thumb-placeholder" aria-hidden="true">
-                      <Play size={10} />
-                    </div>
-                  )}
-                  <span className="music-item-name music-queue-name">{item.title}</span>
-                  <Play size={10} className="music-item-play-ico music-queue-play-ico" />
-                </button>
-              ))
+              <>
+                {/* Pinned row: what's playing now, always visible in the list. */}
+                {track && (
+                  <button
+                    type="button"
+                    className="music-track-item music-queue-now music-item-playing"
+                    onClick={replayCurrent}
+                    title="Restart this song"
+                    aria-label={`Now playing: ${track.title}`}
+                  >
+                    <span className="music-eq" aria-hidden="true">
+                      <i />
+                      <i />
+                      <i />
+                    </span>
+                    {track.videoId ? (
+                      <img
+                        src={`https://i.ytimg.com/vi/${encodeURIComponent(track.videoId)}/mqdefault.jpg`}
+                        alt=""
+                        loading="lazy"
+                        className="music-item-thumb"
+                        onError={(e) => {
+                          (e.currentTarget as HTMLImageElement).style.display = "none";
+                        }}
+                      />
+                    ) : (
+                      <div className="music-item-thumb-placeholder" aria-hidden="true">
+                        <Pause size={10} />
+                      </div>
+                    )}
+                    <span className="music-item-name">{track.title}</span>
+                    <span className="music-now-tag">Now</span>
+                  </button>
+                )}
+                {track?.playlistId && queue.length === 0 ? (
+                  <div className="music-drawer-empty">
+                    <span>Playing a YouTube playlist</span>
+                    <small className="muted-text">Next advances inside the playlist itself.</small>
+                  </div>
+                ) : (
+                  queue.map((item, idx) => {
+                    const isCurrent = Boolean(item.videoId && item.videoId === track?.videoId);
+                    return (
+                      <button
+                        key={`${item.videoId || idx}-${idx}`}
+                        type="button"
+                        className={`music-track-item music-queue-item${isCurrent ? " music-item-playing" : ""}`}
+                        onClick={() => playQueueIndex(idx)}
+                        title={isCurrent ? "Restart this song" : `Play ${item.title}`}
+                      >
+                        <span className="music-item-index">{idx + 1}</span>
+                        {item.videoId ? (
+                          <img
+                            src={`https://i.ytimg.com/vi/${encodeURIComponent(item.videoId)}/mqdefault.jpg`}
+                            alt=""
+                            loading="lazy"
+                            className="music-item-thumb"
+                            onError={(e) => {
+                              (e.currentTarget as HTMLImageElement).style.display = "none";
+                            }}
+                          />
+                        ) : (
+                          <div className="music-item-thumb-placeholder" aria-hidden="true">
+                            <Play size={10} />
+                          </div>
+                        )}
+                        <span className="music-item-name music-queue-name">{item.title}</span>
+                        {isCurrent ? (
+                          <span className="music-eq" aria-label="Now playing">
+                            <i />
+                            <i />
+                            <i />
+                          </span>
+                        ) : (
+                          <Play size={10} className="music-item-play-ico music-queue-play-ico" />
+                        )}
+                      </button>
+                    );
+                  })
+                )}
+              </>
             )}
           </div>
         </div>
