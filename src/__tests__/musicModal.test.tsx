@@ -364,11 +364,16 @@ describe("MusicPanel modal implementation", () => {
       true
     );
 
-    // The other 2 items become queued in the Song List
+    // Search results are cleared after user plays a song
+    expect(container.querySelectorAll(".music-search-item").length).toBe(0);
+
+    // The other 2 items become queued in the Song List with thumbnail images
     const queueItems = container.querySelectorAll(".music-queue-item");
     expect(queueItems.length).toBe(2);
     expect(queueItems[0].textContent).toContain("Lofi Study Beats");
     expect(queueItems[1].textContent).toContain("Rainy Cafe Piano");
+    const queueThumbs = container.querySelectorAll(".music-queue-item .music-item-thumb");
+    expect(queueThumbs.length).toBe(2);
 
     // Clicking Next manually plays the next song from the queue
     const nextBtn = container.querySelector("button[aria-label='Next song']") as HTMLButtonElement;
