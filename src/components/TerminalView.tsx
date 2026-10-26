@@ -34,6 +34,7 @@ import {
 import { TERMINAL_MODE_RESET_SEQ, scanAgentFinishedTail } from "../services/terminalModes";
 import {
   STALE_REPLY_WINDOW_MS,
+  preparePasteText,
   shouldAutoResetModes,
   stripStaleTerminalReplies,
   stripStuckInputReports,
@@ -306,6 +307,32 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
     // are dropped; opened when the agent-finished marker is seen.
     const staleReplyUntilRef = useRef(0);
 
+    // Single writer for every paste route (key combo, toolbar button, native
+    // paste event from the context menu / middle-click). Keeps size limiting,
+    // history tracking and the no-auto-Enter rule (preparePasteText) in one place.
+    const pasteToPty = (text: string) => {
+      const backendId = backendPtyIdRef.current;
+      const term = xtermRef.current;
+      if (!text || !backendId || !term) return;
+
+      const byteLen = new TextEncoder().encode(text).length;
+      if (byteLen > 1_048_576) {
+        term.writeln(
+          `\r\n\x1b[33m[Input rejected: payload size (${byteLen} bytes) exceeds maximum limit of 1048576 bytes; paste smaller chunks instead of losing data silently]\x1b[0m\r\n`
+        );
+        return;
+      }
+
+      // Pasted text updates the line buffer so command history stays in sync.
+      trackInputData(text.replace(/[\r\n]+$/, ""));
+      PtyService.writeToPty(backendId, preparePasteText(text, term.modes.bracketedPasteMode)).catch(
+        (e) => {
+          const msg = e instanceof Error ? e.message : String(e);
+          term.writeln(`\r\n\x1b[31m[Paste failed: ${msg}]\x1b[0m\r\n`);
+        }
+      );
+    };
+
     useImperativeHandle(ref, () => ({
       clear: () => {
         xtermRef.current?.clear();
@@ -332,26 +359,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         }
         return "";
       },
-      pasteText: (text: string) => {
-        const backendId = backendPtyIdRef.current;
-        const term = xtermRef.current;
-        if (!text || !backendId) return;
-
-        const byteLen = new TextEncoder().encode(text).length;
-        if (byteLen > 1_048_576) {
-          term?.writeln(
-            `\r\n\x1b[33m[Input rejected: payload size (${byteLen} bytes) exceeds maximum limit of 1048576 bytes; paste smaller chunks instead of losing data silently]\x1b[0m\r\n`
-          );
-          return;
-        }
-
-        // Pasted text updates the line buffer so command history stays in sync.
-        trackInputData(text);
-        PtyService.writeToPty(backendId, text).catch((e) => {
-          const msg = e instanceof Error ? e.message : String(e);
-          term?.writeln(`\r\n\x1b[31m[Paste failed: ${msg}]\x1b[0m\r\n`);
-        });
-      },
+      pasteText: (text: string) => pasteToPty(text),
       focus: () => {
         xtermRef.current?.focus();
       },
@@ -541,6 +549,21 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       };
       term.textarea?.addEventListener("focus", onTextareaFocus);
 
+      // Native paste events (WebView context-menu Paste, middle-click on
+      // Linux, IME/accessibility paste) would otherwise reach xterm's own
+      // handler, which sends the raw text — a trailing newline then runs the
+      // command. Capture them on the container (before xterm sees them) and
+      // route through the same writer as the keyboard paste. Keyboard paste
+      // preventDefaults its keydown, so this never fires twice for one paste.
+      const container = containerRef.current;
+      const onNativePaste = (event: ClipboardEvent) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const text = event.clipboardData?.getData("text/plain") ?? "";
+        if (text) pasteToPty(text);
+      };
+      container.addEventListener("paste", onNativePaste, true);
+
       xtermRef.current = term;
       fitAddonRef.current = fitAddon;
       searchAddonRef.current = searchAddon;
@@ -575,24 +598,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
           if (event.type === "keydown" && !event.repeat) {
             navigator.clipboard
               .readText()
-              .then((text) => {
-                const backendId = backendPtyIdRef.current;
-                if (!text || !backendId) return;
-
-                const byteLen = new TextEncoder().encode(text).length;
-                if (byteLen > 1_048_576) {
-                  term.writeln(
-                    `\r\n\x1b[33m[Input rejected: payload size (${byteLen} bytes) exceeds maximum limit of 1048576 bytes; paste smaller chunks instead of losing data silently]\x1b[0m\r\n`
-                  );
-                  return;
-                }
-
-                trackInputData(text);
-                ptyService.writeToPty(backendId, text).catch((e) => {
-                  const msg = e instanceof Error ? e.message : String(e);
-                  term.writeln(`\r\n\x1b[31m[Paste failed: ${msg}]\x1b[0m\r\n`);
-                });
-              })
+              .then(pasteToPty)
               .catch(() => {});
           }
           return false;
@@ -970,6 +976,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
           flushTimer = null;
         }
         term.textarea?.removeEventListener("focus", onTextareaFocus);
+        container.removeEventListener("paste", onNativePaste, true);
         detachGpuRenderer(webglAddonRef);
         inputDisposable.dispose();
         resizeObserver.disconnect();

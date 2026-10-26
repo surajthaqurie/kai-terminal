@@ -108,3 +108,26 @@ export function stripStuckInputReports(data: string, onAlternateScreen: boolean)
   if (onAlternateScreen || !data.includes("\x1b")) return data;
   return data.replace(STUCK_INPUT_REPORT_RE, "");
 }
+
+/**
+ * Prepare clipboard text for the PTY so a paste never auto-submits.
+ *
+ * - Line endings become `\r` (what Enter sends), like xterm's own paste.
+ * - When the shell/app enabled bracketed paste (DECSET 2004) the text is
+ *   wrapped in ESC[200~ … ESC[201~, so readline/zsh/PSReadLine treat embedded
+ *   newlines as text instead of executing them.
+ * - Otherwise there is no way to mark the paste as data, so trailing
+ *   newlines (copied lines almost always end with one) are dropped; without
+ *   this the shell ran the pasted command immediately.
+ *
+ * Pure helper (exported for tests).
+ */
+export function preparePasteText(text: string, bracketedPaste: boolean): string {
+  let out = text.replace(/\r\n|\r|\n/g, "\r");
+  if (bracketedPaste) {
+    // A pasted end marker would let the clipboard break out of the paste.
+    out = out.replace(/\x1b\[20[01]~/g, "");
+    return `\x1b[200~${out}\x1b[201~`;
+  }
+  return out.replace(/\r+$/, "");
+}
