@@ -391,14 +391,7 @@ export const TabBar: FC<TabBarProps> = ({
                 className={`tab-item ${isActive ? "active" : ""} status-${tab.status}${
                   tab.color ? " has-color" : ""
                 }${isDragging ? " dragging" : ""}`}
-                style={
-                  tab.color
-                    ? ({
-                        borderTop: `2px solid ${tab.color}`,
-                        "--tab-color": tab.color,
-                      } as CSSProperties)
-                    : undefined
-                }
+                style={tab.color ? ({ "--tab-color": tab.color } as CSSProperties) : undefined}
                 onPointerDown={(e) => beginPotentialDrag(e, tab)}
                 onContextMenu={(e) => openMenu(e, tab)}
                 onClick={() => handleTabClick(tab.id)}

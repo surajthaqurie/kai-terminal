@@ -1,7 +1,9 @@
 pub mod active_project;
 pub mod ai_cli;
 pub mod autostart;
+pub mod call_watch;
 pub mod cli_guard;
+pub mod clipboard;
 pub mod diagnostics;
 pub mod error;
 pub mod git;
@@ -228,6 +230,18 @@ fn open_project_in_editor(
 
 #[cfg(feature = "tauri")]
 #[tauri::command(async)]
+fn read_clipboard_text_cmd() -> Result<String, error::TerminalError> {
+    clipboard::read_clipboard_text()
+}
+
+#[cfg(feature = "tauri")]
+#[tauri::command(async)]
+fn is_call_active_cmd() -> bool {
+    call_watch::is_call_active()
+}
+
+#[cfg(feature = "tauri")]
+#[tauri::command(async)]
 fn detect_installed_editors_cmd() -> Vec<EditorInfo> {
     detect_installed_editors()
 }
@@ -370,6 +384,7 @@ pub fn run() {
             }
         }))
         .setup(|app| {
+            call_watch::spawn_call_watcher(app.handle().clone());
             // First-run repair: installer-only users have no `kai` on PATH.
             // Off the UI thread so a slow PowerShell cold start can never
             // stall the first PTY spawn ("Not Responding on launch").
@@ -411,6 +426,8 @@ pub fn run() {
             discard_git_file_cmd,
             open_project_in_editor,
             detect_installed_editors_cmd,
+            is_call_active_cmd,
+            read_clipboard_text_cmd,
             open_external_url_cmd,
             search_youtube_video_cmd,
             search_youtube_videos_cmd,

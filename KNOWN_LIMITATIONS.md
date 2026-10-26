@@ -37,6 +37,7 @@ Last reviewed 2026-10-15. Everything below is still true today; items fixed in c
 - **Detached grandchild processes** (double-fork, `setsid`, Windows detached) cannot be reaped from Node; outcomes are reported as point-in-time (§5.1, §5.6).
 - **Edits preserving size, mtime and ctime** on a file hashed more than 5 s after its last change can evade freshness detection until the next full rebuild (§5.2).
 - **WSL has no hosted CI runner:** verification is manual-only (§4.2).
+- **Call detection recognises known call apps only:** Music Time pauses while Teams, Zoom, Skype, Webex, Slack, Discord, WhatsApp, Telegram, Signal, Phone Link and similar apps (and browsers, for Meet / web Teams) record from the microphone. Dictation, recorders and other mic users do not pause it, but a call app missing from the list, a listen-only call, and browser voice-typing are not told apart. macOS cannot attribute the microphone to an app, so there it needs a native call app open and does not see browser calls. Turn it off with Settings > "Pause music during calls". Linux needs `pactl` (PulseAudio or PipeWire-pulse).
 - **Pure-MCP clients** must follow writes with a graph read or `kai_sync_graph`, unless the opt-in `--watch` watcher is on (§5.4).
 
 ---

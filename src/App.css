@@ -625,12 +625,44 @@ body.tab-dragging * {
   box-shadow: 0 0 8px var(--accent-glow);
 }
 
-/* Custom tab color wins over the default accent pill: without this the
-   ::after overlay buries the user's 2px borderTop, so picking a color
-   appears to do nothing ("tab color not working"). */
+/* Custom tab color: a 2px strip along the top edge, drawn with ::before
+   instead of a border-top so it never shifts a tab's content (a border used
+   to sit colored tabs' titles 1px lower than plain ones). Unselected colored
+   tabs keep it softened at 55% so they read as labels, not as the selection;
+   the selected tab hands the color over to the glowing pill below. */
+.tab-item.has-color::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--tab-color);
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+/* Selected colored tab: the pill (not the strip) carries the user's color at
+   full strength — one clear indicator instead of two overlapping ones. */
+.tab-item.has-color.active::before {
+  opacity: 0;
+}
+
 .tab-item.has-color.active::after {
   background: var(--tab-color);
   box-shadow: 0 0 8px var(--tab-color);
+}
+
+.tab-item.has-color:not(.active) .tab-color-dot {
+  opacity: 0.65;
+}
+
+/* The tab strip clips anything outside its box (overflow-y: hidden), so draw
+   the keyboard focus ring inside the tab instead of letting the global
+   outline get cut in half at the top edge. */
+.tab-item:focus-visible {
+  outline-offset: -2px;
 }
 
 .tab-icon {

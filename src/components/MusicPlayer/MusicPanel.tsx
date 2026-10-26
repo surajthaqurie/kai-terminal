@@ -30,6 +30,7 @@ import {
   WifiOff,
   X,
 } from "lucide-react";
+import { useCallPause } from "../../hooks/useCallPause";
 import { isTypingTarget } from "../../services/shortcuts";
 import {
   MusicTrack,
@@ -289,6 +290,18 @@ export const MusicPanel: FC<MusicPanelProps> = ({
       report(0);
     };
   }, [src, onProgressChange, sendCommand]);
+
+  useCallPause({
+    playing,
+    pause: () => {
+      sendCommand("pauseVideo");
+      setPlaying(false);
+    },
+    resume: () => {
+      sendCommand("playVideo");
+      setPlaying(true);
+    },
+  });
 
   const togglePlay = () => {
     if (!src) return;

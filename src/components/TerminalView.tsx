@@ -23,6 +23,7 @@ import { ShellProfile, SessionStatus, UserSettings } from "../types/terminal";
 import { SettingsService, DEFAULT_SETTINGS } from "../services/settingsService";
 import { loadCommandHistory, recordCommand, saveCommandHistory } from "../services/autocomplete";
 import { TerminalOutputBuffer } from "../services/terminalOutputBuffer";
+import { readClipboardText } from "../services/clipboardService";
 import {
   CD_PROBE_DELAYS_MS,
   CWD_SETTLE_MS,
@@ -545,7 +546,9 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       // route through the same writer as the keyboard paste. Keyboard paste
       // preventDefaults its keydown, so this never fires twice for one paste.
       const container = containerRef.current;
+      let keyboardPasteFallback: ReturnType<typeof setTimeout> | undefined;
       const onNativePaste = (event: ClipboardEvent) => {
+        clearTimeout(keyboardPasteFallback);
         event.preventDefault();
         event.stopPropagation();
         const text = event.clipboardData?.getData("text/plain") ?? "";
@@ -574,21 +577,26 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
           return false;
         }
         // Paste: Ctrl+Shift+V (Win/Linux), Cmd+V (macOS), Shift+Insert.
-        // preventDefault/stopPropagation are load-bearing: without them the
-        // WebView ALSO performs a native paste into xterm's hidden textarea,
-        // which surfaces via onData as a second writeToPty — "paste once,
-        // appears twice". The explicit clipboard.readText below must be the
-        // single writer. Auto-repeat keydowns are swallowed the same way so
-        // a held combo cannot queue duplicate pastes.
+        // The keydown is NOT cancelled, so the WebView does a native paste:
+        // it fires a `paste` event (handled by onNativePaste above, the
+        // single writer) and never shows a clipboard permission prompt.
+        // If no paste event arrives, the backend reads the clipboard instead.
+        // Auto-repeat keydowns are swallowed so a held combo cannot queue
+        // duplicate pastes.
         const isPaste = isPasteKeyEvent(event);
         if (isPaste) {
-          event.preventDefault();
-          event.stopPropagation();
-          if (event.type === "keydown" && !event.repeat) {
-            navigator.clipboard
-              .readText()
-              .then(pasteToPty)
-              .catch(() => {});
+          if (event.type === "keydown") {
+            if (event.repeat) {
+              event.preventDefault();
+              event.stopPropagation();
+            } else {
+              clearTimeout(keyboardPasteFallback);
+              keyboardPasteFallback = setTimeout(() => {
+                readClipboardText()
+                  .then(pasteToPty)
+                  .catch(() => {});
+              }, 150);
+            }
           }
           return false;
         }
@@ -966,6 +974,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         }
         term.textarea?.removeEventListener("focus", onTextareaFocus);
         container.removeEventListener("paste", onNativePaste, true);
+        clearTimeout(keyboardPasteFallback);
         detachGpuRenderer(webglAddonRef);
         inputDisposable.dispose();
         resizeObserver.disconnect();
