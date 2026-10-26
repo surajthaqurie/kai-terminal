@@ -3,6 +3,7 @@ import { Toolbar } from "./components/Toolbar";
 import { TabBar } from "./components/TabBar";
 import { StatusBar } from "./components/StatusBar";
 import { UpdateBanner } from "./components/UpdateBanner";
+import { UpdateResultNotice } from "./components/UpdateResultNotice";
 import type { TerminalViewRef } from "./components/TerminalView";
 import { TabPanes } from "./components/TabPanes";
 import { SessionBanners } from "./components/SessionBanners";
@@ -261,6 +262,17 @@ function App() {
           onOpenDiagnostics={() => setIsDiagnosticsOpen(true)}
         />
       </div>
+
+      {updates.updateOutcome && (
+        <UpdateResultNotice
+          outcome={updates.updateOutcome}
+          onDismiss={updates.dismissUpdateOutcome}
+          onRetry={() => {
+            updates.dismissUpdateOutcome();
+            void updates.checkUpdates(true);
+          }}
+        />
+      )}
 
       {updates.updateBannerVisible &&
         updates.updateInfo?.updateAvailable &&

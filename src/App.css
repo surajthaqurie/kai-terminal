@@ -2294,6 +2294,62 @@ select.modal-input {
   transition: width 0.2s ease;
 }
 
+/* Installing: the work is hidden, so show a moving bar instead of a fake %. */
+.update-download-progress.indeterminate .update-download-progress-fill {
+  width: 40%;
+  animation: kai-update-indeterminate 1.2s ease-in-out infinite;
+}
+
+@keyframes kai-update-indeterminate {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(250%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .update-download-progress.indeterminate .update-download-progress-fill {
+    animation: none;
+    width: 100%;
+    opacity: 0.6;
+  }
+}
+
+.update-progress-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.update-progress-row .update-download-progress {
+  flex: 0 0 160px;
+}
+
+.update-banner--success {
+  background-color: var(--color-success-bg);
+  border-bottom-color: var(--color-success);
+  color: var(--color-success);
+}
+
+.update-banner--success .update-banner-icon,
+.update-banner--success .update-banner-close {
+  color: var(--color-success);
+}
+
+.update-banner--failed {
+  background-color: var(--color-danger-bg);
+  border-bottom-color: var(--color-danger);
+  color: var(--color-danger);
+}
+
+.update-banner--failed .update-banner-icon,
+.update-banner--failed .update-banner-close {
+  color: var(--color-danger);
+}
+
 .spin {
   animation: kai-spin 1s linear infinite;
 }

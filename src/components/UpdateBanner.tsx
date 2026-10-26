@@ -1,6 +1,7 @@
 import { FC } from "react";
 import { ArrowUpCircle, ExternalLink, X, Clock, Download, Loader2 } from "lucide-react";
 import type { UpdateDownloadState } from "../services/updateService";
+import { UpdateProgressBar, describeUpdateStep } from "./UpdateProgressBar";
 
 interface UpdateBannerProps {
   currentVersion: string;
@@ -34,10 +35,7 @@ export const UpdateBanner: FC<UpdateBannerProps> = ({
   onLater,
 }) => {
   const busy = downloadState.status === "downloading" || downloadState.status === "installing";
-  const progress =
-    downloadState.status === "downloading" && downloadState.progress != null
-      ? Math.max(0, Math.min(100, downloadState.progress))
-      : null;
+  const stepText = describeUpdateStep(downloadState);
 
   return (
     <div className="update-banner" role="alert" aria-label="Application update available">
@@ -45,7 +43,7 @@ export const UpdateBanner: FC<UpdateBannerProps> = ({
         <ArrowUpCircle size={16} />
       </span>
       <span className="update-banner-text">
-        <strong>Update available</strong>
+        <strong>{busy ? "Updating Kai" : "Update available"}</strong>
         <span className="update-banner-versions">
           {" "}
           v{currentVersion} → v{latestVersion}
@@ -53,21 +51,16 @@ export const UpdateBanner: FC<UpdateBannerProps> = ({
         {releaseName && releaseName !== `v${latestVersion}` && (
           <span className="update-banner-release"> — {releaseName}</span>
         )}
-        <span className="update-banner-hint">
-          {" "}
-          A newer version of Kai Terminal is ready{releaseAuthor ? ` by ${releaseAuthor}` : ""}.
-          {assetLabel ? ` ${assetLabel} detected for this device.` : ""}
-        </span>
-        {downloadState.status === "downloading" && (
+        {stepText ? (
           <span className="update-banner-hint" role="status">
             {" "}
-            Downloading{progress != null ? ` ${Math.round(progress)}%` : "…"} — keep Kai open.
+            {stepText}
           </span>
-        )}
-        {downloadState.status === "installing" && (
-          <span className="update-banner-hint" role="status">
+        ) : (
+          <span className="update-banner-hint">
             {" "}
-            Launching installer…
+            A newer version of Kai Terminal is ready{releaseAuthor ? ` by ${releaseAuthor}` : ""}.
+            {assetLabel ? ` ${assetLabel} detected for this device.` : ""}
           </span>
         )}
         {downloadState.status === "installed" && downloadState.message && (
@@ -83,18 +76,7 @@ export const UpdateBanner: FC<UpdateBannerProps> = ({
           </span>
         )}
       </span>
-      {progress != null && (
-        <span
-          className="update-download-progress"
-          role="progressbar"
-          aria-valuenow={Math.round(progress)}
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-label="Update download progress"
-        >
-          <span className="update-download-progress-fill" style={{ width: `${progress}%` }} />
-        </span>
-      )}
+      <UpdateProgressBar state={downloadState} />
       <div className="update-banner-actions">
         {assetLabel ? (
           <button
@@ -141,6 +123,7 @@ export const UpdateBanner: FC<UpdateBannerProps> = ({
           type="button"
           className="btn btn-secondary btn-small"
           onClick={onLater}
+          disabled={busy}
           title="Remind me later"
         >
           <Clock size={12} />
@@ -150,6 +133,7 @@ export const UpdateBanner: FC<UpdateBannerProps> = ({
           type="button"
           className="btn btn-icon btn-small update-banner-close"
           onClick={onDismiss}
+          disabled={busy}
           title="Dismiss this version"
           aria-label="Dismiss update notification"
         >

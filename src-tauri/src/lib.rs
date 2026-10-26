@@ -62,9 +62,9 @@ use shell::{
 #[cfg(feature = "tauri")]
 use tauri::{AppHandle, Emitter, Manager, State};
 
+/// Reaps every PTY child, closes the window and terminates the process.
 #[cfg(feature = "tauri")]
-#[tauri::command]
-fn close_app_window(app_handle: AppHandle) {
+pub(crate) fn shutdown_app(app_handle: &AppHandle) {
     let state: State<'_, PtyManager> = app_handle.state();
     state.close_all();
     if let Some(window) = app_handle.get_webview_window("main") {
@@ -72,6 +72,12 @@ fn close_app_window(app_handle: AppHandle) {
     }
     app_handle.exit(0);
     std::process::exit(0);
+}
+
+#[cfg(feature = "tauri")]
+#[tauri::command]
+fn close_app_window(app_handle: AppHandle) {
+    shutdown_app(&app_handle);
 }
 
 #[cfg(feature = "tauri")]
@@ -427,7 +433,7 @@ pub fn run() {
             kai_cli::ensure_kai_cli_cmd,
             updater::download_update_asset_cmd,
             updater::launch_update_installer_cmd,
-            updater::cleanup_update_download_cmd
+            updater::get_update_install_hint_cmd
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

@@ -30,6 +30,7 @@ const PRESERVED_EXACT: ReadonlySet<string> = new Set([
   // updateService.ts
   "kai_update_last_check",
   "kai_update_dismissed_version",
+  "kai_update_pending",
   // autocomplete.ts
   "kai_cmd_history_v1",
   // aiCliService.ts

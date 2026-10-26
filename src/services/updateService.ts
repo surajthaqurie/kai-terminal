@@ -375,16 +375,44 @@ export function describeAsset(a: ReleaseAsset): string {
 
 export interface DownloadAndInstallHooks {
   onProgress?: (received: number, total: number | null) => void;
+  /** Download finished; the installer is being handed off to run in the background. */
+  onInstalling?: () => void;
+}
+
+export interface InstallLaunchResult {
+  message: string;
+  /** True when a background helper installs after Kai exits and reopens it. */
+  unattended: boolean;
 }
 
 /**
- * Downloads the selected installer via the Tauri backend and launches it.
+ * Swaps the default pick for the installer that matches how this copy of Kai
+ * was installed (`hint` from the backend): an AppImage run must update the
+ * AppImage (a `.deb` would add a second system copy) and an MSI install
+ * under Program Files must update through the MSI (the per-user `.exe`
+ * would add a second copy). Falls back to `asset` when no match exists.
+ */
+export function applyInstallHint(
+  asset: ReleaseAsset,
+  assets: ReleaseAsset[],
+  hint: string | null
+): ReleaseAsset {
+  const flavour = hint === "appimage" ? /\.appimage$/i : hint === "msi" ? /\.msi$/i : null;
+  if (!flavour) return asset;
+  // Same CPU architecture as the default pick (which already matched this machine).
+  const isArm = (name: string) => /aarch64|arm64/i.test(name);
+  return assets.find((a) => flavour.test(a.name) && isArm(a.name) === isArm(asset.name)) ?? asset;
+}
+
+/**
+ * Downloads the selected installer via the Tauri backend and installs it.
  * The whole flow runs in the background: the async backend streams the
- * file (progress events keep the UI bar moving) and the installer spawns
- * detached, so the app never freezes on any OS.
- * After launch the downloaded file is deleted; when the OS holds a lock
- * (Windows while the installer runs) the next app start sweeps it.
- * Returns the backend's human-readable "next step" message.
+ * file (progress events keep the UI bar moving), then hands it to a
+ * detached helper. The backend closes Kai itself a moment later; the helper
+ * installs, deletes the downloaded installer once it is finished with it and
+ * reopens Kai on the new version — no manual close or restart.
+ * Returns the backend's human-readable "next step" message and whether the
+ * install is unattended (Kai restarts by itself) or left to the user.
  * Throws on failure so the UI can show the error + fall back to the
  * release page. In a browser build (no Tauri) it opens the release page
  * instead and returns a message to that effect.
@@ -392,12 +420,17 @@ export interface DownloadAndInstallHooks {
 export async function downloadAndInstallUpdate(
   asset: ReleaseAsset,
   releaseUrl: string | null,
-  hooks?: DownloadAndInstallHooks
-): Promise<string> {
+  hooks?: DownloadAndInstallHooks,
+  assets: ReleaseAsset[] = [asset]
+): Promise<InstallLaunchResult> {
   const { isTauriAvailable } = await import("./ptyService");
   if (!isTauriAvailable()) {
     await openReleasePage(releaseUrl || RELEASES_PAGE_URL);
-    return "Opened the release page in your browser — download the installer for your OS to update.";
+    return {
+      message:
+        "Opened the release page in your browser — download the installer for your OS to update.",
+      unattended: false,
+    };
   }
   const { invoke } = await import("@tauri-apps/api/core");
   const unlistenProgress: Array<() => void> = [];
@@ -412,21 +445,19 @@ export async function downloadAndInstallUpdate(
     } catch {
       // Progress events are best-effort; download still works without them.
     }
+    let target = asset;
+    try {
+      const hint = await invoke<string | null>("get_update_install_hint_cmd");
+      target = applyInstallHint(asset, assets, hint);
+    } catch {
+      // Hint is best-effort; the default pick still installs.
+    }
     const dl = await invoke<{ path: string; filename: string; bytes: number }>(
       "download_update_asset_cmd",
-      { url: asset.browser_download_url, filename: asset.name }
+      { url: target.browser_download_url, filename: target.name }
     );
-    const msg = await invoke<string>("launch_update_installer_cmd", { path: dl.path });
-    // Best-effort cleanup: never fail the update when the delete is refused
-    // (Windows locks the file while its installer runs — the startup sweep
-    // removes it on the next launch instead).
-    let cleaned = false;
-    try {
-      cleaned = await invoke<boolean>("cleanup_update_download_cmd", { path: dl.path });
-    } catch {
-      cleaned = false;
-    }
-    return cleaned ? `${msg} The downloaded installer was removed.` : msg;
+    hooks?.onInstalling?.();
+    return await invoke<InstallLaunchResult>("launch_update_installer_cmd", { path: dl.path });
   } finally {
     for (const off of unlistenProgress) {
       try {
@@ -435,6 +466,67 @@ export async function downloadAndInstallUpdate(
         // ignore
       }
     }
+  }
+}
+
+// --- update outcome (survives the restart the installer causes) ---
+
+export const UPDATE_PENDING_KEY = "kai_update_pending";
+/** An update that has not reported back after this long is forgotten. */
+const UPDATE_PENDING_MAX_AGE_MS = 30 * 60 * 1000;
+
+export interface UpdateOutcome {
+  kind: "updated" | "failed";
+  version: string;
+}
+
+/**
+ * Remembers that an in-app update was started so the next launch can tell
+ * the user whether it worked. Written BEFORE the download: the webview needs
+ * time to flush storage before Kai quits for the install.
+ */
+export function markUpdatePending(from: string, to: string, now = Date.now()): void {
+  try {
+    localStorage.setItem(
+      UPDATE_PENDING_KEY,
+      JSON.stringify({ from: normalizeVersion(from), to: normalizeVersion(to), at: now })
+    );
+  } catch {
+    // Storage unavailable: the update still installs, only the result notice is lost.
+  }
+}
+
+export function clearUpdatePending(): void {
+  try {
+    localStorage.removeItem(UPDATE_PENDING_KEY);
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * Called once per launch: compares the running version with the version the
+ * last in-app update targeted. `null` when no update was pending (or it is
+ * stale). Always clears the marker.
+ */
+export function consumeUpdateOutcome(
+  currentVersion: string,
+  now = Date.now()
+): UpdateOutcome | null {
+  try {
+    const raw = localStorage.getItem(UPDATE_PENDING_KEY);
+    if (!raw) return null;
+    localStorage.removeItem(UPDATE_PENDING_KEY);
+    const data = JSON.parse(raw) as { from?: unknown; to?: unknown; at?: unknown };
+    if (typeof data.to !== "string" || typeof data.at !== "number") return null;
+    if (now - data.at > UPDATE_PENDING_MAX_AGE_MS || data.at > now + 60_000) return null;
+    const current = normalizeVersion(currentVersion);
+    if (current === data.to || isNewerVersion(current, data.to)) {
+      return { kind: "updated", version: current };
+    }
+    return { kind: "failed", version: data.to };
+  } catch {
+    return null;
   }
 }
 

@@ -7,11 +7,15 @@ import {
   UPDATE_PERIODIC_MS,
   UpdateCheckResult,
   UpdateDownloadState,
+  UpdateOutcome,
   checkForUpdates,
+  clearUpdatePending,
+  consumeUpdateOutcome,
   dismissVersion,
   downloadAndInstallUpdate,
   getAppVersion,
   isDismissed,
+  markUpdatePending,
   openReleasePage,
   recordCheckTime,
   shouldAutoCheck,
@@ -21,8 +25,6 @@ import {
 const FIRST_CHECK_DELAY_MS = 45_000;
 const HIDDEN_RETRY_MS = 60_000;
 const MAX_HIDDEN_RETRIES = 3;
-/** Lets the "installed" toast paint before the window closes for the installer. */
-const CLOSE_FOR_INSTALLER_DELAY_MS = 2500;
 
 interface AppUpdatesOptions {
   autoCheckUpdates: boolean | undefined;
@@ -41,6 +43,8 @@ export function useAppUpdates({ autoCheckUpdates, setLastError }: AppUpdatesOpti
   const [updateDownload, setUpdateDownload] = useState<UpdateDownloadState>(
     INITIAL_UPDATE_DOWNLOAD_STATE
   );
+  // Result of the update that restarted Kai ("updated to vX" / "didn't finish").
+  const [updateOutcome, setUpdateOutcome] = useState<UpdateOutcome | null>(null);
 
   const checkUpdates = useCallback(
     async (manual = false) => {
@@ -51,8 +55,13 @@ export function useAppUpdates({ autoCheckUpdates, setLastError }: AppUpdatesOpti
         setAppVersion(current);
         const result = await checkForUpdates(current);
         setUpdateInfo(result);
-        // Fresh version → fresh download state (never reuse a stale path).
-        setUpdateDownload(INITIAL_UPDATE_DOWNLOAD_STATE);
+        // Fresh version → fresh download state (never reuse a stale path),
+        // but never wipe an install that is running right now.
+        setUpdateDownload((prev) =>
+          prev.status === "downloading" || prev.status === "installing"
+            ? prev
+            : INITIAL_UPDATE_DOWNLOAD_STATE
+        );
         recordCheckTime();
         if (result.updateAvailable && result.latestVersion) {
           // Respect a previous dismiss unless this is a manual re-check.
@@ -83,6 +92,8 @@ export function useAppUpdates({ autoCheckUpdates, setLastError }: AppUpdatesOpti
   useEffect(() => {
     void getAppVersion().then((v) => {
       setAppVersion(v);
+      // Did the update that restarted Kai work? Reported once per launch.
+      setUpdateOutcome(consumeUpdateOutcome(v));
       // Install/update cache sweep: remove stale keys from older builds
       // while preserving settings, sessions, and config (allowlist inside).
       // Version-gated so it runs once per update, never on every launch.
@@ -146,40 +157,48 @@ export function useAppUpdates({ autoCheckUpdates, setLastError }: AppUpdatesOpti
       localPath: null,
       message: null,
     });
+    // Remember the target so the next launch can report success/failure.
+    // Written first: the webview needs time to flush before Kai quits.
+    if (updateInfo?.latestVersion)
+      markUpdatePending(updateInfo.currentVersion, updateInfo.latestVersion);
     try {
-      const message = await downloadAndInstallUpdate(asset, updateInfo?.releaseUrl ?? null, {
-        onProgress: (received, total) => {
-          setUpdateDownload((prev) => ({
-            ...prev,
-            status: "downloading",
-            receivedBytes: received,
-            totalBytes: total ?? prev.totalBytes,
-            progress: total && total > 0 ? Math.min(100, (received / total) * 100) : null,
-          }));
+      // After the download the installer runs in the background: the backend
+      // closes Kai itself and a detached helper installs, deletes the
+      // downloaded installer and reopens the new version.
+      const result = await downloadAndInstallUpdate(
+        asset,
+        updateInfo?.releaseUrl ?? null,
+        {
+          onProgress: (received, total) => {
+            setUpdateDownload((prev) => ({
+              ...prev,
+              status: "downloading",
+              receivedBytes: received,
+              totalBytes: total ?? prev.totalBytes,
+              progress: total && total > 0 ? Math.min(100, (received / total) * 100) : null,
+            }));
+          },
+          onInstalling: () =>
+            setUpdateDownload((prev) => ({
+              ...prev,
+              status: "installing",
+              progress: null,
+              message: "Preparing the update…",
+            })),
         },
-      });
+        updateInfo?.assets
+      );
+      if (!result.unattended) clearUpdatePending();
+      // Unattended: stay in "installing" — the install keeps running in the
+      // background and Kai restarts by itself, so the bar must not look done.
       setUpdateDownload((prev) => ({
         ...prev,
-        status: "installed",
-        progress: 100,
-        message,
+        status: result.unattended ? "installing" : "installed",
+        progress: result.unattended ? null : 100,
+        message: result.message,
       }));
-      // Windows NSIS cannot overwrite a running app: close Kai so the
-      // launched installer can proceed. Other platforms keep running (dmg
-      // mount / software-center flow returns the user to the app).
-      try {
-        const { isTauriAvailable } = await import("../services/ptyService");
-        if (isTauriAvailable() && /\.exe$/i.test(asset.name)) {
-          const { invoke } = await import("@tauri-apps/api/core");
-          // Give the toast a beat to paint before the window goes away.
-          setTimeout(() => {
-            void invoke("close_app_window").catch(() => undefined);
-          }, CLOSE_FOR_INSTALLER_DELAY_MS);
-        }
-      } catch {
-        // Non-fatal: installer is already launched.
-      }
     } catch (err) {
+      clearUpdatePending();
       const message = errorMessage(err);
       setUpdateDownload((prev) => ({
         ...prev,
@@ -199,12 +218,16 @@ export function useAppUpdates({ autoCheckUpdates, setLastError }: AppUpdatesOpti
 
   const remindLater = useCallback(() => setUpdateBannerVisible(false), []);
 
+  const dismissUpdateOutcome = useCallback(() => setUpdateOutcome(null), []);
+
   return {
     appVersion,
     updateInfo,
     isCheckingUpdates,
     updateBannerVisible,
     updateDownload,
+    updateOutcome,
+    dismissUpdateOutcome,
     checkUpdates,
     viewUpdate,
     downloadAndInstall,

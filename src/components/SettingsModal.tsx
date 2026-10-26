@@ -30,6 +30,7 @@ import {
   ExternalLink,
 } from "lucide-react";
 import type { UpdateCheckResult, UpdateDownloadState } from "../services/updateService";
+import { UpdateProgressBar, describeUpdateStep } from "./UpdateProgressBar";
 
 export type SettingsTab = "appearance" | "terminal" | "shell" | "shortcuts" | "updates";
 
@@ -901,7 +902,15 @@ export const SettingsModal: FC<SettingsModalProps> = ({
                     </button>
                   )}
                 </div>
-                {updateInfo?.selectedAsset && (
+                {updateDownload &&
+                  (updateDownload.status === "downloading" ||
+                    updateDownload.status === "installing") && (
+                    <div className="update-progress-row" role="status">
+                      <UpdateProgressBar state={updateDownload} />
+                      <span className="muted-text">{describeUpdateStep(updateDownload)}</span>
+                    </div>
+                  )}
+                {updateInfo?.selectedAsset && updateDownload?.status !== "installing" && (
                   <p className="muted-text" role="status">
                     Detected installer for this device: {updateInfo.selectedAsset.name}
                     {updateInfo.selectedAssetLabel ? ` (${updateInfo.selectedAssetLabel})` : ""}.
@@ -919,8 +928,8 @@ export const SettingsModal: FC<SettingsModalProps> = ({
                 )}
                 <p className="muted-text">
                   Checks the public GitHub releases page for a newer version. When an installer is
-                  available for your OS, Kai downloads it and launches the installer automatically —
-                  otherwise use the release page.
+                  available for your OS, Kai downloads it and installs it in the background, then
+                  restarts by itself — otherwise use the release page.
                 </p>
               </div>
 
