@@ -58,8 +58,8 @@ describe("kai mcp CLI commands", () => {
     expect(code).toBe(0);
     expect(fs.existsSync(claudeJson)).toBe(true);
     const content = JSON.parse(fs.readFileSync(claudeJson, "utf-8"));
-    expect(content.mcpServers.kai).toBeDefined();
-    expect(content.mcpServers.kai.command).toBe("node");
+    expect(content.mcpServers["kai-terminal"]).toBeDefined();
+    expect(content.mcpServers["kai-terminal"].command).toBe("node");
   });
 
   it("removes claude wiring with 'kai remove -m claude' and 'kai mcp remove claude'", async () => {
@@ -79,7 +79,7 @@ describe("kai mcp CLI commands", () => {
     const beforeRaw = JSON.parse(fs.readFileSync(claudeJson, "utf-8"));
     expect(beforeRaw.mcpServers.kai).toBeDefined();
 
-    // Real remove with -m
+    // Real remove with -m (legacy "kai" entry is cleaned as well)
     expect(await runCli(["node", "kai", "remove", "-m", "claude"])).toBe(0);
     const afterRaw = JSON.parse(fs.readFileSync(claudeJson, "utf-8"));
     expect(afterRaw.mcpServers.kai).toBeUndefined();
@@ -97,6 +97,7 @@ describe("kai mcp CLI commands", () => {
     expect(await runCli(["node", "kai", "mcp", "remove", "claude"])).toBe(0);
     const finalRaw = JSON.parse(fs.readFileSync(claudeJson, "utf-8"));
     expect(finalRaw.mcpServers.kai).toBeUndefined();
+    expect(finalRaw.mcpServers["kai-terminal"]).toBeUndefined();
   });
 
   it("handles typos gracefully", async () => {

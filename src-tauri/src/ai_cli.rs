@@ -111,6 +111,43 @@ enum McpKeyStyle {
     TomlCodex,
 }
 
+/// MCP server registration name written into every agent's config file.
+/// Renamed from the legacy "kai" so the server reads as "kai-terminal" in
+/// each agent's MCP tool list. Old configs keep working: detection accepts
+/// both names, setup migrates a legacy entry to the new name, and removal
+/// cleans either (mirrors `src/core/agents.ts`).
+const MCP_SERVER_NAME: &str = "kai-terminal";
+const LEGACY_MCP_SERVER_NAME: &str = "kai";
+
+/// Full TOML table header for the kai server entry.
+fn mcp_toml_header(name: &str) -> String {
+    format!("[mcp_servers.{name}]")
+}
+
+/// Does `raw` already wire the kai server (new name or legacy)?
+fn toml_has_kai_entry(raw: &str) -> bool {
+    raw.contains(&mcp_toml_header(MCP_SERVER_NAME))
+        || raw.contains(&mcp_toml_header(LEGACY_MCP_SERVER_NAME))
+}
+
+/// Does a parsed JSON agent config already wire the kai server (new or
+/// legacy name) inside any of its MCP containers?
+fn json_has_kai_entry(parsed: &serde_json::Value) -> bool {
+    for key in ["mcpServers", "mcp", "mcp_servers", "servers"] {
+        if parsed
+            .get(key)
+            .and_then(|c| {
+                c.get(MCP_SERVER_NAME)
+                    .or_else(|| c.get(LEGACY_MCP_SERVER_NAME))
+            })
+            .is_some()
+        {
+            return true;
+        }
+    }
+    false
+}
+
 /// Home-relative config file + merge style for automatic kai MCP wiring.
 /// Returns `None` for unknown ids; callers must reject those.
 fn agent_mcp_target(id: &str) -> Option<(&'static str, McpKeyStyle, Option<&'static str>)> {
@@ -191,18 +228,13 @@ fn is_kai_wired(id: &str) -> bool {
         return false;
     }
     if style == McpKeyStyle::TomlCodex {
-        return raw.contains("[mcp_servers.kai]");
+        return toml_has_kai_entry(&raw);
     }
     let parsed: serde_json::Value = match serde_json::from_str(&raw) {
         Ok(v) => v,
         Err(_) => return false,
     };
-    for key in ["mcpServers", "mcp", "mcp_servers", "servers"] {
-        if parsed.get(key).and_then(|c| c.get("kai")).is_some() {
-            return true;
-        }
-    }
-    false
+    json_has_kai_entry(&parsed)
 }
 
 /// Result of automatically installing kai MCP wiring for one agent.
@@ -733,7 +765,10 @@ fn write_merged_json_config(
         ));
     }
     let entry = kai_entry_json(style, spawn, project_arg);
-    let already = doc.get(container_key).and_then(|c| c.get("kai")).is_some();
+    let already = doc
+        .get(container_key)
+        .and_then(|c| c.get(MCP_SERVER_NAME))
+        .is_some();
     if already && !force {
         return Ok(AgentSetupResult {
             id: id.to_string(),
@@ -741,7 +776,7 @@ fn write_merged_json_config(
             wrote: false,
             already_configured: true,
             backup_path: None,
-            message: "Kai entry already present.".to_string(),
+            message: "kai-terminal MCP entry already present.".to_string(),
         });
     }
     if !doc
@@ -751,7 +786,16 @@ fn write_merged_json_config(
     {
         doc[container_key] = serde_json::json!({});
     }
-    doc[container_key]["kai"] = entry;
+    {
+        // A legacy "kai" entry migrates away so the agent sees exactly one
+        // kai-terminal server (no duplicate registration).
+        let container = doc
+            .get_mut(container_key)
+            .and_then(|v| v.as_object_mut())
+            .ok_or_else(|| "config container is not an object".to_string())?;
+        container.remove(LEGACY_MCP_SERVER_NAME);
+        container.insert(MCP_SERVER_NAME.to_string(), entry);
+    }
 
     if let Some(parent) = file.parent() {
         std::fs::create_dir_all(parent)
@@ -788,18 +832,24 @@ fn write_merged_json_config(
         wrote: true,
         already_configured: false,
         backup_path,
-        message: "Kai MCP entry installed.".to_string(),
+        message: "kai-terminal MCP entry installed.".to_string(),
     })
 }
 
-/// Remove a previously written `[mcp_servers.kai]` section (up to the next
-/// table header or EOF) so forced refreshes replace instead of duplicating.
-fn strip_codex_kai_section(raw: &str) -> String {
+/// Remove any previously written kai server section (`kai-terminal` and the
+/// legacy `kai`) up to the next table header or EOF, so forced refreshes
+/// replace instead of duplicating tables (duplicate tables are a TOML parse
+/// error in the agent).
+fn strip_codex_kai_sections(raw: &str) -> String {
+    let headers = [
+        mcp_toml_header(MCP_SERVER_NAME),
+        mcp_toml_header(LEGACY_MCP_SERVER_NAME),
+    ];
     let mut out: Vec<&str> = Vec::new();
     let mut skipping = false;
     for line in raw.lines() {
         let t = line.trim();
-        if t == "[mcp_servers.kai]" {
+        if headers.iter().any(|h| h == t) {
             skipping = true;
             continue;
         }
@@ -821,23 +871,27 @@ fn setup_codex_toml(
     force: bool,
 ) -> Result<AgentSetupResult, String> {
     let existing = std::fs::read_to_string(file).ok();
-    let has_kai = existing
+    let has_new = existing
         .as_deref()
-        .map(|r| r.contains("[mcp_servers.kai]"))
+        .map(|r| r.contains(&mcp_toml_header(MCP_SERVER_NAME)))
         .unwrap_or(false);
-    if has_kai && !force {
+    let has_legacy = existing
+        .as_deref()
+        .map(|r| r.contains(&mcp_toml_header(LEGACY_MCP_SERVER_NAME)))
+        .unwrap_or(false);
+    if has_new && !force {
         return Ok(AgentSetupResult {
             id: id.to_string(),
             path: file.to_string_lossy().to_string(),
             wrote: false,
             already_configured: true,
             backup_path: None,
-            message: "Kai entry already present.".to_string(),
+            message: "kai-terminal MCP entry already present.".to_string(),
         });
     }
     let full = spawn_full_args(spawn, project_arg);
     let section = format!(
-        "[mcp_servers.kai]\ncommand = {}\nargs = {}\n",
+        "[mcp_servers.{MCP_SERVER_NAME}]\ncommand = {}\nargs = {}\n",
         serde_json::to_string(&spawn.command).unwrap(),
         serde_json::to_string(&full).unwrap()
     );
@@ -856,11 +910,10 @@ fn setup_codex_toml(
         None
     };
     let content = match existing {
-        // Forced refresh replaces the stale kai section instead of appending
-        // a duplicate table (duplicate `[mcp_servers.kai]` tables are a TOML
-        // parse error in the agent).
-        Some(raw) if has_kai => {
-            let stripped = strip_codex_kai_section(&raw);
+        // Forced refresh (or legacy migration) replaces the stale kai
+        // section instead of appending a duplicate table.
+        Some(raw) if has_new || has_legacy => {
+            let stripped = strip_codex_kai_sections(&raw);
             if stripped.is_empty() {
                 section
             } else {
@@ -887,7 +940,7 @@ fn setup_codex_toml(
         wrote: true,
         already_configured: false,
         backup_path,
-        message: "Kai MCP section installed.".to_string(),
+        message: "kai-terminal MCP section installed.".to_string(),
     })
 }
 /// Verified manual MCP snippet for an agent, for the desktop panel's
@@ -938,17 +991,17 @@ pub fn agent_setup_snippet(id: &str, project_arg: &str) -> Result<String, String
         "opencode" => (
             "~/.config/opencode/opencode.json",
             format!(
-                "{{\n  \"$schema\": \"https://opencode.ai/config.json\",\n  \"mcp\": {{\n    \"kai\": {{\n      \"type\": \"local\",\n      \"command\": {opencode_cmd_json},\n      \"enabled\": true\n    }}\n  }}\n}}"
+                "{{\n  \"$schema\": \"https://opencode.ai/config.json\",\n  \"mcp\": {{\n    \"kai-terminal\": {{\n      \"type\": \"local\",\n      \"command\": {opencode_cmd_json},\n      \"enabled\": true\n    }}\n  }}\n}}"
             ),
         ),
         "codex" => (
             "~/.codex/config.toml",
-            format!("[mcp_servers.kai]\ncommand = {cmd_json}\nargs = {args_json}"),
+            format!("[mcp_servers.kai-terminal]\ncommand = {cmd_json}\nargs = {args_json}"),
         ),
         "copilot" => (
             "<project>/.vscode/mcp.json",
             format!(
-                "{{\n  \"servers\": {{\n    \"kai\": {{\n      \"type\": \"stdio\",\n      \"command\": {cmd_json},\n      \"args\": {args_json}\n    }}\n  }}\n}}"
+                "{{\n  \"servers\": {{\n    \"kai-terminal\": {{\n      \"type\": \"stdio\",\n      \"command\": {cmd_json},\n      \"args\": {args_json}\n    }}\n  }}\n}}"
             ),
         ),
         "claude" | "cursor" | "gemini" | "windsurf" | "cline" | "aider" | "agy" => (
@@ -962,7 +1015,7 @@ pub fn agent_setup_snippet(id: &str, project_arg: &str) -> Result<String, String
                 _ => "~/.gemini/antigravity-cli/settings.json",
             },
             format!(
-                "{{\n  \"mcpServers\": {{\n    \"kai\": {{\n      \"command\": {cmd_json},\n      \"args\": {args_json}\n    }}\n  }}\n}}"
+                "{{\n  \"mcpServers\": {{\n    \"kai-terminal\": {{\n      \"command\": {cmd_json},\n      \"args\": {args_json}\n    }}\n  }}\n}}"
             ),
         ),
         _ => {
@@ -2388,7 +2441,8 @@ mod tests {
             assert!(res.wrote);
             let raw = std::fs::read_to_string(proj.join(".vscode/mcp.json")).unwrap();
             let doc: serde_json::Value = serde_json::from_str(&raw).unwrap();
-            assert!(doc["servers"]["kai"].is_object());
+            assert!(doc["servers"]["kai-terminal"].is_object());
+            assert!(doc["servers"]["kai"].is_null());
             assert!(doc["servers"]["other"].is_object());
             // Idempotent without force.
             let again = setup_agent_mcp(
@@ -2419,7 +2473,7 @@ mod tests {
             assert!(forced.wrote);
             let raw = std::fs::read_to_string(home.join(".codex/config.toml")).unwrap();
             assert_eq!(
-                raw.matches("[mcp_servers.kai]").count(),
+                raw.matches("[mcp_servers.kai-terminal]").count(),
                 1,
                 "duplicate kai tables would be a TOML parse error: {raw}"
             );
@@ -2444,10 +2498,12 @@ mod tests {
             let raw = std::fs::read_to_string(&res.path).unwrap();
             let doc: serde_json::Value = serde_json::from_str(&raw).unwrap();
             assert_eq!(
-                doc["mcpServers"]["kai"]["command"],
+                doc["mcpServers"]["kai-terminal"]["command"],
                 serde_json::json!("node")
             );
-            let args = doc["mcpServers"]["kai"]["args"].as_array().unwrap();
+            let args = doc["mcpServers"]["kai-terminal"]["args"]
+                .as_array()
+                .unwrap();
             assert_eq!(args[0], serde_json::json!(js.to_string_lossy()));
             assert!(is_kai_wired("aider"));
             let _ = std::fs::remove_dir_all(shim.parent().unwrap());
@@ -2461,7 +2517,7 @@ mod tests {
         assert!(open.contains("\"mcp\""));
         assert!(open.contains("node"));
         let codex = agent_setup_snippet("codex", ".").expect("codex snippet");
-        assert!(codex.contains("[mcp_servers.kai]"));
+        assert!(codex.contains("[mcp_servers.kai-terminal]"));
         let copilot = agent_setup_snippet("copilot", ".").expect("copilot snippet");
         assert!(copilot.contains("\"servers\""));
         let claude = agent_setup_snippet("claude", ".").expect("claude snippet");
@@ -2533,7 +2589,52 @@ mod tests {
             let raw = std::fs::read_to_string(dir.join("mcp.json")).unwrap();
             let doc: serde_json::Value = serde_json::from_str(&raw).unwrap();
             assert!(doc["mcpServers"]["other"].is_object());
-            assert!(doc["mcpServers"]["kai"].is_object());
+            assert!(doc["mcpServers"]["kai-terminal"].is_object());
+        });
+    }
+
+    #[test]
+    fn test_setup_migrates_legacy_json_server_name() {
+        let _env = crate::test_support::lock_test_env();
+        with_temp_home("legacy-json", |home| {
+            let dir = home.join(".config/aider");
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(
+                dir.join("mcp.json"),
+                r#"{"mcpServers":{"kai":{"command":"node","args":["/legacy/kai.js","mcp","."]}}}"#,
+            )
+            .unwrap();
+            // Old configs still count as wired ...
+            assert!(is_kai_wired("aider"));
+            // ... and setup migrates the entry to the new name.
+            let res = setup_agent_mcp("aider", test_launcher(), ".", false, None).expect("setup");
+            assert!(res.wrote);
+            let raw = std::fs::read_to_string(dir.join("mcp.json")).unwrap();
+            let doc: serde_json::Value = serde_json::from_str(&raw).unwrap();
+            assert!(doc["mcpServers"]["kai"].is_null());
+            assert!(doc["mcpServers"]["kai-terminal"].is_object());
+            assert!(is_kai_wired("aider"));
+        });
+    }
+
+    #[test]
+    fn test_setup_migrates_legacy_codex_toml_section() {
+        let _env = crate::test_support::lock_test_env();
+        with_temp_home("legacy-toml", |home| {
+            let dir = home.join(".codex");
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(
+                dir.join("config.toml"),
+                "[mcp_servers.kai]\ncommand = \"node\"\nargs = [\"/legacy/kai.js\", \"mcp\", \".\"]\n",
+            )
+            .unwrap();
+            assert!(is_kai_wired("codex"));
+            let res = setup_agent_mcp("codex", test_launcher(), ".", false, None).expect("setup");
+            assert!(res.wrote);
+            let raw = std::fs::read_to_string(dir.join("config.toml")).unwrap();
+            assert!(raw.contains("[mcp_servers.kai-terminal]"));
+            assert!(!raw.contains("[mcp_servers.kai]\n"));
+            assert!(is_kai_wired("codex"));
         });
     }
 
@@ -2563,7 +2664,10 @@ mod tests {
             assert!(res.wrote);
             let raw = std::fs::read_to_string(&res.path).unwrap();
             let doc: serde_json::Value = serde_json::from_str(&raw).unwrap();
-            assert_eq!(doc["mcp"]["kai"]["type"], serde_json::json!("local"));
+            assert_eq!(
+                doc["mcp"]["kai-terminal"]["type"],
+                serde_json::json!("local")
+            );
             assert!(doc.get("mcpServers").is_none());
             assert!(is_kai_wired("opencode"));
         });
@@ -2576,7 +2680,7 @@ mod tests {
             let res = setup_agent_mcp("codex", test_launcher(), ".", false, None).expect("setup");
             assert!(res.wrote);
             let raw = std::fs::read_to_string(home.join(".codex/config.toml")).unwrap();
-            assert!(raw.contains("[mcp_servers.kai]"));
+            assert!(raw.contains("[mcp_servers.kai-terminal]"));
             assert!(is_kai_wired("codex"));
             let again = setup_agent_mcp("codex", test_launcher(), ".", false, None).expect("setup");
             assert!(again.already_configured);

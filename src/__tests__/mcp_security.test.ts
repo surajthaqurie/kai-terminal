@@ -28,7 +28,7 @@ describe("Phase 6 & 7: Model Context Protocol (MCP) Protocol & Tools", () => {
     expect(res?.id).toBe(1);
     const result = res?.result as Record<string, unknown>;
     expect(result.protocolVersion).toBe("2024-11-05");
-    expect((result.serverInfo as Record<string, unknown>).name).toBe("kai-mcp-server");
+    expect((result.serverInfo as Record<string, unknown>).name).toBe("kai-terminal-mcp-server");
   });
 
   it("exposes all required project intelligence tools in tools/list", async () => {

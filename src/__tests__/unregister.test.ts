@@ -186,7 +186,8 @@ describe("runCli smoke coverage", () => {
       const snippet = buildAgentSetup(agent, winBin)!;
       expect(snippet).toBeTruthy();
       const parsed = extractJson(snippet);
-      const args = agent === "claude" ? parsed.mcpServers.kai.args : parsed.mcp_servers[0].args;
+      const args =
+        agent === "claude" ? parsed.mcpServers["kai-terminal"].args : parsed.mcp_servers[0].args;
       expect(args[0]).toBe(winBin);
     }
 
@@ -195,7 +196,7 @@ describe("runCli smoke coverage", () => {
     expect(cursor).toContain("C:\\\\tools\\\\kai space\\\\bin\\\\kai.js");
 
     const posix = buildAgentSetup("claude", "/usr/local/bin/kai.js")!;
-    expect(extractJson(posix).mcpServers.kai.args[0]).toBe("/usr/local/bin/kai.js");
+    expect(extractJson(posix).mcpServers["kai-terminal"].args[0]).toBe("/usr/local/bin/kai.js");
 
     expect(buildAgentSetup("unknown-agent", winBin)).toBeNull();
   });

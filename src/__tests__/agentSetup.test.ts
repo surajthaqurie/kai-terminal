@@ -9,6 +9,7 @@ import {
   buildKaiMcpEntry,
   getAgentDefinition,
   isAgentWired,
+  removeAgentSetup,
   resolveAgentConfigPath,
 } from "../core/agents";
 import { getKaiCliLaunch, setupAgentMcp } from "../services/aiCliService";
@@ -85,7 +86,8 @@ describe("applyAgentSetup (automatic install)", () => {
     const file = path.join(home, ".config/aider/mcp.json");
     expect(first.path).toBe(file);
     const doc = JSON.parse(fs.readFileSync(file, "utf-8"));
-    expect(doc.mcpServers.kai.args).toEqual([KAI_BIN, "mcp", "."]);
+    expect(doc.mcpServers["kai-terminal"].args).toEqual([KAI_BIN, "mcp", "."]);
+    expect(doc.mcpServers["kai"]).toBeUndefined();
     expect(isAgentWired("aider", { homeDir: home })).toBe(true);
 
     const second = applyAgentSetup("aider", KAI_BIN, { homeDir: home });
@@ -100,7 +102,7 @@ describe("applyAgentSetup (automatic install)", () => {
     expect(forced.backupPath).toBe(`${file}.kai.bak`);
     expect(fs.existsSync(`${file}.kai.bak`)).toBe(true);
     const refreshed = JSON.parse(fs.readFileSync(file, "utf-8"));
-    expect(refreshed.mcpServers.kai.args[0]).toBe("/other/kai.js");
+    expect(refreshed.mcpServers["kai-terminal"].args[0]).toBe("/other/kai.js");
   });
 
   it("merges without touching unrelated servers", () => {
@@ -115,7 +117,7 @@ describe("applyAgentSetup (automatic install)", () => {
     expect(res.wrote).toBe(true);
     const doc = JSON.parse(fs.readFileSync(path.join(dir, "mcp.json"), "utf-8"));
     expect(doc.mcpServers.other.command).toBe("other-bin");
-    expect(doc.mcpServers.kai.command).toBe("node");
+    expect(doc.mcpServers["kai-terminal"].command).toBe("node");
   });
 
   it("writes opencode config under the mcp key (not mcpServers)", () => {
@@ -123,8 +125,8 @@ describe("applyAgentSetup (automatic install)", () => {
     const res = applyAgentSetup("opencode", KAI_BIN, { homeDir: home });
     expect(res.wrote).toBe(true);
     const doc = JSON.parse(fs.readFileSync(res.path, "utf-8"));
-    expect(doc.mcp.kai.type).toBe("local");
-    expect(doc.mcp.kai.command).toEqual(["node", KAI_BIN, "mcp", "."]);
+    expect(doc.mcp["kai-terminal"].type).toBe("local");
+    expect(doc.mcp["kai-terminal"].command).toEqual(["node", KAI_BIN, "mcp", "."]);
     expect(doc.mcpServers).toBeUndefined();
     expect(isAgentWired("opencode", { homeDir: home })).toBe(true);
   });
@@ -134,11 +136,18 @@ describe("applyAgentSetup (automatic install)", () => {
     const first = applyAgentSetup("codex", KAI_BIN, { homeDir: home });
     expect(first.wrote).toBe(true);
     const raw = fs.readFileSync(first.path, "utf-8");
-    expect(raw).toContain("[mcp_servers.kai]");
+    expect(raw).toContain("[mcp_servers.kai-terminal]");
     expect(isAgentWired("codex", { homeDir: home })).toBe(true);
     const second = applyAgentSetup("codex", KAI_BIN, { homeDir: home });
     expect(second.alreadyConfigured).toBe(true);
     expect(second.wrote).toBe(false);
+    // Forced refresh never duplicates the table (a duplicate table is a TOML
+    // parse error in the agent).
+    const forced = applyAgentSetup("codex", "/other/kai.js", { homeDir: home, force: true });
+    expect(forced.wrote).toBe(true);
+    expect(
+      (fs.readFileSync(forced.path, "utf-8").match(/\[mcp_servers\.kai-terminal\]/g) || []).length
+    ).toBe(1);
   });
 
   it("supports project scope for copilot", () => {
@@ -153,7 +162,7 @@ describe("applyAgentSetup (automatic install)", () => {
     expect(res.wrote).toBe(true);
     expect(res.scope).toBe("project");
     const doc = JSON.parse(fs.readFileSync(path.join(project, ".vscode/mcp.json"), "utf-8"));
-    expect(doc.servers.kai.type).toBe("stdio");
+    expect(doc.servers["kai-terminal"].type).toBe("stdio");
   });
 
   it("dry-run previews without writing", () => {
@@ -162,6 +171,70 @@ describe("applyAgentSetup (automatic install)", () => {
     expect(res.wrote).toBe(false);
     expect(res.created).toBe(true);
     expect(fs.existsSync(path.join(home, ".muse/settings.json"))).toBe(false);
+  });
+
+  it("migrates a legacy 'kai' server entry to 'kai-terminal'", () => {
+    const home = makeTempHome();
+    const dir = path.join(home, ".config/aider");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, "mcp.json"),
+      JSON.stringify({
+        mcpServers: {
+          kai: { command: "node", args: ["/legacy/kai.js", "mcp", "."] },
+          other: { command: "other-bin", args: [] },
+        },
+      })
+    );
+    // Old configs still count as wired ...
+    expect(isAgentWired("aider", { homeDir: home })).toBe(true);
+    // ... and setup migrates the entry to the new name.
+    const res = applyAgentSetup("aider", KAI_BIN, { homeDir: home });
+    expect(res.wrote).toBe(true);
+    const doc = JSON.parse(fs.readFileSync(path.join(dir, "mcp.json"), "utf-8"));
+    expect(doc.mcpServers.kai).toBeUndefined();
+    expect(doc.mcpServers["kai-terminal"].args).toEqual([KAI_BIN, "mcp", "."]);
+    expect(doc.mcpServers.other.command).toBe("other-bin");
+    expect(isAgentWired("aider", { homeDir: home })).toBe(true);
+  });
+
+  it("migrates a legacy codex TOML section to kai-terminal", () => {
+    const home = makeTempHome();
+    const dir = path.join(home, ".codex");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, "config.toml"),
+      '[mcp_servers.kai]\ncommand = "node"\nargs = ["/legacy/kai.js", "mcp", "."]\n\n[mcp_servers.other]\ncommand = "other-bin"\n'
+    );
+    expect(isAgentWired("codex", { homeDir: home })).toBe(true);
+    const res = applyAgentSetup("codex", KAI_BIN, { homeDir: home });
+    expect(res.wrote).toBe(true);
+    const raw = fs.readFileSync(res.path, "utf-8");
+    expect(raw).toContain("[mcp_servers.kai-terminal]");
+    expect(raw).not.toContain("[mcp_servers.kai]");
+    expect(raw).toContain("[mcp_servers.other]");
+    expect(isAgentWired("codex", { homeDir: home })).toBe(true);
+  });
+
+  it("remove cleans both the new and any legacy server name", () => {
+    const home = makeTempHome();
+    const dir = path.join(home, ".config/aider");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, "mcp.json"),
+      JSON.stringify({
+        mcpServers: {
+          kai: { command: "node", args: ["/legacy/kai.js", "mcp", "."] },
+          other: { command: "other-bin", args: [] },
+        },
+      })
+    );
+    const res = removeAgentSetup("aider", { homeDir: home });
+    expect(res.removed).toBe(true);
+    const doc = JSON.parse(fs.readFileSync(path.join(dir, "mcp.json"), "utf-8"));
+    expect(doc.mcpServers.kai).toBeUndefined();
+    expect(doc.mcpServers["kai-terminal"]).toBeUndefined();
+    expect(doc.mcpServers.other.command).toBe("other-bin");
   });
 
   it("refuses invalid JSON instead of destroying user config", () => {
@@ -249,21 +322,21 @@ describe("Harden Phase: Path escaping, spaces, Unicode, quotes & dynamic agent v
     const resAider = applyAgentSetup("aider", unicodePath, { homeDir: home });
     expect(resAider.wrote).toBe(true);
     const docAider = JSON.parse(fs.readFileSync(resAider.path, "utf-8"));
-    expect(docAider.mcpServers.kai.args[0]).toBe(unicodePath);
+    expect(docAider.mcpServers["kai-terminal"].args[0]).toBe(unicodePath);
 
     // 2. Windows-style path with backslashes and spaces
     const winPath = "C:\\Program Files\\Kai Terminal\\bin\\kai.js";
     const resOpencode = applyAgentSetup("opencode", winPath, { homeDir: home, force: true });
     expect(resOpencode.wrote).toBe(true);
     const docOpencode = JSON.parse(fs.readFileSync(resOpencode.path, "utf-8"));
-    expect(docOpencode.mcp.kai.command[1]).toBe(winPath);
+    expect(docOpencode.mcp["kai-terminal"].command[1]).toBe(winPath);
 
     // 3. Path with quotes and special characters in Codex TOML
     const quotedPath = 'C:\\tools\\kai"special"\\kai.js';
     const resCodex = applyAgentSetup("codex", quotedPath, { homeDir: home, force: true });
     expect(resCodex.wrote).toBe(true);
     const rawCodex = fs.readFileSync(resCodex.path, "utf-8");
-    expect(rawCodex).toContain("[mcp_servers.kai]");
+    expect(rawCodex).toContain("[mcp_servers.kai-terminal]");
     // Args in TOML is serialized validly with escaping
     expect(rawCodex).toContain(JSON.stringify(quotedPath));
   });

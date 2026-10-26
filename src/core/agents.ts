@@ -17,6 +17,15 @@ import path from "path";
 
 export type AgentKind = "cli" | "ide";
 
+/**
+ * MCP server registration name written into every agent's config file.
+ * Renamed from the legacy "kai" so the server reads as "kai-terminal" in
+ * each agent's MCP tool list. Old configs keep working: setup migrates a
+ * legacy entry to the new name, detection accepts both, remove cleans both.
+ */
+export const MCP_SERVER_NAME = "kai-terminal";
+export const LEGACY_MCP_SERVER_NAME = "kai";
+
 /** How the kai MCP entry is stored in an agent's config file. */
 export type AgentConfigKeyStyle =
   "mcpServers" | "mcp-opencode" | "mcp_servers" | "vscode-servers" | "toml-codex";
@@ -115,7 +124,7 @@ Add the following to your Claude Code settings (e.g., ~/.claude.json or project 
 
 {
   "mcpServers": {
-    "kai": {
+    "kai-terminal": {
       "command": "node",
       "args": [${quotedBin}, "mcp", "."]
     }
@@ -151,7 +160,7 @@ Add to .cursor/mcp.json or Cursor Settings > MCP:
 
 {
   "mcpServers": {
-    "kai": {
+    "kai-terminal": {
       "command": "node",
       "args": [${quotedBin}, "mcp", "\${workspaceFolder}"]
     }
@@ -180,7 +189,7 @@ Launch Codex with MCP stdio configuration pointing to Kai:
 {
   "mcp_servers": [
     {
-      "name": "kai",
+      "name": "kai-terminal",
       "command": "node",
       "args": [${quotedBin}, "mcp", "."]
     }
@@ -208,7 +217,7 @@ Add to ~/.muse/settings.json (or .muse/settings.json for project scope):
 
 {
   "mcpServers": {
-    "kai": {
+    "kai-terminal": {
       "command": "node",
       "args": [${quotedBin}, "mcp", "."]
     }
@@ -240,7 +249,7 @@ Add to .vscode/mcp.json:
 
 {
   "servers": {
-    "kai": {
+    "kai-terminal": {
       "type": "stdio",
       "command": "node",
       "args": [${quotedBin}, "mcp", "."]
@@ -249,7 +258,7 @@ Add to .vscode/mcp.json:
 }
 
 Verification:
-Open VS Code MCP settings and confirm the "kai" server is running.
+Open VS Code MCP settings and confirm the "kai-terminal" server is running.
 `;
     },
   },
@@ -278,7 +287,7 @@ Add to ~/.codeium/windsurf/mcp_config.json:
 
 {
   "mcpServers": {
-    "kai": {
+    "kai-terminal": {
       "command": "node",
       "args": [${quotedBin}, "mcp", "."]
     }
@@ -286,7 +295,7 @@ Add to ~/.codeium/windsurf/mcp_config.json:
 }
 
 Verification:
-Restart Windsurf and confirm the "kai" MCP server is connected.
+Restart Windsurf and confirm the "kai-terminal" MCP server is connected.
 `;
     },
   },
@@ -308,7 +317,7 @@ Add to cline_mcp_settings.json (VS Code Cline extension settings):
 
 {
   "mcpServers": {
-    "kai": {
+    "kai-terminal": {
       "command": "node",
       "args": [${quotedBin}, "mcp", "."]
     }
@@ -316,7 +325,7 @@ Add to cline_mcp_settings.json (VS Code Cline extension settings):
 }
 
 Verification:
-Open the Cline MCP settings panel and confirm the "kai" server is listed.
+Open the Cline MCP settings panel and confirm the "kai-terminal" server is listed.
 `;
     },
   },
@@ -342,7 +351,7 @@ Add to ~/.config/opencode/opencode.json (global) or opencode.json in the project
 {
   "$schema": "https://opencode.ai/config.json",
   "mcp": {
-    "kai": {
+    "kai-terminal": {
       "type": "local",
       "command": ${command},
       "enabled": true
@@ -379,7 +388,7 @@ Aider reads MCP servers from ~/.config/aider/mcp.json (Claude Desktop convention
 
 {
   "mcpServers": {
-    "kai": {
+    "kai-terminal": {
       "command": "node",
       "args": [${quotedBin}, "mcp", "."]
     }
@@ -388,7 +397,7 @@ Aider reads MCP servers from ~/.config/aider/mcp.json (Claude Desktop convention
 
 Verification:
 Run: aider
-Confirm the "kai" MCP tools are listed at session start.
+Confirm the "kai-terminal" MCP tools are listed at session start.
 `;
     },
   },
@@ -417,7 +426,7 @@ Add to ~/.gemini/antigravity-cli/settings.json:
 
 {
   "mcpServers": {
-    "kai": {
+    "kai-terminal": {
       "command": "node",
       "args": [${quotedBin}, "mcp", "."]
     }
@@ -570,7 +579,7 @@ Add to ${filePath}:
 
 {
   "mcpServers": {
-    "kai": {
+    "kai-terminal": {
       "command": "node",
       "args": [${quotedBin}, "mcp", "."]
     }
@@ -601,7 +610,7 @@ In chat: "Use kai_project_info to inspect the codebase."
       skipped: false,
       created: false,
       alreadyConfigured: true,
-      message: `Kai entry already present in ${filePath}.`,
+      message: `kai-terminal entry already present in ${filePath}.`,
       backupPath: null,
       snippet,
     };
@@ -612,7 +621,7 @@ In chat: "Use kai_project_info to inspect the codebase."
       skipped: false,
       created: !exists,
       alreadyConfigured: false,
-      message: `Would ${exists ? "merge kai entry into" : "create"} ${filePath}.`,
+      message: `Would ${exists ? "merge kai-terminal entry into" : "create"} ${filePath}.`,
       backupPath: null,
       snippet,
     };
@@ -641,7 +650,7 @@ In chat: "Use kai_project_info to inspect the codebase."
       skipped: false,
       created: !exists,
       alreadyConfigured: false,
-      message: `${!exists ? "Created" : "Updated"} ${filePath} with kai MCP entry.`,
+      message: `${!exists ? "Created" : "Updated"} ${filePath} with kai-terminal MCP entry.`,
       backupPath,
       snippet,
     };
@@ -884,7 +893,9 @@ function readJsonConfig(filePath: string): {
   }
 }
 
-/** Insert (or refresh with force) the kai entry inside a parsed JSON config. */
+/** Insert (or refresh with force) the kai-terminal entry inside a parsed
+ *  JSON config. A legacy "kai" entry is migrated: it is removed and the
+ *  entry is rewritten under the new name. */
 export function mergeKaiMcpEntry(
   data: Record<string, unknown>,
   keyStyle: AgentConfigKeyStyle,
@@ -912,8 +923,11 @@ export function mergeKaiMcpEntry(
     data[containerKey] = container;
   }
   const servers = container as Record<string, unknown>;
-  if (servers.kai !== undefined && !force) return { alreadyConfigured: true };
-  servers.kai = entry;
+  if (servers[MCP_SERVER_NAME] !== undefined && !force) return { alreadyConfigured: true };
+  // Migration: the legacy "kai" key moves out of the way so each agent sees
+  // exactly one kai-terminal server (no duplicate registration).
+  delete servers[LEGACY_MCP_SERVER_NAME];
+  servers[MCP_SERVER_NAME] = entry;
   return { alreadyConfigured: false };
 }
 
@@ -924,7 +938,8 @@ function hasKaiJsonEntry(data: Record<string, unknown>): boolean {
       container &&
       typeof container === "object" &&
       !Array.isArray(container) &&
-      (container as Record<string, unknown>).kai !== undefined
+      ((container as Record<string, unknown>)[MCP_SERVER_NAME] !== undefined ||
+        (container as Record<string, unknown>)[LEGACY_MCP_SERVER_NAME] !== undefined)
     ) {
       return true;
     }
@@ -932,7 +947,33 @@ function hasKaiJsonEntry(data: Record<string, unknown>): boolean {
   return false;
 }
 
-const CODEX_TOML_SECTION = "mcp_servers.kai";
+const CODEX_TOML_SECTION = `mcp_servers.${MCP_SERVER_NAME}`;
+const LEGACY_TOML_SECTIONS = [`mcp_servers.${LEGACY_MCP_SERVER_NAME}`];
+
+/** Match one full `[section]` TOML block up to the next section or EOF. */
+function tomlSectionRegex(section: string): RegExp {
+  return new RegExp(`\\n?\\[${section.replace(/\./g, "\\.")}\\][\\s\\S]*?(?=\\n\\[|$)`, "g");
+}
+
+/** Remove any previously written kai server table block(s) — the new
+ *  `kai-terminal` section and any legacy `[mcp_servers.kai]` block left by
+ *  older releases — so setup never appends a duplicate table. */
+function stripKaiTomlSections(raw: string): string {
+  let out = raw.replace(tomlSectionRegex(CODEX_TOML_SECTION), "");
+  for (const section of LEGACY_TOML_SECTIONS) {
+    out = out.replace(tomlSectionRegex(section), "");
+  }
+  return out;
+}
+
+function hasCodexTomlEntry(raw: string): boolean {
+  if (raw.includes(`[${CODEX_TOML_SECTION}]`) || raw.includes(`${CODEX_TOML_SECTION}.`)) {
+    return true;
+  }
+  return LEGACY_TOML_SECTIONS.some(
+    (section) => raw.includes(`[${section}]`) || raw.includes(`${section}.`)
+  );
+}
 
 function buildCodexTomlSection(kaiBin: string, projectArg: string): string {
   const args = JSON.stringify([kaiBin, "mcp", projectArg]);
@@ -956,16 +997,16 @@ function applyCodexTomlSetup(
   } catch {
     fileExists = false;
   }
-  const hasKai =
+  const hasNew =
     existing.includes(`[${CODEX_TOML_SECTION}]`) || existing.includes(`${CODEX_TOML_SECTION}.`);
-  if (hasKai && !force) {
+  if (hasNew && !force) {
     return {
       wrote: false,
       created: false,
       alreadyConfigured: true,
       skipped: false,
       backupPath: null,
-      message: `Kai entry already present in ${filePath}.${note}`,
+      message: `kai-terminal entry already present in ${filePath}.${note}`,
     };
   }
   if (dryRun) {
@@ -975,17 +1016,20 @@ function applyCodexTomlSetup(
       alreadyConfigured: false,
       skipped: false,
       backupPath: null,
-      message: `Would ${fileExists ? "append kai section to" : "create"} ${filePath}.${note}`,
+      message: `Would ${fileExists ? "append kai-terminal section to" : "create"} ${filePath}.${note}`,
     };
   }
   ensureParentDir(filePath);
   let backupPath: string | null = null;
   if (fileExists) backupPath = backupFile(filePath);
   const section = buildCodexTomlSection(kaiBin, projectArg);
+  // Forced refresh (or legacy migration) replaces any stale kai section with
+  // the new one, so TOML never ends up with a duplicate table.
+  const cleaned = stripKaiTomlSections(existing);
   const next =
-    !fileExists || !existing.endsWith("\n")
-      ? `${existing}${fileExists ? "\n" : ""}\n${section}`
-      : `${existing}\n${section}`;
+    !fileExists || !cleaned.endsWith("\n")
+      ? `${cleaned}${fileExists ? "\n" : ""}\n${section}`
+      : `${cleaned}\n${section}`;
   atomicWriteFile(filePath, fileExists ? next : `${section}`);
   return {
     wrote: true,
@@ -993,7 +1037,7 @@ function applyCodexTomlSetup(
     alreadyConfigured: false,
     skipped: false,
     backupPath,
-    message: `Wrote kai MCP section to ${filePath}.${note}`,
+    message: `Wrote kai-terminal MCP section to ${filePath}.${note}`,
   };
 }
 
@@ -1056,7 +1100,7 @@ export function isAgentWired(agent: string, opts: AgentSetupOptions = {}): boole
   if (resolved.target.keyStyle === "toml-codex") {
     try {
       const raw = fs.readFileSync(resolved.path, "utf-8");
-      return raw.includes(`[${CODEX_TOML_SECTION}]`) || raw.includes(`${CODEX_TOML_SECTION}.`);
+      return hasCodexTomlEntry(raw);
     } catch {
       return false;
     }
@@ -1183,7 +1227,7 @@ export function applyAgentSetup(
       alreadyConfigured: true,
       skipped: false,
       backupPath: null,
-      message: `Kai entry already present in ${filePath}.${missingNote}`,
+      message: `kai-terminal entry already present in ${filePath}.${missingNote}`,
     };
   }
   if (dryRun) {
@@ -1197,7 +1241,7 @@ export function applyAgentSetup(
       alreadyConfigured: false,
       skipped: false,
       backupPath: null,
-      message: `Would ${exists ? "merge kai entry into" : "create"} ${filePath}.${missingNote}`,
+      message: `Would ${exists ? "merge kai-terminal entry into" : "create"} ${filePath}.${missingNote}`,
     };
   }
   ensureParentDir(filePath);
@@ -1213,7 +1257,7 @@ export function applyAgentSetup(
     alreadyConfigured: false,
     skipped: false,
     backupPath,
-    message: `${!exists ? "Created" : "Updated"} ${filePath} with kai MCP entry.${missingNote}`,
+    message: `${!exists ? "Created" : "Updated"} ${filePath} with kai-terminal MCP entry.${missingNote}`,
   };
 }
 
@@ -1302,13 +1346,13 @@ export function removeAgentSetup(agent: string, opts: AgentSetupOptions = {}): A
 
   if (target.keyStyle === "toml-codex") {
     const raw = fs.readFileSync(filePath, "utf-8");
-    if (!raw.includes(CODEX_TOML_SECTION)) {
+    if (!hasCodexTomlEntry(raw)) {
       return {
         id: def.id,
         name: def.name,
         path: filePath,
         removed: false,
-        message: `No kai entry found in ${filePath}.`,
+        message: `No kai-terminal MCP entry found in ${filePath}.`,
       };
     }
     if (dryRun) {
@@ -1317,18 +1361,18 @@ export function removeAgentSetup(agent: string, opts: AgentSetupOptions = {}): A
         name: def.name,
         path: filePath,
         removed: true,
-        message: `Would remove kai MCP section from ${filePath}.`,
+        message: `Would remove kai-terminal MCP section from ${filePath}.`,
       };
     }
     backupFile(filePath);
-    const updated = raw.replace(/\n?\[mcp_servers\.kai\][\s\S]*?(?=\n\[|$)/, "");
+    const updated = stripKaiTomlSections(raw);
     atomicWriteFile(filePath, updated);
     return {
       id: def.id,
       name: def.name,
       path: filePath,
       removed: true,
-      message: `Removed kai MCP section from ${filePath}.`,
+      message: `Removed kai-terminal MCP section from ${filePath}.`,
     };
   }
 
@@ -1353,13 +1397,17 @@ export function removeAgentSetup(agent: string, opts: AgentSetupOptions = {}): A
           : "mcpServers";
 
   const container = parsed.data[containerKey] as Record<string, unknown> | undefined;
-  if (!container || typeof container !== "object" || container.kai === undefined) {
+  const hasServer =
+    container &&
+    typeof container === "object" &&
+    (container[MCP_SERVER_NAME] !== undefined || container[LEGACY_MCP_SERVER_NAME] !== undefined);
+  if (!hasServer) {
     return {
       id: def.id,
       name: def.name,
       path: filePath,
       removed: false,
-      message: `No kai entry found in ${filePath}.`,
+      message: `No kai-terminal MCP entry found in ${filePath}.`,
     };
   }
 
@@ -1369,18 +1417,19 @@ export function removeAgentSetup(agent: string, opts: AgentSetupOptions = {}): A
       name: def.name,
       path: filePath,
       removed: true,
-      message: `Would remove kai MCP entry from ${filePath}.`,
+      message: `Would remove kai-terminal MCP entry from ${filePath}.`,
     };
   }
 
   backupFile(filePath);
-  delete container.kai;
+  delete container[MCP_SERVER_NAME];
+  delete container[LEGACY_MCP_SERVER_NAME];
   atomicWriteFile(filePath, JSON.stringify(parsed.data, null, 2) + "\n");
   return {
     id: def.id,
     name: def.name,
     path: filePath,
     removed: true,
-    message: `Removed kai MCP entry from ${filePath}.`,
+    message: `Removed kai-terminal MCP entry from ${filePath}.`,
   };
 }

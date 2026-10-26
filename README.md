@@ -100,16 +100,16 @@ Detailed guide and syntax: see [USER_MANUAL.md](USER_MANUAL.md).
 
 | Agent             | Config file                                                   | Notes                                            |
 | ----------------- | ------------------------------------------------------------- | ------------------------------------------------ |
-| Claude Code       | `~/.claude.json`                                              | `mcpServers.kai` stdio entry                     |
+| Claude Code       | `~/.claude.json`                                              | `mcpServers["kai-terminal"]` stdio entry                     |
 | Cursor            | `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` (project) | uses `${workspaceFolder}`                        |
-| Codex             | `~/.codex/config.toml`                                        | `[mcp_servers.kai]` section                      |
-| Gemini CLI        | `~/.muse/settings.json`                                       | `mcpServers.kai` stdio entry                     |
-| Copilot / VS Code | `.vscode/mcp.json` (project)                                  | `servers.kai` with `"type": "stdio"`             |
-| Windsurf          | `~/.codeium/windsurf/mcp_config.json`                         | `mcpServers.kai` stdio entry                     |
+| Codex             | `~/.codex/config.toml`                                        | `[mcp_servers.kai-terminal]` section             |
+| Gemini CLI        | `~/.muse/settings.json`                                       | `mcpServers["kai-terminal"]` stdio entry                     |
+| Copilot / VS Code | `.vscode/mcp.json` (project)                                  | `servers["kai-terminal"]` with `"type": "stdio"`             |
+| Windsurf          | `~/.codeium/windsurf/mcp_config.json`                         | `mcpServers["kai-terminal"]` stdio entry                     |
 | Cline             | VS Code global storage `cline_mcp_settings.json`              | skipped with manual steps when VS Code is absent |
-| opencode          | `~/.config/opencode/opencode.json`                            | `mcp.kai` with `"type": "local"`                 |
-| Aider             | `~/.config/aider/mcp.json`                                    | `mcpServers.kai` stdio entry                     |
-| Antigravity (agy) | `~/.gemini/antigravity-cli/settings.json`                     | `mcpServers.kai` stdio entry                     |
+| opencode          | `~/.config/opencode/opencode.json`                            | `mcp["kai-terminal"]` with `"type": "local"`                 |
+| Aider             | `~/.config/aider/mcp.json`                                    | `mcpServers["kai-terminal"]` stdio entry                     |
+| Antigravity (agy) | `~/.gemini/antigravity-cli/settings.json`                     | `mcpServers["kai-terminal"]` stdio entry                     |
 
 Agent detection is dynamic: `kai list` probes the live system
 PATH plus known config files at runtime, so newly installed agents show
