@@ -1152,6 +1152,24 @@ pub struct YouTubeVideoItem {
     pub title: String,
 }
 
+/// Byte-range slice that can NEVER panic: returns None when start/end are
+/// out of bounds or land inside a multi-byte UTF-8 character. YouTube's
+/// result pages embed raw non-ASCII text, so fixed byte offsets routinely
+/// hit char-boundary crossings — a plain `&s[a..b]` would panic, and with
+/// the release profile's `panic = "abort"` that closes the whole app.
+fn try_slice(s: &str, start: usize, end: usize) -> Option<&str> {
+    if start <= end
+        && start <= s.len()
+        && end <= s.len()
+        && s.is_char_boundary(start)
+        && s.is_char_boundary(end)
+    {
+        Some(&s[start..end])
+    } else {
+        None
+    }
+}
+
 /// Extracts YouTube videos (videoId and title) from search results HTML.
 pub fn extract_videos_from_search_html(html: &str, limit: usize) -> Vec<YouTubeVideoItem> {
     let mut items = Vec::new();
@@ -1169,16 +1187,19 @@ pub fn extract_videos_from_search_html(html: &str, limit: usize) -> Vec<YouTubeV
     let mut offset = 0;
     while let Some(idx) = html[offset..].find(pattern) {
         let vid_start = offset + idx + pattern.len();
-        if html.len() < vid_start + 11 {
+        let search_chunk_end = (vid_start + 1500).min(html.len());
+        let (Some(candidate_id), Some(chunk)) = (
+            try_slice(html, vid_start, vid_start + 11),
+            try_slice(html, vid_start, search_chunk_end),
+        ) else {
+            // Char-boundary crossing (non-ASCII content) or near-end-of-page:
+            // stop parsing rather than ever risking a panic.
             break;
-        }
-        let candidate_id = &html[vid_start..vid_start + 11];
+        };
         if candidate_id
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
         {
-            let search_chunk_end = (vid_start + 1500).min(html.len());
-            let chunk = &html[vid_start..search_chunk_end];
             let raw_title = if let Some(t_idx) = chunk.find(title_pattern) {
                 let t_start = t_idx + title_pattern.len();
                 if let Some(t_end) = chunk[t_start..].find('"') {
@@ -1222,6 +1243,31 @@ pub fn extract_video_id_from_search_html(html: &str) -> Option<String> {
         .map(|v| v.video_id.clone())
 }
 
+/// `application/x-www-form-urlencoded` encoding for a search query: every
+/// byte except unreserved ones becomes `%XX` (UTF-8 bytes included), spaces
+/// become `+`. The previous `replace(' ', "+")` left `&`, `#`, `/`, etc. raw,
+/// so queries like "AC/DC & Friends" truncated the parameter or broke the
+/// request entirely.
+#[cfg(any(feature = "tauri", test))]
+fn encode_search_query(q: &str) -> String {
+    let mut out = String::with_capacity(q.len() + 8);
+    for &b in q.as_bytes() {
+        match b {
+            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'*' => {
+                out.push(b as char)
+            }
+            b' ' => out.push('+'),
+            _ => {
+                const HEX: &[u8; 16] = b"0123456789ABCDEF";
+                out.push('%');
+                out.push(HEX[usize::from(b >> 4)] as char);
+                out.push(HEX[usize::from(b & 0x0F)] as char);
+            }
+        }
+    }
+    out
+}
+
 /// Searches YouTube for a query and extracts multiple matching videos (videoId and title).
 #[cfg(feature = "tauri")]
 pub async fn search_youtube_videos(
@@ -1232,8 +1278,10 @@ pub async fn search_youtube_videos(
     if clean.is_empty() || clean.len() > 200 {
         return Err(TerminalError::IoError("Invalid search query".to_string()));
     }
-    let encoded = clean.replace(' ', "+");
-    let url = format!("https://www.youtube.com/results?search_query={encoded}");
+    let url = format!(
+        "https://www.youtube.com/results?search_query={}",
+        encode_search_query(clean)
+    );
     let client = reqwest::Client::builder()
         .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         .timeout(std::time::Duration::from_secs(8))
@@ -1295,10 +1343,14 @@ pub fn extract_videos_from_playlist_html(html: &str, limit: usize) -> Vec<YouTub
     let mut offset = 0;
     while let Some(idx) = html[offset..].find(pattern) {
         let vid_start = offset + idx + pattern.len();
-        if html.len() < vid_start + 11 {
+        let chunk_end = (vid_start + 1500).min(html.len());
+        let (Some(candidate_id), Some(chunk)) = (
+            try_slice(html, vid_start, vid_start + 11),
+            try_slice(html, vid_start, chunk_end),
+        ) else {
+            // Never panic on a char-boundary crossing (see try_slice).
             break;
-        }
-        let candidate_id = &html[vid_start..vid_start + 11];
+        };
         if candidate_id
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
@@ -1306,8 +1358,6 @@ pub fn extract_videos_from_playlist_html(html: &str, limit: usize) -> Vec<YouTub
                 .iter()
                 .any(|v: &YouTubeVideoItem| v.video_id.as_str() == candidate_id)
         {
-            let chunk_end = (vid_start + 1500).min(html.len());
-            let chunk = &html[vid_start..chunk_end];
             let raw_title = if let Some(t_idx) = chunk.find(title_pattern) {
                 let t_start = t_idx + title_pattern.len();
                 if let Some(t_end) = chunk[t_start..].find('"') {
@@ -1588,6 +1638,68 @@ pub fn detect_system_terminal_config() -> SystemTerminalConfig {
 mod tests {
     use super::*;
     use std::fs::{self, File};
+
+    #[test]
+    fn test_extract_search_html_with_multibyte_char_never_panics() {
+        // Regression: a raw byte slice at a fixed offset panicked ("byte index
+        // is not a char boundary") when YouTube's page carried raw non-ASCII
+        // text — and with panic=abort the entire app closed. The extractor
+        // must parse or bail, never panic.
+        let html = concat!(
+            r#"<script>ytInitialData = {"contents":[{"videoRenderer":{"videoId":"dQw4w9WgXcQ","#,
+            r#"“title”":{"runs":[{"text":"Rick “Astley” — Never Gonna Give You Up ツ 🎤"}]}}]}"#,
+        );
+        // Must not panic regardless of where the multi-byte text falls.
+        let _ = extract_videos_from_search_html(html, 8);
+        let _ = extract_video_id_from_search_html(html);
+        let _ = extract_videos_from_playlist_html(html, 8);
+        // A videoId embedded before multi-byte bytes still parses when the
+        // offsets stay on char boundaries.
+        let clean = r#"{"videoRenderer":{"videoId":"dQw4w9WgXcQ","title":{"runs":[{"text":"Never Gonna Give You Up"}]}}}"#;
+        let got = extract_videos_from_search_html(clean, 4);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].video_id, "dQw4w9WgXcQ");
+        assert_eq!(got[0].title, "Never Gonna Give You Up");
+    }
+
+    #[test]
+    fn test_extract_search_html_multibyte_inside_1500_byte_window() {
+        // The title chunk slice spans 1500 bytes; a multi-byte char must not
+        // cross its end boundary (previously panicked).
+        let mut html =
+            String::from(r#"{"videoRenderer":{"videoId":"dQw4w9WgXcQ","title":{"runs":[{"text":"#);
+        html.push_str(&"в".repeat(800)); // Cyrillic, 2 bytes each
+        html.push_str(r#"}}]}"#);
+        let got = extract_videos_from_search_html(&html, 4);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].video_id, "dQw4w9WgXcQ");
+    }
+
+    #[test]
+    fn test_encode_search_query_keeps_special_and_unicode_chars() {
+        assert_eq!(encode_search_query("lofi hip hop"), "lofi+hip+hop");
+        assert_eq!(encode_search_query("AC/DC"), "AC%2FDC");
+        assert_eq!(encode_search_query("a & b"), "a+%26+b");
+        assert_eq!(encode_search_query("çé ñ"), "%C3%A7%C3%A9+%C3%B1");
+        assert_eq!(encode_search_query("#hash"), "%23hash");
+        assert_eq!(
+            encode_search_query("the-convenient_2.0~*"),
+            "the-convenient_2.0~*"
+        );
+    }
+
+    #[test]
+    fn test_extract_playlist_html_multibyte_never_panics() {
+        let html = concat!(
+            r#"{"playlistVideoRenderer":{"videoId":"dQw4w9WgXcQ","#,
+            r#""title":{"runs":[{"text":"Rick \u00c5stley"}]},"someé":"…"},"#,
+        );
+        let _ = extract_videos_from_playlist_html(html, 8);
+        let clean = r#"{"playlistVideoRenderer":{"videoId":"jfKfPfyJRdk","title":{"runs":[{"text":"Lofi"}]}}}"#;
+        let got = extract_videos_from_playlist_html(clean, 4);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].video_id, "jfKfPfyJRdk");
+    }
 
     #[test]
     fn test_detect_available_shells() {

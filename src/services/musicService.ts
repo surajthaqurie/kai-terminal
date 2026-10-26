@@ -25,7 +25,7 @@ export interface MusicTrack {
 const LEGACY_QUEUE_KEY = "kai_music_queue_v1";
 
 /** Extract an 11-char YouTube videoId from watch / short / live / share URLs. */
-export function extractVideoId(input: string): string | null {
+function extractVideoId(input: string): string | null {
   const s = input.trim();
   if (!s) return null;
   const patterns = [
@@ -53,7 +53,7 @@ export function extractPlaylistId(input: string): string | null {
   return m ? m[1] : null;
 }
 
-export function isYouTubeUrl(input: string): boolean {
+function isYouTubeUrl(input: string): boolean {
   const s = input.trim().toLowerCase();
   return s.includes("youtube.com/") || s.includes("youtu.be/") || s.includes("music.youtube.com");
 }
@@ -64,14 +64,14 @@ export interface MusicPreset {
   videoId: string;
 }
 
-export const CURATED_PRESETS: MusicPreset[] = [
+const CURATED_PRESETS: MusicPreset[] = [
   { id: "lofi-girl", title: "Lofi Hip Hop Radio", videoId: "jfKfPfyJRdk" },
   { id: "synthwave", title: "Synthwave Radio", videoId: "4xDzrJKXOOY" },
   { id: "chillhop", title: "Chillhop Radio", videoId: "5yx6BWlEVcY" },
   { id: "coding-focus", title: "Deep Focus Beats", videoId: "0w80F8FffQ4" },
 ];
 
-export function getRandomPreset(): MusicTrack {
+function getRandomPreset(): MusicTrack {
   const item = CURATED_PRESETS[Math.floor(Math.random() * CURATED_PRESETS.length)];
   return {
     title: item.title,
@@ -291,12 +291,6 @@ export function watchUrlForTrack(track: MusicTrack): string {
 }
 
 /** Only messages from trusted YouTube origins are accepted as player telemetry. */
-export const YOUTUBE_EMBED_ORIGIN = "https://www.youtube-nocookie.com";
-export const YOUTUBE_EMBED_ORIGINS = [
-  "https://www.youtube.com",
-  "https://www.youtube-nocookie.com",
-];
-
 export function isYouTubeEmbedOrigin(origin: string): boolean {
   return origin === "https://www.youtube.com" || origin === "https://www.youtube-nocookie.com";
 }

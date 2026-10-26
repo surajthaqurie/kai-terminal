@@ -22,6 +22,7 @@ import {
   Repeat,
   Repeat1,
   Search,
+  SkipBack,
   SkipForward,
   Volume1,
   Volume2,
@@ -121,6 +122,26 @@ export const MusicPanel: FC<MusicPanelProps> = ({
   loopRef.current = loop;
   const queueRef = useRef(queue);
   queueRef.current = queue;
+  // Previous-button history: every track switch snapshots the song that was
+  // playing, so Previous walks back through it. A ref (no re-render needed —
+  // the button stays enabled whenever something is playing).
+  const historyRef = useRef<MusicTrack[]>([]);
+  const trackRef = useRef(track);
+  trackRef.current = track;
+  // Auto-advance rate guard: an "ended" state can arrive twice (state event +
+  // envelope); ignore repeats within 1.5 s so the queue never skips two songs.
+  const lastAutoNextRef = useRef(0);
+
+  /** Snapshot the currently playing song onto the Previous-history stack.
+   *  Called at switch time — before `setTrack` changes the current track. */
+  const pushHistory = useCallback(() => {
+    const cur = trackRef.current;
+    if (!cur || (!cur.videoId && !cur.playlistId) || cur.playlistId) return;
+    const last = historyRef.current[historyRef.current.length - 1];
+    if (last && last.videoId === cur.videoId) return;
+    // Bounded stack: keep the 50 most recent songs.
+    historyRef.current = [...historyRef.current.slice(-49), cur];
+  }, []);
 
   // Focus the search box whenever the drawer opens so the footer toggle
   // feels like opening a real panel (and keyboard users land in context).
@@ -225,11 +246,29 @@ export const MusicPanel: FC<MusicPanelProps> = ({
           sendCommand("seekTo", [0, true]);
           sendCommand("playVideo");
           setPlaying(true);
+        } else if (trackRef.current && !trackRef.current.playlistId) {
+          // Song finished: auto-advance exactly like the Next button (queue ->
+          // related-song search). Native playlist embeds advance themselves,
+          // so they must not additionally consume our queue here.
+          const now = Date.now();
+          if (now - lastAutoNextRef.current > 1500) {
+            lastAutoNextRef.current = now;
+            void actionsRef.current.next();
+          }
         }
       }
       if (t.title) {
         const title = t.title;
         setTrack((prev) => (prev && prev.title !== title ? { ...prev, title } : prev));
+        // Keep the Previous-button history snapshots in sync with the real
+        // title so a Previous replay doesn't display "YouTube video".
+        if (historyRef.current.length > 0) {
+          historyRef.current = historyRef.current.map((h) =>
+            h.videoId && h.videoId === trackRef.current?.videoId && h.title !== title
+              ? { ...h, title }
+              : h
+          );
+        }
       }
       if (t.currentTime !== undefined && t.duration !== undefined) {
         report(progressPercent(t.currentTime, t.duration));
@@ -266,6 +305,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
       return;
     }
     if (queueRef.current.length > 0) {
+      pushHistory();
       const [nextItem, ...remaining] = queueRef.current;
       setTrack(nextItem);
       setQueue(remaining);
@@ -286,6 +326,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
         const results = await searchYouTubeVideos(searchSeed, 6);
         const filtered = results.filter((r) => r.videoId !== track?.videoId);
         if (filtered.length > 0) {
+          pushHistory();
           const [nextItem, ...remaining] = filtered.map((r) => ({
             title: r.title,
             videoId: r.videoId,
@@ -306,6 +347,26 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     sendCommand("seekTo", [0, true]);
     sendCommand("playVideo");
     setPlaying(true);
+  };
+
+  /** Previous button: pops the last played song off the history stack. With
+   *  an empty history it restarts the current song (standard player
+   *  behavior). Native playlist embeds own their own position, so Previous
+   *  simply restarts the current list video. */
+  const previous = () => {
+    if (trackRef.current?.playlistId) {
+      replayCurrent();
+      return;
+    }
+    const prevTrack = historyRef.current.pop();
+    if (prevTrack) {
+      setTrack(prevTrack);
+      setPlaying(true);
+      setCurrentTime(0);
+      setDuration(0);
+      return;
+    }
+    replayCurrent();
   };
 
   // Playlist drawer browsing is session-scoped: items stay visible while the
@@ -361,6 +422,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
       replayCurrent();
       return;
     }
+    pushHistory();
     setTrack(item);
     setPlaying(true);
     setCurrentTime(0);
@@ -421,6 +483,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
       return;
     }
     const remaining = queue.filter((_, i) => i !== index);
+    pushHistory();
     setTrack(selected);
     setQueue(remaining);
     setPlaying(true);
@@ -517,28 +580,31 @@ export const MusicPanel: FC<MusicPanelProps> = ({
 
   // Footer + global shortcuts drive the panel via window events so the
   // footer works while the drawer is closed (panel stays mounted).
-  const actionsRef = useRef({ togglePlay, next, toggleMute, toggleLoop });
-  actionsRef.current = { togglePlay, next, toggleMute, toggleLoop };
+  const actionsRef = useRef({ togglePlay, next, previous, toggleMute, toggleLoop });
+  actionsRef.current = { togglePlay, next, previous, toggleMute, toggleLoop };
   useEffect(() => {
     const onTogglePlay = () => actionsRef.current.togglePlay();
     const onNext = () => actionsRef.current.next();
+    const onPrevious = () => actionsRef.current.previous();
     const onMute = () => actionsRef.current.toggleMute();
     const onLoop = () => actionsRef.current.toggleLoop();
     window.addEventListener("kai-music-toggle-play", onTogglePlay);
     window.addEventListener("kai-music-next", onNext);
+    window.addEventListener("kai-music-previous", onPrevious);
     window.addEventListener("kai-music-mute", onMute);
     window.addEventListener("kai-music-toggle-loop", onLoop);
     return () => {
       window.removeEventListener("kai-music-toggle-play", onTogglePlay);
       window.removeEventListener("kai-music-next", onNext);
+      window.removeEventListener("kai-music-previous", onPrevious);
       window.removeEventListener("kai-music-mute", onMute);
       window.removeEventListener("kai-music-toggle-loop", onLoop);
     };
   }, []);
 
-  // Panel-scoped keys: Space play / pause, N next, M mute, L loop, Esc closes the
-  // drawer. Only plain keys, never while typing in the search box, and Space
-  // is left to a focused button so it doesn't toggle twice.
+  // Panel-scoped keys: Space play / pause, N next, P previous, M mute, L loop,
+  // Esc closes the drawer. Only plain keys, never while typing in the search
+  // box, and Space is left to a focused button so it doesn't toggle twice.
   const onPanelKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
     if (e.ctrlKey || e.metaKey || e.altKey || e.nativeEvent.isComposing) return;
     if (isTypingTarget(e.target)) return;
@@ -550,6 +616,10 @@ export const MusicPanel: FC<MusicPanelProps> = ({
       case "n":
       case "N":
         next();
+        break;
+      case "p":
+      case "P":
+        previous();
         break;
       case "l":
       case "L":
@@ -845,6 +915,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
 
     // Direct YouTube link or playlist
     if (resolved.videoId || resolved.playlistId) {
+      pushHistory();
       setTrack(resolved);
       setPlaying(true);
       setSearchResults([]);
@@ -918,6 +989,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
       replayCurrent();
       return;
     }
+    pushHistory();
     setTrack(item);
     setPlaying(true);
     setCurrentTime(0);
@@ -1217,6 +1289,16 @@ export const MusicPanel: FC<MusicPanelProps> = ({
             </div>
 
             <div className="music-controls">
+              <button
+                type="button"
+                className="btn btn-icon music-ctrl-btn"
+                onClick={previous}
+                disabled={!src}
+                title="Previous song (P)"
+                aria-label="Previous song"
+              >
+                <SkipBack size={14} />
+              </button>
               <button
                 type="button"
                 className="music-play"

@@ -97,17 +97,6 @@ function detachGpuRenderer(slot: { current: WebglAddon | null }): void {
   }
 }
 
-// Terminal input-mode recovery (ghost-typing fix): the shared constants and
-// the chunk scanner live in src/services/terminalModes.ts (same bytes the CLI
-// emits on stdout after an agent run). Re-exported here for tests and callers.
-export {
-  AGENT_FINISHED_MARKER,
-  TERMINAL_MODE_RESET_SEQ,
-  scanAgentFinishedTail,
-  shouldAutoResetModes,
-  stripStuckInputReports,
-} from "../services/terminalModes";
-
 export interface TerminalViewRef {
   clear: () => void;
   copySelection: () => Promise<string>;
@@ -1052,6 +1041,13 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       try {
         fitAddonRef.current?.fit();
         pushPtySize(term);
+        // A tab that was hidden (display:none) never repainted while output
+        // streamed in, and fit() is a no-op while hidden. Without a forced
+        // full repaint the re-shown tab keeps stale/ghost glyph rows (text
+        // from the previous state) until the next dirty update.
+        term.refresh(0, Math.max(0, term.rows - 1));
+        // Output may have arrived while hidden: land on the newest lines.
+        term.scrollToBottom();
       } catch {
         // ignore hidden-tab layout errors
       }

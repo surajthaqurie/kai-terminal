@@ -8,6 +8,7 @@ import {
   RefreshCw,
   Pause,
   Play,
+  SkipBack,
   SkipForward,
   Volume2,
   VolumeX,
@@ -38,6 +39,8 @@ interface StatusBarProps {
   /** Re-probe git for the active pane + re-sync Code Mode (footer refresh button). */
   onRefreshGit?: () => void;
   isRefreshingGit?: boolean;
+  /** Opens the Git Changes Review & Diff modal (clicking the branch badge). */
+  onOpenGitChanges?: () => void;
   /** @deprecated Kept for backwards compat. Code Mode is now entered/cleared
    * via the CLI (`kai code <path>` / `kai stop code`), so the badge is
    * display-only and this callback is unused. */
@@ -47,13 +50,15 @@ interface StatusBarProps {
   /** True while the YouTube Music drawer is open (drives aria-expanded/title). */
   musicOpen?: boolean;
   onMusicPlayPause?: () => void;
+  onMusicPrevious?: () => void;
   onMusicNext?: () => void;
   onMusicMute?: () => void;
 }
 
 /**
- * Always-visible bottom status bar: git branch (display-only dirty dot)
- * on the left, app version + update check on the right.
+ * Always-visible bottom status bar: git branch badge (click opens the
+ * Changes Review & Diff modal) on the left, app version + update check on
+ * the right.
  */
 export const StatusBar: FC<StatusBarProps> = ({
   gitBranch,
@@ -69,10 +74,12 @@ export const StatusBar: FC<StatusBarProps> = ({
   mode = "terminal",
   onRefreshGit,
   isRefreshingGit = false,
+  onOpenGitChanges,
   music = null,
   onToggleMusicPanel,
   musicOpen = false,
   onMusicPlayPause,
+  onMusicPrevious,
   onMusicNext,
   onMusicMute,
 }) => {
@@ -218,25 +225,54 @@ export const StatusBar: FC<StatusBarProps> = ({
         )}
         {gitBranch ? (
           <div className="status-git-wrap">
-            <span
-              className={`status-git-btn${gitDirty ? " is-dirty" : " is-clean"} is-display`}
-              title={
-                `Git branch: ${gitBranch}${gitDirty ? " (uncommitted changes)" : " (clean)"}` +
-                (gitRepoRoot ? `\nRepo: ${gitRepoRoot}` : "")
-              }
-              aria-label={`Git branch ${gitBranch}${gitDirty ? ", uncommitted changes" : ", clean"}`}
-            >
-              <GitBranch size={13} aria-hidden="true" />
-              <span className="status-git-branch">{gitBranch}</span>
-              <span
-                className={`status-git-dot${gitDirty ? " dirty" : ""}`}
-                title={gitDirty ? "Uncommitted changes" : "Clean"}
-                aria-hidden="true"
+            {onOpenGitChanges ? (
+              <button
+                type="button"
+                className={`status-git-btn status-git-btn-clickable${
+                  gitDirty ? " is-dirty" : " is-clean"
+                }`}
+                onClick={onOpenGitChanges}
+                title={
+                  `Git branch: ${gitBranch}${gitDirty ? " (uncommitted changes)" : " (clean)"}` +
+                  (gitRepoRoot ? `\nRepo: ${gitRepoRoot}` : "") +
+                  "\nClick to review changes (Ctrl+Shift+G)"
+                }
+                aria-label={`Git branch ${gitBranch}${
+                  gitDirty ? ", uncommitted changes" : ", clean"
+                }. Open changes review (${gitRepoRoot ?? "repo"})`}
               >
-                ●
+                <GitBranch size={13} aria-hidden="true" />
+                <span className="status-git-branch">{gitBranch}</span>
+                <span
+                  className={`status-git-dot${gitDirty ? " dirty" : ""}`}
+                  title={gitDirty ? "Uncommitted changes" : "Clean"}
+                  aria-hidden="true"
+                >
+                  ●
+                </span>
+                {repoName && <span className="status-git-repo">({repoName})</span>}
+              </button>
+            ) : (
+              <span
+                className={`status-git-btn${gitDirty ? " is-dirty" : " is-clean"} is-display`}
+                title={
+                  `Git branch: ${gitBranch}${gitDirty ? " (uncommitted changes)" : " (clean)"}` +
+                  (gitRepoRoot ? `\nRepo: ${gitRepoRoot}` : "")
+                }
+                aria-label={`Git branch ${gitBranch}${gitDirty ? ", uncommitted changes" : ", clean"}`}
+              >
+                <GitBranch size={13} aria-hidden="true" />
+                <span className="status-git-branch">{gitBranch}</span>
+                <span
+                  className={`status-git-dot${gitDirty ? " dirty" : ""}`}
+                  title={gitDirty ? "Uncommitted changes" : "Clean"}
+                  aria-hidden="true"
+                >
+                  ●
+                </span>
+                {repoName && <span className="status-git-repo">({repoName})</span>}
               </span>
-              {repoName && <span className="status-git-repo">({repoName})</span>}
-            </span>
+            )}
             {onRefreshGit && (
               <button
                 type="button"
@@ -358,6 +394,15 @@ export const StatusBar: FC<StatusBarProps> = ({
               ) : (
                 <Play size={12} aria-hidden="true" />
               )}
+            </button>
+            <button
+              type="button"
+              className="status-check-btn"
+              onClick={onMusicPrevious}
+              title="Previous song"
+              aria-label="Previous song"
+            >
+              <SkipBack size={12} aria-hidden="true" />
             </button>
             <button
               type="button"

@@ -2447,6 +2447,27 @@ select.modal-input {
   cursor: default;
 }
 
+/* Clickable variant (renders as a real <button>): inherit the same look the
+ * display span had, reset native button chrome, and signal interactivity. */
+button.status-git-btn-clickable {
+  font-family: inherit;
+  font-size: inherit;
+  color: var(--color-success);
+  cursor: pointer;
+  transition:
+    background-color var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+button.status-git-btn-clickable:hover {
+  background-color: var(--bg-surface-hover, rgba(255, 255, 255, 0.06));
+}
+
+button.status-git-btn-clickable:focus-visible {
+  outline: 1px solid var(--border-accent, var(--color-accent));
+  outline-offset: 1px;
+}
+
 .status-git-branch {
   white-space: nowrap;
   overflow: hidden;
