@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.7
+
+### Patch Changes
+
+- MCP server renamed to `kai-terminal`, mouse tab drag and smoother terminals: the MCP server now registers as `kai-terminal` instead of `kai`, so it reads clearly in each agent's MCP tool list (Claude Code, Cursor, Codex, Gemini CLI, Copilot / VS Code, Windsurf, opencode, Aider, Antigravity). Existing setups keep working: detection accepts both names, `kai agent add` migrates a legacy `kai` entry (JSON and Codex TOML) to the new name without duplicating tables, and `kai remove -m` / `kai mcp remove` clean up either name. Re-run `kai mcp <agent>` to migrate an old entry.
+- Terminal and player polish. Tabs now pick up immediately when you press and drag with a mouse (touch and pen keep press-and-hold, so a swipe cannot reorder by accident). A tab that was hidden while output streamed in is fully repainted and scrolled to the newest lines when shown again, instead of keeping ghost rows. The footer mini-player gains a Previous song button, and the branch badge announces its dirty / clean state to screen readers.
+- Internal quality and smoothness release. The app shell is split into focused hooks and components, and each tab's panes are memoized, so footer updates (music progress, git badge) and tab switches no longer re-render every terminal. The CLI is split into per-command modules with shared helpers and an unrecognized command that matches an inherited object key (for example `kai constructor`) now reports "Unknown command" instead of printing garbage. Dead code and unused exports are removed, the music toggle no longer triggers a state update from inside a state updater, and the new App-shell characterization suite plus CLI helper tests raise coverage to 700+ tests. No behavior changes beyond the fixes above.
+- Harden YouTube Music search. Parsing result pages can no longer panic on non-ASCII titles (a panic aborted the whole app in release builds), and search queries are URL-encoded correctly so queries such as `AC/DC & Friends` no longer truncate or break the request.
+- 7a2d580: Fix "Open in editor" on Windows (PATH lookup no longer picks the extensionless `code`/`cursor` bash shim; the real GUI exe is launched directly, and the `cmd` fallback quotes paths with spaces correctly). Make tab switching smoother: blocking backend commands (git, editor/shell detection, AI CLI probes) no longer run on the UI thread, hidden tabs keep their WebGL renderer briefly so quick tab flips don't rebuild it, and no-op PTY resizes are skipped.
+
 ## 0.1.6
 
 ### Minor Changes
