@@ -53,7 +53,7 @@ const LEGACY_PROJECT_SETTINGS_PREFIX = "terminal_project_settings_";
 const SETTINGS_VERSION = 1;
 
 /** Theme ids the Appearance panel can mark selected. Single source of truth. */
-export const KNOWN_THEME_IDS: ReadonlyArray<ThemeName> = [
+const KNOWN_THEME_IDS: ReadonlyArray<ThemeName> = [
   "kali",
   "catppuccin-mocha",
   "one-dark",

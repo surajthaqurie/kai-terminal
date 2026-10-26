@@ -9,15 +9,15 @@
  */
 
 export const APP_VERSION_FALLBACK = "0.1.4";
-export const GITHUB_REPO = "surajthaqurie/kai-terminal";
+const GITHUB_REPO = "surajthaqurie/kai-terminal";
 /** Repo owner shown as the release author fallback ("by surajthaqurie"). */
-export const GITHUB_OWNER = GITHUB_REPO.split("/")[0] || "surajthaqurie";
-export const LATEST_RELEASE_API_URL = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`;
+const GITHUB_OWNER = GITHUB_REPO.split("/")[0] || "surajthaqurie";
+const LATEST_RELEASE_API_URL = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`;
 export const RELEASES_PAGE_URL = `https://github.com/${GITHUB_REPO}/releases/latest`;
 
 export const UPDATE_LAST_CHECK_KEY = "kai_update_last_check";
 export const UPDATE_DISMISSED_KEY = "kai_update_dismissed_version";
-export const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24h auto-check
+const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24h auto-check
 export const UPDATE_PERIODIC_MS = 6 * 60 * 60 * 1000; // 6h re-check while open
 
 export interface ReleaseAsset {
@@ -251,7 +251,7 @@ function parseReleaseAssets(raw: GithubRelease["assets"]): ReleaseAsset[] {
 export type UpdatePlatform = "windows" | "macos" | "linux" | "unknown";
 
 /** Best-effort OS detection for installer picking (testable via override). */
-export function detectUpdatePlatform(override?: {
+function detectUpdatePlatform(override?: {
   platform?: string;
   userAgent?: string;
 }): UpdatePlatform {
@@ -440,7 +440,7 @@ export async function downloadAndInstallUpdate(
 
 // --- persistence helpers (dismiss / throttle) ---
 
-export function getLastCheckTime(now = Date.now()): number {
+function getLastCheckTime(now = Date.now()): number {
   try {
     const raw = localStorage.getItem(UPDATE_LAST_CHECK_KEY);
     const n = raw ? parseInt(raw, 10) : 0;
@@ -499,7 +499,7 @@ export async function openReleasePage(url: string): Promise<void> {
  * Tauri this goes through the allow-listed `open_external_url_cmd` backend
  * command instead (releases page and exact YouTube link shapes only).
  */
-export async function openExternalUrl(target: string): Promise<void> {
+async function openExternalUrl(target: string): Promise<void> {
   try {
     const { isTauriAvailable } = await import("./ptyService");
     if (isTauriAvailable()) {

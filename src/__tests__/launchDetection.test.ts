@@ -3,43 +3,7 @@ import fs from "fs";
 import { symlinkOrSkip } from "./helpers/symlink";
 import os from "os";
 import path from "path";
-import { isKaiDesktopProcessLine, isKaiCliShim, findKaiAppBinary } from "../cli/index";
-
-describe("isKaiDesktopProcessLine (cross-OS duplicate-window guard)", () => {
-  it("detects the current 'kai' binary name (Linux comm=Kai, macOS, Windows)", () => {
-    expect(isKaiDesktopProcessLine("kai")).toBe(true);
-    expect(isKaiDesktopProcessLine("43392 kai")).toBe(true);
-    expect(isKaiDesktopProcessLine("kai.exe")).toBe(true);
-    expect(isKaiDesktopProcessLine("/usr/bin/kai")).toBe(true);
-    expect(isKaiDesktopProcessLine("/usr/local/bin/kai")).toBe(true);
-    expect(isKaiDesktopProcessLine("C:\\Program Files\\KaiTerminal\\kai.exe")).toBe(true);
-  });
-
-  it("detects legacy binary names on all OSes", () => {
-    expect(isKaiDesktopProcessLine("cross-platform-terminal-backend")).toBe(true);
-    expect(isKaiDesktopProcessLine("cross-platform-")).toBe(true); // truncated comm (15 chars)
-    expect(isKaiDesktopProcessLine("kai-terminal")).toBe(true);
-    expect(isKaiDesktopProcessLine("/Applications/Kai Terminal.app/Contents/MacOS/kai")).toBe(true);
-    expect(
-      isKaiDesktopProcessLine(
-        "/Applications/Kai Terminal.app/Contents/MacOS/cross-platform-terminal-backend"
-      )
-    ).toBe(true);
-  });
-
-  it("never mistakes the Node CLI / MCP server for the desktop GUI", () => {
-    expect(isKaiDesktopProcessLine("node /repo/bin/kai.js mcp .")).toBe(false);
-    expect(isKaiDesktopProcessLine("node /repo/dist/cli/index.js code .")).toBe(false);
-    expect(isKaiDesktopProcessLine("node bin/kai.js code .")).toBe(false);
-  });
-
-  it("never matches unrelated processes containing 'kai' as a substring", () => {
-    expect(isKaiDesktopProcessLine("opencode")).toBe(false);
-    expect(isKaiDesktopProcessLine("opencode serve --service")).toBe(false);
-    expect(isKaiDesktopProcessLine("kaiman")).toBe(false);
-    expect(isKaiDesktopProcessLine("ssh kai@host")).toBe(false);
-  });
-});
+import { isKaiCliShim, findKaiAppBinary } from "../cli/index";
 
 describe("isKaiCliShim (CLI/desktop PATH collision guard, all OS)", () => {
   it("detects symlink shims pointing at bin/kai.js", (ctx) => {

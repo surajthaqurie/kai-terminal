@@ -22,7 +22,7 @@ import { execFileSync } from "child_process";
 import fs from "fs";
 import path from "path";
 
-export const HOOK_MARKER = "kai-commit-msg-hook v1";
+const HOOK_MARKER = "kai-commit-msg-hook v1";
 export const HOOK_FILE = "commit-msg";
 export const HOOK_BACKUP_FILE = "commit-msg.kai-orig";
 
@@ -77,7 +77,7 @@ function isOurHook(content: string): boolean {
 }
 
 /** Resolve the hooks directory, honouring `core.hooksPath` and worktrees. */
-export function resolveHooksDir(repoPath: string): { repoRoot: string; hooksDir: string } {
+function resolveHooksDir(repoPath: string): { repoRoot: string; hooksDir: string } {
   let repoRoot: string;
   try {
     repoRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], {

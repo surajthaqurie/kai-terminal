@@ -1,5 +1,4 @@
 import { KeybindingsConfig } from "../types/terminal";
-import { DEFAULT_KEYBINDINGS } from "./settingsService";
 
 export type ShortcutActionId = keyof KeybindingsConfig;
 
@@ -98,19 +97,6 @@ export function parseBinding(binding: string): ParsedBinding | null {
     return null;
   }
   return { ctrlOrCmd, alt, shift, code, key };
-}
-
-/** Normalize to canonical "Ctrl+Shift+T" (macOS label uses Cmd). */
-export function normalizeBinding(binding: string, isMac = false): string | null {
-  const parsed = parseBinding(binding);
-  if (!parsed) return null;
-  const mod = parsed.ctrlOrCmd ? (isMac ? "Cmd" : "Ctrl") : null;
-  const segs: string[] = [];
-  if (mod) segs.push(mod);
-  if (parsed.alt) segs.push("Alt");
-  if (parsed.shift) segs.push("Shift");
-  segs.push(parsed.key.length === 1 ? parsed.key.toUpperCase() : parsed.key);
-  return segs.join("+");
 }
 
 /** Helper to convert keyboard events to shortcut string (e.g. "Ctrl+Shift+T" or "Cmd+Alt+W"). */
@@ -250,12 +236,6 @@ export function isTypingTarget(target: EventTarget | null): boolean {
   if (target.isContentEditable) return true;
   if (target.closest?.("input, textarea, select, [contenteditable='true']")) return true;
   return false;
-}
-
-export function platformDefaultBindings(isMac: boolean): KeybindingsConfig {
-  if (!isMac) return { ...DEFAULT_KEYBINDINGS };
-  // Same combos; labels render Cmd instead of Ctrl via platformLabel().
-  return { ...DEFAULT_KEYBINDINGS };
 }
 
 /** Render a binding with the platform modifier name. */

@@ -35,7 +35,7 @@ export const isTauriAvailable = (): boolean => {
 /**
  * Production PTY service implementation with web mock fallback.
  */
-export class PtyServiceImpl implements IPtyService {
+class PtyServiceImpl implements IPtyService {
   async getAvailableShells(): Promise<ShellProfile[]> {
     return PtyServiceImpl.getAvailableShells();
   }

@@ -17,8 +17,8 @@ export const MAX_PANES_PER_TAB = 8;
  * 1/8 matches the narrowest pane the previous 4-pane cap could ever produce.
  */
 export const MIN_SPLIT_EXTENT = 0.125;
-export const MIN_PANE_FRACTION = 0.2;
-export const MAX_PANE_FRACTION = 0.8;
+const MIN_PANE_FRACTION = 0.2;
+const MAX_PANE_FRACTION = 0.8;
 
 export function clampPaneFraction(v: number): number {
   if (!Number.isFinite(v)) return 0.5;
@@ -32,17 +32,17 @@ export interface SplitTabState {
   layout?: PaneLayoutNode;
 }
 
-export function nextPaneId(tabId: string, panes: TerminalPane[]): string {
+function nextPaneId(tabId: string, panes: TerminalPane[]): string {
   return `${tabId}-p${panes.length + 1}-${Date.now().toString(36)}`;
 }
 
 let splitSeq = 0;
-export function nextSplitId(): string {
+function nextSplitId(): string {
   splitSeq += 1;
   return `split-${Date.now().toString(36)}-${splitSeq}-${Math.floor(Math.random() * 0xffff).toString(16)}`;
 }
 
-export function activePaneIndex(tab: SplitTabState): number {
+function activePaneIndex(tab: SplitTabState): number {
   const idx = tab.panes.findIndex((p) => p.id === tab.activePaneId);
   return idx >= 0 ? idx : 0;
 }
@@ -269,13 +269,6 @@ export function setLayoutSplitRatio(
   };
 }
 
-/** Find a split node by id (for drag handlers). */
-export function findLayoutSplit(node: PaneLayoutNode, splitId: string): PaneLayoutNode | null {
-  if (node.kind === "pane") return null;
-  if (node.id === splitId) return node;
-  return findLayoutSplit(node.first, splitId) ?? findLayoutSplit(node.second, splitId);
-}
-
 // ---------------------------------------------------------------------------
 // Flat-grid geometry: DOM-stable rendering without remounts
 // ---------------------------------------------------------------------------
@@ -401,7 +394,7 @@ export function resolveTabLayout(
  * pane ids are not blocked here (the split itself is a no-op for them).
  * Geometry-only; a small epsilon absorbs float error from repeated halving.
  */
-export function paneFitsSplit(
+function paneFitsSplit(
   layout: PaneLayoutNode,
   paneId: string,
   direction: PaneSplitDirection

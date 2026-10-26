@@ -52,7 +52,7 @@ export interface AgentSetupResult {
  *   to a diagnostic string instead of an error.
  * - Third-party AI CLI executables are never bundled into the installer.
  */
-export const KNOWN_AI_CLIS = [
+const KNOWN_AI_CLIS = [
   "codex",
   "claude",
   "gemini",
@@ -121,7 +121,7 @@ export function loadUserCustomClis(): CustomAiCliConfig[] {
   }
 }
 
-export function saveUserCustomClis(clis: CustomAiCliConfig[]): void {
+function saveUserCustomClis(clis: CustomAiCliConfig[]): void {
   try {
     localStorage.setItem(CUSTOM_CLI_STORAGE_KEY, JSON.stringify(clis));
   } catch {

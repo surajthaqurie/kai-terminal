@@ -347,7 +347,7 @@ export async function handleMcpMessage(
             tools: {},
           },
           serverInfo: {
-            name: "kai-mcp-server",
+            name: "kai-terminal-mcp-server",
             version: packageJson.version ?? "0.1.0",
           },
         },
@@ -1090,7 +1090,7 @@ export async function handleMcpMessage(
   }
 }
 
-export const MAX_MCP_LINE_BYTES = 10 * 1024 * 1024; // 10 MB
+const MAX_MCP_LINE_BYTES = 10 * 1024 * 1024; // 10 MB
 
 /**
  * Stream transform that rejects oversized lines at the byte stream level
@@ -1177,7 +1177,7 @@ export class BoundedLineTransform extends Transform {
 /**
  * Safely write data to a writable stream without throwing on closed/broken streams.
  */
-export function safeWrite(stream: NodeJS.WritableStream, data: string): boolean {
+function safeWrite(stream: NodeJS.WritableStream, data: string): boolean {
   try {
     const s = stream as unknown as {
       writable?: boolean;

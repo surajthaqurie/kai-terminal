@@ -155,7 +155,7 @@ export function detectInstalledLspServers(): DetectedLspServer[] {
 /**
  * Find the primary matching language server for a project
  */
-export function findLspServerForLanguage(language: string): LspServerCatalogEntry | null {
+function findLspServerForLanguage(language: string): LspServerCatalogEntry | null {
   const norm = language.toLowerCase();
   for (const entry of KNOWN_LSP_SERVERS) {
     if (entry.language === norm) {

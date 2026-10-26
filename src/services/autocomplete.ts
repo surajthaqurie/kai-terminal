@@ -12,7 +12,7 @@ export const AUTOCOMPLETE_HISTORY_KEY = "kai_cmd_history_v1";
 const MAX_HISTORY = 200;
 const MAX_SUGGESTIONS = 8;
 
-export const BUILTIN_COMMANDS: string[] = [
+const BUILTIN_COMMANDS: string[] = [
   // coreutils / navigation
   "ls",
   "ll",

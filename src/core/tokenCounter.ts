@@ -12,10 +12,6 @@ export function registerCustomTokenizer(fn: TokenizerFunction | null): void {
   globalCustomTokenizer = fn;
 }
 
-export function getCustomTokenizer(): TokenizerFunction | null {
-  return globalCustomTokenizer;
-}
-
 /**
  * Deterministic token estimation distinguishing measured counts from estimates.
  * Follows standard cl100k / BPE code heuristics (~3.8 chars per token for mixed code and text)

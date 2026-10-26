@@ -43,7 +43,7 @@ export interface RetrievalResult {
 const MAX_MATCHED_SYMBOLS_PER_FILE = 500;
 const MAX_RANKED_SYMBOLS = 1000;
 
-export const COMMON_TASK_STOP_WORDS = new Set([
+const COMMON_TASK_STOP_WORDS = new Set([
   "the",
   "and",
   "for",

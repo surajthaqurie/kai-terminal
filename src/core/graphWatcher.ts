@@ -22,7 +22,7 @@ import { loadProjectIndex, registerProject } from "./registry";
  * read-tool gate keeps working exactly as before.
  */
 
-export const DEFAULT_WATCH_DEBOUNCE_MS = 1500;
+const DEFAULT_WATCH_DEBOUNCE_MS = 1500;
 
 export interface GraphWatcherOptions {
   debounceMs?: number;

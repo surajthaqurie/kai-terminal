@@ -21,16 +21,7 @@ import {
   saveProjectIndex,
 } from "./registry";
 import { retrieveContext } from "./retrieval";
-import {
-  AGENT_FINISHED_MARKER,
-  TERMINAL_MODE_RESET_SEQ,
-  scanAgentFinishedTail,
-} from "../services/terminalModes";
-
-export { AGENT_FINISHED_MARKER, TERMINAL_MODE_RESET_SEQ, scanAgentFinishedTail };
-
-/** Alias kept for call-site readability (single shared implementation). */
-export const scanForAgentFinished = scanAgentFinishedTail;
+import { TERMINAL_MODE_RESET_SEQ } from "../services/terminalModes";
 
 export type GraphFreshness = "fresh" | "stale" | "unindexed" | "unknown" | "refresh-failed";
 
@@ -370,7 +361,7 @@ export function computeGraphImpact(
   return { scope: "incremental", reason: "small known change; incremental sync" };
 }
 
-export function markGraphStale(projectId: string, reason?: string): void {
+function markGraphStale(projectId: string, reason?: string): void {
   markProjectGraphStatus(projectId, "stale", reason);
 }
 
@@ -422,7 +413,7 @@ export function markStaleGuarded(
  * Cross-platform absolute-path check. `path.isAbsolute` alone misses
  * Windows forms (`C:\x`, `C:/x`, `\\server\share`) when running on POSIX.
  */
-export function isAbsoluteCrossPlatform(p: string): boolean {
+function isAbsoluteCrossPlatform(p: string): boolean {
   if (!p) return false;
   if (path.isAbsolute(p) || path.win32.isAbsolute(p)) return true;
   if (/^[a-zA-Z]:[\\/]/.test(p)) return true;
@@ -530,9 +521,7 @@ export function detectChangedFilesFromDisk(index: ProjectIndex | null): string[]
  * they belong to the current incarnation and are refused; purely legacy
  * flows where neither side carries a token keep the historical behavior.
  */
-export function verifyProjectIdentity(
-  meta: ProjectMeta
-): { ok: true } | { ok: false; reason: string } {
+function verifyProjectIdentity(meta: ProjectMeta): { ok: true } | { ok: false; reason: string } {
   let registered: ReturnType<typeof getProjectMeta>;
   try {
     registered = getProjectMeta(meta.id);
@@ -1079,7 +1068,7 @@ function resolveSpecifierToIndex(
  * direct imports, callers (reverse dependencies), co-defined symbols, and
  * related tests. Purely index-driven and capped so results stay bounded.
  */
-export function expandSupportingFiles(index: ProjectIndex, selected: string[]): SupportingContext {
+function expandSupportingFiles(index: ProjectIndex, selected: string[]): SupportingContext {
   const supporting: SupportingFile[] = [];
   const dependencies: IndexedDependency[] = [];
   const symbols: IndexedSymbol[] = [];

@@ -24,9 +24,9 @@ import {
 } from "./registry";
 
 // Strict limits
-export const MAX_FILE_SIZE_BYTES = 512 * 1024; // 512 KB
-export const MAX_TOTAL_FILES = 10000;
-export const MAX_TRAVERSAL_DEPTH = 20;
+const MAX_FILE_SIZE_BYTES = 512 * 1024; // 512 KB
+const MAX_TOTAL_FILES = 10000;
+const MAX_TRAVERSAL_DEPTH = 20;
 
 // Excluded directory and file names (secrets, build outputs, dependencies)
 export const DEFAULT_EXCLUDED_DIRS = new Set([
@@ -55,7 +55,7 @@ export const DEFAULT_EXCLUDED_DIRS = new Set([
   ".changeset",
 ]);
 
-export const SENSITIVE_FILE_PATTERNS = [
+const SENSITIVE_FILE_PATTERNS = [
   /^\.env(\..+)?$/i,
   /^id_rsa(\..+)?$/i,
   /^id_ed25519(\..+)?$/i,
@@ -76,7 +76,7 @@ export const SENSITIVE_FILE_PATTERNS = [
   /^\.dockercfg$/i,
 ];
 
-export const BINARY_EXTENSIONS = new Set([
+const BINARY_EXTENSIONS = new Set([
   ".png",
   ".jpg",
   ".jpeg",
@@ -186,7 +186,7 @@ export function isSensitiveContent(content: string): boolean {
   return false;
 }
 
-export function detectLanguage(filename: string): string {
+function detectLanguage(filename: string): string {
   const ext = path.extname(filename).toLowerCase();
   switch (ext) {
     case ".ts":
@@ -641,7 +641,7 @@ export function loadProjectRules(projectRoot: string): string[] {
  * 2 s covers FAT-style granularity; the rest is slack for hashing lag during
  * the build. The set is bounded by RACY_REHASH_MAX_FILES per check.
  */
-export const RACY_TIMESTAMP_WINDOW_MS = 5000;
+const RACY_TIMESTAMP_WINDOW_MS = 5000;
 const RACY_REHASH_MAX_FILES = 200;
 
 /**
@@ -743,7 +743,7 @@ export function detectStaleIndexEntries(index: ProjectIndex): {
  * without reading file contents, so excluded files never report stale.
  * Collects at most 50 entries; finding even one proves staleness.
  */
-export function detectUntrackedNewFiles(
+function detectUntrackedNewFiles(
   canonicalRoot: string,
   index: ProjectIndex,
   limit: number = 50

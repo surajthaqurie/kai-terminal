@@ -1,6 +1,6 @@
 import type { TaskCategory, ContextPackage } from "./types";
 
-export const TEMPLATE_VERSION = "1.0.0";
+const TEMPLATE_VERSION = "1.0.0";
 
 export interface PromptTemplate {
   category: TaskCategory;

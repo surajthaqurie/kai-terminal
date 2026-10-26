@@ -22,7 +22,7 @@ export interface TelemetrySummary {
   operationsBreakdown: Record<string, number>;
 }
 
-export function getMetricsLogPath(): string {
+function getMetricsLogPath(): string {
   return path.join(getKaiHomeDir(), "metrics.jsonl");
 }
 

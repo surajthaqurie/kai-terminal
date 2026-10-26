@@ -16,7 +16,7 @@ export function getKaiHomeDir(): string {
   return path.join(os.homedir(), ".kai");
 }
 
-export function getProjectsDir(): string {
+function getProjectsDir(): string {
   return path.join(getKaiHomeDir(), "projects");
 }
 
@@ -46,7 +46,7 @@ export function normalizePathForIdentity(targetPath: string, platform?: string):
   return resolved;
 }
 
-export function computeLegacyProjectId(canonicalPath: string): string {
+function computeLegacyProjectId(canonicalPath: string): string {
   return crypto.createHash("sha256").update(canonicalPath).digest("hex").slice(0, 16);
 }
 
@@ -345,7 +345,7 @@ export function registerProject(projectPath: string): ProjectMeta {
  * Only files older than `maxAgeMs` are removed so a concurrent writer's
  * fresh temp file in another process is never deleted from under it.
  */
-export function cleanupDanglingTempFiles(storageDir: string, maxAgeMs: number = 60000): void {
+function cleanupDanglingTempFiles(storageDir: string, maxAgeMs: number = 60000): void {
   try {
     if (!fs.existsSync(storageDir)) return;
     const entries = fs.readdirSync(storageDir);
