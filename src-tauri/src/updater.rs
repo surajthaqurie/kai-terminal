@@ -431,10 +431,10 @@ pub fn prepare_unattended_install(
         .to_lowercase();
     let pid = app_pid.to_string();
     let installer_s = installer.to_str()?.to_string();
-    let exe_s = current_exe.to_str()?.to_string();
 
     #[cfg(target_os = "windows")]
     {
+        let exe_s = current_exe.to_str()?.to_string();
         let mode = match ext.as_str() {
             "msi" => "msi",
             "exe" => "exe",
@@ -492,6 +492,7 @@ pub fn prepare_unattended_install(
 
     #[cfg(all(unix, not(target_os = "macos")))]
     {
+        let exe_s = current_exe.to_str()?.to_string();
         let (script, target) = match ext.as_str() {
             "deb" => {
                 if !find_in_path("pkexec") || !(find_in_path("apt-get") || find_in_path("dpkg")) {
