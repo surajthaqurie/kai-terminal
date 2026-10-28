@@ -92,29 +92,17 @@ fn canonicalize_state_path(p: &str) -> String {
 /// Reads the active Code Mode project.
 ///
 /// Precedence:
-/// 1. `KAI_ACTIVE_PROJECT` env (set when the CLI launches the app) with
-///    `KAI_MODE == "code"`. Works in dev AND release builds.
-/// 2. `active_project.json` with `mode == "code"` under the first candidate
+/// 1. `active_project.json` with `mode == "code"` under the first candidate
 ///    home that has one (`candidate_home_dirs` order).
-/// 3. Otherwise `{ path: None, mode: "terminal" }` — plain terminal mode.
+/// 2. Otherwise `{ path: None, mode: "terminal" }` — plain terminal mode.
 ///
-/// Never falls back to recent history. Never defaults to code.
+/// Never falls back to recent history. Never defaults to code. The launch
+/// env (`KAI_ACTIVE_PROJECT`/`KAI_MODE`) is deliberately NOT consulted: it is
+/// frozen into the app process for its whole lifetime, so it kept the footer
+/// on Code Mode after an agent run ended or `kai stop code` cleared the file.
+/// The CLI always writes the state file before launching the app.
 pub fn get_active_project() -> ActiveProject {
-    // 1. Launch env from `kai code` (covers release builds where the
-    // WebView localStorage path differs from dev).
-    if let Ok(env_path) = std::env::var("KAI_ACTIVE_PROJECT") {
-        let mode = std::env::var("KAI_MODE").unwrap_or_default();
-        if mode.trim() == "code" {
-            if let Some(p) = sanitize_path(&env_path) {
-                return ActiveProject {
-                    path: Some(p),
-                    mode: "code".to_string(),
-                };
-            }
-        }
-    }
-
-    // 2. Persisted CLI state file. Every candidate home is checked in
+    // Persisted CLI state file. Every candidate home is checked in
     // precedence order so a state file written under any of them (e.g. CLI
     // with `XDG_DATA_HOME` set, app launched without it) still activates.
     for home in candidate_home_dirs() {
@@ -254,8 +242,11 @@ mod tests {
     }
 
     #[test]
-    fn test_env_vars_take_precedence_for_release_launches() {
+    fn test_launch_env_cannot_pin_code_mode() {
         let _env = crate::test_support::lock_test_env();
+        // Regression: a launch env inherited by the app process outlived
+        // `kai stop code` / the end of an agent run, so Code Mode stayed on
+        // forever. With the state file gone, the env must be ignored.
         let tmp = std::env::temp_dir().join(format!("kai-ap-env-{}", std::process::id()));
         let _ = fs::create_dir_all(&tmp);
         let _snap = snapshot_env();
@@ -264,8 +255,8 @@ mod tests {
         std::env::set_var("KAI_ACTIVE_PROJECT", "D:\\work\\app");
         std::env::set_var("KAI_MODE", "code");
         let s = get_active_project();
-        assert_eq!(s.path.as_deref(), Some("D:\\work\\app"));
-        assert_eq!(s.mode, "code");
+        assert_eq!(s.path, None);
+        assert_eq!(s.mode, "terminal");
         let _ = fs::remove_dir_all(&tmp);
         restore_env(_snap);
     }

@@ -18,8 +18,8 @@ interface CodeModeOptions {
 /**
  * Code Mode footer state: driven ONLY by the persisted active project
  * (`kai code <path>` sets it, `kai stop code` clears it). The backend reads
- * `~/.kai/active_project.json` + launch env, so dev and release builds
- * agree. Recent folders / new tabs never activate Code Mode.
+ * `~/.kai/active_project.json` only (never the launch env, which cannot be
+ * cleared), so dev and release builds agree. Recent folders / new tabs never activate Code Mode.
  *
  * The footer pill is STICKY (see resolveModeDisplay): it shows "Code Mode"
  * while a persisted project exists and "Terminal" the moment it is cleared
@@ -43,7 +43,7 @@ export function useCodeMode({ onOpenProject }: CodeModeOptions) {
   // the foreground app.
   const syncCodeModeState = useCallback(() => {
     if (typeof document !== "undefined" && document.hidden) return;
-    // Authoritative async state (backend file + launch env, then explicit
+    // Authoritative async state (backend state file, then explicit
     // localStorage). Never resolves recent history to code. Equality-guarded
     // so idle syncs never re-render the footer (flicker fix).
     void getActiveProjectState().then((s) => {

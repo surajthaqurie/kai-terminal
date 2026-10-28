@@ -187,6 +187,20 @@ export function isKaiCliShim(candidate: string): boolean {
 }
 
 /**
+ * Environment for the spawned GUI. Code Mode travels ONLY through
+ * `active_project.json` (written before launch, cleared by `kai stop code`
+ * or the end of an agent run); an env var would be frozen into the app
+ * process and pin Code Mode on for its lifetime, so stale ones inherited
+ * from an older Kai tab are dropped too.
+ */
+function launchEnv(): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  delete env.KAI_ACTIVE_PROJECT;
+  delete env.KAI_MODE;
+  return env;
+}
+
+/**
  * Launch the Kai Terminal desktop GUI for a Code Mode project.
  *
  * Cross-OS behavior (only ever called by `kai code`, never by
@@ -211,11 +225,7 @@ export function launchKaiApp(appBinary: string, projectPath: string): boolean {
         const child = spawn("open", ["-a", "Kai Terminal", projectPath], {
           detached: true,
           stdio: "ignore",
-          env: {
-            ...process.env,
-            KAI_ACTIVE_PROJECT: projectPath,
-            KAI_MODE: "code",
-          },
+          env: launchEnv(),
         });
         child.unref();
         return true;
@@ -229,11 +239,7 @@ export function launchKaiApp(appBinary: string, projectPath: string): boolean {
       // Windows: never flash a ghost conhost window when
       // launching the desktop app from the CLI.
       windowsHide: true,
-      env: {
-        ...process.env,
-        KAI_ACTIVE_PROJECT: projectPath,
-        KAI_MODE: "code",
-      },
+      env: launchEnv(),
     });
     child.unref();
     return true;

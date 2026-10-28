@@ -155,8 +155,7 @@ export interface ActiveProjectState {
 
 /**
  * Authoritative Code Mode state. Prefers the backend (`active_project.json`
- * state file + `KAI_ACTIVE_PROJECT`/`KAI_MODE` launch env, written by
- * `kai code`), which works in dev AND release builds. Falls back to the
+ * state file, written by `kai code`), which works in dev AND release builds. Falls back to the
  * explicit localStorage keys (no recent-history fallback). Never defaults
  * to code: anything unrecognized resolves to plain terminal mode.
  */
