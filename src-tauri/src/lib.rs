@@ -241,12 +241,6 @@ fn is_call_active_cmd() -> bool {
 }
 
 #[cfg(feature = "tauri")]
-#[tauri::command]
-fn set_extra_call_apps_cmd(apps: Vec<String>) {
-    call_watch::set_extra_call_apps(&apps);
-}
-
-#[cfg(feature = "tauri")]
 #[tauri::command(async)]
 fn detect_installed_editors_cmd() -> Vec<EditorInfo> {
     detect_installed_editors()
@@ -433,7 +427,6 @@ pub fn run() {
             open_project_in_editor,
             detect_installed_editors_cmd,
             is_call_active_cmd,
-            set_extra_call_apps_cmd,
             read_clipboard_text_cmd,
             open_external_url_cmd,
             search_youtube_video_cmd,

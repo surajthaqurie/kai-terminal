@@ -24,7 +24,7 @@ import {
 import { rankCandidates, isPotentialSecretPath } from "./retrieval";
 import { getReverseImports } from "./indexDerived";
 import { dependencyTargets } from "./importResolver";
-import { TERMINAL_MODE_RESET_SEQ } from "../services/terminalModes";
+import { AGENT_EXIT_CLEANUP_SEQ, TERMINAL_MODE_RESET_SEQ } from "../services/terminalModes";
 
 export type GraphFreshness = "fresh" | "stale" | "unindexed" | "unknown" | "refresh-failed";
 
@@ -1622,12 +1622,18 @@ export function resolveSpawnTarget(
  * terminal modes cannot keep injecting mouse/focus/paste input. Safe to
  * call on every path (success, timeout, signal, abort): non-TTY stdout
  * (piped/CI) is skipped so logs stay clean.
+ *
+ * `clearStaleUi` additionally erases the agent's leftover last frame below the
+ * cursor ({@link AGENT_EXIT_CLEANUP_SEQ}); pass it once, right after the agent
+ * exits and before anything else is printed.
  */
-export function resetTerminalModesAfterAgent(): void {
+export function resetTerminalModesAfterAgent(opts: { clearStaleUi?: boolean } = {}): void {
   try {
     const out = process.stdout;
     if (!out || (out as unknown as { isTTY?: boolean }).isTTY !== true) return;
-    out.write(TERMINAL_MODE_RESET_SEQ);
+    out.write(
+      opts.clearStaleUi ? TERMINAL_MODE_RESET_SEQ + AGENT_EXIT_CLEANUP_SEQ : TERMINAL_MODE_RESET_SEQ
+    );
   } catch {
     // Terminal restore is best-effort; never fail the task over it.
   }

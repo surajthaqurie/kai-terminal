@@ -22,6 +22,21 @@
 export const TERMINAL_MODE_RESET_SEQ =
   "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l\x1b[?1004l\x1b[?2004l";
 
+/**
+ * Cleanup for the moment an agent TUI has exited, emitted BEFORE the
+ * `[kai] Agent finished` line. Inline TUIs (Claude Code's "Enter to confirm ·
+ * Esc to cancel" footer) leave their last frame on the normal screen with the
+ * cursor at the end of it, so the next log line was printed on top of that
+ * footer and looked stuck / duplicated. Pops the extended keyboard modes the
+ * TUI pushed (kitty, modifyOtherKeys), restores cursor visibility, autowrap and
+ * normal cursor keys, resets SGR, then returns to column 0 and erases from
+ * there to the end of the screen. Plain VT/ANSI, so it behaves the same under
+ * ConPTY on Windows, macOS terminals and Linux terminals. Unlike
+ * {@link TERMINAL_MODE_RESET_SEQ} it DOES erase (below the cursor only), so it
+ * must run once, right after the agent exits, never on a timer.
+ */
+export const AGENT_EXIT_CLEANUP_SEQ = "\x1b[<u\x1b[>4;0m\x1b[?25h\x1b[?7h\x1b[?1l\x1b[0m\r\x1b[J";
+
 /** Printed by `kai` Code Mode runs once the agent child settles. */
 export const AGENT_FINISHED_MARKER = "[kai] Agent finished";
 

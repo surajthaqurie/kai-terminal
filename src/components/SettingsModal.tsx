@@ -22,7 +22,6 @@ import {
   FIXED_SHORTCUT_HELP,
   eventToBindingString,
 } from "../services/shortcuts";
-import { formatCallAppsInput, parseCallAppsInput } from "../services/callAppsService";
 import {
   X,
   Save,
@@ -189,14 +188,10 @@ export const SettingsModal: FC<SettingsModalProps> = ({
   const [selectedEditorPreset, setSelectedEditorPreset] = useState<string>("");
   const [recordingAction, setRecordingAction] = useState<string | null>(null);
   const [bindingErrors, setBindingErrors] = useState<Record<string, string>>({});
-  // Raw text of the extra call apps field; `formData.extraCallApps` holds the
-  // cleaned list, so a half-typed (too short) name is not eaten mid-typing.
-  const [callAppsText, setCallAppsText] = useState(formatCallAppsInput(settings.extraCallApps));
   const isMac = isMacPlatform();
 
   useEffect(() => {
     setFormData(settings);
-    setCallAppsText(formatCallAppsInput(settings.extraCallApps));
     setBindingErrors({});
     const matchedFont = FONT_PRESETS.find((p) => p.value === settings.fontFamily);
     setSelectedFontPreset(matchedFont ? matchedFont.value : "custom");
@@ -335,7 +330,6 @@ export const SettingsModal: FC<SettingsModalProps> = ({
 
   const handleReset = () => {
     setFormData(DEFAULT_SETTINGS);
-    setCallAppsText("");
     setBindingErrors({});
     document.documentElement.setAttribute("data-theme", DEFAULT_SETTINGS.theme);
     document.body.setAttribute("data-theme", DEFAULT_SETTINGS.theme);
@@ -512,31 +506,6 @@ export const SettingsModal: FC<SettingsModalProps> = ({
                   />
                   <span>YouTube music player</span>
                 </label>
-              </div>
-
-              <div className="setting-field">
-                <label htmlFor="extra-call-apps-input">
-                  Extra call apps{" "}
-                  <span className="muted-text">
-                    (Music Time also pauses while these use the microphone)
-                  </span>
-                </label>
-                <input
-                  id="extra-call-apps-input"
-                  type="text"
-                  className="text-input modal-input"
-                  value={callAppsText}
-                  placeholder="e.g. gotomeet, mumble, teamspeak"
-                  spellCheck={false}
-                  onChange={(e) => {
-                    setCallAppsText(e.target.value);
-                    setFormData({ ...formData, extraCallApps: parseCallAppsInput(e.target.value) });
-                  }}
-                />
-                <p className="muted-text">
-                  Comma-separated, case-insensitive parts of the app or process name (3+ characters
-                  each). Added to Teams, Zoom, Slack, Discord and the other built-in call apps.
-                </p>
               </div>
             </div>
           )}

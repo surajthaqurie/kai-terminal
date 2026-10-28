@@ -257,12 +257,6 @@ export interface UserSettings {
   keybindings: KeybindingsConfig;
   /** Remappable zoom / copy / paste / terminal-local / tab-jump shortcuts. */
   fixedKeybindings?: FixedShortcutsConfig;
-  /**
-   * Extra call apps (lowercase fragments of an app / process name) that make
-   * Music Time pause while they hold the microphone, on top of the built-in
-   * list. Matched as a case-insensitive substring.
-   */
-  extraCallApps?: string[];
 }
 
 /**

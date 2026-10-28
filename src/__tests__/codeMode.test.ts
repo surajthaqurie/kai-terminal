@@ -180,3 +180,33 @@ describe("kai code end-to-end state file", () => {
     }
   });
 });
+
+describe("clearActiveProjectState ownership", () => {
+  let savedKaiHome: string | undefined;
+  let tmpBase: string;
+
+  beforeEach(() => {
+    savedKaiHome = process.env.KAI_HOME;
+    tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), "kai-codemode-own-"));
+    process.env.KAI_HOME = path.join(tmpBase, "kai_home");
+  });
+
+  afterEach(() => {
+    if (savedKaiHome === undefined) delete process.env.KAI_HOME;
+    else process.env.KAI_HOME = savedKaiHome;
+    fs.rmSync(tmpBase, { recursive: true, force: true });
+  });
+
+  it("an agent run ending clears its own Code Mode but not another project's", async () => {
+    const { saveActiveProjectState, clearActiveProjectState } =
+      await import("../cli/activeProject");
+    const file = path.join(process.env.KAI_HOME as string, "active_project.json");
+    saveActiveProjectState("/repo/b", "b", "id-b", "code");
+    clearActiveProjectState("/repo/a");
+    expect(fs.existsSync(file)).toBe(true);
+    clearActiveProjectState("/repo/b");
+    expect(fs.existsSync(file)).toBe(false);
+    // Missing file is a no-op.
+    expect(() => clearActiveProjectState("/repo/b")).not.toThrow();
+  });
+});

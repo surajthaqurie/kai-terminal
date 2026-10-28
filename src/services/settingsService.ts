@@ -7,7 +7,6 @@ import {
 } from "../types/terminal";
 import { ITheme } from "@xterm/xterm";
 import { PtyService } from "./ptyService";
-import { sanitizeCallApps } from "./callAppsService";
 import { DEFAULT_FIXED_SHORTCUTS, resolveFixedBindings } from "./shortcuts";
 
 export const DEFAULT_KEYBINDINGS: KeybindingsConfig = {
@@ -47,7 +46,6 @@ export const DEFAULT_SETTINGS: UserSettings = {
   musicStartMuted: false,
   keybindings: DEFAULT_KEYBINDINGS,
   fixedKeybindings: { ...DEFAULT_FIXED_SHORTCUTS },
-  extraCallApps: [],
 };
 
 const STORAGE_KEY = "kai_user_settings";
@@ -108,7 +106,6 @@ export class SettingsService {
     }
     // Remappable terminal shortcuts: unparsable entries recover to defaults.
     merged.fixedKeybindings = resolveFixedBindings(input.fixedKeybindings);
-    merged.extraCallApps = sanitizeCallApps(input.extraCallApps);
     merged.theme = normalizeThemeId(merged.theme);
 
     const cursorStyles: Array<NonNullable<UserSettings["cursorStyle"]>> = [

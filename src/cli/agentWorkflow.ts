@@ -21,7 +21,7 @@ import {
   resetTerminalModesAfterAgent,
 } from "../core/codeModeWorkflow";
 import { installCommitMsgHook } from "../core/githooks";
-import { saveActiveProjectState } from "./activeProject";
+import { clearActiveProjectState, saveActiveProjectState } from "./activeProject";
 import type { AgentDefinition } from "../core/agents";
 
 /**
@@ -161,6 +161,7 @@ export async function executeAgentWorkflow(
     if (resolved?.agentDef?.installGuidance) {
       console.error(`[kai] ${resolved.agentDef.installGuidance}`);
     }
+    clearActiveProjectState(meta.canonicalPath);
     return 1;
   }
 
@@ -196,8 +197,10 @@ export async function executeAgentWorkflow(
         // modes NOW (before any further logging) so a killed/crashed agent
         // that skipped its own DECSET cleanup cannot keep injecting ghost
         // input on mouse move / window focus. Idempotent; TTY-only. The
-        // outer finally below re-emits it for abort/throw paths.
-        resetTerminalModesAfterAgent();
+        // outer finally below re-emits it for abort/throw paths. Also erases
+        // the TUI's leftover last frame so the "Agent finished" line below
+        // does not land on top of it.
+        resetTerminalModesAfterAgent({ clearStaleUi: true });
         agentExitCode = result.exitCode;
         agentTimedOut = result.timedOut;
         agentSignal = result.signal;
@@ -256,6 +259,9 @@ export async function executeAgentWorkflow(
     resetTerminalModesAfterAgent();
     process.removeListener("SIGINT", onInterrupt);
     process.removeListener("SIGTERM", onInterrupt);
+    // Code Mode lasts as long as the agent run: without this the footer
+    // stayed on "Code Mode" forever after the first `kai code`.
+    clearActiveProjectState(meta.canonicalPath);
   }
 }
 

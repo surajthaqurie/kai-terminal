@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import {
+  AGENT_EXIT_CLEANUP_SEQ,
   AGENT_FINISHED_MARKER,
   TERMINAL_MODE_RESET_SEQ,
   scanAgentFinishedTail,
@@ -145,6 +146,23 @@ describe("resetTerminalModesAfterAgent", () => {
     });
     resetTerminalModesAfterAgent();
     expect(writes.join("")).toContain(TERMINAL_MODE_RESET_SEQ);
+  });
+
+  it("erases the agent's leftover last frame only when asked", () => {
+    const writes: string[] = [];
+    vi.stubGlobal("process", {
+      ...process,
+      stdout: { isTTY: true, write: (s: string) => void writes.push(s) },
+    });
+    resetTerminalModesAfterAgent();
+    expect(writes.join("")).not.toContain(AGENT_EXIT_CLEANUP_SEQ);
+    writes.length = 0;
+    resetTerminalModesAfterAgent({ clearStaleUi: true });
+    const out = writes.join("");
+    expect(out).toContain(TERMINAL_MODE_RESET_SEQ);
+    expect(out.endsWith("\r\x1b[J")).toBe(true);
+    // Below-cursor erase only: never the whole screen, scrollback or alt screen.
+    expect(AGENT_EXIT_CLEANUP_SEQ).not.toMatch(/\[[23]J|\?1049|\?47/);
   });
 
   it("stays silent when stdout is piped (CI/logs)", () => {

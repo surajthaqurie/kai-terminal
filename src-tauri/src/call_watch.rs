@@ -15,8 +15,6 @@
 //!   Browser calls (Meet) are not detected there: a browser is always open.
 //! - Other platforms report "no call".
 
-use std::sync::{Mutex, OnceLock};
-
 /// Event the watcher emits to the frontend when the call state flips.
 pub const CALL_STATE_EVENT: &str = "kai-call-state";
 
@@ -48,7 +46,14 @@ const CALL_APPS: &[&str] = &[
     "wemeet",
     "ringcentral",
     "bluejeans",
-    "gotomeeting",
+    "gotomeet",
+    "mumble",
+    "teamspeak",
+    "chime",
+    "whereby",
+    "mattermost",
+    "kakaotalk",
+    "line.exe",
     "jitsi",
     "linphone",
     "zoiper",
@@ -72,51 +77,6 @@ const BROWSERS: &[&str] = &[
     "webrtc voiceengine",
 ];
 
-/// Limits on the user's extra call apps (Settings). Mirrored by
-/// `sanitizeCallApps` in `src/services/callAppsService.ts`.
-const MAX_EXTRA_CALL_APPS: usize = 32;
-/// Shorter fragments would match almost every app name.
-const MIN_EXTRA_APP_LEN: usize = 3;
-const MAX_EXTRA_APP_LEN: usize = 64;
-
-/// Extra call-app fragments from Settings, lowercase, on top of [`CALL_APPS`].
-fn extra_call_apps() -> &'static Mutex<Vec<String>> {
-    static EXTRA: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
-    EXTRA.get_or_init(|| Mutex::new(Vec::new()))
-}
-
-/// Trim, lowercase, de-duplicate and bound a user-supplied list: control
-/// characters, too-short and too-long entries are dropped, at most 32 kept.
-#[cfg_attr(not(any(feature = "tauri", test)), allow(dead_code))]
-fn sanitize_extra_call_apps(raw: &[String]) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    for entry in raw {
-        let app = entry.trim().to_ascii_lowercase();
-        let len = app.chars().count();
-        if !(MIN_EXTRA_APP_LEN..=MAX_EXTRA_APP_LEN).contains(&len)
-            || app.chars().any(char::is_control)
-            || out.contains(&app)
-        {
-            continue;
-        }
-        out.push(app);
-        if out.len() >= MAX_EXTRA_CALL_APPS {
-            break;
-        }
-    }
-    out
-}
-
-/// Replace the extra call apps (called by the frontend at startup and on every
-/// Settings change). Takes effect on the next poll.
-#[cfg_attr(not(any(feature = "tauri", test)), allow(dead_code))]
-pub fn set_extra_call_apps(raw: &[String]) {
-    let cleaned = sanitize_extra_call_apps(raw);
-    if let Ok(mut guard) = extra_call_apps().lock() {
-        *guard = cleaned;
-    }
-}
-
 #[cfg_attr(
     not(any(target_os = "windows", target_os = "linux", target_os = "macos", test)),
     allow(dead_code)
@@ -124,11 +84,7 @@ pub fn set_extra_call_apps(raw: &[String]) {
 fn is_call_app(identity: &str, with_browsers: bool) -> bool {
     let identity = identity.to_ascii_lowercase();
     let hit = |list: &[&str]| list.iter().any(|app| identity.contains(app));
-    hit(CALL_APPS)
-        || (with_browsers && hit(BROWSERS))
-        || extra_call_apps()
-            .lock()
-            .is_ok_and(|extra| extra.iter().any(|app| identity.contains(app.as_str())))
+    hit(CALL_APPS) || (with_browsers && hit(BROWSERS))
 }
 
 /// Seconds between polls.
@@ -425,36 +381,6 @@ mod tests {
         assert!(parse_call_app_running("launchd\nzoom.us\nFinder\n"));
         assert!(parse_call_app_running("Microsoft Teams\n"));
         assert!(!parse_call_app_running("Google Chrome\nSafari\nTerminal\n"));
-    }
-
-    #[test]
-    fn extra_call_apps_are_sanitized() {
-        let mut raw: Vec<String> = ["  GoToMeet ", "gotomeet", "ab", "", "bad\u{7}name"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-        raw.push("x".repeat(MAX_EXTRA_APP_LEN + 1));
-        raw.push("Mumble".to_string());
-        assert_eq!(sanitize_extra_call_apps(&raw), vec!["gotomeet", "mumble"]);
-        let many: Vec<String> = (0..100).map(|i| format!("app-number-{i}")).collect();
-        assert_eq!(sanitize_extra_call_apps(&many).len(), MAX_EXTRA_CALL_APPS);
-    }
-
-    #[test]
-    fn extra_call_apps_extend_the_built_in_list() {
-        // A token no other test or built-in entry contains, so the shared
-        // setting cannot affect the parallel tests above.
-        let key = format!("{KEY}\\NonPackaged\\C:#Apps#kai-test-callapp#talk.exe");
-        let out = format!("{key}\n    LastUsedTimeStop    REG_QWORD    0x0\n\n");
-        assert!(!parse_mic_in_use(&out));
-        set_extra_call_apps(&["Kai-Test-CallApp".to_string()]);
-        assert!(parse_mic_in_use(&out));
-        assert!(parse_call_app_running("launchd\nKAI-TEST-CALLAPP\n"));
-        // The built-in list is untouched and browsers still need `with_browsers`.
-        assert!(is_call_app("zoom.us", false));
-        assert!(!is_call_app("chrome", false));
-        set_extra_call_apps(&[]);
-        assert!(!parse_mic_in_use(&out));
     }
 
     #[test]

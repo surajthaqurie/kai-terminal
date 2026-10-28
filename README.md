@@ -171,7 +171,7 @@ On macOS use `Cmd` where `Ctrl` is shown. Plain `Ctrl+C` always stays the shell 
 | `Ctrl+Shift+F` | Find in output |
 | `Ctrl+Shift+G` | Review git changes |
 
-Every shortcut above is remappable in **Settings → Shortcuts** except `Ctrl/Shift+Insert`, `Shift+PageUp` / `PageDown` and `Ctrl+Shift+G`, which stay fixed and are listed there read-only. Music Time pauses for calls automatically; add a call app it does not know under **Settings → Appearance → Extra call apps**.
+Every shortcut above is remappable in **Settings → Shortcuts** except `Ctrl/Shift+Insert`, `Shift+PageUp` / `PageDown` and `Ctrl+Shift+G`, which stay fixed and are listed there read-only. Music Time pauses for calls automatically.
 
 ### Privacy and limits
 
