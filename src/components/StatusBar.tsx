@@ -41,9 +41,7 @@ interface StatusBarProps {
   isRefreshingGit?: boolean;
   /** Opens the Git Changes Review & Diff modal (clicking the branch badge). */
   onOpenGitChanges?: () => void;
-  /** @deprecated Kept for backwards compat. Code Mode is now entered/cleared
-   * via the CLI (`kai code <path>` / `kai stop code`), so the badge is
-   * display-only and this callback is unused. */
+  /** Toggle or exit Code Mode, returning to plain terminal mode. */
   onToggleMode?: () => void;
   music?: MusicFooterState | null;
   onToggleMusicPanel?: () => void;
@@ -72,6 +70,7 @@ export const StatusBar: FC<StatusBarProps> = ({
   onCheckUpdates,
   onViewUpdate,
   mode = "terminal",
+  onToggleMode,
   onRefreshGit,
   isRefreshingGit = false,
   onOpenGitChanges,
@@ -203,14 +202,27 @@ export const StatusBar: FC<StatusBarProps> = ({
     <footer className="status-bar" role="status" aria-label="Application status bar">
       <div className="status-left">
         {mode === "code" ? (
-          <span
-            className="status-mode-pill"
-            title="Code Mode — project intelligence active for this folder. Run `kai stop` to clear."
-            aria-label="Code Mode active"
-          >
-            <Code size={12} aria-hidden="true" />
-            <span>Code Mode</span>
-          </span>
+          onToggleMode ? (
+            <button
+              type="button"
+              className="status-mode-pill status-mode-btn"
+              onClick={onToggleMode}
+              title="Code Mode — project intelligence active. Click or run `kai stop` to return to Terminal mode."
+              aria-label="Code Mode active"
+            >
+              <Code size={12} aria-hidden="true" />
+              <span>Code Mode</span>
+            </button>
+          ) : (
+            <span
+              className="status-mode-pill"
+              title="Code Mode — project intelligence active for this folder. Run `kai stop` to clear."
+              aria-label="Code Mode active"
+            >
+              <Code size={12} aria-hidden="true" />
+              <span>Code Mode</span>
+            </span>
+          )
         ) : (
           projectDir && (
             <span

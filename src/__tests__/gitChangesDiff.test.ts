@@ -559,4 +559,40 @@ describe("StatusBar Footer with Active Split Directory, Mode and Git", () => {
     root.unmount();
     container.remove();
   });
+
+  it("allows clicking the Code Mode pill to exit Code Mode when onToggleMode is provided", async () => {
+    const React = await import("react");
+    const { createRoot } = await import("react-dom/client");
+    const { StatusBar } = await import("../components/StatusBar");
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    let toggled = false;
+
+    await React.act(async () => {
+      root.render(
+        React.createElement(StatusBar, {
+          gitBranch: null,
+          gitDirty: false,
+          projectDir: "/repo",
+          appVersion: "1.0.0",
+          updateAvailable: false,
+          mode: "code",
+          onToggleMode: () => {
+            toggled = true;
+          },
+        })
+      );
+    });
+
+    const btn = container.querySelector("button.status-mode-pill") as HTMLButtonElement | null;
+    expect(btn).not.toBeNull();
+    expect(btn?.textContent).toContain("Code Mode");
+    btn?.click();
+    expect(toggled).toBe(true);
+
+    root.unmount();
+    container.remove();
+  });
 });

@@ -220,6 +220,12 @@ fn get_active_project_cmd() -> active_project::ActiveProject {
 }
 
 #[cfg(feature = "tauri")]
+#[tauri::command]
+fn clear_active_project_cmd() {
+    active_project::clear_active_project();
+}
+
+#[cfg(feature = "tauri")]
 #[tauri::command(async)]
 fn open_project_in_editor(
     editor_path: Option<String>,
@@ -446,6 +452,7 @@ pub fn run() {
             list_sessions,
             get_project_intelligence_cmd,
             get_active_project_cmd,
+            clear_active_project_cmd,
             kai_cli::get_kai_cli_status_cmd,
             kai_cli::ensure_kai_cli_cmd,
             updater::download_update_asset_cmd,

@@ -6,6 +6,9 @@ import {
   estimateTokens,
   truncateToTokenBudget,
   registerCustomTokenizer,
+  registerModelTokenizer,
+  getModelTokenizer,
+  estimateModelTokens,
   type TokenizerFunction,
 } from "../core/tokenCounter";
 import { registerProject } from "../core/registry";
@@ -184,5 +187,34 @@ describe("token-count truthfulness contract (KNOWN_LIMITATIONS 1.8.2)", () => {
     expect(res?.error).toBeUndefined();
     const text = (res?.result as { content: Array<{ text: string }> }).content[0].text;
     expect(text).toContain("Estimate (character heuristic, not a model tokenizer)");
+  });
+
+  it("handles model-specific tokenizer adapters and makes unsupported models explicit", () => {
+    // Unregistered model explicitly falls back to heuristic
+    const unreg = estimateModelTokens("hello world", "unsupported-model-v1");
+    expect(unreg.isEstimate).toBe(true);
+    expect(unreg.isExact).toBe(false);
+    expect(unreg.tokenizerName).toBe("kai-heuristic");
+    expect(unreg.model).toBe("unsupported-model-v1");
+
+    // Register an exact adapter for gpt-4o
+    const mockGpt4oTokenizer: TokenizerFunction = (t: string) => t.trim().split(/\s+/).length;
+    registerModelTokenizer("gpt-4o", mockGpt4oTokenizer);
+    expect(getModelTokenizer("gpt-4o")).toBe(mockGpt4oTokenizer);
+    expect(getModelTokenizer("GPT-4O")).toBe(mockGpt4oTokenizer);
+
+    const exact = estimateModelTokens("hello world test", "gpt-4o");
+    expect(exact.isEstimate).toBe(false);
+    expect(exact.isExact).toBe(true);
+    expect(exact.estimatedTokens).toBe(3);
+    expect(exact.measuredTokens).toBe(3);
+    expect(exact.tokenizerName).toBe("adapter-gpt-4o");
+
+    // Unregister cleans up
+    registerModelTokenizer("gpt-4o", null);
+    expect(getModelTokenizer("gpt-4o")).toBeNull();
+    const after = estimateModelTokens("hello world test", "gpt-4o");
+    expect(after.isEstimate).toBe(true);
+    expect(after.isExact).toBe(false);
   });
 });

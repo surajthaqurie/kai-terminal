@@ -332,15 +332,15 @@ impl PtyManager {
 
         if flatpak_id.is_some() {
             // Best-effort cwd reporting for host shells (see
-            // `flatpak_cwd_hook_env`); a user-supplied PROMPT_COMMAND wins.
-            let user_has_hook = options
+            // `flatpak_cwd_hook_env`); preserves existing PROMPT_COMMAND and avoids duplicate hooks.
+            let env_prompt = std::env::var(FLATPAK_CWD_HOOK_VAR).ok();
+            let user_prompt = options
                 .env
                 .as_ref()
-                .is_some_and(|e| e.contains_key(FLATPAK_CWD_HOOK_VAR));
-            if !user_has_hook {
-                for (k, v) in flatpak_cwd_hook_env(&shell_path) {
-                    cmd.env(k, v);
-                }
+                .and_then(|e| e.get(FLATPAK_CWD_HOOK_VAR).map(|s| s.as_str()))
+                .or(env_prompt.as_deref());
+            for (k, v) in flatpak_cwd_hook_env(&shell_path, user_prompt) {
+                cmd.env(k, v);
             }
         }
 
@@ -351,6 +351,9 @@ impl PtyManager {
             if is_wsl_shell_path(&shell_path) {
                 msg.push(' ');
                 msg.push_str(wsl_failure_hint());
+            } else if flatpak_id.is_some() {
+                msg.push(' ');
+                msg.push_str(flatpak_failure_hint());
             }
             TerminalError::PtyCreationFailed(msg)
         })?;
@@ -977,6 +980,28 @@ const FLATPAK_CWD_HOOK_VAR: &str = "PROMPT_COMMAND";
 /// `%`, space, `#` and `?` percent-encoded so the URL parses back exactly.
 const FLATPAK_BASH_CWD_HOOK: &str = "__kai_osc7(){ local p=${PWD//%/%25}; p=${p// /%20}; p=${p//\\#/%23}; p=${p//\\?/%3F}; printf '\\033]7;file://%s%s\\007' \"${HOSTNAME:-localhost}\" \"$p\"; }; __kai_osc7";
 
+/// Diagnostic hint appended to PTY spawn failure when running under Flatpak.
+pub fn flatpak_failure_hint() -> &'static str {
+    "(Flatpak host shell spawn failed. Verify that the Flatpak sandbox has '--talk-name=org.freedesktop.Flatpak' permission and that the requested host shell exists and is executable on the host)"
+}
+
+/// Composes a bash PROMPT_COMMAND that reports cwd via OSC 7 while preserving
+/// any existing user PROMPT_COMMAND and avoiding duplicate injection of the hook.
+pub fn bash_cwd_prompt_command(existing: Option<&str>) -> String {
+    match existing {
+        Some(t) if !t.trim().is_empty() => {
+            let trimmed = t.trim();
+            if trimmed.contains("__kai_osc7") {
+                trimmed.to_string()
+            } else {
+                let stripped = trimmed.trim_end_matches(';');
+                format!("{FLATPAK_BASH_CWD_HOOK}; {stripped}")
+            }
+        }
+        _ => FLATPAK_BASH_CWD_HOOK.to_string(),
+    }
+}
+
 /// Extra environment that lets the cwd badge follow `cd` in a Flatpak tab.
 /// The host shell is invisible from the sandbox (no shared PID namespace, so no
 /// `/proc/<pid>/cwd`), leaving shell-emitted `OSC 7` as the only source. Only
@@ -984,12 +1009,12 @@ const FLATPAK_BASH_CWD_HOOK: &str = "__kai_osc7(){ local p=${PWD//%/%25}; p=${p/
 /// best-effort, since an rc file that assigns `PROMPT_COMMAND` replaces it.
 /// Other shells report cwd only if they emit `OSC 7` themselves, and otherwise
 /// the badge stays at the spawn directory.
-fn flatpak_cwd_hook_env(shell_path: &str) -> Vec<(String, String)> {
+fn flatpak_cwd_hook_env(shell_path: &str, existing_prompt: Option<&str>) -> Vec<(String, String)> {
     let name = shell_path.rsplit('/').next().unwrap_or(shell_path);
     if name == "bash" {
         vec![(
             FLATPAK_CWD_HOOK_VAR.to_string(),
-            FLATPAK_BASH_CWD_HOOK.to_string(),
+            bash_cwd_prompt_command(existing_prompt),
         )]
     } else {
         Vec::new()
@@ -1116,11 +1141,15 @@ fn percent_decode(s: &str) -> String {
 
 /// Parses OSC 7 payload bytes (`file://host/path`, percent-encoded) into a
 /// cwd, mirroring the frontend xterm OSC 7 handler (URL parse, drive-letter
-/// `/C:/` unstripping). Returns `None` for non-file payloads.
+/// `/C:/` unstripping). Returns `None` for non-file payloads, oversized inputs,
+/// or strings containing NUL bytes / control characters.
 fn parse_osc7_data(data: &[u8]) -> Option<String> {
+    if data.len() > 4096 {
+        return None;
+    }
     let s = String::from_utf8_lossy(data);
     let s = s.trim();
-    if s.is_empty() {
+    if s.is_empty() || s.contains('\0') {
         return None;
     }
     let without_scheme = s.strip_prefix("file://")?;
@@ -1139,17 +1168,26 @@ fn parse_osc7_data(data: &[u8]) -> Option<String> {
             }
         }
     }
-    if p.trim().is_empty() {
+    let trimmed = p.trim();
+    if trimmed.is_empty()
+        || trimmed.len() > 4096
+        || trimmed.contains('\0')
+        || trimmed.chars().any(|c| (c as u32) < 0x20)
+    {
         return None;
     }
-    Some(p)
+    Some(trimmed.to_string())
 }
 
 /// Parses OSC 9;9 payload bytes (literal Windows path, e.g. `C:\Users\x`).
+/// Safely rejects oversized payloads, NUL bytes, and control characters.
 fn parse_osc9_data(data: &[u8]) -> Option<String> {
+    if data.len() > 4096 {
+        return None;
+    }
     let s = String::from_utf8_lossy(data);
     let p = s.trim();
-    if p.is_empty() {
+    if p.is_empty() || p.len() > 4096 || p.contains('\0') || p.chars().any(|c| (c as u32) < 0x20) {
         None
     } else {
         Some(p.to_string())
@@ -2038,7 +2076,7 @@ mod tests {
     #[test]
     fn test_flatpak_cwd_hook_env_primes_bash_only() {
         for bash in ["/bin/bash", "/usr/bin/bash", "/nix/store/x/bin/bash"] {
-            let env = flatpak_cwd_hook_env(bash);
+            let env = flatpak_cwd_hook_env(bash, None);
             assert_eq!(env.len(), 1, "{bash}");
             assert_eq!(env[0].0, "PROMPT_COMMAND");
             let hook = &env[0].1;
@@ -2056,13 +2094,36 @@ mod tests {
             "/usr/bin/bashful",
             "bash-5",
         ] {
-            assert!(flatpak_cwd_hook_env(other).is_empty(), "{other}");
+            assert!(flatpak_cwd_hook_env(other, None).is_empty(), "{other}");
         }
     }
 
     #[test]
+    fn test_bash_cwd_prompt_command_preserves_and_avoids_duplicate() {
+        // None or empty produces just the Kai hook
+        let hook_only = bash_cwd_prompt_command(None);
+        assert!(hook_only.starts_with("__kai_osc7(){"));
+        assert!(hook_only.ends_with("__kai_osc7"));
+
+        // Preserves user's existing PROMPT_COMMAND
+        let chained = bash_cwd_prompt_command(Some("history -a"));
+        assert!(chained.contains("__kai_osc7"));
+        assert!(chained.contains("history -a"));
+
+        // Strips trailing semicolon before appending
+        let chained_semi = bash_cwd_prompt_command(Some("history -a;"));
+        assert!(chained_semi.contains("history -a"));
+        assert!(!chained_semi.ends_with(";;"));
+
+        // Avoids injecting duplicate if already hooked
+        let already = format!("{hook_only}; echo prompt");
+        let deduped = bash_cwd_prompt_command(Some(&already));
+        assert_eq!(deduped, already);
+    }
+
+    #[test]
     fn test_flatpak_cwd_hook_is_forwarded_to_the_host_as_an_env_flag() {
-        let env = flatpak_cwd_hook_env("/bin/bash");
+        let env = flatpak_cwd_hook_env("/bin/bash", None);
         let argv = vec!["/bin/bash".to_string()];
         let out = flatpak_host_argv(Some("com.kai.terminal"), &argv, "/home/u", &env).unwrap();
         let flag = out
@@ -2074,6 +2135,47 @@ mod tests {
         let flag_pos = out.iter().position(|a| a == flag).unwrap();
         let prog_pos = out.iter().position(|a| a == "/bin/bash").unwrap();
         assert!(flag_pos < prog_pos);
+    }
+
+    #[test]
+    fn test_parse_osc7_and_osc9_data_hardening() {
+        // Valid OSC 7 with spaces and Unicode
+        let valid_osc7 = b"file://localhost/home/user/my%20projects/%C3%A9cole";
+        assert_eq!(
+            parse_osc7_data(valid_osc7).as_deref(),
+            Some("/home/user/my projects/école")
+        );
+
+        // NUL byte injection in OSC 7 is rejected
+        let nul_osc7 = b"file://localhost/home/user\0/bad";
+        assert_eq!(parse_osc7_data(nul_osc7), None);
+
+        // Control characters in OSC 7 are rejected
+        let ctrl_osc7 = b"file://localhost/home/user\x01/bad";
+        assert_eq!(parse_osc7_data(ctrl_osc7), None);
+
+        // Oversized OSC 7 rejected
+        let big_osc7 = format!("file://localhost/{}", "a".repeat(4500));
+        assert_eq!(parse_osc7_data(big_osc7.as_bytes()), None);
+
+        // Valid OSC 9;9 path
+        let valid_osc9 = b"C:\\Users\\user\\projects";
+        assert_eq!(
+            parse_osc9_data(valid_osc9).as_deref(),
+            Some("C:\\Users\\user\\projects")
+        );
+
+        // NUL byte injection in OSC 9;9 is rejected
+        let nul_osc9 = b"C:\\Users\\user\0\\projects";
+        assert_eq!(parse_osc9_data(nul_osc9), None);
+
+        // Control characters in OSC 9;9 are rejected
+        let ctrl_osc9 = b"C:\\Users\\user\x1b\\projects";
+        assert_eq!(parse_osc9_data(ctrl_osc9), None);
+
+        // Flatpak failure hint provides guidance
+        let hint = flatpak_failure_hint();
+        assert!(hint.contains("org.freedesktop.Flatpak"));
     }
 
     #[test]

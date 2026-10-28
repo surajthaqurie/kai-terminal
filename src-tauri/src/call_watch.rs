@@ -14,6 +14,13 @@
 //!   uses it, so a call is "input running while a native call app is open".
 //!   Browser calls (Meet) are not detected there: a browser is always open.
 //! - Other platforms report "no call".
+//!
+//! Media continuity contract (why this must never fire on ordinary launches):
+//! Kai Terminal never sends media-key events, AppleScript, or audio-session
+//! changes — the ONLY media state this watcher pauses is Music Time's own
+//! embed, and only via the call decision above, debounced on both edges so a
+//! launch/automation mic blip (one poll) cannot pause playback. External
+//! players (Spotify, Apple Music, VLC, browser tabs) are never controlled.
 
 /// Event the watcher emits to the frontend when the call state flips.
 pub const CALL_STATE_EVENT: &str = "kai-call-state";
@@ -21,6 +28,15 @@ pub const CALL_STATE_EVENT: &str = "kai-call-state";
 /// Consecutive "no call" polls required before a call counts as ended, so a
 /// call app briefly releasing the microphone does not resume the music.
 const POLLS_TO_END_CALL: u32 = 2;
+
+/// Consecutive "call" polls required before a call counts as started. A launch
+/// or background task (Kai opening a browser / another app, agent automation,
+/// shell commands) can make an application open the microphone for a moment;
+/// a real call lasts minutes. Requiring the second poll filters those
+/// launch-transient blips so Media Time is not paused by ordinary
+/// application launches (one poll = up to `POLL_INTERVAL_SECS`, a real call
+/// simply starts a few seconds later).
+const POLLS_TO_START_CALL: u32 = 2;
 
 /// Lowercase fragments that identify a call app in a registry key (Windows),
 /// a PulseAudio stream's properties (Linux) or a process name (macOS).
@@ -251,24 +267,35 @@ pub fn is_call_active() -> bool {
 struct CallTracker {
     active: bool,
     quiet_polls: u32,
+    active_polls: u32,
 }
 
 #[cfg_attr(not(any(feature = "tauri", test)), allow(dead_code))]
 impl CallTracker {
     /// Returns `Some(new_state)` only when the debounced state changes.
+    ///
+    /// A call must be observed positively for [`POLLS_TO_START_CALL`]
+    /// consecutive polls before it starts (launch-transient mic blips from
+    /// app launches / automation are never a call), and negatively for
+    /// [`POLLS_TO_END_CALL`] before it ends (a call app briefly releasing
+    /// the mic must not resume the music).
     fn observe(&mut self, mic_in_use: bool) -> Option<bool> {
         if mic_in_use {
             self.quiet_polls = 0;
-            if !self.active {
+            self.active_polls += 1;
+            if !self.active && self.active_polls >= POLLS_TO_START_CALL {
                 self.active = true;
                 return Some(true);
             }
-        } else if self.active {
-            self.quiet_polls += 1;
-            if self.quiet_polls >= POLLS_TO_END_CALL {
-                self.active = false;
-                self.quiet_polls = 0;
-                return Some(false);
+        } else {
+            self.active_polls = 0;
+            if self.active {
+                self.quiet_polls += 1;
+                if self.quiet_polls >= POLLS_TO_END_CALL {
+                    self.active = false;
+                    self.quiet_polls = 0;
+                    return Some(false);
+                }
             }
         }
         None
@@ -384,9 +411,12 @@ mod tests {
     }
 
     #[test]
-    fn tracker_starts_at_once_and_ends_after_quiet_polls() {
+    fn tracker_debounces_call_starts_and_ends() {
         let mut t = CallTracker::default();
         assert_eq!(t.observe(false), None);
+        // Two consecutive positive polls start the call (a few seconds in,
+        // long before a real "pause after music stopped" could matter).
+        assert_eq!(t.observe(true), None);
         assert_eq!(t.observe(true), Some(true));
         assert_eq!(t.observe(true), None);
         assert_eq!(t.observe(false), None);
@@ -395,5 +425,42 @@ mod tests {
         assert_eq!(t.observe(false), None);
         assert_eq!(t.observe(false), Some(false));
         assert_eq!(t.observe(false), None);
+        assert!(!t.active);
+    }
+
+    /// Root-cause regression: a launch (Kai opening a browser, another app,
+    /// agent automation, a shell command) can flip the mic for a single poll.
+    /// That must never pause Media Time, and never emit a call event either
+    /// way — playback continuity cannot depend on repeatedly pressing Play.
+    #[test]
+    fn single_poll_launch_transients_never_pause_music() {
+        let mut t = CallTracker::default();
+        // Kai launches something; the app opens the mic for under one poll.
+        assert_eq!(t.observe(true), None);
+        assert_eq!(t.observe(false), None);
+        assert!(!t.active);
+        // Repeated launches keep producing one-poll blips: still no events.
+        for _ in 0..10 {
+            assert_eq!(t.observe(true), None);
+            assert_eq!(t.observe(false), None);
+            assert_eq!(t.observe(false), None);
+        }
+        assert!(!t.active);
+    }
+
+    /// The user explicitly pauses Media Time while a launch is running: the
+    /// watcher has no say about paused music at all — it only reports call
+    /// edges, and the frontend pauses only when the player was playing.
+    #[test]
+    fn blips_during_an_active_call_do_not_end_it() {
+        let mut t = CallTracker::default();
+        assert_eq!(t.observe(true), None);
+        assert_eq!(t.observe(true), Some(true));
+        // Mic released for one poll (call app hiccup): no event yet.
+        assert_eq!(t.observe(false), None);
+        assert_eq!(t.observe(true), None);
+        assert!(t.active);
+        assert_eq!(t.observe(false), None);
+        assert_eq!(t.observe(false), Some(false));
     }
 }

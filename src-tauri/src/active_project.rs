@@ -130,6 +130,17 @@ pub fn get_active_project() -> ActiveProject {
     }
 }
 
+/// Clears the active Code Mode project state by removing `active_project.json`
+/// from candidate home directories, matching `kai stop` in the CLI.
+pub fn clear_active_project() {
+    for home in candidate_home_dirs() {
+        let file = home.join("active_project.json");
+        if file.exists() {
+            let _ = fs::remove_file(file);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -317,6 +328,28 @@ mod tests {
         );
         // Canonical form still points at the same directory.
         assert!(std::path::Path::new(&got).is_dir());
+        let _ = fs::remove_dir_all(&tmp);
+        restore_env(_snap);
+    }
+
+    #[test]
+    fn test_clear_active_project_removes_file() {
+        let _env = crate::test_support::lock_test_env();
+        let tmp = std::env::temp_dir().join(format!("kai-ap-clear-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        let _ = fs::create_dir_all(&tmp);
+        let _snap = snapshot_env();
+        clear_env();
+        isolate_home(&tmp);
+        fs::write(
+            tmp.join("active_project.json"),
+            format!(r#"{{"path":{:?},"mode":"code"}}"#, tmp.to_string_lossy()),
+        )
+        .unwrap();
+        assert_eq!(get_active_project().mode, "code");
+        clear_active_project();
+        assert_eq!(get_active_project().mode, "terminal");
+        assert!(!tmp.join("active_project.json").exists());
         let _ = fs::remove_dir_all(&tmp);
         restore_env(_snap);
     }

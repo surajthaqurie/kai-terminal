@@ -14,7 +14,7 @@ import {
  * the filesystem probes real; only spawn behavior is altered.
  */
 const spawnControl = vi.hoisted(() => ({
-  mode: "real" as "real" | "throwSync" | "hang",
+  mode: "real" as "real" | "throwSync" | "hang" | "crash",
   killCalls: 0,
 }));
 
@@ -32,11 +32,26 @@ vi.mock("child_process", async (importOriginal) => {
       on: () => {},
     };
   }
+  function fakeCrashingChild() {
+    const child = {
+      stdin: { write: () => true, end: () => {} },
+      stdout: { on: () => {} },
+      kill: () => true,
+      on: (event: string, cb: (...args: unknown[]) => void) => {
+        if (event === "close") {
+          setTimeout(() => cb(1, null), 10);
+        }
+        return child;
+      },
+    };
+    return child;
+  }
   return {
     ...orig,
     spawn: ((...args: Parameters<typeof orig.spawn>) => {
       if (spawnControl.mode === "throwSync") throw new Error("injected sync spawn failure");
       if (spawnControl.mode === "hang") return fakeHangingChild();
+      if (spawnControl.mode === "crash") return fakeCrashingChild();
       return (realSpawn as (...a: unknown[]) => unknown)(...args);
     }) as typeof orig.spawn,
   };
@@ -195,5 +210,24 @@ describe("LSP Bridge: degraded-contract hardening (KNOWN_LIMITATIONS 1.8.1)", ()
     expect(result.degradedReason).toContain("timed out");
     expect(elapsed).toBeLessThan(3000);
     expect(spawnControl.killCalls).toBeGreaterThanOrEqual(1);
+  });
+
+  it("crashing server immediately resolves in degraded mode without waiting for timeout", async () => {
+    const present = KNOWN_LSP_SERVERS.find((e) => isCommandAvailable(e.command));
+    if (!present) return;
+    spawnControl.mode = "crash";
+    const start = Date.now();
+    const result = await queryLspCrossFileReferences(
+      process.cwd(),
+      EXT_FOR_LANGUAGE[present.language] ?? "probe.ts",
+      1,
+      0,
+      "SomeSymbol",
+      4000
+    );
+    const elapsed = Date.now() - start;
+    expect(result.degradedMode).toBe(true);
+    expect(result.degradedReason).toContain("exited with code 1");
+    expect(elapsed).toBeLessThan(1000);
   });
 });

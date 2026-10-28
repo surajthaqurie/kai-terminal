@@ -92,6 +92,7 @@ export function loadRecentProjects(): string[] {
  */
 export function getActiveProject(): string | null {
   try {
+    if (getActiveMode() !== "code") return null;
     const active = localStorage.getItem(ACTIVE_PROJECT_KEY);
     if (active && active.trim()) {
       return active.trim();
@@ -145,6 +146,13 @@ export function clearActiveProject(): void {
     localStorage.setItem(ACTIVE_MODE_KEY, "terminal");
   } catch {
     // ignore
+  }
+  if (isTauriAvailable()) {
+    try {
+      void invoke("clear_active_project_cmd");
+    } catch {
+      // ignore
+    }
   }
 }
 

@@ -3,6 +3,7 @@ import type { TokenMetrics } from "./types";
 export type TokenizerFunction = (text: string) => number;
 
 let globalCustomTokenizer: TokenizerFunction | null = null;
+const modelTokenizers: Map<string, TokenizerFunction> = new Map();
 
 /**
  * Register a global custom tokenizer function (e.g. tiktoken/js-tiktoken or bespoke model tokenizer).
@@ -11,6 +12,49 @@ let globalCustomTokenizer: TokenizerFunction | null = null;
  */
 export function registerCustomTokenizer(fn: TokenizerFunction | null): void {
   globalCustomTokenizer = fn;
+}
+
+/**
+ * Register an adapter tokenizer for a specific model family (e.g. "gpt-4o", "claude-3-5-sonnet").
+ */
+export function registerModelTokenizer(modelName: string, fn: TokenizerFunction | null): void {
+  const norm = modelName.trim().toLowerCase();
+  if (!fn) {
+    modelTokenizers.delete(norm);
+  } else {
+    modelTokenizers.set(norm, fn);
+  }
+}
+
+/**
+ * Returns the registered tokenizer for a model, or null if unsupported.
+ */
+export function getModelTokenizer(modelName?: string): TokenizerFunction | null {
+  if (!modelName) return null;
+  const norm = modelName.trim().toLowerCase();
+  return modelTokenizers.get(norm) ?? null;
+}
+
+export interface ModelTokenMetrics extends TokenMetrics {
+  model?: string;
+  tokenizerName: string;
+  isExact: boolean;
+}
+
+/**
+ * Estimates or accurately measures tokens for a target model.
+ * If no exact tokenizer is registered for the model, falls back to the labeled heuristic estimate
+ * and explicitly marks `isExact: false` and `isEstimate: true`.
+ */
+export function estimateModelTokens(text: string, modelName?: string): ModelTokenMetrics {
+  const modelTokenizer = getModelTokenizer(modelName);
+  const metrics = estimateTokens(text, modelTokenizer);
+  return {
+    ...metrics,
+    model: modelName,
+    tokenizerName: modelTokenizer ? `adapter-${modelName}` : "kai-heuristic",
+    isExact: !metrics.isEstimate,
+  };
 }
 
 /**

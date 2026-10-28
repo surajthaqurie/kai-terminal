@@ -424,6 +424,27 @@ export async function queryLspCrossFileReferences(
         }
       });
 
+      proc.on("close", (code, signal) => {
+        clearTimeout(timer);
+        if (!hasResolved) {
+          hasResolved = true;
+          const exitReason = signal
+            ? `terminated with signal ${signal}`
+            : `exited with code ${code ?? 0}`;
+          resolve({
+            symbolName,
+            language: targetLang,
+            serverUsed: server.command,
+            references: [],
+            definitions: [],
+            isAvailable: true,
+            degradedMode: true,
+            degradedReason: `LSP server ${server.command} ${exitReason} before responding; operating in degraded mode`,
+            error: `LSP server ${server.command} ${exitReason} before responding`,
+          });
+        }
+      });
+
       // Send initialize request
       const fileUri = `file://${fullPath}`;
       const initReq = encodeLspMessage({

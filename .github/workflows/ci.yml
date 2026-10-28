@@ -293,6 +293,8 @@ jobs:
           out=$(flatpak run com.kai.terminal --version || true)
           echo "$out"
           echo "$out" | grep -q "kai-desktop ${VERSION}"
+          # Verify host shell spawn permissions and execution from within the Flatpak sandbox
+          flatpak run --command=flatpak-spawn com.kai.terminal --host sh -c 'echo "FLATPAK_HOST_SHELL_OK: $(uname -s)"' | grep -q "FLATPAK_HOST_SHELL_OK: Linux"
 
   # WSL on a hosted Windows runner: Vampire/setup-wsl installs a WSL2
   # distribution, then the PTY integration test spawns `wsl.exe` under ConPTY

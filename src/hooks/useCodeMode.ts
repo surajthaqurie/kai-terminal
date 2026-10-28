@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   ModeDisplay,
+  clearActiveProject,
   getActiveProject,
   getActiveProjectState,
   resolveModeDisplay,
@@ -128,5 +129,11 @@ export function useCodeMode({ onOpenProject }: CodeModeOptions) {
     });
   }, [codeModeProject]);
 
-  return { syncCodeModeState, modeDisplay };
+  const exitCodeMode = useCallback(() => {
+    clearActiveProject();
+    setCodeModeProject(null);
+    setModeDisplay("terminal");
+  }, []);
+
+  return { syncCodeModeState, modeDisplay, exitCodeMode };
 }

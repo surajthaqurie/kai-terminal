@@ -2503,6 +2503,20 @@ select.modal-input {
   white-space: nowrap;
 }
 
+button.status-mode-pill {
+  cursor: pointer;
+  font-family: inherit;
+  transition:
+    opacity 0.15s ease,
+    background-color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+button.status-mode-pill:hover {
+  background-color: var(--accent-muted, rgba(99, 102, 241, 0.2));
+  border-color: var(--accent-primary);
+}
+
 .status-mode-pill.status-mode-terminal {
   background-color: var(--bg-surface);
   border-color: var(--border-default);

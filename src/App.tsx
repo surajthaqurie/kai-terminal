@@ -128,7 +128,7 @@ function App() {
   /** Effective project dir: active pane -> tab -> global toolbar input. */
   const effectiveProjectDir = resolveEffectiveProjectDir(activePane?.cwd, activeTab?.cwd, cwd);
 
-  const { syncCodeModeState, modeDisplay } = useCodeMode({
+  const { syncCodeModeState, modeDisplay, exitCodeMode } = useCodeMode({
     onOpenProject: tabsState.openOrFocusDir,
   });
   const git = useGitStatus({
@@ -475,6 +475,7 @@ function App() {
         isRefreshingGit={git.isRefreshingGit}
         onOpenGitChanges={() => void project.showGit("changes")}
         mode={modeDisplay}
+        onToggleMode={exitCodeMode}
         music={music.footerState}
         onToggleMusicPanel={toggleMusicPanel}
         musicOpen={music.isOpen}

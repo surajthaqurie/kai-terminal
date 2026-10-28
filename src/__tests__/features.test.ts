@@ -102,6 +102,7 @@ describe("Active Project and Code Mode Persistence", () => {
 
     setActiveMode("terminal");
     expect(getActiveMode()).toBe("terminal");
+    expect(getActiveProject()).toBeNull();
   });
 
   it("never activates Code Mode from recent history alone", async () => {
