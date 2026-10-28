@@ -52,4 +52,4 @@ Option: `--dry-run` to preview changes without modifying files.
 
 ## Response limits
 
-Every response, errors included, stays under a byte ceiling (64 KiB by default; set `KAI_MCP_MAX_RESPONSE_BYTES` to change it). List results take `limit` and `offset`, and report `total`, `returned`, `hasMore` and `nextOffset`, so an agent can walk a long list page by page. When the ceiling cuts a result short, the response says so (`truncated`) instead of returning a partial list silently. Token figures are heuristic estimates, not exact counts.
+Every response, errors included, stays under a byte ceiling (64 KiB by default; set `KAI_MCP_MAX_RESPONSE_BYTES` to change it). List results take `limit` and `offset`, and report `total`, `returned`, `hasMore` and `nextOffset`, so an agent can walk a long list page by page. When the ceiling cuts a result short, the response says so (`truncated`) instead of returning a partial list silently. Token figures are heuristic estimates, not exact counts. The indexer stops at 10,000 files by default; set `KAI_MAX_INDEX_FILES` (100 to 50,000) to change it, and `scan.fileLimit` in the project info reports the cap in force.

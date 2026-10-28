@@ -40,7 +40,7 @@ The real PTY integration suite covers 15 scenarios:
 
 ## 3. Project Intelligence & MCP Verification Matrix
 
-The intelligence test suite covers comprehensive automated scenarios within the full Vitest run of 72 test files (941 passed, 9 skipped on 2026-10-28; the skips are tests gated on the environment, such as creating file symlinks or having a `git` binary):
+The intelligence test suite covers comprehensive automated scenarios within the full Vitest run of 80 test files (1128 passed, 7 skipped on 2026-10-28; the skips are tests gated on the environment, such as creating file symlinks on Windows without Developer Mode or having a `git` binary):
 
 | # | Test Area | Description | Automated Target | Status |
 | :--- | :--- | :--- | :--- | :--- |
@@ -84,7 +84,7 @@ The intelligence test suite covers comprehensive automated scenarios within the 
 Run all verification checks locally prior to committing:
 
 ```bash
-# 1. Full TypeScript, Formatting & Intelligence Test Suite (Vitest - 72 test files, 950 tests: 941 pass, 9 environment-skipped)
+# 1. Full TypeScript, Formatting & Intelligence Test Suite (Vitest - 80 test files, 1135 tests: 1128 pass, 7 environment-skipped)
 npm run check
 
 # 1b. Same gate inside Docker (no host Node/Rust install needed)
@@ -108,7 +108,7 @@ cargo fmt --manifest-path src-tauri/Cargo.toml --check
 # 5. Rust Backend Linter Check
 cargo clippy --no-default-features --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 
-# 6. Rust Backend Unit Tests (110 tests)
+# 6. Rust Backend Unit Tests (163 tests)
 cargo test --no-default-features --manifest-path src-tauri/Cargo.toml --lib
 
 # 7. Real PTY Integration Tests (15 tests)

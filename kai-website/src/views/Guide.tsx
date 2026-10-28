@@ -141,7 +141,7 @@ export function GuidePage() {
             <div className="t-section-head">
               <Badge tone="neutral">Productivity</Badge>
               <h2 className="t-section-title">Essential Shortcuts</h2>
-              <p className="t-section-sub">Default key combinations. App shortcuts are remappable in Settings; copy, paste, zoom and tab-jump keys are fixed.</p>
+              <p className="t-section-sub">Default key combinations. Every shortcut here is remappable in Settings, except Ctrl/Shift+Insert, Shift+PageUp/PageDown and Ctrl+Shift+G.</p>
             </div>
             <div className="t-panel">
               <div className="t-probe-head"><span>Terminal Shortcuts</span><span className="t-pill">Ctrl / Cmd (⌘)</span></div>

@@ -15,7 +15,7 @@ This guide explains how to install pre-built packages of Kai Terminal or build t
 | **macOS (Apple Silicon)** | macOS 12 (Monterey) or later | `.dmg` | Verified native build |
 | **macOS (Intel x86_64)** | macOS 12 (Monterey) or later | `.dmg` | Verified native build (`macos-15-intel` runner; shipped in v0.2.0) |
 
-*Note: Snap and Flatpak manifests are complete and built + smoke-tested by the `linux-packages` job in `ci.yml`, but they are not published with releases and the Flatpak/Snap build has not yet had a CI run (see `KNOWN_LIMITATIONS.md`).*
+*Note: Snap and Flatpak manifests are complete and built + smoke-tested by the `linux-packages` job in `ci.yml`, but they are not published with releases and the Flatpak/Snap build has not yet had a CI run (see `KNOWN_LIMITATIONS.md`). A Flatpak install starts your host's shell through `flatpak-spawn --host` (the manifest grants `--talk-name=org.freedesktop.Flatpak`); that path is unit-tested but not yet run in a real Flatpak.*
 
 ---
 
