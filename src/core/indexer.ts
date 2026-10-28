@@ -28,7 +28,7 @@ import {
 import { extractSymbolsAndDeps, EXTRACTOR_VERSION } from "./symbolExtractor";
 import { resolveAllDependencies } from "./importResolver";
 import { buildAliasLookup } from "./tsconfigAliases";
-import { buildPythonRoots } from "./pythonRoots";
+import { buildPythonLayout } from "./pythonRoots";
 import { buildGoModules, buildRustCrates } from "./rustGoModules";
 
 // Re-exported so existing importers of the extractor keep working.
@@ -36,8 +36,24 @@ export { extractSymbolsAndDeps, EXTRACTOR_VERSION };
 
 // Strict limits
 const MAX_FILE_SIZE_BYTES = 512 * 1024; // 512 KB
-export const MAX_TOTAL_FILES = 10000;
+/** Files indexed per project unless `KAI_MAX_INDEX_FILES` says otherwise. */
+export const DEFAULT_MAX_TOTAL_FILES = 10000;
+/** Bounds for `KAI_MAX_INDEX_FILES`: a value outside is clamped, not rejected. */
+export const MIN_ENV_MAX_TOTAL_FILES = 100;
+/** Ceiling for any cap (env or option): the index is one JSON snapshot loaded whole. */
+export const HARD_MAX_TOTAL_FILES = 50000;
 const MAX_TRAVERSAL_DEPTH = 20;
+
+/**
+ * The file-count cap for a scan: `KAI_MAX_INDEX_FILES` when it is a whole number
+ * (clamped to `MIN_ENV_MAX_TOTAL_FILES`..`HARD_MAX_TOTAL_FILES`), else the default.
+ * Anything that is not a plain decimal integer is ignored rather than guessed at.
+ */
+export function resolveMaxTotalFiles(raw: string | undefined = process.env.KAI_MAX_INDEX_FILES) {
+  const text = raw?.trim();
+  if (!text || !/^\d{1,9}$/.test(text)) return DEFAULT_MAX_TOTAL_FILES;
+  return Math.min(Math.max(Number(text), MIN_ENV_MAX_TOTAL_FILES), HARD_MAX_TOTAL_FILES);
+}
 /** How long a failed read is remembered before the file is read again. */
 const UNREADABLE_RETRY_MS = 60_000;
 
@@ -528,8 +544,20 @@ export function detectStaleIndexEntries(index: ProjectIndex): {
   }
 
   const extractorOutdated = index.extractorVersion !== EXTRACTOR_VERSION;
+  // A capped snapshot is rebuilt once when the user has since raised the cap
+  // through KAI_MAX_INDEX_FILES (an explicit setting only: the default cannot
+  // tell a snapshot capped by a caller's option from one capped by the default).
+  // The rebuilt snapshot records the new limit, so this settles.
+  const capRaised =
+    scanIncomplete &&
+    process.env.KAI_MAX_INDEX_FILES !== undefined &&
+    resolveMaxTotalFiles() > (index.scan?.fileLimit ?? 0);
   const isStale =
-    staleFiles.length > 0 || deletedFiles.length > 0 || newFiles.length > 0 || extractorOutdated;
+    staleFiles.length > 0 ||
+    deletedFiles.length > 0 ||
+    newFiles.length > 0 ||
+    extractorOutdated ||
+    capRaised;
   return { isStale, staleFiles, deletedFiles, newFiles, scanIncomplete, extractorOutdated };
 }
 
@@ -647,7 +675,7 @@ export async function indexProject(
     forceRebuild?: boolean;
     excludePatterns?: string[];
     dryRun?: boolean;
-    /** Lower the file-count cap (tests and constrained callers); never raises it above MAX_TOTAL_FILES. */
+    /** File-count cap for this scan (tests and constrained callers); overrides `KAI_MAX_INDEX_FILES`, never above HARD_MAX_TOTAL_FILES. */
     maxTotalFiles?: number;
   } = {}
 ): Promise<ProjectIndex> {
@@ -700,10 +728,11 @@ export async function indexProject(
     const modifiedFiles: string[] = [];
     const newFiles: string[] = [];
     let totalFilesSeen = 0;
-    const fileCap = Math.min(
-      Math.max(1, Math.floor(options.maxTotalFiles ?? MAX_TOTAL_FILES)),
-      MAX_TOTAL_FILES
-    );
+    const requestedCap =
+      options.maxTotalFiles !== undefined && Number.isFinite(options.maxTotalFiles)
+        ? options.maxTotalFiles
+        : resolveMaxTotalFiles();
+    const fileCap = Math.min(Math.max(1, Math.floor(requestedCap)), HARD_MAX_TOTAL_FILES);
     let fileLimitReached = false;
     let depthLimitReached = false;
     let unreadableDirs = 0;
@@ -948,13 +977,15 @@ export async function indexProject(
     // Import targets depend on which other files exist, so they are resolved
     // for every file on every build (also for reused cache entries): a target
     // added or deleted elsewhere changes the answer.
+    const pythonLayout = buildPythonLayout(canonicalRoot, Object.keys(indexedFiles));
     resolveAllDependencies(
       indexedFiles,
       buildAliasLookup(canonicalRoot, Object.keys(indexedFiles)),
-      buildPythonRoots(canonicalRoot, Object.keys(indexedFiles)),
+      pythonLayout.roots,
       {
         rustCrates: buildRustCrates(canonicalRoot, Object.keys(indexedFiles)),
         go: buildGoModules(canonicalRoot, Object.keys(indexedFiles)),
+        pythonPackages: pythonLayout.packageDirs,
       }
     );
 

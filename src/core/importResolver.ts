@@ -5,8 +5,11 @@ import {
   isGoProjectImport,
   resolveGoTargets,
   resolveRustTargets,
+  RUST_PATH_ATTR_PREFIX,
   type WorkspaceResolvers,
 } from "./rustGoModules";
+import type { PythonPackageDir } from "./pythonRoots";
+import { settleRustImplExports, type RustImplSymbol } from "./rustImplExports";
 
 /**
  * Import-specifier resolution against the set of indexed files.
@@ -31,10 +34,13 @@ import {
  *  - Re-exports: an import of a name that the target file re-exports
  *    (`export { x } from './x'`, `export * from`, a Python `__init__.py`
  *    `from .mod import x`) also records the file that defines it, so a barrel
- *    does not hide who really uses a symbol (see `addReExportTargets`).
+ *    does not hide who really uses a symbol (see `addReExportTargets`). A TS/JS
+ *    side-effect import of a barrel (`import './barrel'`) reaches what the barrel
+ *    re-exports, as a namespace import does.
  *
- *  - Rust (`crate::`, `self::`, `super::`, `mod foo;`, workspace crates) and Go
- *    (import paths under a `go.mod` module of the project); see `rustGoModules.ts`.
+ *  - Rust (`crate::`, `self::`, `super::`, `mod foo;`, `#[path = ".."] mod foo;`,
+ *    workspace crates) and Go (import paths under a `go.mod` / `go.work` module of
+ *    the project); see `rustGoModules.ts`.
  *
  * Everything else is reported explicitly instead of guessed: package names
  * come back as `non-relative`, and languages without a resolver as
@@ -248,24 +254,53 @@ function resolvePythonTargets(
  * root, `src/` and the roots declared by the project's Python configs); anything
  * else (the standard library, installed packages) stays `non-relative`. A
  * package without `__init__.py` that has modules in several roots is a namespace
- * package: each imported name is looked up in every root. Package dirs mapped to a
- * different name, and namespace packages without any indexed child named in the
- * import, are not resolved.
+ * package: each imported name is looked up in every root. A package declared in
+ * `package-dir` under a directory of another name (`"pkg" = "lib/other"`) is looked
+ * up there first; if nothing is indexed for the import it is `unresolved`. Namespace
+ * packages without any indexed child named in the import are not resolved.
  *
  * A top-level name that is also a standard-library module (`logging`, `types`)
  * resolves to the local file only when the importer sits in the directory that
  * holds it: that is the one case where Python itself prefers the local file.
  */
+/** The declared `package-dir` entry an absolute Python import falls under (longest name wins), if any. */
+function mappedPythonPackage(
+  specifier: string,
+  packageDirs: ReadonlyArray<PythonPackageDir>
+): PythonPackageDir | null {
+  let mapped: PythonPackageDir | null = null;
+  for (const pkg of packageDirs) {
+    if (
+      (specifier === pkg.name || specifier.startsWith(`${pkg.name}.`)) &&
+      (mapped === null || pkg.name.length > mapped.name.length)
+    ) {
+      mapped = pkg;
+    }
+  }
+  return mapped;
+}
+
 function resolvePythonAbsoluteTargets(
   specifier: string,
   names: readonly string[],
   sourceRel: string,
   has: (p: string) => boolean,
-  roots: readonly string[]
+  roots: readonly string[],
+  packageDirs: ReadonlyArray<PythonPackageDir> = []
 ): string[] {
   if (!/^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*$/.test(specifier)) return [];
   const shadowsStdlib = PYTHON_STDLIB_MODULES.has(specifier.split(".")[0]);
   const importerDir = dirOf(sourceRel);
+  // A package mapped to a directory of another name (`package-dir`) is declared, so
+  // it is tried before the roots; the longest declared name wins. The rest of the
+  // dotted path is looked up inside that directory.
+  const mapped = shadowsStdlib ? null : mappedPythonPackage(specifier, packageDirs);
+  if (mapped) {
+    const rest = specifier.slice(mapped.name.length); // "" or ".mod.sub"
+    const anchor = mapped.dir ? `${mapped.dir}/_` : "_";
+    const found = resolvePythonTargets(rest || ".", names, anchor, has);
+    if (found.length > 0) return found;
+  }
   for (const root of roots) {
     if (shadowsStdlib && importerDir !== root) continue;
     // Resolved as a relative import from a file that sits directly in `root`.
@@ -343,6 +378,7 @@ function resolveNativeDependency(
     );
     const first = specifier.split("::")[0];
     ownForm =
+      specifier.startsWith(RUST_PATH_ATTR_PREFIX) ||
       first === "crate" ||
       first === "self" ||
       first === "super" ||
@@ -391,7 +427,8 @@ export function resolveDependency(
         dep.importedSymbols ?? [],
         source,
         has,
-        pythonRoots
+        pythonRoots,
+        workspace.pythonPackages ?? []
       );
       if (targets.length > 0) {
         return {
@@ -400,6 +437,13 @@ export function resolveDependency(
           internal: true,
           ...(targets.length > 1 ? { resolvedPaths: targets } : {}),
         };
+      }
+      // A declared `package-dir` package is project code: a miss is `unresolved`, not a package name.
+      if (
+        !PYTHON_STDLIB_MODULES.has(dep.targetSpecifier.split(".")[0]) &&
+        mappedPythonPackage(dep.targetSpecifier, workspace.pythonPackages ?? [])
+      ) {
+        return { resolvedPath: null, resolution: "unresolved" };
       }
     }
     return { resolvedPath: null, resolution: "non-relative" };
@@ -462,12 +506,21 @@ export function resolveAllDependencies(
     }
   }
   addReExportTargets(files);
+  // Export status of Rust trait-impl methods depends on declarations in other files, so it
+  // is settled on every build too, after the re-export targets it reads are in place.
+  settleRustImplExports(files, has, workspace.rustCrates ?? null);
 }
 
-/** A re-export chain deeper than this is not followed (barrels of barrels of barrels). */
-const MAX_REEXPORT_DEPTH = 3;
+/** A re-export chain deeper than this is not followed (barrels of barrels of barrels...). */
+const MAX_REEXPORT_DEPTH = 5;
 /** Upper bound on files recorded per import, so a star-export hub cannot fan out without limit. */
 const MAX_REEXPORT_TARGETS = 8;
+/**
+ * Upper bound on files examined while following one import through barrels (the
+ * importer, its direct targets and every barrel or definer reached), so the walk of
+ * a wide re-export tree costs a fixed amount per import whatever the depth.
+ */
+const MAX_REEXPORT_VISITED = 64;
 
 /** What an importer asks a barrel for: named exports, `default`, or (namespace import) everything. */
 interface WantedNames {
@@ -484,7 +537,7 @@ function wantedNames(dep: IndexedDependency): WantedNames {
 
 type ReExportFile = {
   dependencies: IndexedDependency[];
-  symbols?: ReadonlyArray<{ name: string; isExported: boolean }>;
+  symbols?: ReadonlyArray<RustImplSymbol>;
 };
 
 /**
@@ -519,6 +572,7 @@ function reExportedDefiners(
       if (!relevant) continue;
     }
     for (const target of dep.resolvedPaths ?? [dep.resolvedPath]) {
+      if (seen.size >= MAX_REEXPORT_VISITED) return out;
       if (seen.has(target) || !Object.prototype.hasOwnProperty.call(files, target)) continue;
       seen.add(target);
       const onwards = reExportedDefiners(files, target, wanted, depth + 1, seen);
@@ -548,8 +602,22 @@ function addReExportTargets(files: Record<string, ReExportFile>): void {
   for (const [rel, file] of Object.entries(files)) {
     for (const dep of file.dependencies) {
       if (dep.resolution !== "resolved" || !dep.resolvedPath) continue;
-      if (!dep.importedSymbols || dep.importedSymbols.length === 0) continue;
-      const wanted = wantedNames(dep);
+      const sideEffect = !dep.importedSymbols || dep.importedSymbols.length === 0;
+      if (sideEffect) {
+        // `import './barrel'` runs the barrel, which loads everything it re-exports, so
+        // it reaches the same files a namespace import would. Only for TS/JS, and never
+        // for a re-export statement itself (it is already a link of the barrel chain).
+        if (
+          languageOfPath(rel) !== "ts" ||
+          dep.reExportedNames ||
+          (dep.importBindings && dep.importBindings.length > 0)
+        ) {
+          continue;
+        }
+      }
+      const wanted: WantedNames = sideEffect
+        ? { names: new Set<string>(), all: true }
+        : wantedNames(dep);
       const direct = dep.resolvedPaths ?? [dep.resolvedPath];
       const extra: string[] = [];
       for (const barrel of direct) {

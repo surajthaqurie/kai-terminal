@@ -30,6 +30,36 @@ describe("classifier: phrasings that used to fall through to `unknown`", () => {
     expect(classifyTask(task).category).toBe("refactor");
   });
 
+  it.each([
+    "getUser should be called fetchUser",
+    "`cancelOrder` should be named `voidOrder`",
+    "the user_id field should be called account_id",
+    "loadConfig must be renamed to readConfig",
+    "the helper should be renamed to formatDate",
+    "the old handler needs to be renamed",
+    "foo is misnamed, call it bar",
+    "the retry function is badly named; rename it to backoff",
+    "rename the getUser function to fetchUser",
+    "rename the function from getUser to fetchUser",
+    "rename variable from tmp to buffer",
+  ])("recognises the rename statement %s as a refactor", (task) => {
+    expect(classifyTask(task).category).toBe("refactor");
+  });
+
+  it.each([
+    "the callback should be called only once",
+    "init should be called before start",
+    "cancelOrder should be called twice per request",
+    "the user should be called back tomorrow",
+    "this should be called Bob",
+    "what should this be called?",
+    "the handler should be named in the docs",
+    "explain why the function is named that way",
+    "the build is misnamed in the CI log",
+  ])("does not treat the prose %s as a rename", (task) => {
+    expect(classifyTask(task).category).not.toBe("refactor");
+  });
+
   it("does not treat prose about renaming or moving as a refactor", () => {
     expect(classifyTask("move the cursor to the end of the line").category).not.toBe("refactor");
     expect(classifyTask("explain how the rename flow works").category).toBe("explain");

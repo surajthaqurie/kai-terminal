@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { parseTomlSubset } from "./pythonRoots";
+import { parseTomlSubset, type PythonPackageDir } from "./pythonRoots";
 
 /**
  * Import resolution for Rust and Go, from file layout and manifests only (nothing is
@@ -11,20 +11,31 @@ import { parseTomlSubset } from "./pythonRoots";
  * compiler lays them out, `a.rs` or `a/mod.rs` for module `a`, below the directory of
  * the crate root (`lib.rs`, else `main.rs`, in the nearest directory above the
  * importing file). The deepest module file reached is the target; what follows it
- * names items inside that file. Not resolved: `#[path = "..."]` modules, `mod` inside
- * an inline module, macros that declare modules, `use` of a name that only exists in
- * the importing scope (2015-style relative paths), and crates outside the project.
+ * names items inside that file. A `#[path = "x.rs"] mod foo;` declaration at the top of
+ * a file links that file to `x.rs`, relative to the directory of the declaring file
+ * (the extractor emits it as a `path:x.rs` specifier). Only the declaration itself is
+ * linked: a `use` that walks *through* a path-attributed module (`crate::foo::Item`)
+ * is still resolved by directory layout and so stays unresolved. Not resolved: `mod`
+ * inside an inline module (with or without `#[path]`), `#[cfg_attr(.., path = ..)]`,
+ * macros that declare modules, `use` of a name that only exists in the importing scope
+ * (2015-style relative paths), and crates outside the project.
  *
  * Go: an import path is matched against the `module` line of each `go.mod` (and local
  * `replace` directives) in the project; the longest matching module maps the rest of
  * the path to a directory, and the target is that package's non-test `.go` files
  * (at most `MAX_GO_PACKAGE_FILES`, in name order: the package is the dependency, not one
- * file). Not resolved: vendored and module-cache packages, `go.work`, build tags.
+ * file). A `go.work` adds its local `replace` directives (which win over a `go.mod`'s)
+ * and its `use` directories; modules it does not list are still treated as project
+ * modules. Not resolved: vendored and module-cache packages, build tags.
  */
 
 const MAX_MANIFEST_BYTES = 256 * 1024;
 const MAX_MANIFESTS = 64;
+/** At most this many `go.work` files are read. */
+const MAX_GO_WORKS = 8;
 export const MAX_GO_PACKAGE_FILES = 8;
+/** Specifier prefix for a Rust `#[path = "..."] mod foo;` declaration (see `resolveRustTargets`). */
+export const RUST_PATH_ATTR_PREFIX = "path:";
 
 export interface RustCrates {
   /** Crate identifier (`my_crate`) -> root file of its library (`crates/my/src/lib.rs`). */
@@ -42,6 +53,8 @@ export interface GoModules {
 export interface WorkspaceResolvers {
   rustCrates?: RustCrates | null;
   go?: GoModules | null;
+  /** Python packages mapped to a directory of a different name (`package-dir`). */
+  pythonPackages?: ReadonlyArray<PythonPackageDir> | null;
 }
 
 function dirOf(rel: string): string {
@@ -193,6 +206,13 @@ export function resolveRustTargets(
   has: (p: string) => boolean,
   crates: RustCrates | null
 ): string[] {
+  if (specifier.startsWith(RUST_PATH_ATTR_PREFIX)) {
+    // `#[path = "x.rs"] mod foo;`: the file is relative to the declaring file's directory.
+    const value = specifier.slice(RUST_PATH_ATTR_PREFIX.length);
+    if (value.startsWith("/") || /^[A-Za-z]:/.test(value)) return [];
+    const target = joinPath(dirOf(sourceRel), value);
+    return target && target !== sourceRel && has(target) ? [target] : [];
+  }
   const segs = specifier.split("::").filter(Boolean);
   if (segs.length === 0) return [];
   const globbed = segs[segs.length - 1] === "*";
@@ -258,10 +278,21 @@ export function resolveRustTargets(
 // Go
 // ---------------------------------------------------------------------------
 
-function parseGoMod(text: string): { module?: string; replaces: Array<[string, string]> } {
+/**
+ * The directives of a `go.mod` / `go.work` that matter here: `module`, local
+ * (`./` or `../`) `replace` targets, and `use` directories (`go.work` only). Both
+ * the one-line and the parenthesised block forms are read; lines inside any other
+ * block (`require (`, `exclude (`) are ignored.
+ */
+function parseGoDirectives(text: string): {
+  module?: string;
+  replaces: Array<[string, string]>;
+  uses: string[];
+} {
   const replaces: Array<[string, string]> = [];
+  const uses: string[] = [];
   let module: string | undefined;
-  let inReplaceBlock = false;
+  let block: string | null = null;
   for (const raw of text.split("\n")) {
     const line = raw.replace(/\/\/.*$/, "").trim();
     if (!line) continue;
@@ -270,30 +301,70 @@ function parseGoMod(text: string): { module?: string; replaces: Array<[string, s
       module = mod[2];
       continue;
     }
-    if (/^replace\s*\(\s*$/.test(line)) {
-      inReplaceBlock = true;
+    const open = /^(\w+)\s*\(\s*$/.exec(line);
+    if (open) {
+      block = open[1];
       continue;
     }
-    if (inReplaceBlock && line === ")") {
-      inReplaceBlock = false;
+    if (block !== null && line === ")") {
+      block = null;
       continue;
     }
-    const body = inReplaceBlock ? line : /^replace\s+(.*)$/.exec(line)?.[1];
+    let body: string | undefined;
+    let kind: string | null;
+    if (block !== null) {
+      kind = block;
+      body = line;
+    } else {
+      const single = /^(replace|use)\s+(.*)$/.exec(line);
+      kind = single ? single[1] : null;
+      body = single?.[2];
+    }
     if (!body) continue;
-    const rep = /^([^\s=]+)(?:\s+v\S+)?\s*=>\s*(\.{1,2}(?:\/\S*)?)(?:\s+v\S+)?$/.exec(body);
-    if (rep) replaces.push([rep[1], rep[2]]);
+    if (kind === "replace") {
+      const rep = /^([^\s=]+)(?:\s+v\S+)?\s*=>\s*(\.{1,2}(?:\/\S*)?)(?:\s+v\S+)?$/.exec(body);
+      if (rep) replaces.push([rep[1], rep[2]]);
+    } else if (kind === "use") {
+      const use = /^"?(\.{1,2}(?:\/[^"]*)?)"?$/.exec(body);
+      if (use) uses.push(use[1]);
+    }
   }
-  return { module, replaces };
+  return { module, replaces, uses };
 }
 
 /** Go modules of the project and the files of each package directory; null when there is no `go.mod`. */
 export function buildGoModules(root: string, indexedPaths: Iterable<string>): GoModules | null {
   const paths = [...indexedPaths];
+  const pathSet = new Set(paths);
   const modules: Array<{ path: string; dir: string }> = [];
-  for (const dir of manifestDirs(paths, "go.mod")) {
+  const moduleDirs: string[] = [];
+  const addModuleDir = (dir: string): void => {
+    if (!moduleDirs.includes(dir) && moduleDirs.length < MAX_MANIFESTS) moduleDirs.push(dir);
+  };
+
+  // A go.work comes first: its replaces win over a go.mod's (same path, earlier
+  // entry), and the directories it `use`s are read even past the go.mod cap.
+  for (const dir of manifestDirs(paths, "go.work").slice(0, MAX_GO_WORKS)) {
+    const text = readBounded(path.join(root, dir, "go.work"));
+    if (text === null) continue;
+    const { replaces, uses } = parseGoDirectives(text);
+    for (const [from, target] of replaces) {
+      const targetDir = joinPath(dir, target);
+      if (targetDir !== null) modules.push({ path: from, dir: targetDir });
+    }
+    for (const use of uses.slice(0, MAX_MANIFESTS)) {
+      const useDir = joinPath(dir, use);
+      if (useDir !== null && pathSet.has(useDir ? `${useDir}/go.mod` : "go.mod")) {
+        addModuleDir(useDir);
+      }
+    }
+  }
+  for (const dir of manifestDirs(paths, "go.mod")) addModuleDir(dir);
+
+  for (const dir of moduleDirs) {
     const text = readBounded(path.join(root, dir, "go.mod"));
     if (text === null) continue;
-    const { module, replaces } = parseGoMod(text);
+    const { module, replaces } = parseGoDirectives(text);
     if (module) modules.push({ path: module, dir });
     for (const [from, target] of replaces) {
       const targetDir = joinPath(dir, target);

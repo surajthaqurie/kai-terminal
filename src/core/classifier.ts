@@ -1,8 +1,69 @@
 import type { TaskCategory, ClassificationResult } from "./types";
 
+const SUBJECT_STOPWORDS = new Set([
+  "this",
+  "it",
+  "that",
+  "which",
+  "what",
+  "who",
+  "he",
+  "she",
+  "they",
+  "we",
+  "you",
+  "i",
+  "there",
+  "one",
+  "thing",
+  "things",
+]);
+
+function stripName(token: string): { name: string; quoted: boolean } {
+  const quoted = /^[`'"].+[`'"]$/.test(token);
+  return { name: token.replace(/^[`'"]+|[`'"]+$/g, "").replace(/\.+$/, ""), quoted };
+}
+
+/** camelCase, snake_case, PascalCase with two humps or a dotted path: shaped like an identifier, not a word. */
+function looksLikeIdentifier(name: string): boolean {
+  return /[a-z0-9][A-Z]|_|[A-Za-z0-9]\.[A-Za-z_$]/.test(name);
+}
+
+// "X should be called Y", "X must be renamed to Y", "the X function needs to be named Y"
+const RENAME_STATEMENT =
+  /([`'"]?[\w.$]+[`'"]?)\s+(?:should|ought\s+to|needs?\s+to|must|has\s+to)\s+be\s+(called|named|renamed(?:\s+to)?)\s+(?:to\s+|as\s+)?([`'"]?[\w.$]+[`'"]?)/gi;
+// "X is misnamed, call it Y" / "X is badly named; rename it to Y"
+const MISNAMED_STATEMENT =
+  /([`'"]?[\w.$]+[`'"]?)\s+is\s+(?:badly\s+|poorly\s+|wrongly\s+|incorrectly\s+)?(?:mis-?named|named\s+(?:badly|poorly|wrong(?:ly)?))\b[^.\n]{0,60}?\b(?:call|name|rename)\s+it\s+(?:to\s+|as\s+)?([`'"]?[\w.$]+[`'"]?)/gi;
+
+/**
+ * Rename requests phrased as a statement about the symbol rather than as "rename X to Y".
+ * "should be called" is also ordinary prose about call order ("init should be called once"),
+ * so "called" and "named" need a target shaped like an identifier (quoted, camelCase, snake_case
+ * or dotted); only "renamed" and the explicit "misnamed ... call it" accept any word.
+ */
+function isRenameStatement(task: string): boolean {
+  for (const m of task.matchAll(RENAME_STATEMENT)) {
+    const subject = stripName(m[1]);
+    if (!subject.name || SUBJECT_STOPWORDS.has(subject.name.toLowerCase())) continue;
+    const target = stripName(m[3]);
+    if (!target.name) continue;
+    const verb = m[2].toLowerCase();
+    if (verb.startsWith("renamed")) return true;
+    if (target.quoted || looksLikeIdentifier(target.name)) return true;
+  }
+  for (const m of task.matchAll(MISNAMED_STATEMENT)) {
+    const subject = stripName(m[1]);
+    if (subject.name && !SUBJECT_STOPWORDS.has(subject.name.toLowerCase())) return true;
+  }
+  return false;
+}
+
 interface CategoryRule {
   category: TaskCategory;
   patterns: RegExp[];
+  /** Checks a regex cannot express (identifier shape); a hit counts like a pattern hit. */
+  predicates?: Array<(task: string) => boolean>;
   keywords: string[];
   weight: number;
   priority: number; // Higher priority breaks ties among overlapping intents
@@ -55,11 +116,17 @@ const CATEGORY_RULES: CategoryRule[] = [
       /\brename\s+symbol\b/i,
       // "rename foo to bar", "rename the function `foo` to bar", "rename class Foo as Bar"
       /\brename\s+(?:the\s+)?(?:(?:function|method|class|type|interface|enum|variable|constant|field|property|parameter|param|file|module|component|symbol)\s+)?[`'"]?[\w.$]+[`'"]?\s+(?:to|into|as)\s+[`'"]?\w/i,
+      // "rename the getUser function to fetchUser", "rename the function from foo to bar"
+      /\brename\s+(?:the\s+)?[`'"]?[\w.$]+[`'"]?\s+(?:function|method|class|type|interface|enum|variable|constant|field|property|parameter|param|file|module|component|symbol)\s+(?:to|into|as)\s+[`'"]?\w/i,
+      /\brename\s+(?:the\s+)?(?:(?:function|method|class|type|interface|enum|variable|constant|field|property|parameter|param|file|module|component|symbol)\s+)?from\s+[`'"]?[\w.$]+[`'"]?\s+(?:to|into|as)\s+[`'"]?\w/i,
+      // "the helper needs to be renamed" (no target given)
+      /\b(?:should|needs?\s+to|must|has\s+to)\s+be\s+renamed\b/i,
       /\b(?:change|update)\s+(?:the\s+)?name\s+of\s+(?:the\s+)?(?:\w+\s+)?[`'"]?[\w.$]+[`'"]?\s+to\s+\S/i,
       /\breplace\s+[`'"]?[\w.$]+[`'"]?\s+with\s+[`'"]?\w/i,
       /\b(?:migrate|switch|swap)\s+(?:from\s+)?[`'"]?[\w.$]+[`'"]?\s+(?:to|for)\s+[`'"]?\w/i,
       /\bmove\s+(?:the\s+)?(?:\w+\s+)?[`'"]?[\w.$]+[`'"]?\s+(?:to|into)\s+(?:its\s+own\s+|another\s+|a\s+new\s+|the\s+\w+\s+)?(?:file|module|folder|directory|package)\b/i,
     ],
+    predicates: [isRenameStatement],
     keywords: [
       "refactor",
       "cleanup",
@@ -282,6 +349,10 @@ export function classifyTask(task: string, explicitOverride?: TaskCategory): Cla
       if (pattern.test(trimmed)) {
         score += 0.5 * rule.weight;
       }
+    }
+
+    for (const predicate of rule.predicates ?? []) {
+      if (predicate(trimmed)) score += 0.5 * rule.weight;
     }
 
     // Keyword matching

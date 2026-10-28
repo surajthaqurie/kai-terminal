@@ -135,11 +135,81 @@ describe("TypeScript / JavaScript extraction", () => {
       isExported: true,
     });
     expect(one(symbols, "constructor").location).toMatchObject({ line: 6, endLine: 6 });
-    expect(byName(symbols, "secret")).toHaveLength(0);
+    // Private properties are indexed (never exported); locals inside bodies are not.
+    expect(one(symbols, "secret")).toMatchObject({
+      kind: "variable",
+      container: "Service",
+      isExported: false,
+    });
+    // `constructor(private readonly dep: Dep)` declares a property.
+    expect(one(symbols, "dep")).toMatchObject({
+      kind: "variable",
+      container: "Service",
+      isExported: false,
+    });
     expect(byName(symbols, "x")).toHaveLength(0);
   });
 
-  it("indexes class properties (not private ones) and constructors with their visibility", () => {
+  it("indexes private class properties and constructor parameter properties", () => {
+    const src = [
+      "export class Repo {", // 1
+      "  private cache = new Map<string, number>();", // 2
+      "  #token = 'x';", // 3
+      "  private static readonly LIMIT = 5;", // 4
+      "  constructor(", // 5
+      "    private readonly db: Db<string, number>,", // 6
+      "    public name: string = 'a, b',", // 7
+      "    protected opts: { retries: number; cb: (a: number, b: number) => void },", // 8
+      "    readonly id: number,", // 9
+      "    plain: string,", // 10
+      "    @Inject(TOKEN) private svc: Svc,", // 11
+      "  ) {", // 12
+      "    this.cache.clear();", // 13
+      "  }", // 14
+      "}", // 15
+      "class Overloads {", // 16
+      "  constructor(a: string);", // 17
+      "  constructor(a: number);", // 18
+      "  constructor(private a: unknown) {}", // 19
+      "}", // 20
+      "export class Plain {", // 21
+      "  constructor(a: string, b = 1) {}", // 22
+      "}", // 23
+    ].join("\n");
+    const { symbols } = ts(src);
+    const member = (name: string) => one(symbols, name);
+    expect(member("cache")).toMatchObject({
+      kind: "variable",
+      container: "Repo",
+      isExported: false,
+    });
+    expect(member("#token")).toMatchObject({ container: "Repo", isExported: false });
+    expect(member("LIMIT")).toMatchObject({
+      kind: "constant",
+      container: "Repo",
+      isExported: false,
+    });
+    expect(member("db")).toMatchObject({ kind: "variable", container: "Repo", isExported: false });
+    expect(member("db").location).toMatchObject({ line: 6, endLine: 6 });
+    expect(member("db").signature).toBe("private readonly db: Db<string, number>");
+    // A default containing a comma, and a public parameter, stay one parameter each.
+    expect(member("name")).toMatchObject({ container: "Repo", isExported: true });
+    expect(member("opts")).toMatchObject({ container: "Repo", isExported: false });
+    expect(member("id")).toMatchObject({ container: "Repo", isExported: true });
+    expect(member("svc")).toMatchObject({ container: "Repo", isExported: false });
+    expect(member("svc").location.line).toBe(11);
+    // A parameter without a modifier is not a property.
+    expect(byName(symbols, "plain")).toHaveLength(0);
+    expect(byName(symbols, "retries")).toHaveLength(0);
+    // Only the implementation of an overloaded constructor declares properties.
+    expect(byName(symbols, "a").filter((s) => s.container === "Overloads")).toHaveLength(1);
+    expect(byName(symbols, "b")).toHaveLength(0);
+    expect(symbols.filter((s) => s.container === "Plain").map((s) => s.name)).toEqual([
+      "constructor",
+    ]);
+  });
+
+  it("indexes class properties (private ones included) and constructors with their visibility", () => {
     const src = [
       "export class Config {", // 1
       "  readonly name: string;", // 2
@@ -172,8 +242,8 @@ describe("TypeScript / JavaScript extraction", () => {
     expect(one(symbols, "count").container).toBe("Config");
     expect(one(symbols, "label").location.line).toBe(10);
     expect(one(symbols, "total").kind).toBe("function"); // function-valued: still a function
-    expect(byName(symbols, "secret")).toHaveLength(0);
-    expect(byName(symbols, "#hidden")).toHaveLength(0);
+    expect(one(symbols, "secret")).toMatchObject({ kind: "variable", isExported: false });
+    expect(one(symbols, "#hidden")).toMatchObject({ container: "Config", isExported: false });
     expect(byName(symbols, "key")).toHaveLength(0);
     // A private constructor is indexed but not exported.
     expect(one(symbols, "constructor")).toMatchObject({ container: "Config", isExported: false });

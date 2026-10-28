@@ -70,6 +70,14 @@ export interface IndexedSymbol {
   docstring?: string;
   /** Enclosing class / impl / type for methods (e.g. `Foo` for `Foo.bar`). */
   container?: string;
+  /**
+   * Rust only, on a method of `impl Trait for Type` whose type and/or trait is not
+   * declared in this file: the `use`-expanded path of each (`crate::model::Foo`, or
+   * a bare name when nothing in the file binds it). `isExported` of such a method is
+   * recomputed on every build from the declarations these paths reach
+   * (`settleRustImplExports`); the extractor's own value is only a same-file guess.
+   */
+  implOf?: { type?: string; trait?: string };
 }
 
 /**

@@ -16,6 +16,10 @@ import * as path from "node:path";
  *  - `[tool.pytest.ini_options] pythonpath`,
  *  - `setup.cfg` `[options] package_dir` and `[options.packages.find] where`.
  *
+ * A `package-dir` entry that maps a package to a directory with a different name
+ * (`"pkg" = "lib/other"`) is not a root; it is returned by `buildPythonLayout` as
+ * a named package directory (`PythonPackageDir`) for the resolver.
+ *
  * Only the keys above are read, with a small tolerant TOML/INI reader (not a full
  * parser; a construct it does not understand is skipped, never an error). Reads are
  * bounded (`MAX_CONFIG_BYTES`, regular files only, no symlinks, confined to the
@@ -26,6 +30,7 @@ import * as path from "node:path";
 const MAX_CONFIG_BYTES = 256 * 1024;
 const MAX_PYTHON_CONFIGS = 32;
 const MAX_PYTHON_ROOTS = 64;
+const MAX_PYTHON_PACKAGE_DIRS = 64;
 const MAX_TOML_DEPTH = 16;
 
 /** Roots searched whatever the configuration says. */
@@ -265,14 +270,39 @@ function rootsFromPackageDir(map: Record<string, string>): string[] {
   return out;
 }
 
-function pyprojectRoots(doc: TomlTable): string[] {
-  const out: string[] = [];
+/**
+ * A package that lives in a directory not named after it
+ * (`package-dir = {"pkg" = "lib/other"}`: `import pkg.mod` is `lib/other/mod.py`).
+ * `name` is the dotted package name, `dir` the project-root-relative directory.
+ */
+export interface PythonPackageDir {
+  name: string;
+  dir: string;
+}
+
+const PYTHON_DOTTED_NAME = /^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*$/;
+
+/** Named (non-root) `package-dir` entries: every `name = dir` pair with a valid dotted package name. */
+function packagesFromPackageDir(map: Record<string, string>): Array<[string, string]> {
+  const out: Array<[string, string]> = [];
+  for (const [name, dir] of Object.entries(map)) {
+    if (PYTHON_DOTTED_NAME.test(name)) out.push([name, dir]);
+  }
+  return out;
+}
+
+function pyprojectPackageMap(doc: TomlTable): Record<string, string> {
+  const map: Record<string, string> = {};
   const pd = dig(doc, "tool", "setuptools", "package-dir");
   if (isTable(pd)) {
-    const map: Record<string, string> = {};
     for (const [k, v] of Object.entries(pd)) if (typeof v === "string") map[k] = v;
-    out.push(...rootsFromPackageDir(map));
   }
+  return map;
+}
+
+function pyprojectRoots(doc: TomlTable): string[] {
+  const out: string[] = [];
+  out.push(...rootsFromPackageDir(pyprojectPackageMap(doc)));
   out.push(...strings(dig(doc, "tool", "setuptools", "packages", "find", "where")));
   const poetry = dig(doc, "tool", "poetry", "packages");
   if (Array.isArray(poetry)) {
@@ -322,18 +352,22 @@ function parseIniSubset(text: string): Map<string, Map<string, string>> {
   return sections;
 }
 
-function setupCfgRoots(text: string): string[] {
-  const sections = parseIniSubset(text);
-  const out: string[] = [];
+function setupCfgPackageMap(sections: Map<string, Map<string, string>>): Record<string, string> {
+  const map: Record<string, string> = {};
   const packageDir = sections.get("options")?.get("package_dir");
   if (packageDir) {
-    const map: Record<string, string> = {};
     for (const entry of packageDir.split(/\n|,/)) {
       const m = /^\s*([\w.]*)\s*=\s*(\S+)\s*$/.exec(entry);
       if (m) map[m[1]] = m[2];
     }
-    out.push(...rootsFromPackageDir(map));
   }
+  return map;
+}
+
+function setupCfgRoots(text: string): string[] {
+  const sections = parseIniSubset(text);
+  const out: string[] = [];
+  out.push(...rootsFromPackageDir(setupCfgPackageMap(sections)));
   const where = sections.get("options.packages.find")?.get("where");
   if (where) out.push(...where.split(/[\s,]+/).filter(Boolean));
   return out;
@@ -368,11 +402,27 @@ function joinInside(dir: string, rel: string): string | null {
   return parts.join("/");
 }
 
+/** Source roots plus the packages mapped to a directory of a different name. */
+export interface PythonLayout {
+  roots: string[];
+  packageDirs: PythonPackageDir[];
+}
+
 /**
  * Python source roots for the project: the defaults first, then those declared by
  * its configs (shallowest config first), without duplicates.
  */
 export function buildPythonRoots(root: string, indexedPaths: Iterable<string>): string[] {
+  return buildPythonLayout(root, indexedPaths).roots;
+}
+
+/**
+ * Source roots (see `buildPythonRoots`) and the named `package-dir` entries of the
+ * project's configs (`pkg = "lib/other"`), at most `MAX_PYTHON_PACKAGE_DIRS`, first
+ * declaration of a name wins (shallowest config first). Entries whose directory
+ * leaves the project are dropped.
+ */
+export function buildPythonLayout(root: string, indexedPaths: Iterable<string>): PythonLayout {
   const configs: Array<{ dir: string; kind: "pyproject" | "setup.cfg" }> = [];
   for (const rel of indexedPaths) {
     const base = rel.slice(rel.lastIndexOf("/") + 1);
@@ -391,6 +441,17 @@ export function buildPythonRoots(root: string, indexedPaths: Iterable<string>): 
   const add = (r: string | null): void => {
     if (r !== null && !roots.includes(r) && roots.length < MAX_PYTHON_ROOTS) roots.push(r);
   };
+  const packageDirs: PythonPackageDir[] = [];
+  const addPackage = (name: string, mapped: string | null): void => {
+    if (
+      mapped === null ||
+      packageDirs.length >= MAX_PYTHON_PACKAGE_DIRS ||
+      packageDirs.some((p) => p.name === name)
+    ) {
+      return;
+    }
+    packageDirs.push({ name, dir: mapped });
+  };
   for (const { dir, kind } of configs.slice(0, MAX_PYTHON_CONFIGS)) {
     // A package with its own config is a project root of its own.
     add(dir);
@@ -400,12 +461,24 @@ export function buildPythonRoots(root: string, indexedPaths: Iterable<string>): 
     );
     if (text === null) continue;
     let declared: string[] = [];
+    let mapping: Record<string, string> = {};
     try {
-      declared = kind === "pyproject" ? pyprojectRoots(parseTomlSubset(text)) : setupCfgRoots(text);
+      if (kind === "pyproject") {
+        const doc = parseTomlSubset(text);
+        declared = pyprojectRoots(doc);
+        mapping = pyprojectPackageMap(doc);
+      } else {
+        declared = setupCfgRoots(text);
+        mapping = setupCfgPackageMap(parseIniSubset(text));
+      }
     } catch {
       declared = [];
+      mapping = {};
     }
     for (const d of declared) add(joinInside(dir, d));
+    for (const [name, mapped] of packagesFromPackageDir(mapping)) {
+      addPackage(name, joinInside(dir, mapped));
+    }
   }
-  return roots;
+  return { roots, packageDirs };
 }

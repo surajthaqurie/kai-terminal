@@ -348,7 +348,7 @@ describe("re-exports (barrels and Python __init__)", () => {
     expect(targetsOf(index, "app.ts")).toEqual(["lib/index.ts", "lib/inner/index.ts", "lib/a.ts"]);
   });
 
-  it("is cycle-safe and leaves side-effect imports alone", async () => {
+  it("is cycle-safe, including for a side-effect import of a cyclic barrel", async () => {
     write("x/a.ts", "export * from './b';\nexport const a = 1;\n");
     write("x/b.ts", "export * from './a';\nexport const b = 1;\n");
     write("use.ts", "import { a } from './x/a';\nimport * as ns from './x/b';\nimport './x/b';\n");
@@ -356,7 +356,83 @@ describe("re-exports (barrels and Python __init__)", () => {
     const [named, namespaced, sideEffect] = index.files["use.ts"].dependencies;
     expect(named.resolvedPath).toBe("x/a.ts");
     expect(namespaced.resolvedPaths).toEqual(["x/b.ts", "x/a.ts"]);
-    expect(sideEffect.resolvedPaths).toBeUndefined();
+    expect(sideEffect.resolvedPaths).toEqual(["x/b.ts", "x/a.ts"]);
+  });
+
+  it("follows a side-effect import of a barrel into what it re-exports", async () => {
+    write("lib/a.ts", "export function alpha() {}\n");
+    write("lib/b.ts", "export function beta() {}\n");
+    write("lib/empty.ts", "const hidden = 1;\n");
+    write(
+      "lib/index.ts",
+      "export { alpha } from './a';\nexport * from './b';\nexport * from './empty';\n"
+    );
+    write("lib/plain.ts", "import './a';\nexport const p = 1;\n");
+    write("boot.ts", "import './lib';\nimport './lib/plain';\n");
+    const index = await indexProject(registerProject(root));
+    const [barrel, plain] = index.files["boot.ts"].dependencies;
+    expect(barrel.importedSymbols).toEqual([]);
+    // The barrel itself, then the files it re-exports; the empty star target adds nothing.
+    expect(barrel.resolvedPaths).toEqual(["lib/index.ts", "lib/a.ts", "lib/b.ts"]);
+    // An ordinary module's own imports are not re-exports.
+    expect(plain.resolvedPaths).toBeUndefined();
+    expect(buildReverseImportMap(index).get("lib/b.ts")).toEqual(["boot.ts", "lib/index.ts"]);
+  });
+
+  it("does not follow a Python bare `import pkg` through __init__ (TS/JS only)", async () => {
+    write("pkg/__init__.py", "from .models import User\n");
+    write("pkg/models.py", "class User: ...\n");
+    write("main.py", "import pkg\n");
+    const index = await indexProject(registerProject(root));
+    expect(index.files["main.py"].dependencies[0].resolvedPaths).toBeUndefined();
+  });
+
+  it("follows a chain of barrels up to five deep and no further", async () => {
+    write("c/def.ts", "export function deep() {}\n");
+    write("c/b5/index.ts", "export { deep } from '../def';\n");
+    write("c/b4/index.ts", "export * from '../b5';\n");
+    write("c/b3/index.ts", "export * from '../b4';\n");
+    write("c/b2/index.ts", "export * from '../b3';\n");
+    write("c/b1/index.ts", "export * from '../b2';\n");
+    write("ok.ts", "import { deep } from './c/b4';\n");
+    write("edge.ts", "import { deep } from './c/b2';\n");
+    write("far.ts", "import { deep } from './c/b1';\n");
+    const index = await indexProject(registerProject(root));
+    // b4 -> b5 -> def: two barrels; b2 -> b3 -> b4 -> b5 -> def: four barrels, still reached.
+    expect(targetsOf(index, "ok.ts")).toContain("c/def.ts");
+    expect(targetsOf(index, "edge.ts")).toContain("c/def.ts");
+    // b1 is the first of five barrels above the definer: the chain bound is five, so it is reached.
+    expect(targetsOf(index, "far.ts")).toContain("c/def.ts");
+  });
+
+  it("bounds the work and the targets of a very wide barrel", async () => {
+    const lines: string[] = [];
+    for (let i = 0; i < 120; i++) {
+      write(`wide/m${i}.ts`, `export const v${i} = ${i};\n`);
+      lines.push(`export * from './m${i}';`);
+    }
+    write("wide/index.ts", lines.join("\n") + "\n");
+    write("app.ts", "import * as all from './wide';\nimport './wide';\n");
+    const index = await indexProject(registerProject(root));
+    for (const dep of index.files["app.ts"].dependencies) {
+      // The barrel itself plus at most MAX_REEXPORT_TARGETS (8) re-exported files.
+      expect(dep.resolvedPaths).toHaveLength(9);
+      expect(dep.resolvedPaths?.[0]).toBe("wide/index.ts");
+    }
+  });
+
+  it("stops following a chain longer than the depth bound", async () => {
+    write("d/def.ts", "export function deep() {}\n");
+    let previous = "../def";
+    for (let i = 7; i >= 1; i--) {
+      write(`d/b${i}/index.ts`, `export * from '${previous}';\n`);
+      previous = `../b${i}`;
+    }
+    write("app.ts", "import { deep } from './d/b1';\n");
+    const index = await indexProject(registerProject(root));
+    // Seven barrels above the definer is past the bound.
+    expect(targetsOf(index, "app.ts")).not.toContain("d/def.ts");
+    expect(targetsOf(index, "app.ts")[0]).toBe("d/b1/index.ts");
   });
 
   it("follows a default import through `export { default } from` and `export { x as default }`", async () => {
@@ -545,6 +621,74 @@ describe("Python source roots from pyproject.toml / setup.cfg", () => {
     const index = await indexProject(registerProject(root));
     return index.files[rel].dependencies[i];
   };
+
+  it("maps a package to a directory of a different name (pyproject package-dir)", async () => {
+    put("pyproject.toml", '[tool.setuptools.package-dir]\nmypkg = "lib/other"\n');
+    put("lib/other/__init__.py", "");
+    put("lib/other/core.py", "def run(): ...\n");
+    put("lib/other/sub/__init__.py", "");
+    put("lib/other/sub/deep.py", "");
+    put(
+      "app.py",
+      [
+        "from mypkg.core import run",
+        "import mypkg.sub.deep",
+        "import mypkg",
+        "from mypkg import core",
+        "import mypkg.missing",
+        "import mypkg2.core",
+      ].join("\n")
+    );
+    const index = await indexProject(registerProject(root));
+    const [core, deep, pkg, fromImport, missing, lookalike] = index.files["app.py"].dependencies;
+    expect(core).toMatchObject({
+      resolvedPath: "lib/other/core.py",
+      resolution: "resolved",
+      isExternal: false,
+    });
+    expect(deep.resolvedPath).toBe("lib/other/sub/deep.py");
+    expect(pkg.resolvedPath).toBe("lib/other/__init__.py");
+    expect(fromImport.resolvedPath).toBe("lib/other/core.py");
+    // Declared project package, nothing indexed for it: unresolved, not a package name.
+    expect(missing).toMatchObject({ resolvedPath: null, resolution: "unresolved" });
+    // A name that merely starts with the package name is another package.
+    expect(lookalike).toMatchObject({ resolvedPath: null, resolution: "non-relative" });
+  });
+
+  it("reads setup.cfg package_dir entries for a differently named directory", async () => {
+    put("setup.cfg", "[options]\npackage_dir =\n    mypkg = lib/other\n    = ignored-root\n");
+    put("lib/other/__init__.py", "");
+    put("lib/other/core.py", "");
+    put("app.py", "import mypkg.core\n");
+    expect((await depOf("app.py")).resolvedPath).toBe("lib/other/core.py");
+  });
+
+  it("prefers the longest dotted package-dir name, and ignores directories outside the project", async () => {
+    put(
+      "pyproject.toml",
+      [
+        "[tool.setuptools.package-dir]",
+        'ns = "lib/ns"',
+        '"ns.inner" = "lib/inner"',
+        'evil = "../outside"',
+      ].join("\n")
+    );
+    put("lib/ns/mod.py", "");
+    put("lib/inner/mod.py", "");
+    put("app.py", "import ns.mod\nimport ns.inner.mod\nimport evil.mod\n");
+    const index = await indexProject(registerProject(root));
+    const [plain, inner, evil] = index.files["app.py"].dependencies;
+    expect(plain.resolvedPath).toBe("lib/ns/mod.py");
+    expect(inner.resolvedPath).toBe("lib/inner/mod.py");
+    expect(evil).toMatchObject({ resolvedPath: null, resolution: "non-relative" });
+  });
+
+  it("does not let a package-dir entry capture a standard-library name", async () => {
+    put("pyproject.toml", '[tool.setuptools.package-dir]\nlogging = "lib/log"\n');
+    put("lib/log/handlers.py", "");
+    put("app.py", "import logging.handlers\n");
+    expect(await depOf("app.py")).toMatchObject({ resolvedPath: null, resolution: "non-relative" });
+  });
 
   it("reads setuptools package-dir (inline table)", async () => {
     put("pyproject.toml", '[tool.setuptools]\npackage-dir = {"" = "lib"}\n');
@@ -906,6 +1050,64 @@ describe("Rust module and Go package resolution", () => {
       expect(specs).not.toContain("self::deep");
     });
 
+    it('links `#[path = "x.rs"] mod foo;` to the file, relative to the declaring file', async () => {
+      writeCrate();
+      put("src/elsewhere.rs", "pub fn moved_fn() {}\n");
+      put("src/shared/types.rs", "pub struct Kind;\n");
+      put(
+        "src/net/mod.rs",
+        [
+          "mod client;",
+          '#[cfg(unix)] #[path = "../shared/types.rs"] pub mod types;',
+          '#[path = "nope.rs"] mod gone;',
+          '#[path = "../../../outside.rs"] mod escape;',
+          '#[cfg_attr(unix, path = "client.rs")] mod conditional;',
+          'mod inline { #[path = "client.rs"] mod nested; }',
+        ].join("\n")
+      );
+      const index = await build();
+      // lib.rs sits in src/, net/mod.rs in src/net/: both resolve from their own directory.
+      expect(targets(index, "src/lib.rs", "path:elsewhere.rs")).toEqual(["src/elsewhere.rs"]);
+      expect(targets(index, "src/net/mod.rs", "path:../shared/types.rs")).toEqual([
+        "src/shared/types.rs",
+      ]);
+      const deps = index.files["src/net/mod.rs"].dependencies;
+      expect(deps.find((d) => d.targetSpecifier === "path:../shared/types.rs")).toMatchObject({
+        resolution: "resolved",
+        isExternal: false,
+      });
+      // Missing file and a path that leaves the project: declared project modules, unresolved.
+      expect(deps.find((d) => d.targetSpecifier === "path:nope.rs")).toMatchObject({
+        resolvedPath: null,
+        resolution: "unresolved",
+      });
+      expect(deps.find((d) => d.targetSpecifier === "path:../../../outside.rs")).toMatchObject({
+        resolution: "unresolved",
+      });
+      // cfg_attr and inline-module forms are not guessed at.
+      const specs = deps.map((d) => d.targetSpecifier);
+      expect(specs).not.toContain("path:client.rs");
+      expect(specs).not.toContain("self::conditional");
+      expect(specs).not.toContain("self::nested");
+      expect(buildReverseImportMap(index).get("src/shared/types.rs")).toEqual(["src/net/mod.rs"]);
+    });
+
+    it("never resolves a `path:` specifier to the declaring file or an absolute path", () => {
+      const has = files("src/lib.rs", "src/abs.rs", "src/other.rs");
+      for (const spec of ["path:lib.rs", "path:/src/abs.rs", "path:C:/src/abs.rs"]) {
+        expect(
+          resolveDependency({ targetSpecifier: spec, importedSymbols: [] }, "src/lib.rs", has)
+        ).toEqual({ resolvedPath: null, resolution: "unresolved" });
+      }
+      expect(
+        resolveDependency(
+          { targetSpecifier: "path:other.rs", importedSymbols: [] },
+          "src/lib.rs",
+          has
+        ).resolvedPath
+      ).toBe("src/other.rs");
+    });
+
     it("resolves crate::, self:: and super:: paths to the module files", async () => {
       writeCrate();
       const index = await build();
@@ -1047,6 +1249,73 @@ describe("Rust module and Go package resolution", () => {
       expect(lib.resolvedPath).toBe("third_party/lib/lib.go");
       // A replace target outside the project is ignored.
       expect(other.resolution).toBe("non-relative");
+    });
+
+    it("reads go.work `use` directories and replace directives, which win over a go.mod's", async () => {
+      put(
+        "go.work",
+        [
+          "go 1.22",
+          "",
+          "use ./app",
+          "use (",
+          '  "./libs/util" // quoted, with a comment',
+          "  ./no/gomod",
+          ")",
+          "require (",
+          "  use ./ignored",
+          ")",
+          "replace example.com/ext => ./new/ext",
+          "replace example.com/away => ../outside",
+        ].join("\n")
+      );
+      put("app/go.mod", "module example.com/app\n\nreplace example.com/ext => ../old/ext\n");
+      put(
+        "app/main.go",
+        [
+          "package main",
+          "import (",
+          '  "example.com/libs/util"',
+          '  "example.com/ext"',
+          '  "example.com/away"',
+          '  "example.com/app/inner"',
+          ")",
+        ].join("\n")
+      );
+      put("app/inner/i.go", "package inner\n");
+      put("libs/util/go.mod", "module example.com/libs/util\n");
+      put("libs/util/util.go", "package util\n");
+      put("new/ext/ext.go", "package ext\n");
+      put("old/ext/ext.go", "package ext\n");
+      const index = await build();
+      const [util, ext, away, inner] = index.files["app/main.go"].dependencies;
+      expect(util).toMatchObject({ resolvedPath: "libs/util/util.go", resolution: "resolved" });
+      // go.work's replace beats the module's own.
+      expect(ext).toMatchObject({ resolvedPath: "new/ext/ext.go", resolution: "resolved" });
+      // A replace target outside the project is ignored.
+      expect(away.resolution).toBe("non-relative");
+      expect(inner.resolvedPath).toBe("app/inner/i.go");
+    });
+
+    it("reads a go.work replace even when no go.mod is indexed", async () => {
+      put("go.work", "go 1.22\nreplace example.com/lib => ./lib\n");
+      put("lib/lib.go", "package lib\n");
+      put("main.go", 'package main\nimport "example.com/lib"\n');
+      const index = await build();
+      expect(index.files["main.go"].dependencies[0]).toMatchObject({
+        resolvedPath: "lib/lib.go",
+        resolution: "resolved",
+      });
+    });
+
+    it("still treats a go.mod module that go.work does not list as a project module", async () => {
+      put("go.work", "go 1.22\nuse ./a\n");
+      put("a/go.mod", "module example.com/a\n");
+      put("a/a.go", 'package a\nimport "example.com/b"\n');
+      put("b/go.mod", "module example.com/b\n");
+      put("b/b.go", "package b\n");
+      const index = await build();
+      expect(index.files["a/a.go"].dependencies[0].resolvedPath).toBe("b/b.go");
     });
 
     it("caps the files recorded per package", async () => {

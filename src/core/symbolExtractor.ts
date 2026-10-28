@@ -24,7 +24,7 @@ import type { IndexedDependency, IndexedSymbol } from "./types";
  * Bump EXTRACTOR_VERSION whenever the output for the same input changes; stored
  * indexes carrying an older value are re-extracted on the next refresh.
  */
-export const EXTRACTOR_VERSION = 5;
+export const EXTRACTOR_VERSION = 7;
 
 const MAX_LINE_CHARS = 2048;
 const MAX_SYMBOLS_PER_FILE = 5000;
@@ -623,6 +623,11 @@ interface Scope {
   traitImpl?: boolean;
   /** For `impl Trait for Type`: the trait's base name. */
   traitName?: string;
+  /** For `impl Trait for Type`: the type's and the trait's path segments (empty when not a plain path). */
+  typePath?: string[];
+  traitPath?: string[];
+  /** For an impl: it sits at the top level of the file, not inside an inline `mod { }`. */
+  implAtTop?: boolean;
   isTrait?: boolean;
 }
 
@@ -1174,6 +1179,60 @@ function detectTsStatement(
   return undefined;
 }
 
+const RE_TS_PARAM_PROPERTY =
+  /(?:@[\w$.]+(?:\([^)\n]*\))?\s*)*((?:(?:public|private|protected|readonly|override)\s+)+)([A-Za-z_$][\w$]*)/y;
+
+/** Offsets of the top-level parameters between `open` `(` and `close` (index after `)`). */
+function splitParameters(code: string, open: number, close: number): Array<[number, number]> {
+  const parts: Array<[number, number]> = [];
+  let depth = 0;
+  let start = open + 1;
+  const end = close - 1;
+  for (let i = start; i < end; i++) {
+    const c = code[i];
+    if (c === "(" || c === "[" || c === "{") depth++;
+    else if (c === "<") {
+      if (/[\w$]/.test(code[i - 1] ?? "")) depth++; // `Map<K, V>`, not `a < b`
+    } else if (c === ")" || c === "]" || c === "}") depth = Math.max(0, depth - 1);
+    else if (c === ">") {
+      if (code[i - 1] !== "=" && depth > 0) depth--; // `=>` is not a closing bracket
+    } else if (c === "," && depth === 0) {
+      parts.push([start, i]);
+      start = i + 1;
+    }
+  }
+  parts.push([start, end]);
+  return parts;
+}
+
+function addParameterProperties(
+  src: Source,
+  out: Collector,
+  open: number,
+  close: number,
+  scope: Scope
+): void {
+  const code = src.code;
+  for (const [from, to] of splitParameters(code, open, close)) {
+    const at = skipWs(code, from);
+    if (at >= to) continue;
+    const m = sticky(RE_TS_PARAM_PROPERTY, code, at);
+    if (!m || at + m[0].length > to) continue;
+    const modifiers = m[1];
+    const hidden = /\b(?:private|protected)\b/.test(modifiers);
+    out.addSymbol({
+      name: m[2],
+      kind: "variable",
+      at,
+      nameAt: at + m[0].length - m[2].length,
+      end: lastNonSpace(code, at, to),
+      signature: src.signature(at, to),
+      exported: scope.exported === true && !hidden,
+      container: scope.name,
+    });
+  }
+}
+
 function detectTsMember(src: Source, out: Collector, p: number, scope: Scope): void {
   const code = src.code;
   if (!/[A-Za-z_$#@*]/.test(code[p])) return;
@@ -1220,6 +1279,11 @@ function detectTsMember(src: Source, out: Collector, p: number, scope: Scope): v
       exported,
       container: scope.name,
     });
+    // `constructor(private x: T, public readonly y = 1)` declares properties; only the
+    // implementation (which has a body) does, not an overload signature.
+    if (name === "constructor" && header && "body" in header) {
+      addParameterProperties(src, out, pe.open, pe.close, scope);
+    }
     return;
   }
 
@@ -1247,8 +1311,7 @@ function detectTsMember(src: Source, out: Collector, p: number, scope: Scope): v
   }
 
   // Plain property declaration: `name: T;`, `static readonly MAX = 3;`, `count;`. Private
-  // ones (`private`, `#x`) are left out, like locals; the rest follow the class's visibility.
-  if (isPrivate) return;
+  // ones (`private`, `#x`) are indexed too, never exported; the rest follow the class's visibility.
   const end = findStatementEnd(code, i + name.length);
   out.addSymbol({
     name,
@@ -1433,6 +1496,33 @@ function rustTypeBase(typeText: string): string {
   return m ? m[0] : "";
 }
 
+/**
+ * The path segments of a type or trait as written (`a::b::Foo<T>` gives `a`, `b`, `Foo`),
+ * without generics and reference prefixes. Empty when the text is not a plain path
+ * (tuples, slices, fn pointers), so such a type is never matched to a declaration.
+ */
+function rustPathSegments(typeText: string): string[] {
+  let depth = 0;
+  let stripped = "";
+  for (const ch of typeText) {
+    if (ch === "<") depth++;
+    else if (ch === ">") depth = Math.max(0, depth - 1);
+    else if (depth === 0) stripped += ch;
+  }
+  const t = stripped
+    .replace(/^[&*\s]+/, "")
+    .replace(/^'[A-Za-z_]\w*\s+/, "")
+    .replace(/^(?:mut|const|dyn)\s+/, "")
+    .trim();
+  const m = /^(?:::)?\s*[A-Za-z_]\w*(?:\s*::\s*[A-Za-z_]\w*)*\s*$/.exec(t);
+  return m
+    ? t
+        .replace(/^::/, "")
+        .split(/\s*::\s*/)
+        .map((s) => s.trim())
+    : [];
+}
+
 function extractRust(content: string, relPath: string): Extraction {
   const src = new Source(dropLongLines(content), lexRust);
   const out = new Collector(src, relPath);
@@ -1445,7 +1535,14 @@ function extractRust(content: string, relPath: string): Extraction {
   let suppressUntil = 0;
   // Methods of `impl Trait for Type`: visibility comes from the trait and the type,
   // not from a `pub` on the method (which Rust forbids there). Settled after the scan.
-  const traitImplMethods: Array<{ sym: IndexedSymbol; type?: string; trait?: string }> = [];
+  const traitImplMethods: Array<{
+    sym: IndexedSymbol;
+    typePath: string[];
+    traitPath: string[];
+    atTop: boolean;
+  }> = [];
+  // Top-level `mod foo;` declarations (the module lives in another file).
+  const fileMods = new Set<string>();
   scanBlocks(code, (p, scope) => {
     if (p < suppressUntil) return undefined;
     const c = code[p];
@@ -1490,8 +1587,9 @@ function extractRust(content: string, relPath: string): Extraction {
       if (scope.traitImpl && out.symbols.length > before) {
         traitImplMethods.push({
           sym: out.symbols[out.symbols.length - 1],
-          type: scope.name,
-          trait: scope.traitName,
+          typePath: scope.typePath ?? [],
+          traitPath: scope.traitPath ?? [],
+          atTop: scope.implAtTop === true,
         });
       }
       return undefined;
@@ -1530,14 +1628,19 @@ function extractRust(content: string, relPath: string): Extraction {
       // `mod foo;` (a declaration, not an inline `mod foo { }`) links this file to the
       // file holding the module. Only at the top of a file: inside an inline module
       // the file lives one directory deeper, which the resolver would have to guess.
-      if (
-        kw === "mod" &&
-        body < 0 &&
-        semi >= 0 &&
-        scope.kind === "top" &&
-        !/\bpath\s*=/.test(code.slice(p, q))
-      ) {
-        out.addDep(p, `self::${name}`, [], false);
+      // With a plain `#[path = "x.rs"]` the declaration is linked as `path:x.rs`
+      // (relative to this file's directory); any other `path =` form (`cfg_attr`,
+      // a raw string) is left unlinked rather than guessed.
+      if (kw === "mod" && body < 0 && semi >= 0 && scope.kind === "top") {
+        fileMods.add(name);
+        if (!/\bpath\s*=/.test(code.slice(p, q))) {
+          out.addDep(p, `self::${name}`, [], false);
+        } else {
+          const pathValue = /#\[\s*path\s*=\s*"([^"\\\r\n]{1,512})"\s*\]/.exec(
+            src.text.slice(p, q)
+          )?.[1];
+          if (pathValue) out.addDep(p, `path:${pathValue}`, [], false);
+        }
       }
       if (kw === "trait" || kw === "mod") {
         return {
@@ -1608,26 +1711,119 @@ function extractRust(content: string, relPath: string): Extraction {
           name: name || undefined,
           exported: false,
           traitImpl: !!forM,
-          ...(forM ? { traitName: rustTypeBase(header.slice(0, forM.index)) || undefined } : {}),
+          ...(forM
+            ? {
+                traitName: rustTypeBase(header.slice(0, forM.index)) || undefined,
+                typePath: rustPathSegments(typeText),
+                traitPath: rustPathSegments(header.slice(0, forM.index)),
+                implAtTop: scope.kind === "top",
+              }
+            : {}),
         },
       };
     }
     return undefined;
   });
 
-  // A trait-impl method is callable from outside the crate when the type is
-  // unrestricted `pub` and the trait is not a private trait of this file. A type or
-  // trait declared elsewhere (`use`d) is unknown, so those methods stay unexported.
-  for (const { sym, type, trait } of traitImplMethods) {
-    const typeSym = out.symbols.find((s) => s.name === type && !s.container && s.kind === "class");
-    const traitSym = trait
-      ? out.symbols.find((s) => s.name === trait && !s.container && s.kind === "interface")
-      : undefined;
-    if (typeSym?.isExported && (!traitSym || traitSym.isExported)) sym.isExported = true;
-  }
-
-  collectRustUses(src, out);
+  const useBindings = new Map<string, string | null>();
+  collectRustUses(src, out, useBindings);
+  settleRustTraitImplMethods(out.symbols, traitImplMethods, useBindings, fileMods);
   return out.result();
+}
+
+/**
+ * A trait-impl method is callable from outside the crate when the type is unrestricted
+ * `pub` and the trait is not a private trait. What this file declares decides here; a type
+ * or trait declared elsewhere is recorded as `implOf` (its path with this file's `use`
+ * bindings expanded) for the cross-file pass (`settleRustImplExports`) to decide on every
+ * build. Anything that cannot be tied to one declaration stays unexported, never guessed.
+ */
+function settleRustTraitImplMethods(
+  symbols: IndexedSymbol[],
+  methods: ReadonlyArray<{
+    sym: IndexedSymbol;
+    typePath: string[];
+    traitPath: string[];
+    atTop: boolean;
+  }>,
+  uses: ReadonlyMap<string, string | null>,
+  fileMods: ReadonlySet<string>
+): void {
+  const topLevel = (name: string, kind: SymbolKind): IndexedSymbol | undefined =>
+    symbols.find((s) => s.name === name && !s.container && s.kind === kind);
+  // The declaration a path names in this file: `Foo` or `self::Foo`. A longer path
+  // (`other::Foo`) names something else even when this file also declares a `Foo`.
+  const declared = (segs: string[], kind: SymbolKind): IndexedSymbol | undefined => {
+    if (segs.length === 1) return topLevel(segs[0], kind);
+    if (segs.length === 2 && segs[0] === "self") return topLevel(segs[1], kind);
+    return undefined;
+  };
+  type Ref = { path: string } | { exported: boolean } | null; // null: cannot be pinned down
+  const refOf = (segs: string[], kind: SymbolKind): Ref => {
+    const first = segs[0];
+    if (!first) return null;
+    if (first === "crate" || first === "self" || first === "super") {
+      return { path: segs.join("::") };
+    }
+    if (uses.has(first)) {
+      const bound = uses.get(first);
+      return bound ? { path: [bound, ...segs.slice(1)].join("::") } : null;
+    }
+    // `mod net;` then `net::Client`: a child module of this file, written without `self::`.
+    if (segs.length > 1 && fileMods.has(first)) return { path: `self::${segs.join("::")}` };
+    // `mod inner { ... }` of this file: its members are visible to this file's symbols.
+    const inline = symbols.find((s) => s.name === first && !s.container && s.kind === "module");
+    if (inline) {
+      if (segs.length !== 2) return null;
+      const member = symbols.find(
+        (s) => s.name === segs[1] && s.container === first && s.kind === kind
+      );
+      return member ? { exported: member.isExported } : null;
+    }
+    return { path: segs.join("::") };
+  };
+
+  for (const { sym, typePath, traitPath, atTop } of methods) {
+    sym.isExported = false;
+    if (typePath.length === 0 || traitPath.length === 0) continue;
+
+    let typeNeed: string | undefined;
+    const typeSym = declared(typePath, "class");
+    if (typeSym) {
+      if (!typeSym.isExported) continue;
+    } else {
+      if (!atTop) continue;
+      const ref = refOf(typePath, "class");
+      if (!ref) continue;
+      if ("exported" in ref) {
+        if (!ref.exported) continue;
+      } else typeNeed = ref.path;
+    }
+
+    let traitNeed: string | undefined;
+    const traitSym = declared(traitPath, "interface");
+    if (traitSym) {
+      if (!traitSym.isExported) continue;
+    } else if (atTop) {
+      const ref = refOf(traitPath, "interface");
+      if (!ref) continue;
+      if ("exported" in ref) {
+        if (!ref.exported) continue;
+      } else traitNeed = ref.path;
+    }
+
+    if (typeNeed === undefined && traitNeed === undefined) {
+      sym.isExported = true;
+      continue;
+    }
+    // Same-file guess until the cross-file pass runs: a local public type with a trait
+    // from elsewhere counts as exported (as before); a type from elsewhere does not.
+    sym.isExported = typeNeed === undefined;
+    sym.implOf = {
+      ...(typeNeed !== undefined ? { type: typeNeed } : {}),
+      ...(traitNeed !== undefined ? { trait: traitNeed } : {}),
+    };
+  }
 }
 
 function findRustParamsOpen(code: string, from: number): number {
@@ -1714,7 +1910,13 @@ function expandUseTree(prefix: string, tree: string, leaves: UseLeaf[], depth: n
   }
 }
 
-function collectRustUses(src: Source, out: Collector): void {
+function collectRustUses(src: Source, out: Collector, bindings?: Map<string, string | null>): void {
+  // Local name -> full path of what it imports; null when the same name is bound to two
+  // different paths in this file (an inline module or a function body can do that).
+  const bind = (local: string, full: string): void => {
+    if (!bindings || !local || local === "_" || local === "*" || local === "self") return;
+    bindings.set(local, bindings.has(local) && bindings.get(local) !== full ? null : full);
+  };
   const text = src.noComments;
   const code = src.code;
   const useRe =
@@ -1732,7 +1934,10 @@ function collectRustUses(src: Source, out: Collector): void {
       // `use a::b::C [as D];`: one import; the specifier is the whole path.
       const [path, alias] = raw.split(/\s+as\s+/).map((x) => x.trim());
       const last = path.split("::").pop() || "";
-      if (path && last) addUse(path, [last], [last === "*" ? "*" : alias || last]);
+      if (path && last) {
+        addUse(path, [last], [last === "*" ? "*" : alias || last]);
+        bind(alias || last, path);
+      }
       continue;
     }
     const leaves: UseLeaf[] = [];
@@ -1743,6 +1948,9 @@ function collectRustUses(src: Source, out: Collector): void {
       const list = byParent.get(leaf.parent);
       if (list) list.push(leaf);
       else byParent.set(leaf.parent, [leaf]);
+    }
+    for (const leaf of leaves) {
+      bind(leaf.exported, leaf.parent ? `${leaf.parent}::${leaf.name}` : leaf.name);
     }
     for (const [parent, group] of byParent) {
       if (!parent) continue;
