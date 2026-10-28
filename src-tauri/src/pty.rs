@@ -106,6 +106,12 @@ pub struct PtyCwdPayload {
 
 /// Attempts to resolve the live working directory of a process by its PID.
 pub fn resolve_process_cwd(_pid: u32) -> Option<String> {
+    // Under Flatpak every shell child is a `flatpak-spawn --host` wrapper whose
+    // own cwd never changes and says nothing about the host shell, so probing
+    // it would overwrite OSC 7 reports with a stale constant.
+    if flatpak_blocks_cwd_probe(flatpak_id_from_env().as_deref()) {
+        return None;
+    }
     #[cfg(target_os = "linux")]
     {
         let proc_path = format!("/proc/{}/cwd", _pid);
@@ -229,7 +235,14 @@ impl PtyManager {
         emitter: Arc<dyn TerminalEventEmitter>,
         options: PtyCreateOptions,
     ) -> Result<PtySessionInfo, TerminalError> {
-        let shell_path = validate_and_resolve_shell(options.shell_path.as_deref())?;
+        let flatpak_id = flatpak_id_from_env();
+        let shell_path = if flatpak_id.is_some() {
+            // The shell runs on the host (`flatpak-spawn --host`), so a
+            // sandbox filesystem check would reject host-only shells.
+            resolve_flatpak_shell(options.shell_path.as_deref(), host_login_shell)?
+        } else {
+            validate_and_resolve_shell(options.shell_path.as_deref())?
+        };
         let cwd = validate_and_resolve_cwd(options.cwd.as_deref())?;
         // P0: reject unsupported Windows hosts before touching ConPTY so the
         // user gets an actionable error instead of a cryptic native failure.
@@ -316,6 +329,22 @@ impl PtyManager {
                 cmd.env(k, v);
             }
         }
+
+        if flatpak_id.is_some() {
+            // Best-effort cwd reporting for host shells (see
+            // `flatpak_cwd_hook_env`); a user-supplied PROMPT_COMMAND wins.
+            let user_has_hook = options
+                .env
+                .as_ref()
+                .is_some_and(|e| e.contains_key(FLATPAK_CWD_HOOK_VAR));
+            if !user_has_hook {
+                for (k, v) in flatpak_cwd_hook_env(&shell_path) {
+                    cmd.env(k, v);
+                }
+            }
+        }
+
+        let cmd = route_through_flatpak_host(cmd, &cwd);
 
         let child = pair.slave.spawn_command(cmd).map_err(|e| {
             let mut msg = format!("Child process startup failed: {}", e);
@@ -781,6 +810,213 @@ fn is_cmd_shell(shell_path: &str) -> bool {
     let file = lower.rsplit(['/', '\\']).next().unwrap_or(&lower);
     let base = file.strip_suffix(".exe").unwrap_or(file);
     base == "cmd"
+}
+
+/// Full argv (program first) that runs `argv` on the host instead of inside a
+/// Flatpak sandbox, or `None` when not running under Flatpak (`FLATPAK_ID`
+/// unset or empty), so every other install keeps spawning the shell directly.
+///
+/// `flatpak-spawn --host` does not carry the sandbox environment across, so the
+/// variables Kai sets for the shell are forwarded as explicit `--env=` flags.
+/// Needs `--talk-name=org.freedesktop.Flatpak` in the manifest. `--watch-bus`
+/// makes the host process exit with the sandbox, so closing Kai leaves no
+/// orphaned host shells.
+fn flatpak_host_argv(
+    flatpak_id: Option<&str>,
+    argv: &[String],
+    cwd: &str,
+    env: &[(String, String)],
+) -> Option<Vec<String>> {
+    if flatpak_id.unwrap_or("").is_empty() || argv.is_empty() {
+        return None;
+    }
+    let mut out = vec![
+        "flatpak-spawn".to_string(),
+        "--host".to_string(),
+        "--watch-bus".to_string(),
+        format!("--directory={cwd}"),
+    ];
+    out.extend(env.iter().map(|(k, v)| format!("--env={k}={v}")));
+    out.extend(argv.iter().cloned());
+    Some(out)
+}
+
+/// `FLATPAK_ID` when set and non-empty, i.e. when running inside a Flatpak
+/// sandbox. Flatpak only exists on Linux, so a stray `FLATPAK_ID` in the
+/// environment of a Windows or macOS build never reroutes the shell.
+fn flatpak_id_from_env() -> Option<String> {
+    if !cfg!(target_os = "linux") {
+        return None;
+    }
+    std::env::var("FLATPAK_ID").ok().filter(|v| !v.is_empty())
+}
+
+/// True when the PTY child's `/proc` cwd cannot describe the shell: under
+/// Flatpak the child is the sandbox-side `flatpak-spawn` wrapper.
+fn flatpak_blocks_cwd_probe(flatpak_id: Option<&str>) -> bool {
+    !flatpak_id.unwrap_or("").is_empty()
+}
+
+/// Shell used under Flatpak when the host login shell cannot be determined.
+/// `/bin/sh` exists on every host Kai supports.
+const FLATPAK_FALLBACK_SHELL: &str = "/bin/sh";
+/// Fixed script run on the host to read the login shell from the passwd
+/// database (no user input is interpolated).
+const FLATPAK_HOST_SHELL_PROBE: &str = r#"getent passwd "$(id -u)""#;
+const FLATPAK_HOST_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// Validates a shell path that will be executed on the host, where the
+/// sandbox cannot check that it exists: absolute, bounded, no control
+/// characters (this also rejects NUL and newlines).
+fn validate_host_shell_path(requested: &str) -> Result<String, TerminalError> {
+    let trimmed = requested.trim().trim_matches('"').trim_matches('\'');
+    if trimmed.is_empty() {
+        return Err(TerminalError::ShellNotFound(
+            "Shell path is empty".to_string(),
+        ));
+    }
+    if trimmed.len() > 4096 {
+        return Err(TerminalError::ShellNotFound(
+            "Shell path exceeds 4096 bytes".to_string(),
+        ));
+    }
+    if trimmed.chars().any(char::is_control) {
+        return Err(TerminalError::ShellNotFound(
+            "Shell path contains control characters".to_string(),
+        ));
+    }
+    if !trimmed.starts_with('/') {
+        return Err(TerminalError::ShellNotFound(format!(
+            "Shell path '{trimmed}' must be absolute when the shell runs on the Flatpak host"
+        )));
+    }
+    Ok(trimmed.to_string())
+}
+
+/// Login shell from one `getent passwd` line (`name:x:uid:gid:gecos:home:shell`).
+/// Accounts that cannot log in interactively (`nologin`, `false`) yield `None`.
+fn login_shell_from_passwd(line: &str) -> Option<String> {
+    let shell = line.lines().next()?.split(':').nth(6)?.trim();
+    let name = shell.rsplit('/').next().unwrap_or(shell);
+    if matches!(name, "nologin" | "false") {
+        return None;
+    }
+    validate_host_shell_path(shell).ok()
+}
+
+/// Shell to run on the Flatpak host: an explicit request is only syntax-checked
+/// (the sandbox cannot see the host's executables); otherwise the host login
+/// shell (looked up lazily), then `/bin/sh`.
+fn resolve_flatpak_shell(
+    requested: Option<&str>,
+    host_login_shell: impl FnOnce() -> Option<String>,
+) -> Result<String, TerminalError> {
+    match requested.map(str::trim).filter(|r| !r.is_empty()) {
+        Some(path) => validate_host_shell_path(path),
+        None => Ok(host_login_shell().unwrap_or_else(|| FLATPAK_FALLBACK_SHELL.to_string())),
+    }
+}
+
+/// The user's login shell on the Flatpak host, cached after the first success.
+/// A failed or timed-out probe is not cached, so a transient failure is retried
+/// on the next tab; the caller falls back to `/bin/sh` meanwhile.
+fn host_login_shell() -> Option<String> {
+    static CACHE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    if let Some(cached) = CACHE.get() {
+        return Some(cached.clone());
+    }
+    let out = run_host_probe(&["sh", "-c", FLATPAK_HOST_SHELL_PROBE])?;
+    let shell = login_shell_from_passwd(&out)?;
+    Some(CACHE.get_or_init(|| shell).clone())
+}
+
+/// Runs `flatpak-spawn --host <argv>` with a hard timeout (kill + reap on
+/// expiry) and returns trimmed stdout on success.
+fn run_host_probe(argv: &[&str]) -> Option<String> {
+    use std::io::Read;
+    use std::process::{Command, Stdio};
+    let mut child = Command::new("flatpak-spawn")
+        .arg("--host")
+        .args(argv)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let deadline = std::time::Instant::now() + FLATPAK_HOST_PROBE_TIMEOUT;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                if !status.success() {
+                    return None;
+                }
+                let mut buf = String::new();
+                child
+                    .stdout
+                    .take()?
+                    .take(8192)
+                    .read_to_string(&mut buf)
+                    .ok()?;
+                return Some(buf.trim().to_string());
+            }
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    }
+}
+
+/// Variable the cwd hook rides on.
+const FLATPAK_CWD_HOOK_VAR: &str = "PROMPT_COMMAND";
+/// Bash prompt hook reporting the cwd via `OSC 7` before every prompt, with
+/// `%`, space, `#` and `?` percent-encoded so the URL parses back exactly.
+const FLATPAK_BASH_CWD_HOOK: &str = "__kai_osc7(){ local p=${PWD//%/%25}; p=${p// /%20}; p=${p//\\#/%23}; p=${p//\\?/%3F}; printf '\\033]7;file://%s%s\\007' \"${HOSTNAME:-localhost}\" \"$p\"; }; __kai_osc7";
+
+/// Extra environment that lets the cwd badge follow `cd` in a Flatpak tab.
+/// The host shell is invisible from the sandbox (no shared PID namespace, so no
+/// `/proc/<pid>/cwd`), leaving shell-emitted `OSC 7` as the only source. Only
+/// bash can be primed through the environment (`PROMPT_COMMAND`); it is
+/// best-effort, since an rc file that assigns `PROMPT_COMMAND` replaces it.
+/// Other shells report cwd only if they emit `OSC 7` themselves, and otherwise
+/// the badge stays at the spawn directory.
+fn flatpak_cwd_hook_env(shell_path: &str) -> Vec<(String, String)> {
+    let name = shell_path.rsplit('/').next().unwrap_or(shell_path);
+    if name == "bash" {
+        vec![(
+            FLATPAK_CWD_HOOK_VAR.to_string(),
+            FLATPAK_BASH_CWD_HOOK.to_string(),
+        )]
+    } else {
+        Vec::new()
+    }
+}
+
+/// Rebuilds `cmd` as a `flatpak-spawn --host` invocation when running under
+/// Flatpak (see `flatpak_host_argv`); returns it unchanged otherwise.
+fn route_through_flatpak_host(cmd: CommandBuilder, cwd: &str) -> CommandBuilder {
+    let flatpak_id = flatpak_id_from_env();
+    let argv: Vec<String> = cmd
+        .get_argv()
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    let env: Vec<(String, String)> = cmd
+        .iter_extra_env_as_str()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+    match flatpak_host_argv(flatpak_id.as_deref(), &argv, cwd, &env) {
+        Some(host_argv) => {
+            let mut host = CommandBuilder::new(&host_argv[0]);
+            host.args(&host_argv[1..]);
+            host
+        }
+        None => cmd,
+    }
 }
 
 /// PowerShell prompt hook reporting cwd via `OSC 9;9` on every prompt while
@@ -1631,6 +1867,213 @@ mod tests {
         assert!(is_cmd_shell("CMD.EXE"));
         assert!(!is_cmd_shell("powershell.exe"));
         assert!(!is_cmd_shell("pwsh.exe"));
+    }
+
+    #[test]
+    fn test_flatpak_host_argv_none_outside_flatpak() {
+        let argv = vec!["/bin/bash".to_string()];
+        assert!(flatpak_host_argv(None, &argv, "/home/u", &[]).is_none());
+        assert!(flatpak_host_argv(Some(""), &argv, "/home/u", &[]).is_none());
+    }
+
+    #[test]
+    fn test_flatpak_host_argv_wraps_shell_with_dir_and_env() {
+        let argv = vec!["/bin/bash".to_string(), "-l".to_string()];
+        let env = vec![
+            ("TERM".to_string(), "xterm-256color".to_string()),
+            ("KAI_TERMINAL".to_string(), "1".to_string()),
+        ];
+        let out = flatpak_host_argv(Some("com.kai.terminal"), &argv, "/home/u/my proj", &env)
+            .expect("flatpak id set");
+        assert_eq!(
+            out,
+            vec![
+                "flatpak-spawn",
+                "--host",
+                "--watch-bus",
+                "--directory=/home/u/my proj",
+                "--env=TERM=xterm-256color",
+                "--env=KAI_TERMINAL=1",
+                "/bin/bash",
+                "-l",
+            ]
+        );
+    }
+
+    #[test]
+    fn test_flatpak_host_argv_keeps_user_args_after_env_flags() {
+        // A user argument that looks like a flatpak-spawn option must stay
+        // after the program name, where flatpak-spawn no longer parses it.
+        let argv = vec!["/bin/sh".to_string(), "--env=X=1".to_string()];
+        let out = flatpak_host_argv(Some("app"), &argv, "/", &[]).unwrap();
+        let prog = out.iter().position(|a| a == "/bin/sh").unwrap();
+        assert_eq!(&out[prog..], &["/bin/sh", "--env=X=1"]);
+        assert!(flatpak_host_argv(Some("app"), &[], "/", &[]).is_none());
+    }
+
+    #[test]
+    fn test_route_through_flatpak_host_is_identity_outside_flatpak() {
+        let _env = crate::test_support::lock_test_env();
+        if std::env::var_os("FLATPAK_ID").is_some() {
+            return; // running the suite inside a Flatpak: nothing to compare
+        }
+        let mut cmd = CommandBuilder::new("/bin/bash");
+        cmd.arg("-l");
+        cmd.env("TERM", "xterm-256color");
+        let routed = route_through_flatpak_host(cmd.clone(), "/tmp");
+        assert_eq!(routed.get_argv(), cmd.get_argv());
+        assert_eq!(
+            routed.iter_extra_env_as_str().collect::<Vec<_>>(),
+            cmd.iter_extra_env_as_str().collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_validate_host_shell_path_accepts_absolute_and_strips_quotes() {
+        assert_eq!(
+            validate_host_shell_path("/usr/bin/zsh").unwrap(),
+            "/usr/bin/zsh"
+        );
+        assert_eq!(
+            validate_host_shell_path("  '/bin/bash' ").unwrap(),
+            "/bin/bash"
+        );
+        assert_eq!(
+            validate_host_shell_path("/home/u/my shells/fish").unwrap(),
+            "/home/u/my shells/fish"
+        );
+    }
+
+    #[test]
+    fn test_validate_host_shell_path_rejects_unsafe_input() {
+        for bad in [
+            "",
+            "   ",
+            "zsh",
+            "-c",
+            "./sh",
+            "/bin/sh\0",
+            "/bin/sh\n/bin/x",
+        ] {
+            assert!(
+                validate_host_shell_path(bad).is_err(),
+                "must reject {bad:?}"
+            );
+        }
+        let long = format!("/{}", "a".repeat(4096));
+        assert!(validate_host_shell_path(&long).is_err());
+    }
+
+    #[test]
+    fn test_login_shell_from_passwd_parses_the_seventh_field() {
+        let line = "kai:x:1000:1000:Kai,,,:/home/kai:/usr/bin/zsh\n";
+        assert_eq!(
+            login_shell_from_passwd(line).as_deref(),
+            Some("/usr/bin/zsh")
+        );
+        // Only the first line is read, and a trailing newline is tolerated.
+        assert_eq!(
+            login_shell_from_passwd("a:x:1:1::/h:/bin/bash\nb:x:2:2::/h:/bin/zsh").as_deref(),
+            Some("/bin/bash")
+        );
+    }
+
+    #[test]
+    fn test_login_shell_from_passwd_skips_accounts_that_cannot_log_in() {
+        for line in [
+            "svc:x:999:999::/:/usr/sbin/nologin",
+            "svc:x:999:999::/:/sbin/nologin",
+            "svc:x:999:999::/:/bin/false",
+            "svc:x:999:999::/:",
+            "svc:x:999:999::/:zsh",
+            "",
+        ] {
+            assert!(login_shell_from_passwd(line).is_none(), "line: {line:?}");
+        }
+    }
+
+    #[test]
+    fn test_resolve_flatpak_shell_prefers_the_request_without_a_host_lookup() {
+        let shell = resolve_flatpak_shell(Some("/usr/bin/fish"), || {
+            panic!("an explicit shell must not trigger the host lookup")
+        })
+        .unwrap();
+        assert_eq!(shell, "/usr/bin/fish");
+        // A host-only path is accepted even though the sandbox cannot see it.
+        assert!(resolve_flatpak_shell(Some("/nix/store/x/bin/zsh"), || None).is_ok());
+        assert!(resolve_flatpak_shell(Some("zsh"), || None).is_err());
+    }
+
+    #[test]
+    fn test_resolve_flatpak_shell_falls_back_to_login_shell_then_sh() {
+        let login = resolve_flatpak_shell(None, || Some("/usr/bin/zsh".to_string())).unwrap();
+        assert_eq!(login, "/usr/bin/zsh");
+        let blank = resolve_flatpak_shell(Some("  "), || Some("/bin/bash".to_string())).unwrap();
+        assert_eq!(blank, "/bin/bash");
+        let none = resolve_flatpak_shell(None, || None).unwrap();
+        assert_eq!(none, FLATPAK_FALLBACK_SHELL);
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn test_flatpak_id_is_ignored_off_linux() {
+        let _env = crate::test_support::lock_test_env();
+        let previous = std::env::var_os("FLATPAK_ID");
+        std::env::set_var("FLATPAK_ID", "com.kai.terminal");
+        let seen = flatpak_id_from_env();
+        match previous {
+            Some(v) => std::env::set_var("FLATPAK_ID", v),
+            None => std::env::remove_var("FLATPAK_ID"),
+        }
+        assert!(seen.is_none(), "Flatpak routing must stay Linux-only");
+    }
+
+    #[test]
+    fn test_flatpak_blocks_cwd_probe_only_inside_flatpak() {
+        assert!(!flatpak_blocks_cwd_probe(None));
+        assert!(!flatpak_blocks_cwd_probe(Some("")));
+        assert!(flatpak_blocks_cwd_probe(Some("com.kai.terminal")));
+    }
+
+    #[test]
+    fn test_flatpak_cwd_hook_env_primes_bash_only() {
+        for bash in ["/bin/bash", "/usr/bin/bash", "/nix/store/x/bin/bash"] {
+            let env = flatpak_cwd_hook_env(bash);
+            assert_eq!(env.len(), 1, "{bash}");
+            assert_eq!(env[0].0, "PROMPT_COMMAND");
+            let hook = &env[0].1;
+            assert!(hook.contains("\\033]7;file://"), "must emit OSC 7: {hook}");
+            assert!(!hook.contains('\n'), "hook must stay on one line");
+            assert!(
+                hook.contains("%25") && hook.contains("%20"),
+                "must percent-encode"
+            );
+        }
+        for other in [
+            "/bin/zsh",
+            "/usr/bin/fish",
+            "/bin/sh",
+            "/usr/bin/bashful",
+            "bash-5",
+        ] {
+            assert!(flatpak_cwd_hook_env(other).is_empty(), "{other}");
+        }
+    }
+
+    #[test]
+    fn test_flatpak_cwd_hook_is_forwarded_to_the_host_as_an_env_flag() {
+        let env = flatpak_cwd_hook_env("/bin/bash");
+        let argv = vec!["/bin/bash".to_string()];
+        let out = flatpak_host_argv(Some("com.kai.terminal"), &argv, "/home/u", &env).unwrap();
+        let flag = out
+            .iter()
+            .find(|a| a.starts_with("--env=PROMPT_COMMAND="))
+            .expect("hook must reach flatpak-spawn as --env");
+        assert!(flag.contains("__kai_osc7"));
+        // The flag precedes the program, so flatpak-spawn parses it.
+        let flag_pos = out.iter().position(|a| a == flag).unwrap();
+        let prog_pos = out.iter().position(|a| a == "/bin/bash").unwrap();
+        assert!(flag_pos < prog_pos);
     }
 
     #[test]

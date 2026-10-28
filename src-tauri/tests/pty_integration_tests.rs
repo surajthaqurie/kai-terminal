@@ -1034,3 +1034,215 @@ fn test_15b_close_all_kills_every_shell_process() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// 16. WSL shell round trip (opt-in: set KAI_TEST_WSL=1 on a Windows host that
+// has a WSL distribution; the `wsl` job in ci.yml does). Everywhere else it
+// prints a NOTE and passes, the same way test_13 does without an AI CLI.
+//
+// Before opening a PTY the test runs a bounded, stdin-less `wsl.exe -e true`
+// probe: an uninitialised distribution (first-run "create a default Unix user"
+// prompt), a missing distribution or a hung WSL service then fails fast with a
+// named cause instead of timing out on a marker that can never appear.
+// ---------------------------------------------------------------------------
+
+/// Decodes `wsl.exe` output: its own messages are UTF-16LE when piped, while
+/// output of the Linux side is UTF-8.
+fn decode_wsl_output(bytes: &[u8]) -> String {
+    if bytes.contains(&0) {
+        let units: Vec<u16> = bytes
+            .chunks(2)
+            .filter(|c| c.len() == 2)
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .collect();
+        String::from_utf16_lossy(&units)
+            .trim_start_matches('\u{feff}')
+            .to_string()
+    } else {
+        String::from_utf8_lossy(bytes).into_owned()
+    }
+}
+
+/// Names the likely cause when WSL output shows a known first-run or setup
+/// failure; `None` when the text is not recognisably one of them.
+fn wsl_diagnosis(text: &str) -> Option<&'static str> {
+    let t = text.to_lowercase();
+    if t.contains("create a default unix user account")
+        || t.contains("enter new unix username")
+        || t.contains("installation successful")
+    {
+        Some(
+            "the WSL distribution is not initialised (first-run user prompt); \
+             install it non-interactively, e.g. with Vampire/setup-wsl or `wsl --install -d <distro> --no-launch` \
+             followed by `<distro> install --root`",
+        )
+    } else if t.contains("no installed distributions")
+        || t.contains("has no installed distributions")
+        || t.contains("there is no distribution with the supplied name")
+    {
+        Some("no WSL distribution is installed or registered under that name (`wsl --list --verbose`)")
+    } else if t.contains("wsl2 is not supported")
+        || t.contains("virtual machine platform")
+        || t.contains("hcs_e_")
+        || t.contains("wsl_e_")
+    {
+        Some("WSL2 cannot start on this host (virtualization or optional feature missing)")
+    } else {
+        None
+    }
+}
+
+#[test]
+fn test_16b_wsl_output_decoding_and_diagnosis() {
+    // UTF-16LE with BOM, as `wsl.exe` writes when stdout is a pipe.
+    let mut utf16 = vec![0xff, 0xfe];
+    for u in "Create a default Unix user account: ".encode_utf16() {
+        utf16.extend_from_slice(&u.to_le_bytes());
+    }
+    let decoded = decode_wsl_output(&utf16);
+    assert!(decoded.starts_with("Create a default"), "got {decoded:?}");
+    assert!(wsl_diagnosis(&decoded).unwrap().contains("not initialised"));
+    assert_eq!(
+        decode_wsl_output(b"5.15.0-microsoft\n"),
+        "5.15.0-microsoft\n"
+    );
+
+    assert!(wsl_diagnosis("Enter new UNIX username:")
+        .unwrap()
+        .contains("not initialised"));
+    assert!(
+        wsl_diagnosis("Windows Subsystem for Linux has no installed distributions.")
+            .unwrap()
+            .contains("no WSL distribution")
+    );
+    assert!(wsl_diagnosis("HCS_E_HYPERV_NOT_INSTALLED")
+        .unwrap()
+        .contains("WSL2 cannot start"));
+    assert!(wsl_diagnosis("KAI_WSL_1").is_none());
+}
+
+/// Runs `wsl.exe <args>` with no stdin and a hard timeout (kill + reap on
+/// expiry). Returns the exit code and decoded stdout+stderr.
+#[cfg(target_os = "windows")]
+fn run_wsl_probe(args: &[&str], timeout: Duration) -> Result<(Option<i32>, String), String> {
+    use std::io::Read;
+    use std::process::{Command, Stdio};
+    let mut child = Command::new("wsl.exe")
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("could not start wsl.exe: {e}"))?;
+    // Drain both pipes on threads so a chatty child cannot block on a full pipe.
+    let mut out = child.stdout.take().expect("piped stdout");
+    let mut err = child.stderr.take().expect("piped stderr");
+    let out_t = std::thread::spawn(move || {
+        let mut b = Vec::new();
+        let _ = out.read_to_end(&mut b);
+        b
+    });
+    let err_t = std::thread::spawn(move || {
+        let mut b = Vec::new();
+        let _ = err.read_to_end(&mut b);
+        b
+    });
+    let deadline = Instant::now() + timeout;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(50)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break None;
+            }
+        }
+    };
+    let mut text = decode_wsl_output(&out_t.join().unwrap_or_default());
+    text.push_str(&decode_wsl_output(&err_t.join().unwrap_or_default()));
+    match status {
+        Some(s) => Ok((s.code(), text)),
+        None => Err(format!(
+            "`wsl.exe {}` did not finish within {}s (hung WSL service or an interactive prompt). Output so far: {}",
+            args.join(" "),
+            timeout.as_secs(),
+            text.trim()
+        )),
+    }
+}
+
+#[test]
+fn test_16_wsl_shell_round_trip() {
+    if std::env::var("KAI_TEST_WSL").as_deref() != Ok("1") {
+        println!("NOTE: KAI_TEST_WSL!=1, skipping the WSL shell round trip");
+        return;
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        println!("NOTE: WSL only exists on Windows, skipping the WSL shell round trip");
+    }
+    #[cfg(target_os = "windows")]
+    {
+        match run_wsl_probe(&["-e", "true"], Duration::from_secs(120)) {
+            Ok((Some(0), _)) => {}
+            Ok((code, text)) => panic!(
+                "WSL preflight `wsl.exe -e true` failed (exit {code:?}): {}. Output: {}",
+                wsl_diagnosis(&text).unwrap_or("cause not recognised, see output"),
+                text.trim()
+            ),
+            Err(msg) => panic!(
+                "WSL preflight failed: {} ({})",
+                msg,
+                wsl_diagnosis(&msg).unwrap_or("cause not recognised")
+            ),
+        }
+
+        let manager = PtyManager::new();
+        let (emitter, _, _) = TestEventEmitter::new();
+        let session = manager
+            .create_pty(
+                Arc::new(emitter.clone()),
+                PtyCreateOptions {
+                    shell_path: Some("wsl.exe".to_string()),
+                    args: None,
+                    cwd: None,
+                    cols: 80,
+                    rows: 24,
+                    env: None,
+                },
+            )
+            .expect("wsl.exe must start under ConPTY");
+
+        // The typed line contains `$(grep ...)`, never the literal marker, so
+        // `KAI_WSL_1` can only come from the Linux side evaluating it:
+        // /proc/version of a WSL kernel mentions "microsoft".
+        manager
+            .write_to_pty(
+                &session.id,
+                "echo KAI_WSL_$(grep -ci microsoft /proc/version)\n",
+            )
+            .unwrap();
+        // Poll in 1 s steps so a first-run prompt (which only appears on a
+        // console, never through the pipe preflight above) fails within a
+        // second of showing up instead of after the full wait.
+        let mut seen = false;
+        for _ in 0..60 {
+            if emitter.wait_for_output("KAI_WSL_1", 1) {
+                seen = true;
+                break;
+            }
+            if wsl_diagnosis(&emitter.get_text()).is_some() {
+                break;
+            }
+        }
+        assert!(
+            seen,
+            "A WSL shell must evaluate commands inside the Linux kernel ({}). Output: {}",
+            wsl_diagnosis(&emitter.get_text()).unwrap_or("cause not recognised"),
+            emitter.get_text()
+        );
+
+        manager.close_pty(&session.id).unwrap();
+    }
+}

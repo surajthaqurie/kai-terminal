@@ -4,8 +4,10 @@ name: Cross-Platform Terminal CI
 # no cross-compiled binary counts as native verification. Unit tests never
 # count as proof of interactive behavior; the real PTY step on the same
 # runner is the native proof (path handling, JSON escaping, CRLF, executable
-# discovery, permissions, process cleanup). WSL has no hosted runner and is
-# manual-only (see final reporting step). Security regression is a mandatory
+# discovery, permissions, process cleanup). WSL is exercised by the separate
+# `wsl` job (a hosted Windows runner with a WSL2 distribution installed by
+# Vampire/setup-wsl); that job has not run yet, so WSL stays manual-only until
+# it is green. Security regression is a mandatory
 # PR gate (runs on pull_request, no skip). Full installers ship via release.yml.
 #
 # Check map: 1 rust fmt, 2 clippy, 3 rust unit, 4 PTY integration, 5 frontend
@@ -212,7 +214,7 @@ jobs:
           echo "- Unit tests prove logic only; interactive native behavior is proven by the PTY step above on this same runner."
           echo "- PTY AI-CLI subtest (test_13) reports NOTE + passes when no AI CLI binary is on PATH."
           echo "- Symlink-boundary subtests skip (reported as skipped by Vitest, with a reason) where the runner disallows symlinks."
-          echo "- WSL: no GitHub-hosted WSL runner exists. WSL2 verification is manual-only (run scripts/docker-test.sh or cargo/vitest natively inside WSL2 + Windows Terminal) and is NOT claimed here."
+          echo "- WSL: not verified by this job. The separate 'wsl' job runs a WSL shell round trip through ConPTY; until it has been green, WSL2 verification is manual-only (scripts/docker-test.sh or cargo/vitest natively inside WSL2 + Windows Terminal)."
           echo "- Full Tauri installer bundles (.deb/.AppImage/.msi/.exe/.dmg) are built only by release.yml on native runners; this CI verifies the web bundle + release binary."
 
   # Snap and Flatpak repackage the .deb that Tauri builds (a --no-default-features
@@ -291,3 +293,84 @@ jobs:
           out=$(flatpak run com.kai.terminal --version || true)
           echo "$out"
           echo "$out" | grep -q "kai-desktop ${VERSION}"
+
+  # WSL on a hosted Windows runner: Vampire/setup-wsl installs a WSL2
+  # distribution, then the PTY integration test spawns `wsl.exe` under ConPTY
+  # and checks a command is evaluated by the Linux kernel (test_16, opt-in via
+  # KAI_TEST_WSL=1). NOT RUN YET: nothing here could execute this job, so it is
+  # unconfirmed until its first green run. If the runner cannot start WSL2 (no
+  # nested virtualization), the setup step fails visibly instead of passing.
+  #
+  # Non-interactive by construction: setup-wsl installs the distribution with
+  # root as the default user (its documented default), `wsl-conf` pins that
+  # explicitly so the interactive `wsl.exe` launch that test_16 does through
+  # ConPTY never shows the first-run "create a default Unix user" prompt, and
+  # the step after it makes the distro the default and waits until it answers.
+  # The prompt only appears on a console, so test_16 itself also detects it and
+  # fails within seconds with a named cause rather than hanging.
+  wsl:
+    name: WSL shell (windows-latest + Ubuntu-22.04)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install WSL2 distribution
+        uses: Vampire/setup-wsl@v7
+        with:
+          distribution: Ubuntu-22.04
+          set-as-default: "true"
+          wsl-shell-user: root
+          wsl-conf: |
+            [user]
+            default=root
+
+      - name: Make the distribution the default and wait until it answers
+        shell: bash
+        run: |
+          set -euo pipefail
+          # wsl.exe prints UTF-16LE: strip NULs and CRs before matching.
+          wsl.exe --list --verbose | tr -d '\0\r'
+          name=$(wsl.exe --list --quiet | tr -d '\0\r' | sed 's/(Default)//; s/[[:space:]]*$//' | grep -m1 '^Ubuntu' || true)
+          if [ -z "$name" ]; then
+            echo "::error::no Ubuntu distribution is registered after Vampire/setup-wsl"
+            exit 1
+          fi
+          echo "WSL distribution: $name"
+          wsl.exe --set-default "$name"
+          # Restart it so /etc/wsl.conf (default user) is re-read, then poll
+          # until it answers; a cold WSL2 VM can take a while on a fresh runner.
+          wsl.exe --terminate "$name" || true
+          ready=0
+          for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
+            if timeout 30 wsl.exe -d "$name" -e true; then
+              ready=1
+              break
+            fi
+            echo "WSL not ready (attempt ${attempt}/12), retrying in 5 s"
+            sleep 5
+          done
+          if [ "$ready" != 1 ]; then
+            echo "::error::WSL distribution '$name' never answered"
+            exit 1
+          fi
+          user=$(wsl.exe -d "$name" -e id -un | tr -d '\r')
+          echo "default user: $user"
+          test "$user" = root
+          out=$(wsl.exe -d "$name" -e uname -r | tr -d '\r')
+          echo "$out"
+          echo "$out" | grep -qi microsoft
+
+      - name: Install Rust stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri"
+
+      - name: WSL shell round trip through ConPTY
+        shell: bash
+        env:
+          KAI_TEST_WSL: "1"
+        run: cargo test --no-default-features --manifest-path src-tauri/Cargo.toml --test pty_integration_tests test_16_wsl_shell_round_trip -- --nocapture

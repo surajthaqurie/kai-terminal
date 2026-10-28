@@ -26,6 +26,9 @@ finish-args:
   # The terminal opens and edits the user's own files.
   - --filesystem=host
   - --talk-name=org.freedesktop.Notifications
+  # Terminal tabs run the user's shell on the host through
+  # `flatpak-spawn --host` (see flatpak_host_argv in src-tauri/src/pty.rs).
+  - --talk-name=org.freedesktop.Flatpak
 
 modules:
   - name: kai
