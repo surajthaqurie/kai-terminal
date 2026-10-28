@@ -106,4 +106,4 @@ To verify the outstanding items:
 
 2. **Flatpak Packaging & Host Shell Execution:**
    - Execute the `linux-packages` job in `.github/workflows/ci.yml` on `ubuntu-22.04`.
-   - Verify that `flatpak-builder` packages `com.kai.terminal.yml` with the GNOME 48 SDK and that `flatpak run --command=flatpak-spawn com.kai.terminal --host sh -c 'echo "FLATPAK_HOST_SHELL_OK: $(uname -s)"'` successfully invokes the host shell.
+   - Verify that `flatpak-builder` packages `com.kai.terminal.yml` with the GNOME 48 SDK and that `flatpak run --command=flatpak-spawn com.kai.terminal --host sh -c 'echo "FLATPAK_HOST_SHELL_OK: $(uname -s)"'` (run with `dbus-run-session` in headless environments) successfully invokes the host shell.
