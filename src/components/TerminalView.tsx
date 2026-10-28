@@ -177,6 +177,11 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
     const fitAddonRef = useRef<FitAddon | null>(null);
     const searchAddonRef = useRef<SearchAddon | null>(null);
     const webglAddonRef = useRef<WebglAddon | null>(null);
+    // The key handler below is attached once per terminal; it reads the
+    // remapped copy / paste / zoom / terminal-local keys through this ref so a
+    // Settings change applies to open panes without re-creating them.
+    const fixedKeysRef = useRef(settings.fixedKeybindings);
+    fixedKeysRef.current = settings.fixedKeybindings;
     // Backend PTY session id returned by create_pty (UUID). This is distinct
     // from the frontend tab id (`sessionId`): all IPC read/write/resize/close
     // calls and output filtering MUST use the backend id, otherwise writes
@@ -575,7 +580,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         // Copy: Ctrl+Shift+C (Win/Linux), Cmd+C / Cmd+Shift+C (macOS),
         // Ctrl+Insert (Win/Linux). Plain Ctrl+C always reaches the shell as
         // SIGINT; Shift+Insert is paste on every OS, never copy.
-        const isCopy = isCopyKeyEvent(event, term.hasSelection());
+        const isCopy = isCopyKeyEvent(event, term.hasSelection(), fixedKeysRef.current);
         if (isCopy) {
           if (event.type === "keydown") {
             const selection = term.getSelection();
@@ -590,7 +595,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         // If no paste event arrives, the backend reads the clipboard instead.
         // Auto-repeat keydowns are swallowed so a held combo cannot queue
         // duplicate pastes.
-        const isPaste = isPasteKeyEvent(event);
+        const isPaste = isPasteKeyEvent(event, fixedKeysRef.current);
         if (isPaste) {
           if (event.type === "keydown") {
             if (event.repeat) {
@@ -609,7 +614,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         }
         // Terminal-local keys: Ctrl+Shift+A select all, Ctrl+Shift+K clear,
         // Ctrl+Shift+Home / End jump to the top / bottom of the scrollback.
-        const localAction = matchTerminalAction(event);
+        const localAction = matchTerminalAction(event, fixedKeysRef.current);
         if (localAction) {
           event.preventDefault();
           if (event.type === "keydown") {
@@ -623,7 +628,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         // App-level zoom (Ctrl+= / - / 0) and tab jump (Ctrl+1-9) are handled
         // by App on the bubbled event; keep xterm from also sending the
         // matching control byte to the shell.
-        if (matchBuiltinShortcut(event)) return false;
+        if (matchBuiltinShortcut(event, fixedKeysRef.current)) return false;
         // Handle Ctrl+Shift+F for toggling search
         if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.code === "KeyF") {
           if (event.type === "keydown") {

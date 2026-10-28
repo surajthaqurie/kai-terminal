@@ -202,6 +202,26 @@ export interface KeybindingsConfig {
 }
 
 /**
+ * Remappable terminal-level shortcuts that used to be hard-coded: zoom, copy /
+ * paste, terminal-local keys and the tab-jump modifier (`Ctrl+1` stands for
+ * the modifiers plus digits 1-9). Stored apart from `KeybindingsConfig`
+ * because they are matched by the terminal and the zoom / tab-jump logic, not
+ * the action registry.
+ */
+export interface FixedShortcutsConfig {
+  zoomIn: string;
+  zoomOut: string;
+  zoomReset: string;
+  copy: string;
+  paste: string;
+  selectAll: string;
+  clearTerminal: string;
+  scrollTop: string;
+  scrollBottom: string;
+  tabJump: string;
+}
+
+/**
  * Persistent user settings for terminal UI & rendering options.
  */
 export interface UserSettings {
@@ -235,6 +255,14 @@ export interface UserSettings {
   musicStartMuted?: boolean;
   /** Customizable keyboard shortcut map. */
   keybindings: KeybindingsConfig;
+  /** Remappable zoom / copy / paste / terminal-local / tab-jump shortcuts. */
+  fixedKeybindings?: FixedShortcutsConfig;
+  /**
+   * Extra call apps (lowercase fragments of an app / process name) that make
+   * Music Time pause while they hold the microphone, on top of the built-in
+   * list. Matched as a case-insensitive substring.
+   */
+  extraCallApps?: string[];
 }
 
 /**

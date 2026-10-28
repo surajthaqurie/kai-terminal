@@ -6,11 +6,13 @@ import {
   matchShortcut,
   type ShortcutActionId,
 } from "../services/shortcuts";
-import type { KeybindingsConfig, SplitDirection } from "../types/terminal";
+import type { FixedShortcutsConfig, KeybindingsConfig, SplitDirection } from "../types/terminal";
 import { useLatest } from "./useLatest";
 
 export interface AppShortcutHandlers {
   keybindings: KeybindingsConfig;
+  /** Remapped zoom / tab-jump keys; omitted means the defaults. */
+  fixedKeybindings?: FixedShortcutsConfig;
   newTab: () => void;
   closeActiveTab: () => void;
   toggleCommandPalette: () => void;
@@ -80,7 +82,7 @@ export function useAppShortcuts(handlers: AppShortcutHandlers) {
         // terminal font for this session; Ctrl+1-9 jump to a tab. Skipped in
         // text fields, but the terminal's own hidden input counts as terminal.
         if (isTypingTarget(e.target) && !isXtermInput(e.target)) return;
-        const builtin = matchBuiltinShortcut(e);
+        const builtin = matchBuiltinShortcut(e, h.fixedKeybindings);
         if (!builtin) return;
         e.preventDefault();
         if (builtin.type === "zoom") h.zoomFont(builtin.delta);

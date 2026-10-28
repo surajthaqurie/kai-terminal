@@ -9,14 +9,20 @@ import {
 import { DEFAULT_SETTINGS, SettingsService } from "../services/settingsService";
 import {
   SHORTCUT_ACTION_LABELS,
+  FIXED_ACTION_LABELS,
+  DEFAULT_FIXED_SHORTCUTS,
+  AnyShortcutId,
+  FixedActionId,
   ShortcutActionId,
   findConflicts,
   validateBinding,
+  validateFixedBinding,
   isMacPlatform,
   platformLabel,
   FIXED_SHORTCUT_HELP,
   eventToBindingString,
 } from "../services/shortcuts";
+import { formatCallAppsInput, parseCallAppsInput } from "../services/callAppsService";
 import {
   X,
   Save,
@@ -32,6 +38,11 @@ import {
 import { APP_VERSION_FALLBACK } from "../services/updateService";
 import type { UpdateCheckResult, UpdateDownloadState } from "../services/updateService";
 import { UpdateProgressBar, describeUpdateStep } from "./UpdateProgressBar";
+
+const BINDING_LABELS: Record<AnyShortcutId, string> = {
+  ...SHORTCUT_ACTION_LABELS,
+  ...FIXED_ACTION_LABELS,
+};
 
 export type SettingsTab = "appearance" | "terminal" | "shell" | "shortcuts" | "updates";
 
@@ -178,10 +189,14 @@ export const SettingsModal: FC<SettingsModalProps> = ({
   const [selectedEditorPreset, setSelectedEditorPreset] = useState<string>("");
   const [recordingAction, setRecordingAction] = useState<string | null>(null);
   const [bindingErrors, setBindingErrors] = useState<Record<string, string>>({});
+  // Raw text of the extra call apps field; `formData.extraCallApps` holds the
+  // cleaned list, so a half-typed (too short) name is not eaten mid-typing.
+  const [callAppsText, setCallAppsText] = useState(formatCallAppsInput(settings.extraCallApps));
   const isMac = isMacPlatform();
 
   useEffect(() => {
     setFormData(settings);
+    setCallAppsText(formatCallAppsInput(settings.extraCallApps));
     setBindingErrors({});
     const matchedFont = FONT_PRESETS.find((p) => p.value === settings.fontFamily);
     setSelectedFontPreset(matchedFont ? matchedFont.value : "custom");
@@ -220,16 +235,44 @@ export const SettingsModal: FC<SettingsModalProps> = ({
 
   if (!isOpen) return null;
 
-  const conflicts = findConflicts(formData.keybindings);
-  const conflictedActions = new Set(conflicts.flatMap((c) => c.actions));
+  const conflicts = findConflicts(formData.keybindings, formData.fixedKeybindings);
+  const conflictedActions = new Set<AnyShortcutId>(conflicts.flatMap((c) => c.actions));
 
-  const handleBindingChange = (action: ShortcutActionId, value: string) => {
-    const next: KeybindingsConfig = {
-      ...formData.keybindings,
-      [action]: value,
-    };
-    setFormData({ ...formData, keybindings: next });
-    const err = validateBinding(value);
+  const isFixedAction = (action: AnyShortcutId): action is FixedActionId =>
+    action in DEFAULT_FIXED_SHORTCUTS;
+  const bindingFor = (action: AnyShortcutId): string =>
+    isFixedAction(action)
+      ? (formData.fixedKeybindings?.[action] ?? DEFAULT_FIXED_SHORTCUTS[action])
+      : formData.keybindings[action];
+
+  const bindingGroups: Array<{ heading?: string; actions: AnyShortcutId[] }> = [
+    { actions: Object.keys(SHORTCUT_ACTION_LABELS) as ShortcutActionId[] },
+    {
+      heading: "Terminal keys (zoom, copy / paste, scroll, tab jump)",
+      actions: Object.keys(FIXED_ACTION_LABELS) as FixedActionId[],
+    },
+  ];
+
+  const handleBindingChange = (action: AnyShortcutId, value: string) => {
+    let err: string | null;
+    if (isFixedAction(action)) {
+      setFormData({
+        ...formData,
+        fixedKeybindings: {
+          ...DEFAULT_FIXED_SHORTCUTS,
+          ...formData.fixedKeybindings,
+          [action]: value,
+        },
+      });
+      err = validateFixedBinding(action, value);
+    } else {
+      const next: KeybindingsConfig = {
+        ...formData.keybindings,
+        [action]: value,
+      };
+      setFormData({ ...formData, keybindings: next });
+      err = validateBinding(value);
+    }
     setBindingErrors((prev) => {
       const copy = { ...prev };
       if (err) copy[action] = err;
@@ -242,6 +285,7 @@ export const SettingsModal: FC<SettingsModalProps> = ({
     setFormData({
       ...formData,
       keybindings: { ...DEFAULT_SETTINGS.keybindings },
+      fixedKeybindings: { ...DEFAULT_FIXED_SHORTCUTS },
     });
     setBindingErrors({});
     setRecordingAction(null);
@@ -261,7 +305,7 @@ export const SettingsModal: FC<SettingsModalProps> = ({
     }
   };
 
-  const handleShortcutKeyDown = (action: ShortcutActionId, e: React.KeyboardEvent) => {
+  const handleShortcutKeyDown = (action: AnyShortcutId, e: React.KeyboardEvent) => {
     if (e.key === "Escape") {
       setRecordingAction(null);
       return;
@@ -291,6 +335,7 @@ export const SettingsModal: FC<SettingsModalProps> = ({
 
   const handleReset = () => {
     setFormData(DEFAULT_SETTINGS);
+    setCallAppsText("");
     setBindingErrors({});
     document.documentElement.setAttribute("data-theme", DEFAULT_SETTINGS.theme);
     document.body.setAttribute("data-theme", DEFAULT_SETTINGS.theme);
@@ -467,6 +512,31 @@ export const SettingsModal: FC<SettingsModalProps> = ({
                   />
                   <span>YouTube music player</span>
                 </label>
+              </div>
+
+              <div className="setting-field">
+                <label htmlFor="extra-call-apps-input">
+                  Extra call apps{" "}
+                  <span className="muted-text">
+                    (Music Time also pauses while these use the microphone)
+                  </span>
+                </label>
+                <input
+                  id="extra-call-apps-input"
+                  type="text"
+                  className="text-input modal-input"
+                  value={callAppsText}
+                  placeholder="e.g. gotomeet, mumble, teamspeak"
+                  spellCheck={false}
+                  onChange={(e) => {
+                    setCallAppsText(e.target.value);
+                    setFormData({ ...formData, extraCallApps: parseCallAppsInput(e.target.value) });
+                  }}
+                />
+                <p className="muted-text">
+                  Comma-separated, case-insensitive parts of the app or process name (3+ characters
+                  each). Added to Teams, Zoom, Slack, Discord and the other built-in call apps.
+                </p>
               </div>
             </div>
           )}
@@ -727,44 +797,50 @@ export const SettingsModal: FC<SettingsModalProps> = ({
                   </button>
                 </div>
 
-                <div className="shortcuts-table">
-                  {(Object.keys(SHORTCUT_ACTION_LABELS) as ShortcutActionId[]).map((action) => {
-                    const isRecording = recordingAction === action;
-                    return (
-                      <div key={action} className="shortcut-row-item">
-                        <span className="shortcut-label">{SHORTCUT_ACTION_LABELS[action]}</span>
-                        <div className="shortcut-input-group">
-                          <input
-                            type="text"
-                            className={`text-input modal-input shortcut-input ${
-                              isRecording ? "recording" : ""
-                            }`}
-                            value={
-                              isRecording ? "Press shortcut..." : formData.keybindings[action] || ""
-                            }
-                            onChange={(e) => handleBindingChange(action, e.target.value)}
-                            onKeyDown={(e) => handleShortcutKeyDown(action, e)}
-                            onFocus={() => setRecordingAction(action)}
-                            onBlur={() => {
-                              if (recordingAction === action) setRecordingAction(null);
-                            }}
-                            placeholder={DEFAULT_SETTINGS.keybindings[action]}
-                            aria-label={`${SHORTCUT_ACTION_LABELS[action]} shortcut`}
-                          />
-                          {(bindingErrors[action] || conflictedActions.has(action)) && (
-                            <p className="error-text" role="alert">
-                              {bindingErrors[action] ??
-                                `Conflicts with another action (${platformLabel(
-                                  formData.keybindings[action],
-                                  isMac
-                                )}).`}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
+                {bindingGroups.map(({ heading, actions }) => (
+                  <div key={heading ?? "actions"} style={{ marginTop: heading ? "16px" : 0 }}>
+                    {heading && <label style={{ display: "block" }}>{heading}</label>}
+                    <div className="shortcuts-table">
+                      {actions.map((action) => {
+                        const isRecording = recordingAction === action;
+                        const placeholder = isFixedAction(action)
+                          ? DEFAULT_FIXED_SHORTCUTS[action]
+                          : DEFAULT_SETTINGS.keybindings[action];
+                        return (
+                          <div key={action} className="shortcut-row-item">
+                            <span className="shortcut-label">{BINDING_LABELS[action]}</span>
+                            <div className="shortcut-input-group">
+                              <input
+                                type="text"
+                                className={`text-input modal-input shortcut-input ${
+                                  isRecording ? "recording" : ""
+                                }`}
+                                value={isRecording ? "Press shortcut..." : bindingFor(action) || ""}
+                                onChange={(e) => handleBindingChange(action, e.target.value)}
+                                onKeyDown={(e) => handleShortcutKeyDown(action, e)}
+                                onFocus={() => setRecordingAction(action)}
+                                onBlur={() => {
+                                  if (recordingAction === action) setRecordingAction(null);
+                                }}
+                                placeholder={placeholder}
+                                aria-label={`${BINDING_LABELS[action]} shortcut`}
+                              />
+                              {(bindingErrors[action] || conflictedActions.has(action)) && (
+                                <p className="error-text" role="alert">
+                                  {bindingErrors[action] ??
+                                    `Conflicts with another action (${platformLabel(
+                                      bindingFor(action),
+                                      isMac
+                                    )}).`}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
 
                 {conflicts.length > 0 && (
                   <p className="error-text" role="alert" style={{ marginTop: "8px" }}>
@@ -773,7 +849,8 @@ export const SettingsModal: FC<SettingsModalProps> = ({
                 )}
 
                 <label style={{ marginTop: "16px", display: "block" }}>
-                  Built-in shortcuts <span className="muted-text">(fixed, not remappable)</span>
+                  Other built-in shortcuts{" "}
+                  <span className="muted-text">(fixed, not remappable)</span>
                 </label>
                 <div className="shortcuts-table">
                   {FIXED_SHORTCUT_HELP.map((row) => (

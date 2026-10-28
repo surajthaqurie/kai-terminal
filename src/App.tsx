@@ -21,6 +21,7 @@ import {
 } from "./components/lazyPanels";
 import { useAppShortcuts } from "./hooks/useAppShortcuts";
 import { useAppUpdates } from "./hooks/useAppUpdates";
+import { useCallAppsSync } from "./hooks/useCallAppsSync";
 import { useCodeMode } from "./hooks/useCodeMode";
 import { useGitStatus } from "./hooks/useGitStatus";
 import { useLatest } from "./hooks/useLatest";
@@ -210,8 +211,10 @@ function App() {
     }
   };
 
+  useCallAppsSync(userSettings.extraCallApps);
   useAppShortcuts({
     keybindings: userSettings.keybindings,
+    fixedKeybindings: userSettings.fixedKeybindings,
     newTab: newTabAndFocus,
     closeActiveTab: () => tabsState.closeTab(activeTabId),
     toggleCommandPalette: () => setIsCommandPaletteOpen((prev) => !prev),

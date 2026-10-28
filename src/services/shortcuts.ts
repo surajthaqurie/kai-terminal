@@ -1,6 +1,8 @@
-import { KeybindingsConfig } from "../types/terminal";
+import { FixedShortcutsConfig, KeybindingsConfig } from "../types/terminal";
 
 export type ShortcutActionId = keyof KeybindingsConfig;
+export type FixedActionId = keyof FixedShortcutsConfig;
+export type AnyShortcutId = ShortcutActionId | FixedActionId;
 
 export const SHORTCUT_ACTION_LABELS: Record<ShortcutActionId, string> = {
   newTab: "New tab",
@@ -89,6 +91,16 @@ export function parseBinding(binding: string): ParsedBinding | null {
     code = "ArrowLeft";
   } else if (upper === "RIGHT" || upper === "ARROWRIGHT") {
     code = "ArrowRight";
+  } else if (upper === "HOME") {
+    code = "Home";
+  } else if (upper === "END") {
+    code = "End";
+  } else if (upper === "INSERT" || upper === "INS") {
+    code = "Insert";
+  } else if (upper === "PAGEUP" || upper === "PGUP") {
+    code = "PageUp";
+  } else if (upper === "PAGEDOWN" || upper === "PGDN") {
+    code = "PageDown";
   } else if (upper === "-" || upper === "MINUS") {
     code = "Minus";
   } else if (upper === "=" || upper === "EQUAL" || upper === "+") {
@@ -152,6 +164,12 @@ export function eventToBindingString(
     parts.push("[");
   } else if (e.code === "BracketRight") {
     parts.push("]");
+  } else if (k === "-" || e.code === "Minus") {
+    parts.push("-");
+  } else if (k === "=" || e.code === "Equal") {
+    parts.push("=");
+  } else if (RECORDABLE_NAMED_KEYS.has(e.code)) {
+    parts.push(e.code);
   } else {
     return null;
   }
@@ -159,15 +177,28 @@ export function eventToBindingString(
   return parts.join("+");
 }
 
+/** Navigation keys the shortcut recorder can capture by their `code`. */
+const RECORDABLE_NAMED_KEYS = new Set(["Home", "End", "Insert", "PageUp", "PageDown"]);
+
+/** Subset of a keyboard event the matchers read; `KeyboardEvent` satisfies it. */
+type KeyLike = {
+  ctrlKey: boolean;
+  metaKey: boolean;
+  altKey?: boolean;
+  shiftKey: boolean;
+  code: string;
+  key?: string;
+};
+
 /** True when a keyboard event matches a binding string. */
-export function eventMatchesBinding(e: KeyboardEvent, binding: string): boolean {
+export function eventMatchesBinding(e: KeyLike, binding: string): boolean {
   const parsed = parseBinding(binding);
   if (!parsed) return false;
   // Cross-OS: Ctrl (Win/Linux) and Cmd (macOS) are interchangeable so one
   // binding works everywhere without per-OS configuration.
   const ctrlOrCmd = e.ctrlKey || e.metaKey;
   if (parsed.ctrlOrCmd !== ctrlOrCmd) return false;
-  if (parsed.alt !== e.altKey) return false;
+  if (parsed.alt !== Boolean(e.altKey)) return false;
   if (parsed.shift !== e.shiftKey) return false;
   if (parsed.code.startsWith("F") && /^F([1-9]|1[0-2])$/.test(parsed.code)) {
     return e.code === parsed.code || e.key === parsed.code;
@@ -190,27 +221,57 @@ export function matchShortcut(
   return null;
 }
 
-/** Detect conflicting bindings (two actions sharing one normalized combo). */
-export function findConflicts(bindings: KeybindingsConfig): Array<{
+function comboKey(parsed: ParsedBinding): string {
+  return `${parsed.ctrlOrCmd ? "C" : ""}${parsed.alt ? "A" : ""}${parsed.shift ? "S" : ""}:${parsed.code}`;
+}
+
+/**
+ * Detect conflicting bindings (two actions sharing one normalized combo).
+ * With `fixed`, the remappable terminal shortcuts take part too, so a user
+ * binding cannot silently shadow zoom / copy / paste / tab jump.
+ */
+export function findConflicts(
+  bindings: KeybindingsConfig,
+  fixed?: Partial<FixedShortcutsConfig>
+): Array<{
   binding: string;
-  actions: ShortcutActionId[];
+  actions: AnyShortcutId[];
 }> {
-  const byCombo = new Map<string, ShortcutActionId[]>();
+  const byCombo = new Map<string, AnyShortcutId[]>();
+  const labels = new Map<AnyShortcutId, string>();
+  const add = (key: string, action: AnyShortcutId) => {
+    const list = byCombo.get(key) ?? [];
+    if (!list.includes(action)) list.push(action);
+    byCombo.set(key, list);
+  };
   for (const action of Object.keys(bindings) as ShortcutActionId[]) {
     const raw = bindings[action];
     if (typeof raw !== "string") continue;
     const parsed = parseBinding(raw);
     if (!parsed) continue;
-    const key = `${parsed.ctrlOrCmd ? "C" : ""}${parsed.alt ? "A" : ""}${parsed.shift ? "S" : ""}:${parsed.code}`;
-    const list = byCombo.get(key) ?? [];
-    list.push(action);
-    byCombo.set(key, list);
+    labels.set(action, raw);
+    add(comboKey(parsed), action);
   }
-  const out: Array<{ binding: string; actions: ShortcutActionId[] }> = [];
+  if (fixed) {
+    for (const action of Object.keys(DEFAULT_FIXED_SHORTCUTS) as FixedActionId[]) {
+      // An entry still being typed (unparsable) is skipped; its own error shows.
+      const raw = fixed[action] ?? DEFAULT_FIXED_SHORTCUTS[action];
+      const parsed = parseBinding(raw);
+      if (!parsed) continue;
+      labels.set(action, raw);
+      if (action === "tabJump") {
+        // The binding names the modifiers; every digit 1-9 follows them.
+        for (let d = 1; d <= 9; d++) add(comboKey({ ...parsed, code: `Digit${d}` }), action);
+      } else {
+        add(comboKey(parsed), action);
+      }
+    }
+  }
+  const out: Array<{ binding: string; actions: AnyShortcutId[] }> = [];
   for (const [, actions] of byCombo) {
     if (actions.length > 1) {
       out.push({
-        binding: actions.map((a) => bindings[a]).join(" / "),
+        binding: actions.map((a) => labels.get(a)).join(" / "),
         actions,
       });
     }
@@ -223,7 +284,20 @@ export function validateBinding(value: string): string | null {
   if (!value.trim()) return "Binding must not be empty.";
   const parsed = parseBinding(value);
   if (!parsed) {
-    return "Use Ctrl/Cmd and/or Alt plus a letter, digit, F1–F12, arrow, Tab, Enter, Esc, or , . / [ ] - = (e.g. Ctrl+Shift+T).";
+    return "Use Ctrl/Cmd and/or Alt plus a letter, digit, F1–F12, arrow, Home, End, Insert, PageUp, PageDown, Tab, Enter, Esc, or , . / [ ] - = (e.g. Ctrl+Shift+T).";
+  }
+  return null;
+}
+
+/** Like {@link validateBinding}, plus the tab-jump rule (modifiers + a digit 1-9). */
+export function validateFixedBinding(id: FixedActionId, value: string): string | null {
+  const base = validateBinding(value);
+  if (base) return base;
+  if (id === "tabJump") {
+    const parsed = parseBinding(value);
+    if (!parsed || !/^Digit[1-9]$/.test(parsed.code)) {
+      return "Tab jump needs a digit 1–9 after the modifiers (e.g. Ctrl+1); digits 1–8 pick that tab, 9 the last one.";
+    }
   }
   return null;
 }
@@ -255,76 +329,166 @@ export function isMacPlatform(): boolean {
   }
 }
 
+/** Defaults of the remappable terminal shortcuts (Ctrl and Cmd are interchangeable). */
+export const DEFAULT_FIXED_SHORTCUTS: Readonly<FixedShortcutsConfig> = {
+  zoomIn: "Ctrl+=",
+  zoomOut: "Ctrl+-",
+  zoomReset: "Ctrl+0",
+  copy: "Ctrl+Shift+C",
+  paste: "Ctrl+Shift+V",
+  selectAll: "Ctrl+Shift+A",
+  clearTerminal: "Ctrl+Shift+K",
+  scrollTop: "Ctrl+Shift+Home",
+  scrollBottom: "Ctrl+Shift+End",
+  tabJump: "Ctrl+1",
+};
+
+export const FIXED_ACTION_LABELS: Record<FixedActionId, string> = {
+  zoomIn: "Zoom in",
+  zoomOut: "Zoom out",
+  zoomReset: "Reset zoom",
+  copy: "Copy selection (Ctrl+C stays interrupt)",
+  paste: "Paste",
+  selectAll: "Select all output",
+  clearTerminal: "Clear terminal",
+  scrollTop: "Scroll to top",
+  scrollBottom: "Scroll to bottom",
+  tabJump: "Jump to tab (digits 1–8 pick a tab, 9 the last)",
+};
+
+/**
+ * Full config from a possibly partial / corrupted one: any entry that is not
+ * a parsable binding falls back to its default.
+ */
+export function resolveFixedBindings(
+  input?: Partial<FixedShortcutsConfig> | null
+): FixedShortcutsConfig {
+  const out = { ...DEFAULT_FIXED_SHORTCUTS };
+  if (!input) return out;
+  for (const id of Object.keys(out) as FixedActionId[]) {
+    const v = input[id];
+    if (typeof v !== "string" || !parseBinding(v)) continue;
+    if (id === "tabJump" && validateFixedBinding(id, v)) continue;
+    out[id] = v.trim();
+  }
+  return out;
+}
+
+const mod = (e: KeyLike) => e.ctrlKey || e.metaKey;
+
+/**
+ * What each action did while it was fixed. A binding left at its default keeps
+ * this exact behaviour (numpad aliases, Cmd+C / Cmd+V on macOS, Shift+Ctrl+=),
+ * so remapping is purely additive for everyone who never opens Settings.
+ */
+const DEFAULT_MATCHERS: Record<FixedActionId, (e: KeyLike) => boolean> = {
+  zoomIn: (e) => mod(e) && !e.altKey && (e.code === "Equal" || e.code === "NumpadAdd"),
+  zoomOut: (e) => mod(e) && !e.altKey && (e.code === "Minus" || e.code === "NumpadSubtract"),
+  zoomReset: (e) =>
+    mod(e) && !e.altKey && !e.shiftKey && (e.code === "Digit0" || e.code === "Numpad0"),
+  copy: (e) =>
+    (mod(e) && e.code === "KeyC" && (e.shiftKey || e.metaKey)) ||
+    (e.ctrlKey && !e.metaKey && e.code === "Insert"),
+  paste: (e) =>
+    (mod(e) && e.shiftKey && e.code === "KeyV") ||
+    (e.metaKey && !e.ctrlKey && e.code === "KeyV") ||
+    (e.shiftKey && e.code === "Insert"),
+  selectAll: (e) => mod(e) && e.shiftKey && !e.altKey && e.code === "KeyA",
+  clearTerminal: (e) => mod(e) && e.shiftKey && !e.altKey && e.code === "KeyK",
+  scrollTop: (e) => mod(e) && e.shiftKey && !e.altKey && e.code === "Home",
+  scrollBottom: (e) => mod(e) && e.shiftKey && !e.altKey && e.code === "End",
+  tabJump: (e) => mod(e) && !e.altKey && !e.shiftKey && /^(?:Digit|Numpad)[1-9]$/.test(e.code),
+};
+
+/** Standard alternates that stay available when copy / paste are remapped. */
+const ALTERNATE_MATCHERS: Partial<Record<FixedActionId, (e: KeyLike) => boolean>> = {
+  copy: (e) => e.ctrlKey && !e.metaKey && e.code === "Insert",
+  paste: (e) => e.shiftKey && e.code === "Insert",
+};
+
+function isDefaultFixed(id: FixedActionId, bindings?: Partial<FixedShortcutsConfig> | null) {
+  const value = bindings?.[id];
+  const custom = typeof value === "string" ? parseBinding(value) : null;
+  if (!custom) return true;
+  const base = parseBinding(DEFAULT_FIXED_SHORTCUTS[id]);
+  return base !== null && comboKey(custom) === comboKey(base);
+}
+
+/** Matches one remappable action: the old behaviour at the default, the user's combo otherwise. */
+function fixedMatches(
+  e: KeyLike,
+  id: FixedActionId,
+  bindings?: Partial<FixedShortcutsConfig> | null
+): boolean {
+  if (isDefaultFixed(id, bindings)) return DEFAULT_MATCHERS[id](e);
+  const binding = bindings?.[id] as string;
+  if (id === "tabJump") {
+    const parsed = parseBinding(binding);
+    return (
+      parsed !== null &&
+      /^(?:Digit|Numpad)[1-9]$/.test(e.code) &&
+      parsed.ctrlOrCmd === mod(e) &&
+      parsed.alt === Boolean(e.altKey) &&
+      parsed.shift === e.shiftKey
+    );
+  }
+  return eventMatchesBinding(e, binding) || (ALTERNATE_MATCHERS[id]?.(e) ?? false);
+}
+
 /**
  * True when a keyboard event is a terminal copy combo AND there is a
  * selection to copy: Ctrl+Shift+C (Win/Linux), Cmd+C / Cmd+Shift+C (macOS),
- * or Ctrl+Insert (Win/Linux standard). Plain Ctrl+C is NOT copy — it must
- * keep reaching the shell as SIGINT. Shift+Insert is NOT copy either — it
- * is paste on every OS (see isPasteKeyEvent); the two sets are disjoint so
- * Shift+Insert pastes even while text is selected.
+ * or Ctrl+Insert (Win/Linux standard) by default, or the user's own binding
+ * (Ctrl+Insert keeps working). Plain Ctrl+C is NOT copy unless the user maps
+ * it — it must keep reaching the shell as SIGINT. Shift+Insert is NOT copy
+ * either — it is paste on every OS (see isPasteKeyEvent); the two sets are
+ * disjoint so Shift+Insert pastes even while text is selected.
  */
 export function isCopyKeyEvent(
-  e: {
-    ctrlKey: boolean;
-    metaKey: boolean;
-    shiftKey: boolean;
-    code: string;
-  },
-  hasSelection: boolean
+  e: KeyLike,
+  hasSelection: boolean,
+  bindings?: Partial<FixedShortcutsConfig> | null
 ): boolean {
   if (!hasSelection) return false;
-  const mod = e.ctrlKey || e.metaKey;
-  return (
-    (mod && e.code === "KeyC" && (e.shiftKey || e.metaKey)) ||
-    (e.ctrlKey && !e.metaKey && e.code === "Insert")
-  );
+  return fixedMatches(e, "copy", bindings);
 }
 
 /**
  * True when a keyboard event is a terminal paste combo: Ctrl+Shift+V
- * (Win/Linux), Cmd+V (macOS), or Shift+Insert (all OSes). Plain Ctrl+V is
- * NOT a paste combo — it must keep reaching the shell untouched.
+ * (Win/Linux), Cmd+V (macOS), or Shift+Insert (all OSes) by default, or the
+ * user's own binding (Shift+Insert keeps working). Plain Ctrl+V is NOT a
+ * paste combo unless the user maps it — it must keep reaching the shell.
  */
-export function isPasteKeyEvent(e: {
-  ctrlKey: boolean;
-  metaKey: boolean;
-  shiftKey: boolean;
-  code: string;
-}): boolean {
-  const mod = e.ctrlKey || e.metaKey;
-  return (
-    (mod && e.shiftKey && e.code === "KeyV") ||
-    (e.metaKey && !e.ctrlKey && e.code === "KeyV") ||
-    (e.shiftKey && e.code === "Insert")
-  );
+export function isPasteKeyEvent(e: KeyLike, bindings?: Partial<FixedShortcutsConfig> | null) {
+  return fixedMatches(e, "paste", bindings);
 }
 
-type KeyLike = {
-  ctrlKey: boolean;
-  metaKey: boolean;
-  altKey?: boolean;
-  shiftKey: boolean;
-  code: string;
-};
-
-/** Fixed (non-remappable) app-level shortcuts that work like a browser / Windows Terminal. */
+/** App-level shortcuts that work like a browser / Windows Terminal. */
 export type BuiltinShortcut =
   { type: "zoom"; delta: 1 | -1 | 0 } | { type: "gotoTab"; index: number | "last" };
 
+const ZOOM_ACTIONS: ReadonlyArray<[FixedActionId, 1 | -1 | 0]> = [
+  ["zoomIn", 1],
+  ["zoomOut", -1],
+  ["zoomReset", 0],
+];
+
 /**
- * Ctrl/Cmd + `=` / `-` / `0` zoom the terminal font in / out / back to the
- * saved size; Ctrl/Cmd + 1-8 jump to that tab and 9 to the last tab. Plain
- * Ctrl+digit never produces shell text, so claiming it is safe.
+ * By default Ctrl/Cmd + `=` / `-` / `0` zoom the terminal font in / out / back
+ * to the saved size; Ctrl/Cmd + 1-8 jump to that tab and 9 to the last tab.
+ * Plain Ctrl+digit never produces shell text, so claiming it is safe. All of
+ * them can be remapped through `bindings` (the tab-jump binding names the
+ * modifiers; digits 1-9 follow them).
  */
-export function matchBuiltinShortcut(e: KeyLike): BuiltinShortcut | null {
-  if (!(e.ctrlKey || e.metaKey) || e.altKey) return null;
-  if (e.code === "Equal" || e.code === "NumpadAdd") return { type: "zoom", delta: 1 };
-  if (e.code === "Minus" || e.code === "NumpadSubtract") return { type: "zoom", delta: -1 };
-  if (e.shiftKey) return null;
-  if (e.code === "Digit0" || e.code === "Numpad0") return { type: "zoom", delta: 0 };
-  const m = /^(?:Digit|Numpad)([1-9])$/.exec(e.code);
-  if (m) {
-    const n = Number(m[1]);
+export function matchBuiltinShortcut(
+  e: KeyLike,
+  bindings?: Partial<FixedShortcutsConfig> | null
+): BuiltinShortcut | null {
+  for (const [id, delta] of ZOOM_ACTIONS) {
+    if (fixedMatches(e, id, bindings)) return { type: "zoom", delta };
+  }
+  if (fixedMatches(e, "tabJump", bindings)) {
+    const n = Number(/([1-9])$/.exec(e.code)?.[1]);
     return { type: "gotoTab", index: n === 9 ? "last" : n - 1 };
   }
   return null;
@@ -333,38 +497,33 @@ export function matchBuiltinShortcut(e: KeyLike): BuiltinShortcut | null {
 /** Terminal-local actions that must not reach the shell. */
 export type TerminalLocalAction = "selectAll" | "clear" | "scrollTop" | "scrollBottom";
 
+const TERMINAL_ACTIONS: ReadonlyArray<[FixedActionId, TerminalLocalAction]> = [
+  ["selectAll", "selectAll"],
+  ["clearTerminal", "clear"],
+  ["scrollTop", "scrollTop"],
+  ["scrollBottom", "scrollBottom"],
+];
+
 /**
- * Ctrl+Shift+A select all, Ctrl+Shift+K clear, Ctrl+Shift+Home / End scroll to
- * top / bottom of the scrollback (Cmd+Shift+... on macOS). Plain Ctrl+A / Ctrl+K
- * are readline line-editing keys and are deliberately left alone.
+ * By default Ctrl+Shift+A select all, Ctrl+Shift+K clear, Ctrl+Shift+Home /
+ * End scroll to top / bottom of the scrollback (Cmd+Shift+... on macOS), or
+ * the user's own bindings. Plain Ctrl+A / Ctrl+K are readline line-editing
+ * keys and are deliberately left alone.
  */
-export function matchTerminalAction(e: KeyLike): TerminalLocalAction | null {
-  if (!(e.ctrlKey || e.metaKey) || !e.shiftKey || e.altKey) return null;
-  switch (e.code) {
-    case "KeyA":
-      return "selectAll";
-    case "KeyK":
-      return "clear";
-    case "Home":
-      return "scrollTop";
-    case "End":
-      return "scrollBottom";
-    default:
-      return null;
+export function matchTerminalAction(
+  e: KeyLike,
+  bindings?: Partial<FixedShortcutsConfig> | null
+): TerminalLocalAction | null {
+  for (const [id, action] of TERMINAL_ACTIONS) {
+    if (fixedMatches(e, id, bindings)) return action;
   }
+  return null;
 }
 
-/** Fixed shortcuts shown read-only in Settings (Cmd replaces Ctrl on macOS). */
+/** Shortcuts that stay fixed, shown read-only in Settings (Cmd replaces Ctrl on macOS). */
 export const FIXED_SHORTCUT_HELP: ReadonlyArray<{ keys: string; label: string }> = [
-  { keys: "Ctrl+Shift+C", label: "Copy selection (Ctrl+C stays interrupt)" },
-  { keys: "Ctrl+Shift+V", label: "Paste" },
   { keys: "Ctrl+Insert / Shift+Insert", label: "Copy / paste (alternate)" },
-  { keys: "Ctrl+Shift+A", label: "Select all output" },
-  { keys: "Ctrl+Shift+K", label: "Clear terminal" },
-  { keys: "Ctrl+Shift+Home / End", label: "Scroll to top / bottom" },
   { keys: "Shift+PageUp / PageDown", label: "Scroll one page" },
-  { keys: "Ctrl+= / Ctrl+- / Ctrl+0", label: "Zoom in / out / reset font" },
-  { keys: "Ctrl+1 … 8 / Ctrl+9", label: "Jump to tab 1–8 / last tab" },
   { keys: "Ctrl+Shift+G", label: "Review git changes" },
 ];
 
