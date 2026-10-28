@@ -43,9 +43,13 @@ Option: `--dry-run` to preview changes without modifying files.
 | `kai_search_code` | Ranked file and symbol search, metadata only (`query`, up to 20 files; `includeSource: true` adds snippets) |
 | `kai_read_range` | Read one symbol or line range (max 400 lines) |
 | `kai_find_symbol` | Find a symbol by name |
-| `kai_get_dependencies` | Imports of a file |
+| `kai_get_dependencies` | Imports of a file (`includeDependents: true` also lists importers, paged with `limit` / `offset`) |
 | `kai_get_context` | Context package for a task (`tokenBudget` optional: the default depends on task type, 1,700 to 4,000, or set `KAI_CONTEXT_BUDGETS`) |
 | `kai_refresh_index` | Rebuild the map now (incremental unless forced) |
 | `kai_get_lsp_status` | Language server state |
 | `kai_plan_task` | Task plan with file priorities |
 | `kai_sync_graph` | Sync the map after writes |
+
+## Response limits
+
+Every response, errors included, stays under a byte ceiling (64 KiB by default; set `KAI_MCP_MAX_RESPONSE_BYTES` to change it). List results take `limit` and `offset`, and report `total`, `returned`, `hasMore` and `nextOffset`, so an agent can walk a long list page by page. When the ceiling cuts a result short, the response says so (`truncated`) instead of returning a partial list silently. Token figures are heuristic estimates, not exact counts.

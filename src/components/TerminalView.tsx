@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useRef,
   useImperativeHandle,
   forwardRef,
@@ -284,6 +285,12 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
     // Tracks whether the initial PTY spawn has been scheduled, so tab
     // switches don't re-spawn a live session.
     const initialLaunchScheduledRef = useRef(false);
+    // Pending-output flusher owned by the mount effect (see `flushOutput`
+    // there; it is a closure over that chunk's buffer). Synced via ref so the
+    // show-time LAYOUT effect below can drain output that arrived while the
+    // tab was hidden BEFORE the browser paints it — otherwise the first paint
+    // shows the tab without those lines and they pop in a beat later.
+    const flushPendingRef = useRef<() => void>(() => {});
     // Cross-chunk tail for AGENT_FINISHED_MARKER detection (the marker can
     // straddle two PTY output events). Bounded to the marker length.
     const agentFinishedTailRef = useRef("");
@@ -855,6 +862,10 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
           flushTimer = setTimeout(doFlush, 250);
         }
       };
+      // Exposed for the show-time layout effect: a tab that flipped from
+      // hidden to visible flushes buffered output synchronously so the first
+      // paint already contains it.
+      flushPendingRef.current = flushOutput;
 
       trackUnlisten(
         ptyService.onPtyOutput((payload) => {
@@ -959,6 +970,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       return () => {
         initSeqRef.current += 1;
         listenersCancelled = true;
+        flushPendingRef.current = () => {};
         if (initialTimer) clearTimeout(initialTimer);
         if (rafId !== null) {
           try {
@@ -1004,7 +1016,13 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
     // visibly laggy. Re-showing within the grace period reuses the live
     // renderer; a pane left hidden still frees its context so many tabs never
     // exhaust the cap (context loss is handled by `attachGpuRenderer`).
-    useEffect(() => {
+    //
+    // LAYOUT effect: the re-attach must land before the browser paints the
+    // re-shown tab. As a plain effect it ran after the first paint, so a tab
+    // hidden long enough to lose its WebGL context briefly flashed the DOM
+    // renderer's stale frame (old glyph rows at the pre-hide layout) before
+    // the GPU canvas replaced it — the "random text flash on tab switch".
+    useLayoutEffect(() => {
       const term = xtermRef.current;
       if (!term) return;
       if (visible) {
@@ -1038,7 +1056,17 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
     // First-show launcher for tabs that mounted hidden: spawn the PTY on
     // first visibility, or re-fit an already-live session (hidden mount
     // fit() is a no-op, so cols/rows would otherwise stay 80x24).
-    useEffect(() => {
+    //
+    // LAYOUT effect (tab-switch smoothness fix): the tab's container flips
+    // from display:none to display:block in this commit, and the browser
+    // paints IMMEDIATELY after React commits. A plain effect ran after that
+    // first paint, so the re-fit, forced refresh and scrollToBottom landed a
+    // frame late — the user saw one frame of stale content (glyph rows laid
+    // out for the 0-size hidden container at the old scroll position, i.e.
+    // the "random text flash" when switching tabs) before it corrected
+    // itself. Running fit/refresh/scroll synchronously before paint means
+    // the very first painted frame of the re-shown tab is already correct.
+    useLayoutEffect(() => {
       if (!visible) return;
       const term = xtermRef.current;
       if (!term) return;
@@ -1048,6 +1076,10 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         return;
       }
       try {
+        // Output that arrived while the tab was hidden sits in the mount
+        // effect's pending buffer (rAF stalls for hidden tabs). Drain it
+        // synchronously so the first paint includes the newest lines.
+        flushPendingRef.current();
         fitAddonRef.current?.fit();
         pushPtySize(term);
         // A tab that was hidden (display:none) never repainted while output
@@ -1055,7 +1087,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         // full repaint the re-shown tab keeps stale/ghost glyph rows (text
         // from the previous state) until the next dirty update.
         term.refresh(0, Math.max(0, term.rows - 1));
-        // Output may have arrived while hidden: land on the newest lines.
+        // Land on the newest lines in the same pre-paint pass.
         term.scrollToBottom();
       } catch {
         // ignore hidden-tab layout errors
