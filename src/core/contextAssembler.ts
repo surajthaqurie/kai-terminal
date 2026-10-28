@@ -8,7 +8,7 @@ import type {
   TokenMetrics,
 } from "./types";
 import { classifyTask } from "./classifier";
-import { retrieveContext } from "./retrieval";
+import { retrieveContext, type ExpansionOptions } from "./retrieval";
 import { selectRelevantSkills, formatSkillContent, BUILTIN_SKILLS } from "./skills";
 import { TASK_TEMPLATES, DEFAULT_RENDERED_OMISSIONS } from "./templates";
 import { estimateTokens, truncateToTokenBudget } from "./tokenCounter";
@@ -47,6 +47,21 @@ const ADAPTIVE_MIN_SCORE_RATIO = 0.25;
 const ADAPTIVE_MIN_FILES = 2;
 /** Measured fixed cost of the rendered package (template framing, omission and footer lines). */
 const ADAPTIVE_FRAMING_TOKENS = 800;
+/**
+ * Which neighbours of the symbol a task names are worth their tokens. Callers are
+ * the edit set of a refactor; the tests that import the symbol's file guard any
+ * change to it. Other categories get none, since none are measured to need them.
+ */
+function expansionFor(category: string): ExpansionOptions | undefined {
+  const callers = category === "refactor";
+  const tests =
+    category === "refactor" ||
+    category === "debug" ||
+    category === "implement" ||
+    category === "test";
+  return callers || tests ? { callers, tests } : undefined;
+}
+
 /** Fraction of an adaptive package (after the fixed reserve) that rules and skills may use. */
 const ADAPTIVE_RULES_SKILLS_SHARE = 0.4;
 /** Smallest retrieval budget an adaptive package asks for; the generic floor (800) could exceed a small budget. */
@@ -211,6 +226,9 @@ export function assembleContext(
     tokenizer,
     minScoreRatio: adaptive ? ADAPTIVE_MIN_SCORE_RATIO : 0,
     minFiles: ADAPTIVE_MIN_FILES,
+    // Bounded neighbour expansion only for default budgets; an explicit tokenBudget
+    // keeps the plain ranked list.
+    expand: adaptive ? expansionFor(classification.category) : undefined,
   });
 
   const sourceReferences = retrieval.matchedFiles.map((m) => ({
@@ -218,6 +236,7 @@ export function assembleContext(
     startLine: m.startLine,
     endLine: m.endLine,
     relevanceScore: m.score,
+    ...(m.relation ? { relation: m.relation } : {}),
     content: m.snippet || "",
   }));
 

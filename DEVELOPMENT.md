@@ -87,6 +87,8 @@ kai-terminal/
 │   └── __tests__/            # Unit & Integration Tests (Vitest)
 │       ├── intelligence.test.ts # Intelligence, tokens, classifier tests
 │       ├── mcp_security.test.ts # MCP protocol, security, concurrency tests
+│       ├── retrievalExpansion.test.ts # Anchored ranking, relevance floor, bounded caller/test expansion
+│       ├── indexInterruption.test.ts  # Interrupted/failed index writes, removed storage vs the shared cache
 │       ├── autoSyncLifecycle.test.ts # Auto-sync, task planning & lifecycle tests
 │       ├── codeModeWorkflow.test.ts  # Code mode workflow & lock tests
 │       ├── finalHardening.test.ts    # Process tree, signal, shell & crash consistency tests

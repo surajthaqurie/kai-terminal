@@ -51,6 +51,7 @@ const CATEGORY_RULES: CategoryRule[] = [
       /\b(?:refactor|clean\s+up|restructure|modularize|deduplicate|extract\s+method|extract\s+class)\b/i,
       /\bsimplify\s+(?:the\s+)?(?:code|logic|function|class|module)\b/i,
       /\brename\s+symbol\b/i,
+      /\brename\s+[\w.$]+\s+(?:to|into|as)\s+\w/i,
     ],
     keywords: [
       "refactor",

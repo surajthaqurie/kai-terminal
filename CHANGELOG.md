@@ -8,6 +8,8 @@
 
 ### Patch Changes
 
+- `kai_get_context` now treats an identifier you type in full (`cancelOrder`, `format_money`) that names an indexed symbol as the anchor of the request. A file that merely shares one of its split words (a route file called `orders.ts` for `cancelOrder`) no longer outranks the file that defines it, and under the task-aware default budget files matching only on those split words are dropped earlier (listed as `low_relevance`). For refactor, debug, implement and test tasks without an explicit `tokenBudget`, it also adds a bounded, one-hop neighbourhood of the anchored symbol from the import graph: callers (usage excerpts, refactor only) and up to two tests that import its file, labelled in the output and capped; whatever does not fit is reported in an omission entry. "rename X to Y" is now classified as a refactor. Retrieval-only: no model is run, and completion rate is not measured.
+
 - Music Time improvements:
 
   - **Calls are handled automatically.** While the player is playing and a known call app (Teams, Zoom, Meet, WhatsApp, Phone Link, ...) holds the microphone, music pauses and resumes when the call ends — no Settings entry anymore; music paused before the call stays paused. The old "Pause music during calls" checkbox is gone.

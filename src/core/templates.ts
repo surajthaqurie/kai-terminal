@@ -268,7 +268,7 @@ function renderStandardTemplate(pkg: ContextPackage, instructions: string[]): st
     for (const ref of pkg.sourceReferences) {
       const lineRange = ref.startLine ? ` (lines ${ref.startLine}-${ref.endLine || "end"})` : "";
       parts.push(
-        `### \`${ref.relativePath}\`${lineRange} [score: ${ref.relevanceScore.toFixed(2)}]`
+        `### \`${ref.relativePath}\`${lineRange} [${ref.relation ?? `score: ${ref.relevanceScore.toFixed(2)}`}]`
       );
       const codeFence = safeCodeFence(ref.content);
       parts.push(codeFence);

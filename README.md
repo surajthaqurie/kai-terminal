@@ -135,7 +135,7 @@ Your numbers will differ by repo size and hardware — run `kai bench .` to chec
 - `kai_read_range` — read one symbol or line range.
 - `kai_find_symbol` — function/class/struct locations with line ranges.
 - `kai_get_dependencies` — import graph.
-- `kai_get_context` — budgeted context for a task.
+- `kai_get_context` — budgeted context for a task (an exact symbol name anchors it; callers and tests of that symbol are added within a cap for refactor, debug, implement and test tasks).
 - `kai_refresh_index` — re-index after changes.
 - `kai_get_lsp_status` — local language server status (`typescript-language-server`, `rust-analyzer`, `pyright`, `gopls`).
 - `kai_plan_task` — Code Mode task planning with project context and prompt options.

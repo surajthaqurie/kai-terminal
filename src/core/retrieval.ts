@@ -12,7 +12,13 @@ import { estimateTokens, truncateToTokenBudget, type TokenizerFunction } from ".
 import { isWithinProjectBoundary } from "./registry";
 import { extractSearchTokens } from "./classifier";
 import { isBinaryFile, isSensitiveContent, isSensitiveFile } from "./indexer";
-import { getSymbolNameTable, stemWord } from "./indexDerived";
+import {
+  getReverseImports,
+  getSymbolNameTable,
+  splitIdentifier,
+  stemWord,
+  type SymbolNameTable,
+} from "./indexDerived";
 
 export interface LineRange {
   startLine: number;
@@ -51,6 +57,8 @@ export interface ScoredFileMatch extends RankedFile {
   moreRanges?: Array<LineRange & { symbol: string }>;
   /** True when the live file differs from the indexed snapshot (line numbers may have shifted). */
   changedSinceIndex?: boolean;
+  /** Set for neighbours added by `expandNeighbors`, e.g. `caller of formatMoney`. They have no ranking score. */
+  relation?: string;
 }
 
 export interface RetrievalResult {
@@ -77,6 +85,16 @@ const MAX_RANKED_SYMBOLS = 1000;
 const MAX_SYMBOL_HITS_PER_FILE = 8;
 const MAX_MATCHED_DEPS = 200;
 export const MAX_OMISSIONS = 25;
+
+/** Path/import credit kept by words that only exist because an anchoring identifier was split. */
+const ANCHORED_PART_WEIGHT = 0.25;
+
+/**
+ * Relevance floor (fraction of the best score) once the query is anchored on an
+ * exact symbol, replacing a lower caller-supplied floor. Applies only where the
+ * caller already opted into early stopping (`minScoreRatio` > 0).
+ */
+export const ANCHORED_MIN_SCORE_RATIO = 0.5;
 
 /** A source range is whole-file below this many lines. */
 const SMALL_FILE_LINES = 60;
@@ -293,6 +311,13 @@ export interface RankResult {
   matchedSymbols: IndexedSymbol[];
   dependencies: IndexedDependency[];
   queryTokens: string[];
+  /**
+   * Set when the query names an indexed symbol outright (an identifier typed in
+   * full) and a top-ranked file defines it. Files that match only on that
+   * identifier's split words are then supplementary, not co-equal candidates, and
+   * the defining file is where neighbour expansion starts.
+   */
+  anchor?: { name: string; filePath: string };
 }
 
 function prepareQueryTokens(query: string): {
@@ -316,6 +341,35 @@ function prepareQueryTokens(query: string): {
     primaryTokens: nonStop.length > 0 ? nonStop : queryTokens,
     intentHints: extracted.intentHints,
   };
+}
+
+/**
+ * Identifiers the user typed in full that name an indexed symbol (`cancelOrder`,
+ * `format_money`; a plain word such as "order" does not count, it is
+ * indistinguishable from prose). They anchor the query: `names` are the lowercase
+ * symbol names, and `parts` the words obtained by splitting them (`cancel`,
+ * `order`). Parts are weak evidence: they keep only `ANCHORED_PART_WEIGHT` of their
+ * path and import credit, otherwise a route file named `orders.ts` outranks the file
+ * that defines `cancelOrder`. A part that also appears standalone in the query
+ * keeps its full weight.
+ */
+function anchorIdentifiers(
+  query: string,
+  table: SymbolNameTable
+): { names: Set<string>; parts: Set<string> } {
+  const words = (query || "").slice(0, 2000).match(/[A-Za-z_][A-Za-z0-9_]*/g) || [];
+  const standalone = new Set(words.map((w) => w.toLowerCase()));
+  const names = new Set<string>();
+  const parts = new Set<string>();
+  for (const w of words) {
+    const lower = w.toLowerCase();
+    if (!/[a-z0-9][A-Z]|_/.test(w) || !table.byLower.has(lower)) continue;
+    const split = splitIdentifier(w);
+    if (split.length < 2) continue;
+    names.add(lower);
+    for (const part of split) if (!standalone.has(part)) parts.add(part);
+  }
+  return { names, parts };
 }
 
 /**
@@ -344,6 +398,8 @@ export function rankCandidates(
     idf: 1 + Math.log((nameCount + 1) / ((table.docFreq.get(stemWord(raw)) ?? 0) + 1)),
   }));
   const primaryCount = Math.max(1, primaryQ.length);
+  const anchor = anchorIdentifiers(query, table);
+  const anchoredParts = anchor.parts;
 
   const fileHits = new Map<string, { file: IndexedFile; hits: SymbolHit[] }>();
   const fileMatchedTokens = new Map<string, Set<string>>();
@@ -465,25 +521,26 @@ export function rankCandidates(
     let pathScore = 0;
     const pathMatches: string[] = [];
     for (const q of queryTokens) {
+      const weight = anchoredParts.has(q) ? ANCHORED_PART_WEIGHT : 1;
       const isStopWord = COMMON_TASK_STOP_WORDS.has(q);
       const isPluralStemMatch =
         (baseWithoutExt.endsWith("s") && baseWithoutExt.slice(0, -1) === q) ||
         (q.endsWith("s") && q.slice(0, -1) === baseWithoutExt);
 
       if (baseWithoutExt === q || isPluralStemMatch) {
-        pathScore += isStopWord ? 5.0 : 25.0; // Exact or singular/plural filename stem match
+        pathScore += weight * (isStopWord ? 5.0 : 25.0); // Exact or singular/plural filename stem match
         recordTokenMatch(normRel, q);
         pathMatches.push(q);
       } else if (baseName === q) {
-        pathScore += isStopWord ? 4.0 : 20.0;
+        pathScore += weight * (isStopWord ? 4.0 : 20.0);
         recordTokenMatch(normRel, q);
         pathMatches.push(q);
       } else if (baseName.includes(q)) {
-        pathScore += isStopWord ? 1.0 : 6.0; // File name match
+        pathScore += weight * (isStopWord ? 1.0 : 6.0); // File name match
         recordTokenMatch(normRel, q);
         pathMatches.push(q);
       } else if (!isStopWord && pathLower.includes(q)) {
-        pathScore += 2.0; // Directory match
+        pathScore += weight * 2.0; // Directory match
         recordTokenMatch(normRel, q);
         pathMatches.push(q);
       }
@@ -513,7 +570,7 @@ export function rankCandidates(
         const normSource = file.relativePath.replace(/\\/g, "/");
         const existing = fileInfo.get(normSource);
         if (existing) {
-          existing.score += 1.5;
+          existing.score += 1.5 * (anchoredParts.has(q) ? ANCHORED_PART_WEIGHT : 1);
           recordTokenMatch(normSource, q);
           if (!existing.matchedDeps.some((d) => d.targetSpecifier === dep.targetSpecifier)) {
             existing.matchedDeps.push(dep);
@@ -562,7 +619,20 @@ export function rankCandidates(
     .slice(0, MAX_RANKED_SYMBOLS)
     .map((h) => h.symbol);
 
-  return { ranked, matchedSymbols, dependencies: matchedDeps, queryTokens };
+  let anchored: RankResult["anchor"];
+  if (anchor.names.size > 0) {
+    for (const r of ranked.slice(0, 3)) {
+      const hit = r.symbolHits.find(
+        (h) => h.exactName && anchor.names.has(h.symbol.name.toLowerCase())
+      );
+      if (hit) {
+        anchored = { name: hit.symbol.name, filePath: r.file.relativePath };
+        break;
+      }
+    }
+  }
+
+  return { ranked, matchedSymbols, dependencies: matchedDeps, queryTokens, anchor: anchored };
 }
 
 /** Short, deterministic explanation of why a file was selected. */
@@ -763,6 +833,166 @@ export function readSnippet(
   };
 }
 
+export interface ExpansionOptions {
+  /** Files that import the anchor's file and mention the anchor symbol. */
+  callers?: boolean;
+  /** Test files that import the anchor's file. */
+  tests?: boolean;
+}
+
+// Bounds of neighbour expansion. One hop only: no transitive importers, no second anchor.
+export const MAX_EXPANDED_CALLERS = 8;
+export const MAX_EXPANDED_TESTS = 2;
+/** Importers read at most (I/O bound): a barrel imported by thousands of files cannot stall a request. */
+export const MAX_EXAMINED_IMPORTERS = 40;
+const CALLER_EXCERPT_LINES = 30;
+const TEST_EXCERPT_LINES = 40;
+
+/** Usage excerpt: the first run of occurrences (plus one line of context) that fits `maxLines`. */
+function usageExcerpt(
+  content: string,
+  name: string,
+  maxLines: number
+): { startLine: number; endLine: number; snippet: string } | undefined {
+  const lines = content.split("\n");
+  const word = new RegExp(`(?<![A-Za-z0-9_$])${name}(?![A-Za-z0-9_$])`);
+  const hits: number[] = [];
+  for (let i = 0; i < lines.length; i++) if (word.test(lines[i])) hits.push(i + 1);
+  if (hits.length === 0) return undefined;
+  const start = Math.max(1, hits[0] - 1);
+  let end = Math.min(lines.length, hits[0] + 1);
+  for (const h of hits.slice(1)) {
+    const candidate = Math.min(lines.length, h + 1);
+    if (candidate - start + 1 > maxLines) break;
+    end = candidate;
+  }
+  return { startLine: start, endLine: end, snippet: lines.slice(start - 1, end).join("\n") };
+}
+
+/**
+ * Bounded one-hop expansion around the symbol the task names. Neighbours come
+ * from the import graph only, never from lexical matching: callers (files that
+ * import the anchor's file and really mention the symbol) and tests that import
+ * it. Stopping conditions: no anchor, no importers, `MAX_EXPANDED_*`, or the
+ * remaining token budget. Neighbours that do not fit are reported as omissions.
+ * Each is read through `readIndexedSource`, so secret screening and root
+ * confinement apply exactly as for ranked files.
+ */
+function expandNeighbors(
+  index: ProjectIndex,
+  anchor: { name: string; filePath: string },
+  expand: ExpansionOptions,
+  state: {
+    matchedFiles: ScoredFileMatch[];
+    seenContentHashes: Set<string>;
+    staleFiles: string[];
+    addOmission: (o: ContextOmission) => void;
+    tokensLeft: number;
+    tokenizer?: TokenizerFunction;
+  }
+): number {
+  const present = new Set(state.matchedFiles.map((m) => m.file.relativePath));
+  const importers = [...(getReverseImports(index).get(anchor.filePath) ?? [])]
+    .filter((rel) => !present.has(rel) && index.files[rel])
+    .sort();
+  let used = 0;
+  let callers = 0;
+  let tests = 0;
+  let exhausted = false;
+  let examined = 0;
+  // Importers that were eligible but never delivered or examined (a cap or the
+  // budget was reached first). They are not all callers, so they are reported
+  // as one summary entry rather than as individual omissions.
+  let notShown = 0;
+  let notShownTokens = 0;
+  const skipUnexamined = (file: IndexedFile): void => {
+    notShown++;
+    notShownTokens += estimateOmissionTokens(file.sizeBytes);
+  };
+
+  for (const rel of importers) {
+    const file = index.files[rel];
+    const isTest = !!file.isTest;
+    if (isTest ? !expand.tests : !expand.callers) continue;
+    const limit = isTest ? MAX_EXPANDED_TESTS : MAX_EXPANDED_CALLERS;
+    if (exhausted || examined >= MAX_EXAMINED_IMPORTERS || (isTest ? tests : callers) >= limit) {
+      skipUnexamined(file);
+      continue;
+    }
+    examined++;
+
+    const read = readIndexedSource(index, rel);
+    if (read.status === "missing") {
+      state.staleFiles.push(rel);
+      continue;
+    }
+    if (read.status === "untrusted" || read.status === "binary") {
+      state.addOmission({
+        type: "file",
+        identifier: rel,
+        reason: "untrusted",
+        estimatedTokens: estimateOmissionTokens(file.sizeBytes),
+      });
+      continue;
+    }
+    if (read.status !== "ok" || read.content === undefined) continue;
+    if (read.changedSinceIndex) state.staleFiles.push(rel);
+    if (state.seenContentHashes.has(read.contentHash as string)) continue;
+
+    let excerpt: { startLine: number; endLine: number; snippet: string } | undefined;
+    if (isTest) {
+      const lines = read.content.split("\n");
+      const end = Math.min(lines.length, TEST_EXCERPT_LINES);
+      excerpt = { startLine: 1, endLine: end, snippet: lines.slice(0, end).join("\n") };
+    } else {
+      excerpt = usageExcerpt(read.content, anchor.name, CALLER_EXCERPT_LINES);
+    }
+    if (!excerpt) continue; // imports the file but never mentions the symbol: not a caller
+
+    const tokens = estimateTokens(excerpt.snippet, state.tokenizer).estimatedTokens;
+    if (tokens > state.tokensLeft - used) {
+      // A genuine neighbour that did not fit: name it, and stop expanding.
+      state.addOmission({
+        type: "file",
+        identifier: rel,
+        reason: "budget_exceeded",
+        estimatedTokens: tokens,
+      });
+      exhausted = true;
+      continue;
+    }
+    state.seenContentHashes.add(read.contentHash as string);
+    state.matchedFiles.push({
+      file,
+      score: 0,
+      matchedSymbols: [],
+      symbolHits: [],
+      matchedDeps: [],
+      pathMatches: [],
+      matchedTokenCount: 0,
+      startLine: excerpt.startLine,
+      endLine: excerpt.endLine,
+      snippet: excerpt.snippet,
+      changedSinceIndex: read.changedSinceIndex || undefined,
+      relation: isTest
+        ? `test importing ${anchor.filePath}`
+        : `caller of ${anchor.name} (${anchor.filePath})`,
+    });
+    used += tokens;
+    if (isTest) tests++;
+    else callers++;
+  }
+  if (notShown > 0) {
+    state.addOmission({
+      type: "file",
+      identifier: `${notShown} more importer(s) of ${anchor.filePath} (not examined: expansion limit or token budget reached)`,
+      reason: "budget_exceeded",
+      estimatedTokens: notShownTokens,
+    });
+  }
+  return used;
+}
+
 /**
  * Deterministic relevance search over indexed symbols, file paths and
  * dependencies, returning source snippets chosen around each file's best
@@ -783,6 +1013,12 @@ export function retrieveContext(
     minScoreRatio?: number;
     /** Files kept regardless of `minScoreRatio`, so a weak top match still gets neighbours. */
     minFiles?: number;
+    /**
+     * Add callers / tests of the symbol the query names after the ranked files
+     * (see `expandNeighbors`). Off by default: callers that pass an explicit
+     * budget keep the plain ranked list.
+     */
+    expand?: ExpansionOptions;
   } = {}
 ): RetrievalResult {
   // Non-finite budgets (NaN, ±Infinity) fall back to the default instead of
@@ -817,8 +1053,12 @@ export function retrieveContext(
       ? Math.min(options.minScoreRatio as number, 1)
       : 0;
   const minFiles = Math.max(1, Math.floor(options.minFiles ?? 1));
+  const floorRatio =
+    minScoreRatio > 0 && ranking.anchor
+      ? Math.max(minScoreRatio, ANCHORED_MIN_SCORE_RATIO)
+      : minScoreRatio;
   const scoreFloor =
-    minScoreRatio > 0 && sortedFiles.length > 0 ? sortedFiles[0].score * minScoreRatio : 0;
+    floorRatio > 0 && sortedFiles.length > 0 ? sortedFiles[0].score * floorRatio : 0;
 
   for (const item of sortedFiles) {
     const rel = item.file.relativePath;
@@ -905,6 +1145,17 @@ export function retrieveContext(
       changedSinceIndex: snip.changedSinceIndex,
     });
     currentTokens += snip.tokens ?? 0;
+  }
+
+  if (options.expand && ranking.anchor && matchedFiles.length > 0) {
+    currentTokens += expandNeighbors(index, ranking.anchor, options.expand, {
+      matchedFiles,
+      seenContentHashes,
+      staleFiles,
+      addOmission,
+      tokensLeft: tokenBudget - currentTokens,
+      tokenizer: options.tokenizer,
+    });
   }
 
   return {

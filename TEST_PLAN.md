@@ -40,7 +40,7 @@ The real PTY integration suite covers 15 scenarios:
 
 ## 3. Project Intelligence & MCP Verification Matrix
 
-The intelligence test suite covers comprehensive automated scenarios across 46 test files and 504 Vitest tests:
+The intelligence test suite covers comprehensive automated scenarios within the full Vitest run of 72 test files (941 passed, 9 skipped on 2026-10-28; the skips are tests gated on the environment, such as creating file symlinks or having a `git` binary):
 
 | # | Test Area | Description | Automated Target | Status |
 | :--- | :--- | :--- | :--- | :--- |
@@ -68,6 +68,14 @@ The intelligence test suite covers comprehensive automated scenarios across 46 t
 | **22** | **Task Planning & Graph Workflow** | Code mode workflow, file prioritization, caller/test expansion, generation guards | `codeModeWorkflow.test.ts` | **Passed** |
 | **23** | **Production Hardening** | Process tree cleanup, timeout/signal exit codes, shell safety, dual-copy crash consistency | `finalHardening.test.ts` | **Passed** |
 | **24** | **Release Hardening & Incarnations** | Incarnation identity tokens, process group termination, persistence boundaries, legacy fallback | `releaseHardening.test.ts` | **Passed** |
+| **25** | **MCP Response Bounds** | Every tool result and error stays under the byte ceiling; pagination fields; oversized ids rejected | `mcpBounds.test.ts` | **Passed** |
+| **26** | **Metadata-first Reads** | `kai_read_range` ranges, ambiguity, stale hashes, confinement and secret screening on indexed files | `mcpReadRange.test.ts` | **Passed** |
+| **27** | **Index Cache Safety** | Bounded cache, concurrent reads, project switching, rename, deletion, corruption, no mutation of the frozen snapshot | `indexCacheSafety.test.ts` | **Passed** |
+| **28** | **Index Freshness & Skips** | Skip records for rejected files, scan completeness, drift detection cost, link handling | `indexFreshness.test.ts` | **Passed** |
+| **29** | **Interrupted / Failed Writes** | Partial temp files never served; a failed save keeps the last complete snapshot and recovers; removed storage is not served from the cache | `indexInterruption.test.ts` | **Passed** |
+| **30** | **Ranking & Anchoring** | Rarity-weighted symbol ranking; exact identifiers outrank split-word matches; anchored relevance floor | `retrievalRanking.test.ts`, `retrievalExpansion.test.ts` | **Passed** |
+| **31** | **Bounded Neighbour Expansion** | Callers and tests of the anchored symbol: caps, token budget, summary omission, secret screening, deleted files, determinism, explicit-budget opt-out | `retrievalExpansion.test.ts` | **Passed** |
+| **32** | **Symbol Extraction** | Text-based extractor fixtures: wrapped signatures, members, ranges, import forms | `symbolExtraction.test.ts` | **Passed** |
 
 ---
 
@@ -76,7 +84,7 @@ The intelligence test suite covers comprehensive automated scenarios across 46 t
 Run all verification checks locally prior to committing:
 
 ```bash
-# 1. Full TypeScript, Formatting & Intelligence Test Suite (Vitest - 46 test files, 504 tests)
+# 1. Full TypeScript, Formatting & Intelligence Test Suite (Vitest - 72 test files, 950 tests: 941 pass, 9 environment-skipped)
 npm run check
 
 # 1b. Same gate inside Docker (no host Node/Rust install needed)

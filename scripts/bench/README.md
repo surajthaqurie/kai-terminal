@@ -65,3 +65,49 @@ typical task); p95 is nearest-rank and, with five runs, close to the maximum.
 "Expected file present" checks retrieval only. It does not show that a model would
 complete the task: the harness never calls a model, so task completion rate and
 actual model token usage are **not measured**.
+
+## Task benchmark (`mcp-task-bench.mjs`)
+
+Measures what a *task* costs, not one call. A fixed suite (`task-suite/fixture.mjs`:
+a generated TypeScript API, a Python data layer with migrations, a cross-module
+rename target, a ~3,000-line legacy file and 70 distractor modules) defines seven
+tasks (exact symbol, function explanation, localized bug fix, API endpoint change,
+database model + migration, cross-module refactor, large-file fix) with hand-written
+ground truth: files that must be edited (`edit`) and contracts, callers and tests a
+careful change should see (`support`). Three fixed policies drive the built bundle
+over stdio and are identical for every bundle: `context` (one `kai_get_context`),
+`meta-read` (search, read the best symbol of the top 3 files, dependencies of the
+top file) and `context+deps`.
+
+```sh
+node scripts/bench/mcp-task-bench.mjs --cli /tmp/kai-after/index.js --label after \
+     --out /tmp/runs/task-after-1.json --reps 5
+# repeated runs of one label are pooled; several labels are tabulated side by side
+node scripts/bench/mcp-task-bench.mjs --compare /tmp/runs/task-baseline-*.json /tmp/runs/task-after-*.json
+```
+
+Per task it reports calls, response bytes (bytes/4 as an *estimate* of tokens),
+latency, edit recall and support recall by delivered source, and a retrieval-proxy
+`success` (every edit file's source delivered; for the large file, the declaration
+without most of the file). **No model runs here**: coding-task completion rate,
+generated-code regressions and real model token usage are not measured. Response
+bytes embed the JSON-RPC id, so repetitions may differ by a byte or two; the
+stability check allows that and nothing more. The fixture was written together
+with the expansion it evaluates, so treat it as a regression suite and a
+demonstration, not independent evidence; the real-repo section of
+`mcp-response-bench.mjs` is the cross-check.
+
+Reference results (Windows 11, Node 24, 5 alternating runs per bundle, 5 repetitions
+each; baseline = the commit before the 0.2.0 retrieval rework, head = 0.2.0 plus
+docs, final = this change), `context` policy:
+
+| | baseline | head | final |
+|---|---|---|---|
+| tasks whose edit files were all delivered | 5/7 | 5/7 | 7/7 |
+| tasks with every support file delivered too | 1/7 | 2/7 | 4/7 |
+| median response bytes per task | 5,738 | 4,779 | 5,025 |
+| response bytes per delivered task | 7,658 | 6,765 | 5,296 |
+| call latency median / p95 (ms) | 917 / 1,177 | 47 / 65 | 46 / 61 |
+
+The median per task rises from head to final because the refactor task now returns
+its callers (2,205 to 6,355 bytes) and is delivered, where before it was not.

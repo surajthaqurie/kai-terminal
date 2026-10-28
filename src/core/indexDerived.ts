@@ -45,6 +45,8 @@ export interface SymbolNameEntry {
 
 export interface SymbolNameTable {
   entries: SymbolNameEntry[];
+  /** Entries by lowercase symbol name, for exact-name lookups. */
+  byLower: Map<string, SymbolNameEntry>;
   /** How many distinct symbol names contain each stemmed word (rarity signal for ranking). */
   docFreq: Map<string, number>;
 }
@@ -69,14 +71,17 @@ export function getSymbolNameTable(index: ProjectIndex): SymbolNameTable {
   const d = derivedFor(index);
   if (d.names) return d.names;
   const entries: SymbolNameEntry[] = [];
+  const byLower = new Map<string, SymbolNameEntry>();
   const docFreq = new Map<string, number>();
   for (const [name, symbols] of Object.entries(index.symbolIndex)) {
     if (!Array.isArray(symbols) || symbols.length === 0) continue;
     const stems = splitIdentifier(name).map(stemWord);
-    entries.push({ name, lower: name.toLowerCase(), stems, symbols });
+    const entry = { name, lower: name.toLowerCase(), stems, symbols };
+    entries.push(entry);
+    if (!byLower.has(entry.lower)) byLower.set(entry.lower, entry);
     for (const s of new Set(stems)) docFreq.set(s, (docFreq.get(s) ?? 0) + 1);
   }
-  d.names = { entries, docFreq };
+  d.names = { entries, byLower, docFreq };
   return d.names;
 }
 

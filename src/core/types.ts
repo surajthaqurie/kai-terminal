@@ -212,6 +212,8 @@ export interface ContextPackage {
     startLine?: number;
     endLine?: number;
     relevanceScore: number;
+    /** Set for neighbours added by bounded expansion (e.g. `caller of formatMoney`); they carry no score. */
+    relation?: string;
     content: string;
   }>;
   symbols: IndexedSymbol[];
