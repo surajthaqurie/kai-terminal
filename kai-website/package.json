@@ -1,7 +1,7 @@
 {
   "name": "kai-website",
   "private": true,
-  "version": "0.1.7",
+  "version": "0.2.0",
   "type": "module",
   "scripts": {
     "predev": "node scripts/sync-changesets.mjs && node scripts/sync-docs.mjs",
