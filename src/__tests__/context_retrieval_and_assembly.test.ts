@@ -244,7 +244,7 @@ describe("Context Retrieval and Prompt Assembly Hardening", () => {
       expect(metrics.measuredTokens).toBe(metrics.estimatedTokens);
     });
 
-    it("uses cl100k estimate marked with isEstimate: true when no exact tokenizer is registered", () => {
+    it("uses the character heuristic, marked isEstimate: true, when no tokenizer is registered", () => {
       const metrics = estimateTokens(
         "function calculateSum(a: number, b: number) { return a + b; }"
       );

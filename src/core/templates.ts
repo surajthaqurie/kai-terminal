@@ -2,6 +2,9 @@ import type { TaskCategory, ContextPackage } from "./types";
 
 const TEMPLATE_VERSION = "1.0.0";
 
+/** Omission lines listed in a rendered prompt unless budget pressure lowers it. */
+export const DEFAULT_RENDERED_OMISSIONS = 10;
+
 export interface PromptTemplate {
   category: TaskCategory;
   version: string;
@@ -196,7 +199,7 @@ function renderStandardTemplate(pkg: ContextPackage, instructions: string[]): st
   parts.push(`Generated: ${pkg.assembledAt} | Template Version: ${TEMPLATE_VERSION}`);
   parts.push("");
   parts.push(
-    "> [!NOTE]\n> Deterministic Index Notice: Context was assembled via local static AST parsing, lexical heuristics, and deterministic ranking. No cloud models, telemetry, or remote services were queried, and complete semantic proofs are not guaranteed.\n"
+    "> [!NOTE]\n> Deterministic Index Notice: Context was assembled from a local text-based symbol scan (not a full parser), lexical heuristics, and deterministic ranking. No cloud models, telemetry, or remote services were queried, and complete semantic proofs are not guaranteed.\n"
   );
 
   // 1. Preserved original task (NEVER truncated or rewritten)
@@ -276,13 +279,17 @@ function renderStandardTemplate(pkg: ContextPackage, instructions: string[]): st
   }
 
   // 8. Omissions & Budget Metrics
-  if (pkg.omissions.length > 0) {
-    parts.push("## Omissions (Budget Limit)");
-    for (const om of pkg.omissions) {
+  const omissionsTotal = pkg.omissionsTotal ?? pkg.omissions.length;
+  if (omissionsTotal > 0) {
+    parts.push("## Omissions (Budget or Relevance Limit)");
+    const shown = pkg.omissions.slice(0, pkg.omissionRenderLimit ?? DEFAULT_RENDERED_OMISSIONS);
+    for (const om of shown) {
       parts.push(
         `- Omitted \`${om.type}\` "${om.identifier}" (${om.reason}, ~${om.estimatedTokens} tokens)`
       );
     }
+    const hidden = omissionsTotal - shown.length;
+    if (hidden > 0) parts.push(`- ...and ${hidden} more item(s) omitted (list capped).`);
     parts.push("");
   }
 
@@ -303,8 +310,19 @@ function renderStandardTemplate(pkg: ContextPackage, instructions: string[]): st
     `- **Estimated Tokens**: ~${pkg.tokenMetrics.estimatedTokens} (Chars: ${pkg.tokenMetrics.characterCount}, Bytes: ${pkg.tokenMetrics.byteCount})`
   );
   parts.push(
-    `- **Measurement Type**: ${pkg.tokenMetrics.isEstimate ? "Estimate (cl100k heuristic)" : "Exact Tokenizer"}`
+    `- **Measurement Type**: ${pkg.tokenMetrics.isEstimate ? "Estimate (character heuristic, not a model tokenizer)" : "Custom tokenizer count"}`
   );
+  if (pkg.budget) {
+    const origin =
+      pkg.budget.origin === "explicit"
+        ? "requested"
+        : pkg.budget.origin === "task-default"
+          ? `${pkg.classification.category} default; pass tokenBudget to change`
+          : "default";
+    parts.push(
+      `- **Budget**: ~${pkg.budget.tokens} tokens (${origin}); this package only, not the model's full input.`
+    );
+  }
 
   return parts.join("\n");
 }

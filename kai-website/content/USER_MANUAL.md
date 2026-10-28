@@ -26,7 +26,7 @@ kai health
 
 Output:
 ```text
-✔ Kai v0.1.6 is ready
+✔ Kai v0.2.0 is ready
 
 ✔ Fast and private · Free
 ```
@@ -102,13 +102,13 @@ kai list -a                     # list installed tools (also: kai list --agent, 
 
 ## Project graph
 
-Build, rebuild, inspect, or remove the AST symbol index and dependency graph.
+Build, rebuild, inspect, or remove the symbol index and import graph.
 
 ---
 
 ### kai graph
 
-- **What**: Generates a high-precision AST symbol index, dependency graph, and project intelligence map for your codebase.
+- **What**: Generates a symbol index (from a deterministic text-based scan, not a full parser), an import graph, and a project intelligence map for your codebase.
 - **Where**: Stored locally and privately in `~/.kai/projects/<project-id>/`. Your repository code is never modified.
 - **How**:
   - `kai graph init [path]` — Build the map from scratch. Automatically installs a self-contained `commit-msg` git hook to prevent co-author trailers.

@@ -95,11 +95,40 @@ function App() {
     [activePaneIdRef]
   );
 
+  /**
+   * Focus the active terminal as soon as it exists (bounded retry: a newly
+   * created pane mounts on the next commit, so its ref is not registered
+   * yet). Nothing in the app moves keyboard focus into a terminal by
+   * itself — without this, the TabBar's + button kept focus after opening
+   * a tab and every Space/Enter the user typed while "typing a command"
+   * re-activated it, opening yet another tab. Same for session exits
+   * (Ctrl+C / `exit`): focus used to be dropped to the document, so typed
+   * keys went nowhere (or re-triggered whatever toolbar control had focus).
+   */
+  const focusActiveTerminalSoon = useCallback(() => {
+    const attempt = (tries: number) => {
+      const term = getActiveTerminal();
+      if (term) {
+        term.focus();
+      } else if (tries > 0) {
+        window.setTimeout(() => attempt(tries - 1), 50);
+      }
+    };
+    requestAnimationFrame(() => attempt(3));
+  }, [getActiveTerminal]);
+
+  const newTabAndFocus = useCallback(
+    (opts?: { cwd?: string }) => {
+      tabsState.newTab(opts);
+      focusActiveTerminalSoon();
+    },
+    [tabsState.newTab, focusActiveTerminalSoon]
+  );
+
   /** Effective project dir: active pane -> tab -> global toolbar input. */
   const effectiveProjectDir = resolveEffectiveProjectDir(activePane?.cwd, activeTab?.cwd, cwd);
 
   const { syncCodeModeState, modeDisplay } = useCodeMode({
-    effectiveProjectDir,
     onOpenProject: tabsState.openOrFocusDir,
   });
   const git = useGitStatus({
@@ -154,6 +183,17 @@ function App() {
   useWindowRefit({ tabsRef, activeTabIdRef, terminalRefs });
   usePrefetchPanels();
 
+  /** Session exited (Ctrl+C / `exit` / kill): close the pane, then hand
+   * keyboard focus to whatever terminal is active now so typing continues
+   * without a click. */
+  const handleSessionExit = useCallback(
+    (tabId: string, paneId: string, exitCode?: number) => {
+      sessionExit.handleSessionExit(tabId, paneId, exitCode);
+      focusActiveTerminalSoon();
+    },
+    [sessionExit.handleSessionExit, focusActiveTerminalSoon]
+  );
+
   const toggleSearch = useCallback(() => getActiveTerminal()?.toggleSearch(), [getActiveTerminal]);
   const openAiCli = useCallback(() => {
     setAiCliDir(effectiveProjectDir);
@@ -172,7 +212,7 @@ function App() {
 
   useAppShortcuts({
     keybindings: userSettings.keybindings,
-    newTab: () => tabsState.newTab(),
+    newTab: newTabAndFocus,
     closeActiveTab: () => tabsState.closeTab(activeTabId),
     toggleCommandPalette: () => setIsCommandPaletteOpen((prev) => !prev),
     toggleSearch,
@@ -191,7 +231,7 @@ function App() {
   const commandActions = buildCommandActions({
     keybindings: userSettings.keybindings,
     isMac: isMacPlatform(),
-    newTab: () => tabsState.newTab(),
+    newTab: newTabAndFocus,
     cycleTab: tabsState.cycleTab,
     focusNextPane: tabsState.focusNextPane,
     openWorkspaces: () => setIsWorkspaceOpen(true),
@@ -233,7 +273,7 @@ function App() {
           activeTabId={activeTabId}
           onSelectTab={setActiveTabId}
           onCloseTab={tabsState.closeTab}
-          onNewTab={() => tabsState.newTab()}
+          onNewTab={() => newTabAndFocus()}
           onRenameTab={tabsState.renameTab}
           onMoveTab={tabsState.moveTab}
           onReorderTabs={tabsState.reorderTabs}
@@ -317,7 +357,7 @@ function App() {
             onFocusPane={tabsState.focusPane}
             onCommandSubmitted={syncCodeModeState}
             onCwdResolved={handleCwdResolved}
-            onExit={sessionExit.handleSessionExit}
+            onExit={handleSessionExit}
             onStatusChange={tabsState.setPaneStatus}
             onResizeSplit={tabsState.resizeSplit}
           />
@@ -372,7 +412,7 @@ function App() {
           onClose={() => setIsAiCliOpen(false)}
           projectDir={aiCliDir || effectiveProjectDir}
           onLaunchInTerminal={(dir) => {
-            tabsState.newTab({ cwd: dir || undefined });
+            newTabAndFocus({ cwd: dir || undefined });
             setIsAiCliOpen(false);
           }}
         />

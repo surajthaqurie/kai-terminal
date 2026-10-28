@@ -6,16 +6,21 @@ let globalCustomTokenizer: TokenizerFunction | null = null;
 
 /**
  * Register a global custom tokenizer function (e.g. tiktoken/js-tiktoken or bespoke model tokenizer).
- * When registered, token counts will be exact measurements rather than cl100k estimates.
+ * When registered, token counts are that tokenizer's counts (`isEstimate: false`) rather than the
+ * built-in heuristic. Kai bundles no tokenizer and cannot know which one a given model uses.
  */
 export function registerCustomTokenizer(fn: TokenizerFunction | null): void {
   globalCustomTokenizer = fn;
 }
 
 /**
- * Deterministic token estimation distinguishing measured counts from estimates.
- * Follows standard cl100k / BPE code heuristics (~3.8 chars per token for mixed code and text)
- * unless an optional exact tokenizer is provided.
+ * Deterministic token count that distinguishes measured counts from estimates.
+ *
+ * Without a registered tokenizer the result is a character-class HEURISTIC
+ * (word, symbol and whitespace runs), not a cl100k or any other model
+ * tokenizer, and it has not been calibrated against one here. Use it for
+ * budgeting and relative sizes only; `isEstimate` is true for it and false only
+ * when a caller-supplied tokenizer produced the number.
  */
 export function estimateTokens(
   text: string,
@@ -58,11 +63,9 @@ export function estimateTokens(
     }
   }
 
-  // Token heuristic:
-  // Splitting on word boundaries, special symbols, whitespace, and code syntax
-  // Average ratio across TypeScript, Rust, and Markdown is ~3.7 to 4.0 characters per token.
-  // We use a deterministic token model:
-  // Words, numbers, symbols, and whitespace chunks.
+  // Heuristic: runs of word characters, punctuation and whitespace are counted
+  // with fixed per-run weights (long words are split at ~3.8 chars, whitespace
+  // at 4). The constants are rules of thumb, not measured against a tokenizer.
   const tokens = text.match(/\w+|[^\w\s]+|\s+/g);
   let estimated = 0;
 

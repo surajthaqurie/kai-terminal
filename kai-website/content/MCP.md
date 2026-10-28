@@ -40,10 +40,11 @@ Option: `--dry-run` to preview changes without modifying files.
 | Tool | Does |
 | :--- | :--- |
 | `kai_project_info` | Project name, root, and map state |
-| `kai_search_code` | Search files, symbols, and snippets (`query`, up to 20 files) |
+| `kai_search_code` | Ranked file and symbol search, metadata only (`query`, up to 20 files; `includeSource: true` adds snippets) |
+| `kai_read_range` | Read one symbol or line range (max 400 lines) |
 | `kai_find_symbol` | Find a symbol by name |
 | `kai_get_dependencies` | Imports of a file |
-| `kai_get_context` | Context package for a task (token budget, default 4000) |
+| `kai_get_context` | Context package for a task (`tokenBudget` optional: the default depends on task type, 1,700 to 4,000, or set `KAI_CONTEXT_BUDGETS`) |
 | `kai_refresh_index` | Rebuild the map now (incremental unless forced) |
 | `kai_get_lsp_status` | Language server state |
 | `kai_plan_task` | Task plan with file priorities |

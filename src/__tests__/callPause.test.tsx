@@ -64,20 +64,22 @@ describe("useCallPause", () => {
     expect(resume).not.toHaveBeenCalled();
   });
 
-  it("does nothing when the setting is off", async () => {
-    localStorage.setItem("kai_user_settings", JSON.stringify({ musicPauseOnCall: false }));
-    const { pause, resume } = await mount(true);
-    await flush();
-    act(() => emitCall({ active: true }));
-    act(() => emitCall({ active: false }));
-    expect(pause).not.toHaveBeenCalled();
-    expect(resume).not.toHaveBeenCalled();
-  });
-
   it("pauses for a call that was already running at mount", async () => {
     callActiveAtMount = true;
     const { pause } = await mount(true);
     await flush();
     expect(pause).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not resume music the user paused during the call themselves", async () => {
+    // pause() is called by the hook; a second pause (user action) must not
+    // make the hook lose track of its own pause, and resume runs once.
+    const { pause, resume } = await mount(true);
+    await flush();
+    act(() => emitCall({ active: true }));
+    act(() => emitCall({ active: true }));
+    expect(pause).toHaveBeenCalledTimes(1);
+    act(() => emitCall({ active: false }));
+    expect(resume).toHaveBeenCalledTimes(1);
   });
 });

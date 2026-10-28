@@ -233,8 +233,6 @@ export interface UserSettings {
   showMusicPlayer?: boolean;
   /** Start muted when the player loads. */
   musicStartMuted?: boolean;
-  /** Pause the player while the OS reports a call (default ON). */
-  musicPauseOnCall?: boolean;
   /** Customizable keyboard shortcut map. */
   keybindings: KeybindingsConfig;
 }

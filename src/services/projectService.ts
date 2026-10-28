@@ -337,26 +337,20 @@ export function isCodeModeActiveForDir(dir: string, activePath: string | null): 
 export type ModeDisplay = "code" | "terminal";
 
 /**
- * Footer Code Mode pill state from the global persisted project + the
- * active pane directory.
+ * Footer Code Mode pill state — STICKY.
  *
- * - No persisted project → `"terminal"` (always clears, even while the cwd
- *   is still resolving — `kai stop code` must reflect immediately).
- * - Pane inside the project → `"code"`.
- * - Project set but the active pane is elsewhere → `"terminal"`: the pill
- *   reflects the pane in front of you ("Code Mode" or "Terminal") and never
- *   shows another project's name.
- * - Cwd still resolving (`""`) with a project set → keep `prev` (never
- *   blank/flap the pill mid-navigation).
+ * The pill follows ONLY the persisted active project: "Code Mode" while
+ * `kai code <path>` has set one, "terminal" the moment it is cleared
+ * (`kai stop code` / `kai stop` — must reflect at once). Reports from the
+ * active pane (OSC 7 / OSC 9;9 / backend probes) never flip the badge on
+ * their own: transient or still-resolving directories used to make the pill
+ * flap between "Code Mode" and "Terminal" while the user was working in the
+ * same tab without touching the mode. The pane directory still drives git
+ * and the AI CLI panel (see `resolveEffectiveProjectDir`), just not this
+ * badge.
  */
-export function resolveModeDisplay(
-  codeModeProject: string | null,
-  effectiveDir: string,
-  prev: ModeDisplay = "terminal"
-): ModeDisplay {
-  if (!codeModeProject) return "terminal";
-  if (!effectiveDir) return prev;
-  return isCodeModeActiveForDir(effectiveDir, codeModeProject) ? "code" : "terminal";
+export function resolveModeDisplay(codeModeProject: string | null): ModeDisplay {
+  return codeModeProject ? "code" : "terminal";
 }
 
 /** Short display name for a Code Mode project path (`…/repo` → `repo`). */

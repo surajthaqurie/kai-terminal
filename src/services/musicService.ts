@@ -119,12 +119,18 @@ export function hasNextItem(track: MusicTrack | null): boolean {
 
 /**
  * Embed src for a track, or null when there is nothing embeddable.
- * `muted` only applies at load; later changes use commands.
+ * `muted` and `loop` only apply at load; later changes use commands.
+ * `startSeconds` resumes playback at that position on a rebuild (loop-off).
  * Query-only tracks (plain song names) return null: the deprecated
  * `listType=search` embed renders Error 153, so callers must offer the
  * browser-search fallback instead of embedding a guess.
  */
-export function embedSrcForTrack(track: MusicTrack, muted = false, loop = false): string | null {
+export function embedSrcForTrack(
+  track: MusicTrack,
+  muted = false,
+  loop = false,
+  startSeconds = 0
+): string | null {
   // Only pass `origin` if it is a standard web HTTP/HTTPS origin (e.g. dev server).
   // In desktop webviews (Tauri), `window.location.origin` is `tauri://localhost` or `tauri://`,
   // which causes YouTube's embed configuration validator to crash with Error 153.
@@ -138,7 +144,8 @@ export function embedSrcForTrack(track: MusicTrack, muted = false, loop = false)
     : `&widget_referrer=${encodeURIComponent("https://www.youtube-nocookie.com")}`;
 
   const loopParam = loop && track.videoId ? `&loop=1&playlist=${track.videoId}` : "";
-  const tail = `autoplay=1&rel=0&controls=0&enablejsapi=1${originParam}${muted ? "&mute=1" : ""}${loopParam}`;
+  const startParam = startSeconds > 0 ? `&start=${Math.max(0, Math.floor(startSeconds))}` : "";
+  const tail = `autoplay=1&rel=0&controls=0&enablejsapi=1${originParam}${muted ? "&mute=1" : ""}${loopParam}${startParam}`;
   if (track.videoId) {
     const list = track.playlistId ? `&list=${track.playlistId}` : "";
     return `https://www.youtube-nocookie.com/embed/${track.videoId}?${tail}${list}`;
@@ -379,4 +386,77 @@ export function clearLegacyQueue(): void {
   } catch {
     // storage unavailable: nothing to clean
   }
+}
+
+/** localStorage key for the player's favorite songs. */
+const FAVORITES_KEY = "kai_music_favorites";
+
+/** Favorites kept locally, so the list cannot grow without bound. */
+const MAX_FAVORITES = 50;
+
+/** True when a track carries something playable (a video or playlist id). */
+function isPlayableTrack(t: unknown): t is MusicTrack {
+  if (!t || typeof t !== "object") return false;
+  const track = t as Partial<MusicTrack>;
+  return (
+    typeof track.title === "string" &&
+    track.title.trim().length > 0 &&
+    (typeof track.videoId === "string" || typeof track.playlistId === "string")
+  );
+}
+
+function sanitizeFavorite(t: MusicTrack): MusicTrack {
+  return {
+    title: t.title.trim().slice(0, 200),
+    videoId: t.videoId && /^[\w-]{11}$/.test(t.videoId) ? t.videoId : null,
+    playlistId: t.playlistId && /^[\w-]{10,64}$/.test(t.playlistId) ? t.playlistId : null,
+    query: typeof t.query === "string" ? t.query.slice(0, 300) : t.title,
+    thumbnail: typeof t.thumbnail === "string" ? t.thumbnail.slice(0, 512) : null,
+  };
+}
+
+/** Favorites persisted in localStorage (bounded, oldest dropped first). */
+export function loadFavorites(): MusicTrack[] {
+  try {
+    const raw = localStorage.getItem(FAVORITES_KEY);
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter(isPlayableTrack)
+      .map(sanitizeFavorite)
+      .filter((t) => t.videoId || t.playlistId)
+      .slice(-MAX_FAVORITES);
+  } catch {
+    return [];
+  }
+}
+
+export function saveFavorites(list: MusicTrack[]): void {
+  try {
+    const bounded = list.filter((t) => t.videoId || t.playlistId).slice(-MAX_FAVORITES);
+    localStorage.setItem(FAVORITES_KEY, JSON.stringify(bounded));
+  } catch {
+    // storage unavailable: favorites stay session-only
+  }
+}
+
+/** Two tracks are "the same song" by video id (falling back to playlist id). */
+export function sameTrackIdentity(a: MusicTrack, b: MusicTrack): boolean {
+  if (a.videoId && b.videoId) return a.videoId === b.videoId;
+  if (a.playlistId && b.playlistId) return a.playlistId === b.playlistId;
+  return false;
+}
+
+/** Is `track` already in the favorites list? */
+export function isFavoriteTrack(track: MusicTrack, favorites: MusicTrack[]): boolean {
+  return favorites.some((f) => sameTrackIdentity(f, track));
+}
+
+/** Pure toggle: returns a new favorites list with the track added or removed. */
+export function toggleFavoriteTrack(track: MusicTrack, favorites: MusicTrack[]): MusicTrack[] {
+  if (isFavoriteTrack(track, favorites)) {
+    return favorites.filter((f) => !sameTrackIdentity(f, track));
+  }
+  return [...favorites, sanitizeFavorite(track)].slice(-MAX_FAVORITES);
 }

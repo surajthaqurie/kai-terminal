@@ -1,14 +1,15 @@
 import { useEffect, useRef } from "react";
 import { isTauriAvailable } from "../services/ptyService";
-import { SettingsService } from "../services/settingsService";
 
 /** Event the Rust call watcher emits when a call starts or ends. */
 export const CALL_STATE_EVENT = "kai-call-state";
 
 /**
  * Pauses playback while the OS reports a call (another app recording from
- * the microphone) and resumes it afterwards — but only if this hook did the
- * pausing, so music the user had already paused stays paused.
+ * the microphone) and resumes it afterwards. No setting gates this: it is
+ * automatic whenever the player is actually playing — and only this hook's
+ * own pause is undone on call end, so music the user had already paused
+ * stays paused.
  */
 export function useCallPause({
   playing,
@@ -32,7 +33,7 @@ export function useCallPause({
 
     const onCallState = (active: boolean) => {
       if (active) {
-        if (!playingRef.current || !SettingsService.loadSettings().musicPauseOnCall) return;
+        if (!playingRef.current || pausedByCallRef.current) return;
         pausedByCallRef.current = true;
         actionsRef.current.pause();
       } else if (pausedByCallRef.current) {

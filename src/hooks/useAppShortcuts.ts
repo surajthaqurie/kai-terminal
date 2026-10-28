@@ -28,6 +28,8 @@ export interface AppShortcutHandlers {
 }
 
 const MODIFIER_KEYS = new Set(["Control", "Shift", "Alt", "Meta"]);
+/** Actions that make sense while the key is held down; every other action fires once. */
+const REPEATABLE_ACTIONS = new Set<ShortcutActionId>(["nextTab", "prevTab", "nextPane"]);
 
 /**
  * Centralized application shortcuts: honors user-configured bindings,
@@ -51,10 +53,15 @@ export function useAppShortcuts(handlers: AppShortcutHandlers) {
       // event target is a text field AND no modifier combo matches — handled
       // implicitly by matchShortcut returning null there.
       if (MODIFIER_KEYS.has(e.key)) return;
+      // Auto-repeat must not re-trigger a one-shot action: holding Ctrl+Shift+T
+      // a beat too long re-fired the keydown and opened extra tabs / toggled
+      // panels again and again. Repeats are still swallowed (preventDefault) so
+      // the webview's own binding never fires; only navigation and zoom, which
+      // are meant to be held, keep repeating (REPEATABLE_ACTIONS).
       const primary = e.ctrlKey || e.metaKey;
       if (primary && e.shiftKey && e.code === "KeyG") {
         e.preventDefault();
-        h.reviewChanges();
+        if (!e.repeat) h.reviewChanges();
         return;
       }
       // Universal New-Tab accelerator on every OS: Ctrl+T (Windows/Linux)
@@ -64,7 +71,7 @@ export function useAppShortcuts(handlers: AppShortcutHandlers) {
       // it must not fire and steal the keystroke.
       if (primary && !e.altKey && e.code === "KeyT" && !isTypingTarget(e.target)) {
         e.preventDefault();
-        h.newTab();
+        if (!e.repeat) h.newTab();
         return;
       }
       const action: ShortcutActionId | null = matchShortcut(e, h.keybindings);
@@ -77,10 +84,11 @@ export function useAppShortcuts(handlers: AppShortcutHandlers) {
         if (!builtin) return;
         e.preventDefault();
         if (builtin.type === "zoom") h.zoomFont(builtin.delta);
-        else h.gotoTab(builtin.index);
+        else if (!e.repeat) h.gotoTab(builtin.index);
         return;
       }
       e.preventDefault();
+      if (e.repeat && !REPEATABLE_ACTIONS.has(action)) return;
       switch (action) {
         case "newTab":
           return h.newTab();

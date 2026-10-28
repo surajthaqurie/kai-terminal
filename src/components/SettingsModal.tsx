@@ -467,19 +467,6 @@ export const SettingsModal: FC<SettingsModalProps> = ({
                   <span>YouTube music player</span>
                 </label>
               </div>
-
-              <div className="setting-field checkbox-field">
-                <label className="checkbox-label">
-                  <input
-                    type="checkbox"
-                    checked={formData.musicPauseOnCall !== false}
-                    onChange={(e) =>
-                      setFormData({ ...formData, musicPauseOnCall: e.target.checked })
-                    }
-                  />
-                  <span>Pause music during calls</span>
-                </label>
-              </div>
             </div>
           )}
 

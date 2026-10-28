@@ -65,7 +65,7 @@ export async function runBench(args: string[]): Promise<number> {
     }))
   );
   console.log(
-    `\nNote: Est. Tokens are cl100k heuristics (~3.8 chars/tok). Retrieval Recall measures target symbol presence in context, not autonomous LLM task completion.`
+    `\nNote: Est. Tokens come from a character heuristic, not a model tokenizer. Retrieval Recall measures target symbol presence in context, not autonomous LLM task completion.`
   );
   return 0;
 }

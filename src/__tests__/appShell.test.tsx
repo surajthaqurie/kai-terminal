@@ -689,13 +689,16 @@ describe("App shell: working directory, git and Code Mode footer", () => {
     );
   });
 
-  it("Code Mode footer follows the persisted active project and the pane's directory", async () => {
+  it("Code Mode footer is sticky: pane directory reports never flip the pill", async () => {
     registry.activeProject = { mode: "code", path: "/work/proj" };
     await mount();
     await resolveCwd(paneId(0), "/work/proj/src");
     expect(container.querySelector('[aria-label="Code Mode active"]')).not.toBeNull();
+    // The pane moving outside the project (or reporting a transient dir)
+    // must NOT auto-flip the pill — only clearing the project does that.
     await resolveCwd(paneId(0), "/elsewhere");
-    expect(container.querySelector('[aria-label="Terminal mode"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Code Mode active"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Terminal mode"]')).toBeNull();
   });
 
   it("clearing the active project drops to Terminal mode on the next focus sync", async () => {
@@ -740,6 +743,88 @@ describe("App shell: working directory, git and Code Mode footer", () => {
     });
     await flush();
     expect(getGitInfoCached).toHaveBeenCalledWith("/work/proj");
+  });
+});
+
+describe("App shell: new-tab focus handoff and auto-repeat guard", () => {
+  /** Let the focus helper's rAF (+ bounded retry) run. */
+  async function settleFocus() {
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 60));
+    });
+    await flush();
+  }
+
+  it("a repeated (held) new-tab keydown never opens extra tabs", async () => {
+    await mount();
+    await press("KeyT", "t", { ctrl: true, shift: true });
+    expect(tabTitles()).toHaveLength(2);
+    // OS auto-repeat re-fires the same keydown while the combo is held.
+    await act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          code: "KeyT",
+          key: "t",
+          ctrlKey: true,
+          shiftKey: true,
+          repeat: true,
+          bubbles: true,
+          cancelable: true,
+        })
+      );
+    });
+    await flush();
+    expect(tabTitles()).toHaveLength(2);
+  });
+
+  it("a held tab-cycle shortcut keeps cycling while one-shot actions do not repeat", async () => {
+    await mount();
+    await newTabKey();
+    await newTabKey();
+    expect(activeTitle()).toBe("Terminal 3");
+    const prevTab = (repeat: boolean) =>
+      act(async () => {
+        window.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            code: "BracketLeft",
+            key: "{",
+            ctrlKey: true,
+            shiftKey: true,
+            repeat,
+            bubbles: true,
+            cancelable: true,
+          })
+        );
+      });
+    await prevTab(false);
+    expect(activeTitle()).toBe("Terminal 2");
+    await prevTab(true);
+    expect(activeTitle()).toBe("Terminal 1");
+  });
+
+  it("opening a tab via the + button focuses the new terminal", async () => {
+    await mount();
+    registry.refCalls.length = 0;
+    await act(async () => {
+      (container.querySelector(".tab-add-btn") as HTMLButtonElement).click();
+    });
+    await settleFocus();
+    expect(tabTitles()).toHaveLength(2);
+    // The NEW pane's terminal took focus, so Space/Enter the user types next
+    // reach the shell instead of re-activating the focused + button (which
+    // used to open yet another tab).
+    expect(registry.refCalls).toContain(`${paneId(1)}:focus`);
+  });
+
+  it("a session exit hands keyboard focus to the now-active terminal", async () => {
+    await mount();
+    await press("KeyT", "t", { ctrl: true, shift: true });
+    await flush();
+    registry.refCalls.length = 0;
+    await exitPane(paneId(1), 0);
+    await settleFocus();
+    expect(tabTitles()).toHaveLength(1);
+    expect(registry.refCalls).toContain(`${paneId(0)}:focus`);
   });
 });
 
@@ -815,7 +900,9 @@ describe("App shell: settings, themes and terminal actions", () => {
     await press("KeyF", "f", { ctrl: true, shift: true });
     await runAction("clear-terminal");
     await runAction("reset-terminal-modes");
-    expect(registry.refCalls).toEqual([
+    // New-tab now also focuses the new terminal (rAF-scheduled), so focus
+    // entries are expected noise around the asserted imperative calls.
+    expect(registry.refCalls.filter((c) => !c.endsWith(":focus"))).toEqual([
       `${active}:toggleSearch`,
       `${active}:clear`,
       `${active}:resetModes`,

@@ -4,6 +4,7 @@ import { spawn, spawnSync } from "child_process";
 import type {
   IndexedDependency,
   IndexedSymbol,
+  KnownStaleness,
   ProjectIndex,
   ProjectMeta,
   TaskCategory,
@@ -20,7 +21,9 @@ import {
   resolveCanonicalPath,
   saveProjectIndex,
 } from "./registry";
-import { retrieveContext } from "./retrieval";
+import { rankCandidates, isPotentialSecretPath } from "./retrieval";
+import { getReverseImports } from "./indexDerived";
+import { resolveDependency } from "./importResolver";
 import { TERMINAL_MODE_RESET_SEQ } from "../services/terminalModes";
 
 export type GraphFreshness = "fresh" | "stale" | "unindexed" | "unknown" | "refresh-failed";
@@ -41,6 +44,26 @@ export function getGraphFreshness(index: ProjectIndex | null | undefined): Graph
     if (Number.isFinite(ageMs) && ageMs > 24 * 60 * 60 * 1000) return "stale";
     const check = detectStaleIndexEntries(index);
     if (check.isStale) return "stale";
+    return "fresh";
+  } catch {
+    return "unknown";
+  }
+}
+
+/**
+ * Freshness from snapshot metadata alone (status, age), with no filesystem drift
+ * scan. Used right after this process rebuilt the index: the build itself just
+ * walked the tree, so re-walking it to confirm is redundant work.
+ */
+export function getSnapshotFreshness(index: ProjectIndex | null | undefined): GraphFreshness {
+  if (!index) return "unindexed";
+  try {
+    if (!index.meta || !index.meta.lastIndexedAt) return "unindexed";
+    if (index.meta.status === "failed") return "refresh-failed";
+    if (index.meta.status === "stale") return "stale";
+    if (index.meta.status === "indexing" || index.meta.status === "unindexed") return "unknown";
+    const ageMs = Date.now() - new Date(index.meta.lastIndexedAt).getTime();
+    if (Number.isFinite(ageMs) && ageMs > 24 * 60 * 60 * 1000) return "stale";
     return "fresh";
   } catch {
     return "unknown";
@@ -916,6 +939,8 @@ export function synchronizeGraphDeduped(
   return task;
 }
 
+const CLEAN_STALENESS: KnownStaleness = { isStale: false, staleFiles: [], deletedFiles: [] };
+
 export type RefreshOutcome = "not-required" | "refreshed" | "refresh-failed";
 
 export interface FreshIndexResult {
@@ -924,6 +949,8 @@ export interface FreshIndexResult {
   freshnessAfter: GraphFreshness;
   refreshOutcome: RefreshOutcome;
   warning?: string;
+  /** Set when the graph is known fresh, so later steps need not re-scan for drift. */
+  knownStaleness?: KnownStaleness;
 }
 
 /**
@@ -948,7 +975,13 @@ export async function ensureFreshIndex(
     persistenceMismatched = false;
   }
   if (freshnessBefore === "fresh" && !persistenceMismatched) {
-    return { index, freshnessBefore, freshnessAfter: "fresh", refreshOutcome: "not-required" };
+    return {
+      index,
+      freshnessBefore,
+      freshnessAfter: "fresh",
+      refreshOutcome: "not-required",
+      knownStaleness: CLEAN_STALENESS,
+    };
   }
   // Active-project correctness: never write to a project that was
   // switched, closed, or deleted after the caller loaded its meta.
@@ -965,11 +998,13 @@ export async function ensureFreshIndex(
   }
   try {
     const refreshed = await indexProject(meta);
+    const freshnessAfter = getSnapshotFreshness(refreshed);
     return {
       index: refreshed,
       freshnessBefore,
-      freshnessAfter: getGraphFreshness(refreshed),
+      freshnessAfter,
       refreshOutcome: "refreshed",
+      ...(freshnessAfter === "fresh" ? { knownStaleness: CLEAN_STALENESS } : {}),
     };
   } catch (err) {
     const after = loadProjectIndex(meta.id) ?? index;
@@ -1026,62 +1061,81 @@ export interface SupportingContext {
   symbols: IndexedSymbol[];
   testFiles: string[];
   rationale: string[];
+  /** Import-graph nodes expanded (bounded by depth and file caps). */
+  graphSteps?: number;
 }
 
-/** Resolve `./x` style specifiers against a source file to an in-index path. */
-function resolveSpecifierToIndex(
-  specifier: string,
-  sourceRel: string,
-  index: ProjectIndex
-): string | null {
-  if (!specifier.startsWith(".")) return null;
-  const dir = toPosixRel(sourceRel).split("/").slice(0, -1).join("/");
-  const base = dir ? `${dir}/${specifier}` : specifier;
-  const candidates = [base, `${base}.ts`, `${base}.tsx`, `${base}.js`, `${base}.py`, `${base}.go`];
-  // Normalize `./` and `../` segments without touching the filesystem.
-  for (const c of candidates) {
-    const parts: string[] = [];
-    for (const seg of c.split("/")) {
-      if (seg === "." || seg === "") continue;
-      if (seg === "..") parts.pop();
-      else parts.push(seg);
-    }
-    const norm = parts.join("/");
-    if (Object.prototype.hasOwnProperty.call(index.files, norm)) return norm;
+export interface GraphExpansionOptions {
+  /** Import hops to follow from the selected files (default 1, at most 3). */
+  depth?: number;
+  /** Maximum supporting files to return (default 10, at most 25). */
+  maxFiles?: number;
+}
+
+const DEFAULT_EXPANSION_DEPTH = 1;
+const DEFAULT_EXPANSION_FILES = 10;
+const MAX_EXPANSION_DEPTH = 3;
+const MAX_EXPANSION_FILES = 25;
+const MAX_TEST_AND_SUPPORT_FILES = 12;
+
+/** Resolved in-index import targets of a file (persisted resolution, or resolved on the fly for legacy snapshots). */
+function importTargets(index: ProjectIndex, rel: string): string[] {
+  const file = Object.prototype.hasOwnProperty.call(index.files, rel)
+    ? index.files[rel]
+    : undefined;
+  if (!file) return [];
+  const has = (p: string): boolean => Object.prototype.hasOwnProperty.call(index.files, p);
+  const out: string[] = [];
+  for (const dep of file.dependencies) {
+    const target =
+      dep.resolvedPath !== undefined && dep.resolution !== undefined
+        ? dep.resolvedPath
+        : resolveDependency(dep, rel, has).resolvedPath;
+    if (target && target !== rel && has(target) && !out.includes(target)) out.push(target);
   }
-  // Directory import pointing at an index file (./pkg -> ./pkg/index.ts).
-  for (const suffix of ["/index.ts", "/index.js", "/__init__.py"]) {
-    const parts: string[] = [];
-    for (const seg of `${base}${suffix}`.split("/")) {
-      if (seg === "." || seg === "") continue;
-      if (seg === "..") parts.pop();
-      else parts.push(seg);
-    }
-    const norm = parts.join("/");
-    if (Object.prototype.hasOwnProperty.call(index.files, norm)) return norm;
-  }
-  return null;
+  return out;
 }
 
 /**
- * Expand user-selected primary targets into bounded supporting context:
- * direct imports, callers (reverse dependencies), co-defined symbols, and
- * related tests. Purely index-driven and capped so results stay bounded.
+ * Expand user-selected primary targets into bounded supporting context: files
+ * they import and files that import them (import relationships only: no call
+ * graph is built or implied), related tests, and co-defined symbols. Breadth-
+ * first by import hop with an explicit depth and file cap, using the
+ * per-index reverse-import map instead of rescanning every file. Package and
+ * alias specifiers, and languages without an import resolver, are not followed;
+ * that is reported in the rationale instead of being guessed.
  */
-function expandSupportingFiles(index: ProjectIndex, selected: string[]): SupportingContext {
+export function expandSupportingFiles(
+  index: ProjectIndex,
+  selected: string[],
+  options: GraphExpansionOptions = {}
+): SupportingContext {
+  const depthLimit = Math.min(
+    Math.max(1, Math.floor(options.depth ?? DEFAULT_EXPANSION_DEPTH)),
+    MAX_EXPANSION_DEPTH
+  );
+  const fileCap = Math.min(
+    Math.max(1, Math.floor(options.maxFiles ?? DEFAULT_EXPANSION_FILES)),
+    MAX_EXPANSION_FILES
+  );
   const supporting: SupportingFile[] = [];
   const dependencies: IndexedDependency[] = [];
   const symbols: IndexedSymbol[] = [];
   const testFiles: string[] = [];
   const rationale: string[] = [];
   const seen = new Set<string>(selected);
-  const push = (p: string, reason: string): void => {
-    if (seen.has(p) || supporting.length >= 10) return;
-    if (!Object.prototype.hasOwnProperty.call(index.files, p)) return;
+  let steps = 0;
+  const push = (p: string, reason: string): boolean => {
+    if (seen.has(p) || supporting.length >= fileCap) return false;
+    if (!Object.prototype.hasOwnProperty.call(index.files, p)) return false;
     seen.add(p);
     supporting.push({ path: p, reason });
+    return true;
   };
 
+  let unresolvedPackages = 0;
+  let unresolvedRelative = 0;
+  const present: string[] = [];
   for (const rel of selected) {
     const file = Object.prototype.hasOwnProperty.call(index.files, rel)
       ? index.files[rel]
@@ -1092,26 +1146,68 @@ function expandSupportingFiles(index: ProjectIndex, selected: string[]): Support
       );
       continue;
     }
+    present.push(rel);
     for (const sym of file.symbols.slice(0, 20)) {
       if (symbols.length < 15) symbols.push(sym);
     }
+    for (const dep of file.dependencies) {
+      if (dep.resolution === "non-relative" || dep.resolution === "unsupported") {
+        unresolvedPackages++;
+      } else if (dep.resolution === "unresolved") {
+        unresolvedRelative++;
+      }
+    }
     for (const dep of file.dependencies.slice(0, 20)) {
       if (dependencies.length < 15) dependencies.push(dep);
-      const target = resolveSpecifierToIndex(dep.targetSpecifier, rel, index);
-      if (target) push(target, `imported by selected file ${rel}`);
     }
-    // Related tests by naming convention.
-    const base =
-      rel
-        .split("/")
-        .pop()
-        ?.replace(/\.[^.]+$/, "") ?? "";
-    if (base) {
-      for (const [otherRel, other] of Object.entries(index.files)) {
-        if (seen.has(otherRel) || testFiles.length + supporting.length >= 12) break;
-        if (!other.isTest) continue;
-        const otherLower = otherRel.toLowerCase();
-        if (otherLower.includes(base.toLowerCase())) {
+  }
+
+  // Import hops: forward (files the frontier imports) and backward (files that import it).
+  const reverse = getReverseImports(index);
+  let frontier = present.map((rel) => ({ rel, origin: rel }));
+  for (let depth = 1; depth <= depthLimit && frontier.length > 0; depth++) {
+    const next: Array<{ rel: string; origin: string }> = [];
+    for (const { rel, origin } of frontier) {
+      steps++;
+      for (const target of importTargets(index, rel)) {
+        const via =
+          depth === 1
+            ? `imported by selected file ${rel}`
+            : `imported by ${rel} (depth ${depth}, from ${origin})`;
+        if (push(target, via)) next.push({ rel: target, origin });
+      }
+      for (const importer of reverse.get(rel) ?? []) {
+        const via =
+          depth === 1
+            ? `imports selected file ${rel}`
+            : `imports ${rel} (depth ${depth}, from ${origin})`;
+        if (push(importer, via)) next.push({ rel: importer, origin });
+      }
+      if (supporting.length >= fileCap) break;
+    }
+    frontier = next;
+    if (supporting.length >= fileCap) break;
+  }
+
+  // Related tests by naming convention (one pass over the test files).
+  if (present.length > 0) {
+    const tests = Object.entries(index.files).filter(([, f]) => f.isTest);
+    for (const rel of present) {
+      const base =
+        rel
+          .split("/")
+          .pop()
+          ?.replace(/\.[^.]+$/, "")
+          .toLowerCase() ?? "";
+      if (!base) continue;
+      for (const [otherRel] of tests) {
+        if (
+          seen.has(otherRel) ||
+          testFiles.length + supporting.length >= MAX_TEST_AND_SUPPORT_FILES
+        ) {
+          break;
+        }
+        if (otherRel.toLowerCase().includes(base)) {
           testFiles.push(otherRel);
           push(otherRel, `test file related to selected file ${rel}`);
         }
@@ -1119,26 +1215,17 @@ function expandSupportingFiles(index: ProjectIndex, selected: string[]): Support
     }
   }
 
-  // Callers: files whose resolved imports point at a selected file.
-  if (selected.length > 0 && supporting.length < 10) {
-    for (const [otherRel, other] of Object.entries(index.files)) {
-      if (seen.has(otherRel) || supporting.length >= 10) break;
-      for (const dep of other.dependencies) {
-        const target = resolveSpecifierToIndex(dep.targetSpecifier, otherRel, index);
-        if (target && selected.includes(target)) {
-          push(otherRel, `imports selected file ${target}`);
-          break;
-        }
-      }
-    }
-  }
-
   if (supporting.length > 0) {
     rationale.push(
-      `Included ${supporting.length} supporting file(s) via direct imports, callers, or related tests of the selected targets.`
+      `Included ${supporting.length} supporting file(s) via imports (depth ${depthLimit}), importers, or related tests of the selected targets (import relationships only; no call graph).`
     );
   }
-  return { supporting, dependencies, symbols, testFiles, rationale };
+  if (unresolvedPackages > 0 || unresolvedRelative > 0) {
+    rationale.push(
+      `Not followed: ${unresolvedPackages} package/alias/unsupported-language import(s) and ${unresolvedRelative} relative import(s) that match no indexed file.`
+    );
+  }
+  return { supporting, dependencies, symbols, testFiles, rationale, graphSteps: steps };
 }
 
 export interface PlanInput {
@@ -1171,6 +1258,8 @@ export interface PlanResult {
   rationale: string[];
   warnings: string[];
   note: string;
+  /** Import-graph expansion steps taken while planning (telemetry; 0 when no files were selected). */
+  graphSteps?: number;
 }
 
 /**
@@ -1228,6 +1317,7 @@ export async function planCodeTask(
   let supporting: SupportingFile[] = [];
   let dependencies: IndexedDependency[] = [];
   let symbols: IndexedSymbol[] = [];
+  let graphSteps = 0;
   const rationale: string[] = [
     `Classified as ${understanding.category} (confidence ${understanding.confidence.toFixed(2)}): ${understanding.reason}`,
   ];
@@ -1239,34 +1329,31 @@ export async function planCodeTask(
       dependencies = expanded.dependencies;
       symbols = expanded.symbols;
       rationale.push(...expanded.rationale);
-      // Small inferred sweep for files the selection did not cover.
+      graphSteps = expanded.graphSteps ?? 0;
+      // Small inferred sweep for files the selection did not cover. Ranking
+      // uses index data only: planning needs paths, not source text.
       try {
-        const retrieved = retrieveContext(workingIndex, task, { fileBudget: 5, tokenBudget: 1500 });
-        for (const m of retrieved.matchedFiles) {
+        const ranking = rankCandidates(workingIndex, task);
+        for (const m of ranking.ranked) {
           const p = m.file.relativePath;
+          if (isPotentialSecretPath(p)) continue;
           if (!selected.includes(p) && !supporting.some((s) => s.path === p)) {
             if (inferredFiles.length < 5) inferredFiles.push(p);
           }
-        }
-        if (retrieved.staleFiles.length > 0) {
-          warnings.push(
-            `${retrieved.staleFiles.length} retrieved file(s) changed on disk since indexing; results may be incomplete.`
-          );
+          if (inferredFiles.length >= 5) break;
         }
       } catch {
         warnings.push("Context retrieval unavailable; relying on selected files only.");
       }
     } else if (!understanding.isSimple) {
       try {
-        const retrieved = retrieveContext(workingIndex, task, { fileBudget: 5, tokenBudget: 1500 });
-        inferredFiles = retrieved.matchedFiles.map((m) => m.file.relativePath).slice(0, 5);
-        dependencies = retrieved.dependencies.slice(0, 15);
-        symbols = retrieved.matchedSymbols.slice(0, 15);
-        if (retrieved.staleFiles.length > 0) {
-          warnings.push(
-            `${retrieved.staleFiles.length} retrieved file(s) changed on disk since indexing; results may be incomplete.`
-          );
-        }
+        const ranking = rankCandidates(workingIndex, task);
+        inferredFiles = ranking.ranked
+          .map((m) => m.file.relativePath)
+          .filter((p) => !isPotentialSecretPath(p))
+          .slice(0, 5);
+        dependencies = ranking.dependencies.slice(0, 15);
+        symbols = ranking.matchedSymbols.slice(0, 15);
         if (inferredFiles.length === 0) {
           warnings.push("No strong file matches; task text is the primary constraint.");
         }
@@ -1344,6 +1431,7 @@ export async function planCodeTask(
       options.length === 0
         ? "Simple task: execute directly without prompt options."
         : "If the user continues without choosing and continuation is clear, use option1.",
+    graphSteps,
   };
 }
 

@@ -242,7 +242,41 @@ describe("MusicPanel modal implementation", () => {
     expect(iframe).not.toBeNull();
     expect(iframe.src).toContain("youtube-nocookie.com/embed/0w80F8FffQ4");
     expect(iframe.src).toContain("autoplay=1");
+    // Native loop=1 is baked into the URL when loop is on at load time (the
+    // reliable repeat mechanism). Toggling loop mid-song does NOT rebuild the
+    // iframe (that used to restart the song); only switching loop OFF on an
+    // embed that was built with native loop rebuilds it, position-preserving.
     expect(iframe.src).toContain("loop=1");
+  });
+
+  it("renders the favorites heart (disabled without a track) and favorites tab in the drawer", async () => {
+    await act(async () => {
+      root.render(<MusicPanel startMuted={false} open={true} onClose={vi.fn()} />);
+    });
+
+    const heartBtn = container.querySelector(
+      "button[aria-label='Add to favorites']"
+    ) as HTMLButtonElement;
+    expect(heartBtn).not.toBeNull();
+    expect(heartBtn.disabled).toBe(true);
+
+    // Open the Next-playing drawer: it now has Next Playing / Favorites tabs.
+    const nextListBtn = container.querySelector(
+      "button[aria-label='Next playing list']"
+    ) as HTMLButtonElement;
+    await act(async () => nextListBtn.click());
+    expect(container.querySelector(".music-drawer-tab.active")?.textContent).toContain(
+      "Next Playing"
+    );
+
+    const favTab = Array.from(
+      container.querySelectorAll<HTMLButtonElement>(".music-drawer-tab")
+    ).find((b) => b.textContent?.includes("Favorites")) as HTMLButtonElement;
+    await act(async () => favTab.click());
+    expect(favTab.classList.contains("active")).toBe(true);
+    expect(container.querySelector(".music-drawer-empty")?.textContent).toContain(
+      "No favorites yet"
+    );
   });
 
   it("does not render open in browser button in player controls", async () => {

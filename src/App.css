@@ -4594,6 +4594,76 @@ button.status-git-btn-clickable:focus-visible {
   text-overflow: ellipsis;
 }
 
+/* Drawer tabs: Next Playing | Favorites (search keeps a plain title). */
+.music-drawer-tabs {
+  display: flex;
+  flex: 1;
+  gap: 4px;
+  justify-content: center;
+}
+
+.music-drawer-tab {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm, 6px);
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 3px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
+}
+
+.music-drawer-tab:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.music-drawer-tab.active {
+  color: var(--accent-primary);
+  background: var(--accent-subtle);
+  border-color: var(--border-accent, var(--accent-ring));
+}
+
+/* Favorite rows are div-based (they contain a nested remove button). */
+.music-favorite-item {
+  cursor: pointer;
+  outline: none;
+}
+
+.music-favorite-item:focus-visible {
+  border-color: var(--border-accent, var(--accent-ring));
+}
+
+.music-fav-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  border-radius: 50%;
+  color: var(--accent-primary);
+  cursor: pointer;
+  padding: 0;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
+}
+
+.music-fav-remove:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
 .music-drawer-list {
   flex: 1;
   overflow-y: auto;

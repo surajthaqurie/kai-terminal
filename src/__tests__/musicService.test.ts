@@ -1,13 +1,17 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearLegacyQueue,
   embedSrcForTrack,
   extractPlaylistId,
   hasNextItem,
+  isFavoriteTrack,
+  loadFavorites,
   parseYouTubePlayerMessage,
   resolveInputToTrack,
+  saveFavorites,
   searchYouTubeVideoId,
+  toggleFavoriteTrack,
   watchUrlForTrack,
   youtubeCommand,
 } from "../services/musicService";
@@ -37,7 +41,14 @@ describe("music input resolution", () => {
     expect(embedSrcForTrack(t)).not.toContain("mute=1");
     expect(embedSrcForTrack(t, true)).toContain("mute=1");
     expect(embedSrcForTrack(t)).toContain("enablejsapi=1");
+    // Native loop only applies to single videos, at load time.
+    expect(embedSrcForTrack(t)).not.toContain("loop=1");
+    expect(embedSrcForTrack(t, false, true)).toContain("loop=1&playlist=dQw4w9WgXcQ");
     const pl = resolveInputToTrack("https://www.youtube.com/playlist?list=PLabcdefghijkl")!;
+    expect(embedSrcForTrack(pl, false, true)).not.toContain("loop=1");
+    // `start` resumes at a position (loop-off rebuilds), floored and omitted at 0.
+    expect(embedSrcForTrack(t, false, false, 0)).not.toContain("start=");
+    expect(embedSrcForTrack(t, false, false, 83.7)).toContain("start=83");
     expect(embedSrcForTrack(pl)).toContain("listType=playlist&list=PLabcdefghijkl");
   });
 
@@ -158,5 +169,72 @@ describe("curated presets and random playback", () => {
     expect(id).toBe("dQw4w9WgXcQ");
     const empty = await searchYouTubeVideoId("   ");
     expect(empty).toBeNull();
+  });
+});
+
+describe("favorites", () => {
+  beforeEach(() => localStorage.clear());
+
+  const video = resolveInputToTrack("https://youtu.be/dQw4w9WgXcQ")!;
+  const other = resolveInputToTrack("https://youtu.be/4xDzrJKXOOO")!;
+
+  it("toggles a track in and out of the favorites list", () => {
+    let list = toggleFavoriteTrack(video, []);
+    expect(list).toHaveLength(1);
+    expect(isFavoriteTrack(video, list)).toBe(true);
+    list = toggleFavoriteTrack(other, list);
+    expect(list).toHaveLength(2);
+    list = toggleFavoriteTrack(video, list);
+    expect(list).toHaveLength(1);
+    expect(isFavoriteTrack(video, list)).toBe(false);
+    expect(isFavoriteTrack(other, list)).toBe(true);
+  });
+
+  it("matches the same song by identity, not object equality", () => {
+    const list = toggleFavoriteTrack(video, []);
+    expect(isFavoriteTrack({ ...video, title: "Different title" }, list)).toBe(true);
+    expect(isFavoriteTrack(other, list)).toBe(false);
+  });
+
+  it("persists and reloads favorites from localStorage", () => {
+    saveFavorites(toggleFavoriteTrack(video, []));
+    expect(loadFavorites()).toMatchObject([{ videoId: "dQw4w9WgXcQ" }]);
+  });
+
+  it("drops corrupt or unplayable persisted entries", () => {
+    localStorage.setItem(
+      "kai_music_favorites",
+      JSON.stringify([
+        "nope",
+        { title: "x" },
+        { title: "Bad id", videoId: "short" },
+        { title: "Good", videoId: "dQw4w9WgXcQ", playlistId: null, query: "q" },
+      ])
+    );
+    expect(loadFavorites()).toHaveLength(1);
+    expect(loadFavorites()[0].videoId).toBe("dQw4w9WgXcQ");
+  });
+
+  it("caps the favorites list at 50 songs", () => {
+    const many = Array.from({ length: 60 }, (_, i) => ({
+      title: `Song ${i}`,
+      videoId: String(1e10 + i)
+        .slice(0, 11)
+        .padEnd(11, "0"),
+      playlistId: null,
+      query: `Song ${i}`,
+    }));
+    saveFavorites(many);
+    expect(loadFavorites()).toHaveLength(50);
+    // The oldest favorites are dropped, newest survive.
+    expect(loadFavorites()[49].title).toBe("Song 59");
+  });
+
+  it("survives unavailable storage silently", () => {
+    const spy = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("quota");
+    });
+    expect(() => saveFavorites(toggleFavoriteTrack(video, []))).not.toThrow();
+    spy.mockRestore();
   });
 });

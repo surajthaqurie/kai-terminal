@@ -4,10 +4,12 @@ import crypto from "crypto";
 import type {
   IndexedFile,
   IndexedSymbol,
-  IndexedDependency,
   ProjectIndex,
   ProjectMeta,
   IndexChangeSet,
+  SkippedFileRecord,
+  SkipReason,
+  ScanSummary,
 } from "./types";
 import {
   loadProjectIndex,
@@ -22,11 +24,44 @@ import {
   newProjectIncarnation,
   SCHEMA_VERSION,
 } from "./registry";
+import { extractSymbolsAndDeps, EXTRACTOR_VERSION } from "./symbolExtractor";
+import { resolveAllDependencies } from "./importResolver";
+
+// Re-exported so existing importers of the extractor keep working.
+export { extractSymbolsAndDeps, EXTRACTOR_VERSION };
 
 // Strict limits
 const MAX_FILE_SIZE_BYTES = 512 * 1024; // 512 KB
-const MAX_TOTAL_FILES = 10000;
+export const MAX_TOTAL_FILES = 10000;
 const MAX_TRAVERSAL_DEPTH = 20;
+/** How long a failed read is remembered before the file is read again. */
+const UNREADABLE_RETRY_MS = 60_000;
+
+/**
+ * True when a skip record still describes the file on disk. Compares only
+ * stat metadata (size, mtime, and ctime when both sides carry it), so any
+ * edit, replacement or permission change invalidates the record and the
+ * file is inspected again.
+ */
+export function skipRecordMatches(
+  rec: SkippedFileRecord | undefined,
+  stat: { size: number; mtimeMs: number; ctimeMs?: number },
+  nowMs: number = Date.now()
+): boolean {
+  if (!rec) return false;
+  // A failed read can be transient (a lock held by an editor or antivirus), so
+  // unlike a content verdict it is retried once the record is old enough.
+  if (rec.reason === "unreadable") {
+    if (rec.recordedAtMs === undefined || nowMs - rec.recordedAtMs > UNREADABLE_RETRY_MS) {
+      return false;
+    }
+  }
+  if (rec.sizeBytes !== stat.size || rec.mtimeMs !== stat.mtimeMs) return false;
+  if (rec.ctimeMs !== undefined && stat.ctimeMs !== undefined && rec.ctimeMs !== stat.ctimeMs) {
+    return false;
+  }
+  return true;
+}
 
 // Excluded directory and file names (secrets, build outputs, dependencies)
 export const DEFAULT_EXCLUDED_DIRS = new Set([
@@ -181,7 +216,12 @@ export function isSensitiveContent(content: string): boolean {
   if (/ghp_[A-Za-z0-9]{30,}/.test(content)) return true; // GitHub PAT
   if (/github_pat_[A-Za-z0-9_]{50,}/.test(content)) return true; // GitHub fine-grained PAT
   if (/sk-ant-[A-Za-z0-9_-]{20,}/.test(content)) return true; // Anthropic API key
-  if (/sk-[A-Za-z0-9_-]{32,}/.test(content)) return true; // OpenAI API key
+  // OpenAI API key. The leading lookbehind keeps the prefix a real token
+  // start: without it any long kebab-case word ending in "sk" (e.g.
+  // "task-management-and-scheduling-service-config") matched and silently
+  // dropped the whole file. Keys such as `sk-proj-...`, `"sk-..."` and
+  // `KEY=sk-...` still match because they are not preceded by a word char.
+  if (/(?<![A-Za-z0-9])sk-[A-Za-z0-9_-]{32,}/.test(content)) return true;
   if (/gsk_[A-Za-z0-9]{20,}/.test(content)) return true; // Generic API key prefix
   return false;
 }
@@ -224,289 +264,6 @@ function detectLanguage(filename: string): string {
     default:
       return "text";
   }
-}
-
-/**
- * Deterministic, non-evaluating symbol parser for TypeScript/JavaScript, Rust, Python, Go
- */
-export function extractSymbolsAndDeps(
-  content: string,
-  relativePath: string,
-  language: string
-): { symbols: IndexedSymbol[]; dependencies: IndexedDependency[] } {
-  const symbols: IndexedSymbol[] = [];
-  const dependencies: IndexedDependency[] = [];
-  const lines = content.split("\n");
-
-  for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
-    const line = lines[lineIndex];
-    if (line.length > 2048) {
-      // Skip excessively long lines (minified code / bundled single-lines)
-      continue;
-    }
-    const lineNumber = lineIndex + 1;
-
-    try {
-      // TypeScript / JavaScript
-      if (language === "typescript" || language === "javascript") {
-        // Imports
-        const importMatch = line.match(
-          /import\s+(?:\{([^}]+)\}|\*\s+as\s+(\w+)|(\w+))\s+from\s+['"]([^'"]+)['"]/
-        );
-        if (importMatch) {
-          const specifier = importMatch[4];
-          const rawSymbols = importMatch[1] || importMatch[2] || importMatch[3] || "";
-          const importedSymbols = rawSymbols
-            .split(",")
-            .map((s) =>
-              s
-                .trim()
-                .split(/\s+as\s+/)[0]
-                .trim()
-            )
-            .filter(Boolean);
-
-          dependencies.push({
-            sourceFile: relativePath,
-            targetSpecifier: specifier,
-            isExternal: !specifier.startsWith("."),
-            importedSymbols,
-          });
-        }
-
-        // Exported or standard functions
-        const funcMatch = line.match(
-          /(?:export\s+)?(?:async\s+)?function\s+([a-zA-Z0-9_$]+)\s*\(([^)]*)\)/
-        );
-        if (funcMatch) {
-          symbols.push({
-            name: funcMatch[1],
-            kind: "function",
-            filePath: relativePath,
-            location: {
-              filePath: relativePath,
-              line: lineNumber,
-              column: line.indexOf(funcMatch[1]) + 1,
-            },
-            signature: funcMatch[0].trim(),
-            isExported: line.includes("export "),
-          });
-        }
-
-        // Const arrow functions
-        const arrowMatch = line.match(
-          /(?:export\s+)?const\s+([a-zA-Z0-9_$]+)\s*=\s*(?:async\s*)?\([^)]*\)\s*=>/
-        );
-        if (arrowMatch) {
-          symbols.push({
-            name: arrowMatch[1],
-            kind: "function",
-            filePath: relativePath,
-            location: {
-              filePath: relativePath,
-              line: lineNumber,
-              column: line.indexOf(arrowMatch[1]) + 1,
-            },
-            signature: arrowMatch[0].trim(),
-            isExported: line.includes("export "),
-          });
-        }
-
-        // Exported or module-level constants and variables
-        const constVarMatch = line.match(
-          /(?:export\s+)?(?:const|let|var)\s+([a-zA-Z0-9_$]+)\s*[:=]/
-        );
-        if (constVarMatch && !arrowMatch) {
-          const isUpper = /^[A-Z0-9_]+$/.test(constVarMatch[1]);
-          symbols.push({
-            name: constVarMatch[1],
-            kind: isUpper ? "constant" : "variable",
-            filePath: relativePath,
-            location: {
-              filePath: relativePath,
-              line: lineNumber,
-              column: line.indexOf(constVarMatch[1]) + 1,
-            },
-            signature: line.trim().slice(0, 120),
-            isExported: line.includes("export "),
-          });
-        }
-
-        // Classes
-        const classMatch = line.match(/(?:export\s+)?class\s+([a-zA-Z0-9_$]+)/);
-        if (classMatch) {
-          symbols.push({
-            name: classMatch[1],
-            kind: "class",
-            filePath: relativePath,
-            location: {
-              filePath: relativePath,
-              line: lineNumber,
-              column: line.indexOf(classMatch[1]) + 1,
-            },
-            isExported: line.includes("export "),
-          });
-        }
-
-        // Interfaces / Types
-        const ifaceMatch = line.match(/(?:export\s+)?(?:interface|type)\s+([a-zA-Z0-9_$]+)/);
-        if (ifaceMatch) {
-          symbols.push({
-            name: ifaceMatch[1],
-            kind: line.includes("interface ") ? "interface" : "type",
-            filePath: relativePath,
-            location: {
-              filePath: relativePath,
-              line: lineNumber,
-              column: line.indexOf(ifaceMatch[1]) + 1,
-            },
-            isExported: line.includes("export "),
-          });
-        }
-      }
-
-      // Rust
-      if (language === "rust") {
-        const useMatch = line.match(/use\s+([^;]+);/);
-        if (useMatch) {
-          dependencies.push({
-            sourceFile: relativePath,
-            targetSpecifier: useMatch[1].trim(),
-            isExternal: !useMatch[1].startsWith("crate::"),
-            importedSymbols: [useMatch[1].split("::").pop() || ""],
-          });
-        }
-
-        const fnMatch = line.match(/(?:pub\s+)?(?:async\s+)?fn\s+([a-zA-Z0-9_]+)\s*\(([^)]*)\)/);
-        if (fnMatch) {
-          symbols.push({
-            name: fnMatch[1],
-            kind: "function",
-            filePath: relativePath,
-            location: {
-              filePath: relativePath,
-              line: lineNumber,
-              column: line.indexOf(fnMatch[1]) + 1,
-            },
-            signature: fnMatch[0].trim(),
-            isExported: line.includes("pub "),
-          });
-        }
-
-        const structMatch = line.match(/(?:pub\s+)?(?:struct|enum|trait)\s+([a-zA-Z0-9_]+)/);
-        if (structMatch) {
-          symbols.push({
-            name: structMatch[1],
-            kind: "class",
-            filePath: relativePath,
-            location: {
-              filePath: relativePath,
-              line: lineNumber,
-              column: line.indexOf(structMatch[1]) + 1,
-            },
-            isExported: line.includes("pub "),
-          });
-        }
-      }
-
-      // Python
-      if (language === "python") {
-        const pyImport = line.match(
-          /(?:from\s+([a-zA-Z0-9_.]+)\s+import\s+([a-zA-Z0-9_, *]+)|import\s+([a-zA-Z0-9_,.]+))/
-        );
-        if (pyImport) {
-          dependencies.push({
-            sourceFile: relativePath,
-            targetSpecifier: pyImport[1] || pyImport[3] || "",
-            isExternal: true,
-            importedSymbols: pyImport[2] ? pyImport[2].split(",").map((s) => s.trim()) : [],
-          });
-        }
-
-        const pyDef = line.match(/^\s*(?:async\s+)?def\s+([a-zA-Z0-9_]+)\s*\(([^)]*)\):/);
-        if (pyDef) {
-          symbols.push({
-            name: pyDef[1],
-            kind: "function",
-            filePath: relativePath,
-            location: {
-              filePath: relativePath,
-              line: lineNumber,
-              column: line.indexOf(pyDef[1]) + 1,
-            },
-            signature: pyDef[0].trim(),
-            isExported: !pyDef[1].startsWith("_"),
-          });
-        }
-
-        const pyClass = line.match(/^\s*class\s+([a-zA-Z0-9_]+)/);
-        if (pyClass) {
-          symbols.push({
-            name: pyClass[1],
-            kind: "class",
-            filePath: relativePath,
-            location: {
-              filePath: relativePath,
-              line: lineNumber,
-              column: line.indexOf(pyClass[1]) + 1,
-            },
-            isExported: !pyClass[1].startsWith("_"),
-          });
-        }
-      }
-
-      // Go
-      if (language === "go") {
-        const goImportLine = line.match(/^\s*import\s+(?:"([^"]+)"|([a-zA-Z0-9_]+)\s+"([^"]+)")/);
-        if (goImportLine) {
-          const specifier = goImportLine[1] || goImportLine[3] || "";
-          if (specifier) {
-            dependencies.push({
-              sourceFile: relativePath,
-              targetSpecifier: specifier,
-              isExternal: !specifier.startsWith("."),
-              importedSymbols: goImportLine[2] ? [goImportLine[2]] : [],
-            });
-          }
-        }
-
-        const goFunc = line.match(/^\s*func\s+(?:\([^)]*\)\s+)?([A-Za-z_][\w]*)\s*\(/);
-        if (goFunc) {
-          symbols.push({
-            name: goFunc[1],
-            kind: "function",
-            filePath: relativePath,
-            location: {
-              filePath: relativePath,
-              line: lineNumber,
-              column: line.indexOf(goFunc[1]) + 1,
-            },
-            signature: line.trim().slice(0, 200),
-            isExported: /^[A-Z]/.test(goFunc[1]),
-          });
-        }
-
-        const goType = line.match(/^\s*type\s+([A-Za-z_][\w]*)\s+(?:struct|interface)/);
-        if (goType) {
-          symbols.push({
-            name: goType[1],
-            kind: "class",
-            filePath: relativePath,
-            location: {
-              filePath: relativePath,
-              line: lineNumber,
-              column: line.indexOf(goType[1]) + 1,
-            },
-            isExported: /^[A-Z]/.test(goType[1]),
-          });
-        }
-      }
-    } catch {
-      // Continue parsing next line if unexpected syntax error occurred
-    }
-  }
-
-  return { symbols, dependencies };
 }
 
 /**
@@ -659,6 +416,19 @@ export function detectStaleIndexEntries(index: ProjectIndex): {
   staleFiles: string[];
   deletedFiles: string[];
   newFiles: string[];
+  /**
+   * The snapshot's own scan stopped at the file-count cap, so files beyond it
+   * are unindexed by design and cannot be told apart from new files. New-file
+   * detection is skipped (it would otherwise report "new" forever and force a
+   * rebuild on every read); callers must surface the incomplete scan.
+   */
+  scanIncomplete: boolean;
+  /**
+   * The snapshot's symbols came from an older extractor revision. This counts
+   * as stale so one refresh re-extracts every file; the rebuilt snapshot
+   * carries the current revision and the check then settles.
+   */
+  extractorOutdated: boolean;
 } {
   const canonicalRoot = resolveCanonicalPath(index.meta.canonicalPath);
   const staleFiles: string[] = [];
@@ -666,14 +436,35 @@ export function detectStaleIndexEntries(index: ProjectIndex): {
   const snapshotMs = Date.parse(index.generatedAt);
   let racyRehashes = 0;
 
+  // Directory listings, read once per directory, for the case-only-rename check
+  // below (a realpath per file costs ~7x a stat on Windows and dominated the
+  // whole freshness check).
+  const dirListings = new Map<string, Set<string> | null>();
+  const onDiskNameMatches = (full: string): boolean => {
+    const dir = path.dirname(full);
+    let names = dirListings.get(dir);
+    if (names === undefined) {
+      try {
+        names = new Set(fs.readdirSync(dir));
+      } catch {
+        names = null;
+      }
+      dirListings.set(dir, names);
+    }
+    // An unreadable directory cannot disprove the name (the stat above already succeeded).
+    return names === null || names.has(path.basename(full));
+  };
+
   for (const [relPath, file] of Object.entries(index.files)) {
     const fullPath = path.join(canonicalRoot, relPath);
     try {
-      if (!fs.existsSync(fullPath)) {
+      let stat: fs.Stats;
+      try {
+        stat = fs.statSync(fullPath);
+      } catch {
         deletedFiles.push(relPath);
         continue;
       }
-      const stat = fs.statSync(fullPath);
       if (stat.mtimeMs !== file.mtimeMs || stat.size !== file.sizeBytes) {
         staleFiles.push(relPath);
         continue;
@@ -710,15 +501,12 @@ export function detectStaleIndexEntries(index: ProjectIndex): {
           continue;
         }
       }
-      // Case-only rename on case-insensitive filesystems: the old key
-      // still resolves but the on-disk case differs.
-      try {
-        const real = fs.realpathSync(fullPath);
-        if (path.basename(real) !== path.basename(relPath)) {
-          staleFiles.push(relPath);
-        }
-      } catch {
-        // realpath failure already handled as deleted above; ignore here.
+      // Case-only rename on case-insensitive filesystems: the old key still
+      // stats but the on-disk spelling differs. (Comparing against the real
+      // directory listing also means a symlinked file is not mistaken for a
+      // rename, which a basename-of-realpath comparison did.)
+      if (!onDiskNameMatches(fullPath)) {
+        staleFiles.push(relPath);
       }
     } catch {
       deletedFiles.push(relPath);
@@ -726,14 +514,19 @@ export function detectStaleIndexEntries(index: ProjectIndex): {
   }
 
   let newFiles: string[] = [];
-  try {
-    newFiles = detectUntrackedNewFiles(canonicalRoot, index);
-  } catch {
-    newFiles = [];
+  const scanIncomplete = index.scan?.fileLimitReached === true;
+  if (!scanIncomplete) {
+    try {
+      newFiles = detectUntrackedNewFiles(canonicalRoot, index);
+    } catch {
+      newFiles = [];
+    }
   }
 
-  const isStale = staleFiles.length > 0 || deletedFiles.length > 0 || newFiles.length > 0;
-  return { isStale, staleFiles, deletedFiles, newFiles };
+  const extractorOutdated = index.extractorVersion !== EXTRACTOR_VERSION;
+  const isStale =
+    staleFiles.length > 0 || deletedFiles.length > 0 || newFiles.length > 0 || extractorOutdated;
+  return { isStale, staleFiles, deletedFiles, newFiles, scanIncomplete, extractorOutdated };
 }
 
 /**
@@ -776,13 +569,20 @@ function detectUntrackedNewFiles(
         continue;
       }
       if (!rel || rel.startsWith("..")) continue;
-      let canonical: string;
-      try {
-        canonical = fs.realpathSync(fullPath);
-      } catch {
-        continue;
+      // Only a symlink (a junction counts as one) can lead outside the root, so
+      // only its target is resolved and boundary-checked here, exactly as the
+      // indexer does. A real entry of a directory already verified to be inside
+      // the root is inside it too, and needs no realpath (the dominant cost of
+      // this walk). The walk never descends into a link that fails the check.
+      let canonical = fullPath;
+      if (entry.isSymbolicLink()) {
+        try {
+          canonical = fs.realpathSync(fullPath);
+        } catch {
+          continue;
+        }
+        if (!isWithinProjectBoundary(canonical, canonicalRoot)) continue;
       }
-      if (!isWithinProjectBoundary(canonical, canonicalRoot)) continue;
       let isDir = entry.isDirectory();
       let isFile = entry.isFile();
       if (entry.isSymbolicLink()) {
@@ -802,18 +602,27 @@ function detectUntrackedNewFiles(
         visited.add(canonical);
         stack.push({ dir: fullPath, depth: depth + 1 });
       } else if (isFile) {
+        // Tracked files were already stat-checked above; only unknown files need a look.
+        if (Object.prototype.hasOwnProperty.call(index.files, rel)) continue;
         if (isSensitiveFile(entry.name)) continue;
         if (isBinaryFile(entry.name)) continue;
         if (matchesIgnorePattern(rel, entry.name, ignorePatterns)) continue;
+        let st: fs.Stats;
         try {
-          const st = fs.statSync(fullPath);
-          if (st.size > MAX_FILE_SIZE_BYTES) continue;
+          st = fs.statSync(fullPath);
         } catch {
           continue;
         }
-        if (!Object.prototype.hasOwnProperty.call(index.files, rel)) {
-          found.push(rel);
-        }
+        if (st.size > MAX_FILE_SIZE_BYTES) continue;
+        // A file the indexer already inspected and rejected on content
+        // (secret, binary, unreadable) is not "new" while its stat metadata
+        // is unchanged; any change makes it new again so it is reconsidered.
+        const rec =
+          index.skipped && Object.prototype.hasOwnProperty.call(index.skipped, rel)
+            ? index.skipped[rel]
+            : undefined;
+        if (skipRecordMatches(rec, st)) continue;
+        found.push(rel);
       }
     }
   }
@@ -825,7 +634,13 @@ function detectUntrackedNewFiles(
  */
 export async function indexProject(
   meta: ProjectMeta,
-  options: { forceRebuild?: boolean; excludePatterns?: string[]; dryRun?: boolean } = {}
+  options: {
+    forceRebuild?: boolean;
+    excludePatterns?: string[];
+    dryRun?: boolean;
+    /** Lower the file-count cap (tests and constrained callers); never raises it above MAX_TOTAL_FILES. */
+    maxTotalFiles?: number;
+  } = {}
 ): Promise<ProjectIndex> {
   const lock = new ProjectLock(meta.id);
   if (!lock.acquire(6000)) {
@@ -845,6 +660,11 @@ export async function indexProject(
     }
     const canonicalRoot = resolveCanonicalPath(meta.canonicalPath);
     const existingIndex = options.forceRebuild ? null : loadProjectIndex(meta.id);
+    // Symbols written by an older extractor are re-extracted (the file is
+    // re-read) even when its stat metadata is unchanged. That is a
+    // reprocessing pass, not a content change, so it is not reported as
+    // `modified`.
+    const extractorCurrent = existingIndex?.extractorVersion === EXTRACTOR_VERSION;
     // Normalize legacy keys: indexes written on Windows used backslash
     // separators (`src\a.ts`). Lookups below use POSIX keys (`src/a.ts`).
     const existingFiles: Record<string, IndexedFile> = Object.create(null);
@@ -857,11 +677,27 @@ export async function indexProject(
       }
     }
 
+    // Skip records from the previous snapshot (stat-only memos of files that
+    // were inspected and rejected on content). Honoured only while the file's
+    // stat metadata is unchanged; a forced rebuild forgets them.
+    const existingSkipped: Record<string, SkippedFileRecord> =
+      existingIndex && existingIndex.skipped && typeof existingIndex.skipped === "object"
+        ? existingIndex.skipped
+        : Object.create(null);
+
     const indexedFiles: Record<string, IndexedFile> = Object.create(null);
     const symbolIndex: Record<string, IndexedSymbol[]> = Object.create(null);
+    const skipped: Record<string, SkippedFileRecord> = Object.create(null);
     const modifiedFiles: string[] = [];
     const newFiles: string[] = [];
     let totalFilesSeen = 0;
+    const fileCap = Math.min(
+      Math.max(1, Math.floor(options.maxTotalFiles ?? MAX_TOTAL_FILES)),
+      MAX_TOTAL_FILES
+    );
+    let fileLimitReached = false;
+    let depthLimitReached = false;
+    let unreadableDirs = 0;
 
     const ignorePatterns = loadIgnorePatterns(canonicalRoot);
     if (options.excludePatterns) {
@@ -873,17 +709,34 @@ export async function indexProject(
     visitedDirs.add(normalizePathForIdentity(canonicalRoot));
 
     function scanDir(dirPath: string, depth: number): void {
-      if (depth > MAX_TRAVERSAL_DEPTH || totalFilesSeen >= MAX_TOTAL_FILES) return;
+      // Every early exit below leaves part of the tree unvisited; each one is
+      // recorded in the scan summary so a partial scan is never reported as
+      // complete.
+      if (depth > MAX_TRAVERSAL_DEPTH) {
+        depthLimitReached = true;
+        return;
+      }
+      if (totalFilesSeen >= fileCap) {
+        fileLimitReached = true;
+        return;
+      }
 
       let entries: fs.Dirent[];
       try {
         entries = fs.readdirSync(dirPath, { withFileTypes: true });
       } catch {
+        unreadableDirs++;
         return; // Unreadable directory
       }
 
       for (const entry of entries) {
-        if (totalFilesSeen >= MAX_TOTAL_FILES) break;
+        if (totalFilesSeen >= fileCap) {
+          // Entries that would have been excluded anyway do not make the
+          // scan partial; anything else left unvisited does.
+          if (DEFAULT_EXCLUDED_DIRS.has(entry.name) || entry.name.startsWith(".")) continue;
+          fileLimitReached = true;
+          break;
+        }
 
         const fullPath = path.join(dirPath, entry.name);
         const relPath = toPosixRel(path.relative(canonicalRoot, fullPath));
@@ -944,11 +797,12 @@ export async function indexProject(
           const cached = existingFiles[relPath];
 
           // Check if file is unchanged (comparing mtime, ctime, and size)
-          const isUnchanged =
+          const statUnchanged =
             cached &&
             cached.mtimeMs === mtimeMs &&
             cached.sizeBytes === stat.size &&
             (cached.ctimeMs === undefined || ctimeMs === undefined || cached.ctimeMs === ctimeMs);
+          const isUnchanged = statUnchanged && extractorCurrent;
 
           if (isUnchanged) {
             deletedCandidates.delete(relPath);
@@ -977,17 +831,44 @@ export async function indexProject(
             continue;
           }
 
+          // A file rejected on content in an earlier build is not re-read while
+          // its stat metadata is unchanged (it is not "new", just skipped).
+          const prevSkip = Object.prototype.hasOwnProperty.call(existingSkipped, relPath)
+            ? existingSkipped[relPath]
+            : undefined;
+          if (skipRecordMatches(prevSkip, stat)) {
+            skipped[relPath] = prevSkip as SkippedFileRecord;
+            continue;
+          }
+
+          const recordSkip = (reason: SkipReason): void => {
+            skipped[relPath] = {
+              reason,
+              sizeBytes: stat.size,
+              mtimeMs,
+              ...(ctimeMs !== undefined ? { ctimeMs } : {}),
+              ...(reason === "unreadable" ? { recordedAtMs: Date.now() } : {}),
+            };
+          };
+
           // File is new or modified; read and process
           let content: string;
           try {
             const buf = fs.readFileSync(fullPath);
-            if (isBinaryFile(entry.name, buf)) continue;
+            if (isBinaryFile(entry.name, buf)) {
+              recordSkip("binary_content");
+              continue;
+            }
             content = buf.toString("utf-8");
           } catch {
+            recordSkip("unreadable");
             continue;
           }
 
-          if (isSensitiveContent(content)) continue;
+          if (isSensitiveContent(content)) {
+            recordSkip("sensitive_content");
+            continue;
+          }
 
           const sha256 = crypto.createHash("sha256").update(content).digest("hex");
           const language = detectLanguage(entry.name);
@@ -1001,12 +882,17 @@ export async function indexProject(
 
           if (cached) {
             deletedCandidates.delete(relPath);
-            modifiedFiles.push(relPath);
+            if (!statUnchanged) modifiedFiles.push(relPath);
           } else {
             newFiles.push(relPath);
           }
 
           const { symbols, dependencies } = extractSymbolsAndDeps(content, relPath, language);
+          // A trailing newline ends the last line; it does not start another.
+          const lineCount =
+            content.length === 0
+              ? 0
+              : content.split("\n").length - (content.endsWith("\n") ? 1 : 0);
 
           const indexedFile: IndexedFile = {
             relativePath: relPath,
@@ -1016,6 +902,7 @@ export async function indexProject(
             ctimeMs,
             sha256,
             language,
+            lineCount,
             symbols,
             dependencies,
             isTest,
@@ -1040,19 +927,31 @@ export async function indexProject(
 
     scanDir(canonicalRoot, 0);
 
-    // Rename and deletion detection
+    // Import targets depend on which other files exist, so they are resolved
+    // for every file on every build (also for reused cache entries): a target
+    // added or deleted elsewhere changes the answer.
+    resolveAllDependencies(indexedFiles);
+
+    // Rename and deletion detection: one pass over the deletion candidates
+    // keyed by content hash (first candidate in scan order wins, as before).
     const renamedFiles: Array<{ from: string; to: string }> = [];
     const addedFiles: string[] = [];
+    const deletedByContent = new Map<string, string[]>();
+    for (const [oldRel, oldFile] of deletedCandidates.entries()) {
+      const key = `${oldFile.sha256}:${oldFile.sizeBytes}`;
+      const bucket = deletedByContent.get(key);
+      if (bucket) bucket.push(oldRel);
+      else deletedByContent.set(key, [oldRel]);
+    }
 
     for (const newRel of newFiles) {
       const newFile = indexedFiles[newRel];
       let matchedOldRel: string | null = null;
-      if (newFile && deletedCandidates.size > 0) {
-        for (const [oldRel, oldFile] of deletedCandidates.entries()) {
-          if (oldFile.sha256 === newFile.sha256 && oldFile.sizeBytes === newFile.sizeBytes) {
-            matchedOldRel = oldRel;
-            break;
-          }
+      if (newFile) {
+        const bucket = deletedByContent.get(`${newFile.sha256}:${newFile.sizeBytes}`);
+        while (bucket && bucket.length > 0 && matchedOldRel === null) {
+          const candidate = bucket.shift() as string;
+          if (deletedCandidates.has(candidate)) matchedOldRel = candidate;
         }
       }
 
@@ -1065,12 +964,25 @@ export async function indexProject(
     }
 
     const deletedFiles = Array.from(deletedCandidates.keys());
+    const skippedByReason: Partial<Record<SkipReason, number>> = {};
+    for (const rec of Object.values(skipped)) {
+      skippedByReason[rec.reason] = (skippedByReason[rec.reason] ?? 0) + 1;
+    }
+    const scan: ScanSummary = {
+      complete: !fileLimitReached && !depthLimitReached && unreadableDirs === 0,
+      fileLimitReached,
+      fileLimit: fileCap,
+      depthLimitReached,
+      unreadableDirs,
+      skippedByReason,
+    };
     const changes: IndexChangeSet = {
       added: addedFiles,
       modified: modifiedFiles,
       renamed: renamedFiles,
       deleted: deletedFiles,
       isStale: false,
+      skippedCount: Object.keys(skipped).length,
     };
 
     // Calculate total tokens estimate from file sizes
@@ -1106,6 +1018,9 @@ export async function indexProject(
       totalTokensEstimated: totalTokens,
       generatedAt: nowIso,
       changes,
+      skipped,
+      scan,
+      extractorVersion: EXTRACTOR_VERSION,
       snapshotId,
     };
 

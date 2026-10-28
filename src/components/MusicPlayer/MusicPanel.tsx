@@ -10,6 +10,7 @@ import {
 import {
   ChevronLeft,
   Contrast,
+  Heart,
   ListMusic,
   Maximize2,
   Minimize2,
@@ -41,10 +42,14 @@ import {
   embedSrcForTrack,
   fetchPlaylistVideos,
   hasNextItem,
+  isFavoriteTrack,
+  loadFavorites,
   parseYouTubePlayerMessage,
   progressPercent,
   resolveInputToTrack,
+  saveFavorites,
   searchYouTubeVideos,
+  toggleFavoriteTrack,
   youtubeCommand,
 } from "../../services/musicService";
 
@@ -92,7 +97,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
   const [suggestLoading, setSuggestLoading] = useState(false);
   const [showNextList, setShowNextList] = useState<boolean>(false);
   const [drawerOpen, setDrawerOpen] = useState<boolean>(false);
-  const [drawerMode, setDrawerMode] = useState<"queue" | "search">("queue");
+  const [drawerMode, setDrawerMode] = useState<"queue" | "search" | "favorites">("queue");
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(startMuted);
   const [isPinned, setIsPinned] = useState<boolean>(() => {
@@ -110,6 +115,18 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     return 75;
   });
   const [loop, setLoop] = useState(false);
+  // Loop bookkeeping: the embed bakes native `loop=1` into its URL only at
+  // load time (the most reliable repeat). Toggling loop mid-song must never
+  // rebuild the iframe (that restarts the song) — the ended-state handler
+  // replays instead — except switching loop OFF when the live embed carries
+  // native loop, which a command cannot cancel: that one rebuild preserves
+  // the position through the `start` URL param instead of restarting.
+  const [embedReloadNonce, setEmbedReloadNonce] = useState(0);
+  const nativeLoopRef = useRef(false);
+  const rebuildStartRef = useRef(0);
+  // Favorite songs, persisted in localStorage; the heart button in the
+  // controls and the Favorites tab in the drawer both drive this list.
+  const [favorites, setFavorites] = useState<MusicTrack[]>(() => loadFavorites());
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [online, setOnline] = useState(isOnline);
@@ -172,13 +189,24 @@ export const MusicPanel: FC<MusicPanelProps> = ({
   }, [open, isPinned, onClose]);
 
   // Mute is applied at load through the URL and afterwards through commands,
-  // so toggling it never reloads (restarts) the video.
-  const src = useMemo(
-    () => (track && online ? embedSrcForTrack(track, mutedRef.current, loop) : null),
-    // Only the track's identity and loop reloads the embed; a title update must not.
+  // so toggling it never reloads (restarts) the video. Native `loop=1` is
+  // baked into the URL only at load time (the loop state the track starts
+  // with); toggling loop mid-song does not rebuild the iframe, so it can
+  // never restart playback.
+  const src = useMemo(() => {
+    if (!track || !online) return null;
+    const start = rebuildStartRef.current;
+    rebuildStartRef.current = 0;
+    return embedSrcForTrack(track, mutedRef.current, loopRef.current, start);
+    // Only the track's identity reloads the embed; a title update must not.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [track?.videoId, track?.playlistId, track?.query, online, loop]
-  );
+  }, [track?.videoId, track?.playlistId, track?.query, online, embedReloadNonce]);
+
+  // Track whether the live embed carries native loop, so switching loop off
+  // knows it must rebuild (commands cannot cancel YouTube's own looping).
+  useEffect(() => {
+    nativeLoopRef.current = Boolean(src && loopRef.current && track?.videoId && !track?.playlistId);
+  }, [src, track?.videoId, track?.playlistId]);
 
   const sendCommand = useCallback((func: YouTubeCommand | string, args: unknown = "") => {
     frameRef.current?.contentWindow?.postMessage(youtubeCommand(func, args), "*");
@@ -505,7 +533,54 @@ export const MusicPanel: FC<MusicPanelProps> = ({
   };
 
   const toggleLoop = () => {
-    setLoop((v) => !v);
+    const next = !loop;
+    setLoop(next);
+    // Switching loop OFF on an embed that carries native loop needs a
+    // position-preserving rebuild; everything else is command/event driven
+    // and never touches the iframe.
+    if (!next && nativeLoopRef.current) {
+      nativeLoopRef.current = false;
+      rebuildStartRef.current = Math.max(0, Math.floor(currentTime));
+      setEmbedReloadNonce((n) => n + 1);
+    }
+  };
+
+  /** Whether the current track is in the favorites list (drives the heart). */
+  const isCurrentFavorite = Boolean(
+    track && (track.videoId || track.playlistId) && isFavoriteTrack(track, favorites)
+  );
+
+  const toggleFavorite = () => {
+    if (!track || (!track.videoId && !track.playlistId)) return;
+    setFavorites((prev) => {
+      const next = toggleFavoriteTrack(track, prev);
+      saveFavorites(next);
+      return next;
+    });
+  };
+
+  /** Play a favorite as the current track (same path as queue items). */
+  const playFavorite = (item: MusicTrack, index: number) => {
+    const selected = favorites[index];
+    if (!selected || (selected.videoId && selected.videoId === track?.videoId)) {
+      replayCurrent();
+      return;
+    }
+    pushHistory();
+    setTrack(item);
+    setPlaying(true);
+    setCurrentTime(0);
+    setDuration(0);
+    setNotice(null);
+  };
+
+  /** Remove one favorite (heart in its row). */
+  const removeFavorite = (index: number) => {
+    setFavorites((prev) => {
+      const next = prev.filter((_, i) => i !== index);
+      saveFavorites(next);
+      return next;
+    });
   };
 
   const toggleNextList = async () => {
@@ -1354,6 +1429,17 @@ export const MusicPanel: FC<MusicPanelProps> = ({
               >
                 {loop ? <Repeat1 size={14} /> : <Repeat size={14} />}
               </button>
+              <button
+                type="button"
+                className={`btn btn-icon music-ctrl-btn ${isCurrentFavorite ? "music-control-active" : ""}`}
+                onClick={toggleFavorite}
+                disabled={!track || (!track.videoId && !track.playlistId)}
+                title={isCurrentFavorite ? "Remove from favorites" : "Add to favorites"}
+                aria-label={isCurrentFavorite ? "Remove from favorites" : "Add to favorites"}
+                aria-pressed={isCurrentFavorite}
+              >
+                <Heart size={14} fill={isCurrentFavorite ? "currentColor" : "none"} />
+              </button>
 
               <div className="music-volume-group" title={`Volume: ${muted ? 0 : volume}%`}>
                 <button
@@ -1407,11 +1493,30 @@ export const MusicPanel: FC<MusicPanelProps> = ({
             >
               <ChevronLeft size={16} />
             </button>
-            <span className="music-drawer-title">
-              {drawerMode === "search"
-                ? `Search Results (${searchResults.length})`
-                : `Next Playing (${queue.length})`}
-            </span>
+            {drawerMode === "search" ? (
+              <span className="music-drawer-title">Search Results ({searchResults.length})</span>
+            ) : (
+              <div className="music-drawer-tabs" role="tablist">
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={drawerMode === "queue"}
+                  className={`music-drawer-tab ${drawerMode === "queue" ? "active" : ""}`}
+                  onClick={() => setDrawerMode("queue")}
+                >
+                  Next Playing ({queue.length})
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={drawerMode === "favorites"}
+                  className={`music-drawer-tab ${drawerMode === "favorites" ? "active" : ""}`}
+                  onClick={() => setDrawerMode("favorites")}
+                >
+                  Favorites ({favorites.length})
+                </button>
+              </div>
+            )}
           </div>
 
           <div className="music-drawer-list music-track-list">
@@ -1455,6 +1560,74 @@ export const MusicPanel: FC<MusicPanelProps> = ({
                   </button>
                 );
               })
+            ) : drawerMode === "favorites" ? (
+              favorites.length === 0 ? (
+                <div className="music-drawer-empty">
+                  <span>No favorites yet</span>
+                  <small className="muted-text">
+                    Play a song and tap the heart to save it here
+                  </small>
+                </div>
+              ) : (
+                favorites.map((item, idx) => {
+                  const isCurrent = Boolean(item.videoId && item.videoId === track?.videoId);
+                  return (
+                    <div
+                      key={`${item.videoId || item.playlistId}-${idx}`}
+                      role="button"
+                      tabIndex={0}
+                      className={`music-track-item music-queue-item music-favorite-item${isCurrent ? " music-item-playing" : ""}`}
+                      onClick={() => playFavorite(item, idx)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          playFavorite(item, idx);
+                        }
+                      }}
+                      title={isCurrent ? "Restart this song" : `Play ${item.title}`}
+                    >
+                      <span className="music-item-index">{idx + 1}</span>
+                      {item.videoId ? (
+                        <img
+                          src={`https://i.ytimg.com/vi/${encodeURIComponent(item.videoId)}/mqdefault.jpg`}
+                          alt=""
+                          loading="lazy"
+                          className="music-item-thumb"
+                          onError={(e) => {
+                            (e.currentTarget as HTMLImageElement).style.display = "none";
+                          }}
+                        />
+                      ) : (
+                        <div className="music-item-thumb-placeholder" aria-hidden="true">
+                          <Play size={10} />
+                        </div>
+                      )}
+                      <span className="music-item-name music-queue-name">{item.title}</span>
+                      {isCurrent ? (
+                        <span className="music-eq" aria-label="Now playing">
+                          <i />
+                          <i />
+                          <i />
+                        </span>
+                      ) : (
+                        <Play size={10} className="music-item-play-ico music-queue-play-ico" />
+                      )}
+                      <button
+                        type="button"
+                        className="music-fav-remove"
+                        title="Remove from favorites"
+                        aria-label={`Remove ${item.title} from favorites`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          removeFavorite(idx);
+                        }}
+                      >
+                        <Heart size={11} fill="currentColor" />
+                      </button>
+                    </div>
+                  );
+                })
+              )
             ) : queue.length === 0 && !track ? (
               <div className="music-drawer-empty">
                 <span>No upcoming songs in list</span>

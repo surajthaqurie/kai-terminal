@@ -43,7 +43,6 @@ export const DEFAULT_SETTINGS: UserSettings = {
   skipShellProfile: false,
   showMusicPlayer: false,
   musicStartMuted: false,
-  musicPauseOnCall: true,
   keybindings: DEFAULT_KEYBINDINGS,
 };
 
@@ -148,8 +147,6 @@ export class SettingsService {
     merged.skipShellProfile = Boolean(merged.skipShellProfile);
     merged.showMusicPlayer = Boolean(merged.showMusicPlayer);
     merged.musicStartMuted = Boolean(merged.musicStartMuted);
-    merged.musicPauseOnCall =
-      merged.musicPauseOnCall === undefined ? true : Boolean(merged.musicPauseOnCall);
     merged.autoCheckUpdates =
       merged.autoCheckUpdates === undefined ? true : Boolean(merged.autoCheckUpdates);
     return merged;

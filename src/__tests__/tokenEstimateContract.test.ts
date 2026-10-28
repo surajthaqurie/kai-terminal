@@ -183,6 +183,6 @@ describe("token-count truthfulness contract (KNOWN_LIMITATIONS 1.8.2)", () => {
     );
     expect(res?.error).toBeUndefined();
     const text = (res?.result as { content: Array<{ text: string }> }).content[0].text;
-    expect(text).toContain("Estimate (cl100k heuristic)");
+    expect(text).toContain("Estimate (character heuristic, not a model tokenizer)");
   });
 });

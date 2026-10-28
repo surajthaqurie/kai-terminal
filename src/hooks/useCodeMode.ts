@@ -11,8 +11,6 @@ import { useLatest } from "./useLatest";
 const CODE_MODE_POLL_MS = 4000;
 
 interface CodeModeOptions {
-  /** Active pane's project dir (pane -> tab -> toolbar). */
-  effectiveProjectDir: string;
   /** A second `kai <path>` launch asked this window to show `dir`. */
   onOpenProject: (dir: string) => void;
 }
@@ -23,11 +21,11 @@ interface CodeModeOptions {
  * `~/.kai/active_project.json` + launch env, so dev and release builds
  * agree. Recent folders / new tabs never activate Code Mode.
  *
- * The footer pill combines global + per-pane truth (see resolveModeDisplay):
- * inside the project → "Code Mode", anywhere else → "Terminal" (the pill
- * follows the pane; it never names another project).
+ * The footer pill is STICKY (see resolveModeDisplay): it shows "Code Mode"
+ * while a persisted project exists and "Terminal" the moment it is cleared
+ * — pane directory reports never flip it on their own.
  */
-export function useCodeMode({ effectiveProjectDir, onOpenProject }: CodeModeOptions) {
+export function useCodeMode({ onOpenProject }: CodeModeOptions) {
   const onOpenProjectRef = useLatest(onOpenProject);
   const [codeModeProject, setCodeModeProject] = useState<string | null>(() => {
     try {
@@ -117,18 +115,18 @@ export function useCodeMode({ effectiveProjectDir, onOpenProject }: CodeModeOpti
     return () => clearInterval(timer);
   }, [syncCodeModeState]);
 
-  // Stable footer pill: the badge flapped between "Terminal" and nothing
-  // whenever the effective dir was momentarily empty (cwd still resolving) —
-  // unknown dir keeps the last pill instead of flashing, while clearing the
-  // project always drops to Terminal immediately (`kai stop code` must
-  // reflect at once).
-  const [modeDisplay, setModeDisplay] = useState<ModeDisplay>("terminal");
+  // Sticky footer pill: "Code Mode" while a persisted project exists,
+  // "terminal" the moment it is cleared. No per-pane input — directory
+  // reports and still-resolving cwds never flip the badge (flicker fix).
+  const [modeDisplay, setModeDisplay] = useState<ModeDisplay>(() =>
+    codeModeProject ? "code" : "terminal"
+  );
   useEffect(() => {
     setModeDisplay((prev) => {
-      const next = resolveModeDisplay(codeModeProject, effectiveProjectDir, prev);
+      const next = resolveModeDisplay(codeModeProject);
       return prev === next ? prev : next;
     });
-  }, [effectiveProjectDir, codeModeProject]);
+  }, [codeModeProject]);
 
   return { syncCodeModeState, modeDisplay };
 }

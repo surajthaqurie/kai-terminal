@@ -9,32 +9,20 @@ import {
   codeProjectName,
 } from "../services/projectService";
 
-describe("resolveModeDisplay (footer pill: global + per-pane truth)", () => {
-  it("is terminal without a persisted project — always clears, even mid-resolve", () => {
-    expect(resolveModeDisplay(null, "/repo/demo")).toBe("terminal");
-    expect(resolveModeDisplay(null, "")).toBe("terminal");
-    // `kai stop code` must reflect at once, not keep a stale pill.
-    expect(resolveModeDisplay(null, "/repo/demo", "code")).toBe("terminal");
-    expect(resolveModeDisplay(null, "", "code")).toBe("terminal");
+describe("resolveModeDisplay (footer pill: sticky on the persisted project)", () => {
+  it("is terminal without a persisted project", () => {
+    expect(resolveModeDisplay(null)).toBe("terminal");
   });
 
-  it("is code inside the project (exact dir and children)", () => {
-    expect(resolveModeDisplay("/repo/demo", "/repo/demo")).toBe("code");
-    expect(resolveModeDisplay("/repo/demo", "/repo/demo/sub")).toBe("code");
-    expect(resolveModeDisplay("C:\\Repo\\Demo", "c:/repo/demo/src")).toBe("code");
+  it("is code while a persisted project exists, whatever the pane reports", () => {
+    expect(resolveModeDisplay("/repo/demo")).toBe("code");
+    expect(resolveModeDisplay("C:\\Repo\\Demo")).toBe("code");
   });
 
-  it("is terminal when the pane sits outside the project (no other project name shown)", () => {
-    expect(resolveModeDisplay("/repo/demo", "/repo/other")).toBe("terminal");
-    expect(resolveModeDisplay("/repo/demo", "/repo/demo-x")).toBe("terminal");
-    // Same pane flips back to Code Mode once it is inside the project again.
-    expect(resolveModeDisplay("/repo/demo", "/repo/demo/src", "terminal")).toBe("code");
-  });
-
-  it("keeps the previous pill while the cwd is still resolving", () => {
-    expect(resolveModeDisplay("/repo/demo", "", "code")).toBe("code");
-    expect(resolveModeDisplay("/repo/demo", "", "terminal")).toBe("terminal");
-    expect(resolveModeDisplay("/repo/demo", "")).toBe("terminal");
+  it("never flips on transient or outside directory reports", () => {
+    // The pane moved elsewhere / cwd still resolving: the badge must NOT
+    // auto-flip — only `kai stop code` / `kai stop` clears it.
+    expect(resolveModeDisplay("/repo/demo")).toBe("code");
   });
 });
 

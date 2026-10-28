@@ -292,6 +292,10 @@ export function registerProject(projectPath: string): ProjectMeta {
         typeof existing.canonicalPath === "string" &&
         typeof existing.status === "string"
       ) {
+        // Only rewrite meta.json when a field actually changes: every MCP call
+        // registers the project, and an unconditional rewrite made each plain
+        // read an atomic write.
+        const before = JSON.stringify(existing);
         // Update rootPath if alias was used
         existing.rootPath = projectPath;
         // If it was stuck in 'indexing' from an interrupted process, reset to ready or unindexed
@@ -308,7 +312,11 @@ export function registerProject(projectPath: string): ProjectMeta {
         // the upgrade carries no token and is rejected by
         // verifyProjectIdentity, never silently adopted.
         ensureIncarnation(existing);
-        atomicWriteJson(metaPath, existing);
+        if (JSON.stringify(existing) !== before) {
+          atomicWriteJson(metaPath, existing);
+        }
+        // The abandoned-temp sweep stays unconditional (a cheap readdir): a
+        // registration is the recovery point after an interrupted write.
         cleanupDanglingTempFiles(getProjectStorageDir(id));
         return existing as ProjectMeta;
       }
@@ -508,7 +516,112 @@ export function loadProjectIndex(projectId: string): ProjectIndex | null {
   }
 }
 
+// ---------------------------------------------------------------------------
+// In-process cache of parsed indexes (read paths only)
+// ---------------------------------------------------------------------------
+//
+// Parsing a multi-megabyte index.json dominated repeated MCP reads. The cache
+// is keyed by project id and validated on every use against the index file's
+// stat signature (size, mtime, ctime, inode): the atomic temp+rename write path
+// replaces the file, so any rewrite by this or another process changes the
+// signature and the next read misses. Entries are frozen so one request can
+// never mutate what another sees; they hold no source text; the cache is
+// bounded in entries and estimated memory. `loadProjectIndex` stays an
+// uncached, mutable load for writers (the indexer reuses and edits its copy).
+
+interface IndexCacheEntry {
+  signature: string;
+  index: ProjectIndex;
+  cost: number;
+}
+
+const INDEX_CACHE_MAX_ENTRIES = 3;
+const INDEX_CACHE_MAX_COST_BYTES = 96 * 1024 * 1024;
+/** Parsed JS objects take several times the bytes of the JSON text. */
+const INDEX_CACHE_COST_FACTOR = 4;
+const indexCache = new Map<string, IndexCacheEntry>();
+let indexCacheHits = 0;
+let indexCacheMisses = 0;
+
+function indexFileSignature(indexPath: string): { signature: string; size: number } | null {
+  try {
+    const st = fs.statSync(indexPath);
+    return {
+      signature: `${st.size}:${st.mtimeMs}:${st.ctimeMs}:${st.ino}`,
+      size: st.size,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function deepFreeze<T>(root: T): T {
+  const stack: unknown[] = [root];
+  while (stack.length > 0) {
+    const value = stack.pop();
+    if (value === null || typeof value !== "object" || Object.isFrozen(value)) continue;
+    Object.freeze(value);
+    for (const key of Object.keys(value as object)) {
+      stack.push((value as Record<string, unknown>)[key]);
+    }
+  }
+  return root;
+}
+
+/** Drop cached parses for one project (or all). Called by every writer for this project's files. */
+export function invalidateIndexCache(projectId?: string): void {
+  if (projectId === undefined) indexCache.clear();
+  else indexCache.delete(projectId);
+}
+
+export function getIndexCacheStats(): { hits: number; misses: number; entries: number } {
+  return { hits: indexCacheHits, misses: indexCacheMisses, entries: indexCache.size };
+}
+
+/**
+ * Load the index for read-only use. The returned object is deeply frozen and
+ * shared across calls while the file is unchanged: never mutate it.
+ */
+export function loadProjectIndexShared(projectId: string): {
+  index: ProjectIndex | null;
+  cache: "hit" | "miss";
+} {
+  const indexPath = getProjectIndexPath(projectId);
+  const sig = indexFileSignature(indexPath);
+  if (!sig) {
+    indexCache.delete(projectId);
+    return { index: null, cache: "miss" };
+  }
+  const hit = indexCache.get(projectId);
+  if (hit && hit.signature === sig.signature && hit.index.meta.id === projectId) {
+    // Re-insert so the Map's insertion order tracks recency.
+    indexCache.delete(projectId);
+    indexCache.set(projectId, hit);
+    indexCacheHits++;
+    return { index: hit.index, cache: "hit" };
+  }
+  indexCacheMisses++;
+  indexCache.delete(projectId);
+  const parsed = loadProjectIndex(projectId);
+  if (!parsed) return { index: null, cache: "miss" };
+  const frozen = deepFreeze(parsed);
+  const cost = sig.size * INDEX_CACHE_COST_FACTOR;
+  if (cost <= INDEX_CACHE_MAX_COST_BYTES) {
+    indexCache.set(projectId, { signature: sig.signature, index: frozen, cost });
+    let total = 0;
+    for (const e of indexCache.values()) total += e.cost;
+    for (const key of indexCache.keys()) {
+      if (indexCache.size <= INDEX_CACHE_MAX_ENTRIES && total <= INDEX_CACHE_MAX_COST_BYTES) break;
+      if (key === projectId) continue; // never evict the entry just loaded
+      total -= indexCache.get(key)?.cost ?? 0;
+      indexCache.delete(key);
+    }
+  }
+  return { index: frozen, cache: "miss" };
+}
+
 export function saveProjectIndex(projectId: string, index: ProjectIndex): void {
+  invalidateIndexCache(projectId);
   // Pair both persistence copies with one shared snapshot id before the
   // two sequential renames: a crash between them leaves mismatched ids
   // that checkPersistenceConsistency detects. Legacy candidates without
@@ -544,6 +657,7 @@ export function saveProjectIndex(projectId: string, index: ProjectIndex): void {
   }
 
   cleanupDanglingTempFiles(getProjectStorageDir(projectId));
+  invalidateIndexCache(projectId);
 }
 
 /**
@@ -559,6 +673,7 @@ export function markProjectGraphStatus(
   status: "stale" | "failed",
   lastError?: string
 ): void {
+  invalidateIndexCache(projectId);
   try {
     const metaPath = getProjectMetaPath(projectId);
     const raw = fs.readFileSync(metaPath, "utf-8");
@@ -626,7 +741,16 @@ export function checkPersistenceConsistency(projectId: string): {
     let index: Record<string, unknown>;
     try {
       meta = JSON.parse(fs.readFileSync(metaPath, "utf-8"));
-      index = JSON.parse(fs.readFileSync(indexPath, "utf-8"));
+      // The (large) index copy is read-only here: reuse the parsed, frozen
+      // cache entry when index.json's stat signature is unchanged instead of
+      // re-parsing it on every freshness check. meta.json is always re-read.
+      const sig = indexFileSignature(indexPath);
+      const cached = sig ? indexCache.get(projectId) : undefined;
+      if (sig && cached && cached.signature === sig.signature) {
+        index = cached.index as unknown as Record<string, unknown>;
+      } else {
+        index = JSON.parse(fs.readFileSync(indexPath, "utf-8"));
+      }
     } catch {
       return { consistent: false, reason: "persistence copy is truncated or malformed JSON" };
     }
@@ -758,6 +882,7 @@ export function deleteProjectData(projectId: string): { success: boolean; error?
   if (!/^[0-9a-f]{16}$/.test(projectId)) {
     return { success: false, error: "Invalid project id" };
   }
+  invalidateIndexCache(projectId);
   const storageDir = getProjectStorageDir(projectId);
   const resolvedBase = path.resolve(getProjectsDir());
   const resolvedTarget = path.resolve(storageDir);

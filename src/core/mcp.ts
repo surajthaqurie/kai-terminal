@@ -1,28 +1,41 @@
 import readline from "readline";
 import { Transform } from "stream";
 import fs from "fs";
-import path from "path";
 import {
   registerProject,
-  loadProjectIndex,
+  loadProjectIndexShared,
   resolveCanonicalPath,
   isWithinProjectBoundary,
 } from "./registry";
-import { indexProject, isSensitiveFile } from "./indexer";
-import { assembleContext } from "./contextAssembler";
-import { retrieveContext } from "./retrieval";
+import { indexProject } from "./indexer";
 import { recordMetric } from "./telemetry";
-import { detectInstalledLspServers } from "./lspBridge";
-import {
-  isCodeMode,
-  getGraphFreshness,
-  getValidatedFreshness,
-  synchronizeGraphDeduped,
-  ensureFreshIndex,
-  planCodeTask,
-} from "./codeModeWorkflow";
+import { getGraphFreshness, ensureFreshIndex } from "./codeModeWorkflow";
 import { startGraphWatcher } from "./graphWatcher";
-import type { TaskCategory } from "./types";
+import {
+  MAX_ID_BYTES,
+  clipForMessage,
+  finalizeResponse,
+  getMaxResponseBytes,
+  shapeTextResult,
+  shapeToolResult,
+  utf8Bytes,
+  wrapperBytes,
+} from "./mcpResponse";
+import {
+  estimateTextTokens,
+  toolFindSymbol,
+  toolGetContext,
+  toolGetDependencies,
+  toolLspStatus,
+  toolPlanTask,
+  toolProjectInfo,
+  toolReadRange,
+  toolRefreshIndex,
+  toolSearchCode,
+  toolSyncGraph,
+  type ToolContext,
+  type ToolOutcome,
+} from "./mcpTools";
 import packageJson from "../../package.json";
 
 export interface McpRequest {
@@ -43,55 +56,108 @@ export interface McpResponse {
   };
 }
 
+const PROJECT_PATH_PROP = { type: "string", description: "Optional project root." };
+const PAGE_PROPS = {
+  limit: { type: "number", description: "Page size." },
+  offset: { type: "number", description: "Items to skip (use nextOffset)." },
+};
+const CATEGORY_PROP = {
+  type: "string",
+  enum: [
+    "explain",
+    "implement",
+    "debug",
+    "refactor",
+    "test",
+    "review",
+    "architecture",
+    "documentation",
+  ],
+  description: "Optional task category override.",
+};
+
+/**
+ * Every tool result is bounded (see mcpResponse.ts): collections paginate with
+ * limit/offset and the whole response stays under the server's byte ceiling
+ * (KAI_MCP_MAX_RESPONSE_BYTES, default 64 KiB). Token figures are heuristic
+ * estimates, never model-reported usage. Descriptions stay short on purpose:
+ * agents carry these definitions in context on every turn.
+ */
 export const MCP_TOOLS = [
   {
     name: "kai_project_info",
-    description:
-      "Retrieve high-level project metadata, language breakdown, file count, and index status.",
+    description: "Project summary: languages, file/symbol counts, freshness, scan completeness.",
     inputSchema: {
       type: "object",
       properties: {
-        projectPath: {
-          type: "string",
-          description: "Optional path to the project root. Defaults to current working directory.",
-        },
+        projectPath: PROJECT_PATH_PROP,
+        includeChanges: { type: "boolean", description: "List last build's changed files." },
+        ...PAGE_PROPS,
       },
     },
   },
   {
     name: "kai_search_code",
-    description: "Perform deterministic search over indexed code files, symbols, and snippets.",
+    description:
+      "Ranked file/symbol search returning metadata only (default 6, max 20 per page). Read code with kai_read_range.",
     inputSchema: {
       type: "object",
       properties: {
-        query: { type: "string", description: "Search keywords or phrases." },
-        limit: { type: "number", description: "Max number of files to return (1-20)." },
-        projectPath: { type: "string", description: "Optional project root path." },
+        query: { type: "string", description: "Search keywords." },
+        includeSource: { type: "boolean", description: "Also return snippets (default false)." },
+        ...PAGE_PROPS,
+        projectPath: PROJECT_PATH_PROP,
       },
       required: ["query"],
     },
   },
   {
-    name: "kai_find_symbol",
+    name: "kai_read_range",
     description:
-      "Locate symbol definitions (functions, classes, interfaces) with line numbers and signatures.",
+      "Read a bounded source range (max 400 lines) by symbol or lines. expectedHash detects edits since search.",
     inputSchema: {
       type: "object",
       properties: {
-        name: { type: "string", description: "Symbol name to search for." },
-        projectPath: { type: "string", description: "Optional project root path." },
+        filePath: {
+          type: "string",
+          description: "Project-relative file (optional if symbol is unique).",
+        },
+        symbol: { type: "string", description: "Name or Class.method." },
+        startLine: { type: "number" },
+        endLine: { type: "number" },
+        contextLines: { type: "number", description: "Extra lines around (0-20)." },
+        maxLines: { type: "number", description: "Default 200." },
+        expectedHash: { type: "string", description: "contentHash from an earlier result." },
+        projectPath: PROJECT_PATH_PROP,
+      },
+    },
+  },
+  {
+    name: "kai_find_symbol",
+    description: "Find symbol definitions with line ranges and signatures (default 25, max 100).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Symbol name." },
+        ...PAGE_PROPS,
+        projectPath: PROJECT_PATH_PROP,
       },
       required: ["name"],
     },
   },
   {
     name: "kai_get_dependencies",
-    description: "Query module dependencies and import graphs for a given file.",
+    description: "A file's imports with resolution status (default 50, max 200). Imports only.",
     inputSchema: {
       type: "object",
       properties: {
-        filePath: { type: "string", description: "Relative path to the file inside the project." },
-        projectPath: { type: "string", description: "Optional project root path." },
+        filePath: { type: "string", description: "Project-relative file." },
+        includeDependents: {
+          type: "boolean",
+          description: "List files importing it (paged by limit/offset; see dependentsHasMore).",
+        },
+        ...PAGE_PROPS,
+        projectPath: PROJECT_PATH_PROP,
       },
       required: ["filePath"],
     },
@@ -99,96 +165,58 @@ export const MCP_TOOLS = [
   {
     name: "kai_get_context",
     description:
-      "Assemble a task-optimized context package with ranked sources, rules, and skills within a strict token budget.",
+      "Task context package (ranked sources, rules, skills) within a heuristic token budget and the response size limit.",
     inputSchema: {
       type: "object",
       properties: {
-        task: { type: "string", description: "Task description or query from user." },
-        categoryOverride: {
-          type: "string",
-          enum: [
-            "explain",
-            "implement",
-            "debug",
-            "refactor",
-            "test",
-            "review",
-            "architecture",
-            "documentation",
-          ],
-          description: "Optional explicit task category override.",
-        },
-        tokenBudget: {
-          type: "number",
-          description: "Maximum tokens for context package (default: 4000).",
-        },
-        projectPath: { type: "string", description: "Optional project root path." },
+        task: { type: "string", description: "Task or question." },
+        categoryOverride: CATEGORY_PROP,
+        tokenBudget: { type: "number", description: "Default depends on task type; max 20000." },
+        projectPath: PROJECT_PATH_PROP,
       },
       required: ["task"],
     },
   },
   {
     name: "kai_refresh_index",
-    description: "Trigger a safe, bounded incremental re-index of the project.",
+    description: "Safe, bounded incremental re-index.",
     inputSchema: {
       type: "object",
       properties: {
-        projectPath: { type: "string", description: "Optional project root path." },
-        forceRebuild: {
-          type: "boolean",
-          description: "Force full rebuild instead of incremental update.",
-        },
+        projectPath: PROJECT_PATH_PROP,
+        forceRebuild: { type: "boolean", description: "Full rebuild." },
+        includeChanges: { type: "boolean", description: "List changed files." },
+        ...PAGE_PROPS,
       },
     },
   },
   {
     name: "kai_get_lsp_status",
-    description:
-      "Detect installed local Language Server Protocol (LSP) servers for cross-file type references.",
+    description: "Installed local language servers.",
     inputSchema: {
       type: "object",
       properties: {
-        projectPath: { type: "string", description: "Optional project root path." },
+        projectPath: PROJECT_PATH_PROP,
       },
     },
   },
   {
     name: "kai_plan_task",
     description:
-      "Code Mode only: classify a task with project-graph context and return at most two prompt options (recommended + alternative). Simple tasks return zero options for direct execution.",
+      "Code Mode only: classify a task with graph context; returns at most two prompt options, none for simple tasks.",
     inputSchema: {
       type: "object",
       properties: {
-        task: { type: "string", description: "Task description from the user." },
-        mode: {
-          type: "string",
-          description: "Execution mode. Prompt options are only returned when mode is 'code'.",
-        },
-        categoryOverride: {
-          type: "string",
-          enum: [
-            "explain",
-            "implement",
-            "debug",
-            "refactor",
-            "test",
-            "review",
-            "architecture",
-            "documentation",
-          ],
-          description: "Optional explicit task category override.",
-        },
-        projectPath: { type: "string", description: "Optional project root path." },
+        task: { type: "string", description: "Task description." },
+        mode: { type: "string", description: "Options only when 'code'." },
+        categoryOverride: CATEGORY_PROP,
+        projectPath: PROJECT_PATH_PROP,
         selectedFiles: {
           type: "array",
           items: { type: "string" },
-          description:
-            "Optional user-selected or explicitly mentioned files (project-relative). Treated as primary planning targets.",
+          description: "User-selected files (project-relative), planned as primary targets.",
         },
-        selectedFile: {
-          type: "string",
-          description: "Single-file convenience alias for selectedFiles.",
-        },
+        selectedFile: { type: "string", description: "Single-file alias for selectedFiles." },
       },
       required: ["task"],
     },
@@ -196,51 +224,54 @@ export const MCP_TOOLS = [
   {
     name: "kai_sync_graph",
     description:
-      "Code Mode only: safely synchronize the project graph after validated code changes. Validates the candidate before persisting and preserves the last-known-good graph on failure.",
+      "Code Mode only: validated graph sync after code changes; keeps the last-known-good graph on failure.",
     inputSchema: {
       type: "object",
       properties: {
-        mode: {
-          type: "string",
-          description: "Execution mode. Synchronization only runs when mode is 'code'.",
-        },
+        mode: { type: "string", description: "Syncs only when 'code'." },
         changedFiles: {
           type: "array",
           items: { type: "string" },
-          description:
-            "Caller-reported relative paths changed by the coding task (not independently verified; empty skips rebuild).",
+          description: "Caller-reported changed paths (unverified; empty skips rebuild).",
         },
-        forceFull: {
-          type: "boolean",
-          description: "Force a validated full rebuild instead of incremental sync.",
-        },
-        uncertain: {
-          type: "boolean",
-          description: "Set true when change impact is uncertain; forces a full rebuild path.",
-        },
-        codeValidationRan: {
-          type: "boolean",
-          description: "Whether code validation (tests/checks) ran after the change.",
-        },
+        forceFull: { type: "boolean", description: "Force a full validated rebuild." },
+        uncertain: { type: "boolean", description: "Impact uncertain; forces full rebuild." },
+        codeValidationRan: { type: "boolean", description: "Whether checks ran." },
         codeValidationPassed: {
           type: "boolean",
-          description:
-            "Whether code validation passed. Report only what actually ran; omit (defaults to false) when unknown.",
+          description: "Whether checks passed; report only what ran (default false).",
         },
-        codeValidationDetail: {
-          type: "string",
-          description: "Which checks ran and their outcome (do not claim unrun proofs).",
-        },
-        projectPath: { type: "string", description: "Optional project root path." },
+        codeValidationDetail: { type: "string", description: "Which checks ran and the outcome." },
+        projectPath: PROJECT_PATH_PROP,
       },
     },
   },
 ];
 
+/** Tools that read the graph and therefore pass the automatic freshness gate first. */
+const GATED_TOOLS = new Set([
+  "kai_search_code",
+  "kai_find_symbol",
+  "kai_get_dependencies",
+  "kai_get_context",
+  "kai_read_range",
+]);
+
 /**
- * Handle incoming MCP JSON-RPC messages and return the JSON-RPC response
+ * Handle incoming MCP JSON-RPC messages and return the JSON-RPC response.
+ * Every response, including errors, leaves through the size guard in
+ * `finalizeResponse`, so no code path can exceed the response ceiling.
  */
 export async function handleMcpMessage(
+  message: unknown,
+  defaultProjectRoot: string = process.cwd(),
+  cancelledRequests?: Set<string | number>
+): Promise<McpResponse | null> {
+  const response = await dispatchMcpMessage(message, defaultProjectRoot, cancelledRequests);
+  return response ? finalizeResponse(response) : null;
+}
+
+async function dispatchMcpMessage(
   message: unknown,
   defaultProjectRoot: string = process.cwd(),
   cancelledRequests?: Set<string | number>
@@ -265,6 +296,15 @@ export async function handleMcpMessage(
       jsonrpc: "2.0",
       id: null,
       error: { code: -32600, message: "Invalid Request: id must be a string, number, or null" },
+    };
+  }
+
+  if (typeof req.id === "string" && utf8Bytes(req.id) > MAX_ID_BYTES) {
+    // The id is echoed in every response; an oversized one would defeat the size ceiling.
+    return {
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: -32600, message: `Invalid Request: id exceeds ${MAX_ID_BYTES} bytes` },
     };
   }
 
@@ -421,7 +461,7 @@ export async function handleMcpMessage(
         return {
           jsonrpc: "2.0",
           id: reqId,
-          error: { code: -32601, message: `Unknown tool: ${toolName}` },
+          error: { code: -32601, message: `Unknown tool: ${clipForMessage(toolName, 80)}` },
         };
       }
 
@@ -478,7 +518,11 @@ export async function handleMcpMessage(
       }
 
       const meta = registerProject(canonicalRoot);
-      let index = loadProjectIndex(meta.id);
+      // Read-only shared load: a frozen, cached parse while index.json's stat
+      // signature is unchanged (see registry.loadProjectIndexShared).
+      const loaded = loadProjectIndexShared(meta.id);
+      let index = loaded.index;
+      const indexCache = loaded.cache;
 
       // Auto-index if not indexed
       if (!index) {
@@ -491,601 +535,144 @@ export async function handleMcpMessage(
       // bounded incremental refresh. kai_plan_task runs its own gate inside
       // planCodeTask; kai_sync_graph and kai_refresh_index manage indexing
       // themselves. Never throws: falls back to the stale index truthfully.
-      let autoFreshness = getGraphFreshness(index);
-      let autoRefreshOutcome: "not-required" | "refreshed" | "refresh-failed" = "not-required";
-      let autoRefreshWarning: string | undefined;
-      if (
-        toolName === "kai_search_code" ||
-        toolName === "kai_find_symbol" ||
-        toolName === "kai_get_dependencies" ||
-        toolName === "kai_get_context"
-      ) {
+      let gate: ToolContext["gate"] = { freshness: "unknown", refreshOutcome: "not-required" };
+      let refreshMs: number | undefined;
+      if (GATED_TOOLS.has(toolName)) {
+        const gateStart = Date.now();
         try {
           const ensured = await ensureFreshIndex(meta, index);
           if (ensured.index) index = ensured.index;
-          autoFreshness = ensured.freshnessAfter;
-          autoRefreshOutcome = ensured.refreshOutcome;
-          autoRefreshWarning = ensured.warning;
+          gate = {
+            freshness: ensured.freshnessAfter,
+            refreshOutcome: ensured.refreshOutcome,
+            warning: ensured.warning,
+            knownStaleness: ensured.knownStaleness,
+          };
         } catch {
-          autoRefreshOutcome = "refresh-failed";
-          autoRefreshWarning = "Automatic graph refresh failed; results use the last-known index.";
+          gate = {
+            freshness: getGraphFreshness(index),
+            refreshOutcome: "refresh-failed",
+            warning: "Automatic graph refresh failed; results use the last-known index.",
+          };
         }
+        refreshMs = Date.now() - gateStart;
       }
 
       const start = Date.now();
-
-      // Tool dispatch
-      if (toolName === "kai_project_info") {
-        const languages: Record<string, number> = {};
-        for (const file of Object.values(index.files)) {
-          languages[file.language] = (languages[file.language] || 0) + 1;
-        }
-        // Truthful freshness without triggering a refresh here: read tools
-        // own the bounded auto-refresh gate; project_info only reports.
-        // The pairing is validated first so a torn snapshot (crash between
-        // the index.json and meta.json renames) never reports `fresh`.
-        const infoFreshness = getValidatedFreshness(meta.id, index);
-
-        recordMetric({
-          projectId: meta.id,
-          operation: "mcp_call",
-          latencyMs: Date.now() - start,
-          tokensEstimated: 100,
-          success: true,
-        });
-
-        return {
-          jsonrpc: "2.0",
-          id: reqId,
-          result: {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(
-                  {
-                    name: meta.name,
-                    canonicalPath: meta.canonicalPath,
-                    schemaVersion: meta.schemaVersion,
-                    lastIndexedAt: meta.lastIndexedAt,
-                    status: meta.status,
-                    totalFiles: Object.keys(index.files).length,
-                    totalSymbols: Object.keys(index.symbolIndex).length,
-                    languageBreakdown: languages,
-                    rulesCount: index.rules.length,
-                    freshness: infoFreshness,
-                    changes: index.changes,
-                  },
-                  null,
-                  2
-                ),
-              },
-            ],
-          },
-        };
-      }
-
-      if (toolName === "kai_search_code") {
-        if (typeof args.query !== "string" || !args.query.trim()) {
-          return {
-            jsonrpc: "2.0",
-            id: reqId,
-            error: {
-              code: -32602,
-              message: "query parameter is required and must be a non-empty string",
-            },
-          };
-        }
-        if (args.limit !== undefined) {
-          if (typeof args.limit !== "number" || !Number.isFinite(args.limit) || args.limit <= 0) {
-            return {
-              jsonrpc: "2.0",
-              id: reqId,
-              error: { code: -32602, message: "limit parameter must be a positive number" },
-            };
-          }
-        }
-        const query = args.query.trim().slice(0, 2000);
-        const limit =
-          typeof args.limit === "number" ? Math.min(Math.max(1, Math.floor(args.limit)), 20) : 6;
-        const retrieved = retrieveContext(index, query, { fileBudget: limit, tokenBudget: 4000 });
-
-        recordMetric({
-          projectId: meta.id,
-          operation: "mcp_call",
-          latencyMs: Date.now() - start,
-          tokensEstimated: retrieved.usedTokens,
-          success: true,
-        });
-
-        return {
-          jsonrpc: "2.0",
-          id: reqId,
-          result: {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(
-                  {
-                    query,
-                    freshness: autoFreshness,
-                    refreshOutcome: autoRefreshOutcome,
-                    ...(autoRefreshWarning ? { refreshWarning: autoRefreshWarning } : {}),
-                    matchesCount: retrieved.matchedFiles.length,
-                    files: retrieved.matchedFiles.map((m) => ({
-                      relativePath: m.file.relativePath,
-                      score: m.score,
-                      startLine: m.startLine,
-                      endLine: m.endLine,
-                      snippet: (m.snippet || "").slice(0, 8000),
-                    })),
-                    omissions: retrieved.omissions,
-                  },
-                  null,
-                  2
-                ),
-              },
-            ],
-          },
-        };
-      }
-
-      if (toolName === "kai_find_symbol") {
-        if (typeof args.name !== "string" || !args.name.trim()) {
-          return {
-            jsonrpc: "2.0",
-            id: reqId,
-            error: {
-              code: -32602,
-              message: "name parameter is required and must be a non-empty string",
-            },
-          };
-        }
-        const name = args.name.trim().slice(0, 256);
-        if (name.includes("\0") || /[./\\]/.test(name)) {
-          return {
-            jsonrpc: "2.0",
-            id: reqId,
-            error: { code: -32602, message: "invalid symbol name" },
-          };
-        }
-        const found =
-          Object.prototype.hasOwnProperty.call(index.symbolIndex, name) &&
-          Array.isArray(index.symbolIndex[name])
-            ? index.symbolIndex[name]
-            : [];
-
-        return {
-          jsonrpc: "2.0",
-          id: reqId,
-          result: {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(
-                  {
-                    symbolName: name,
-                    freshness: autoFreshness,
-                    refreshOutcome: autoRefreshOutcome,
-                    ...(autoRefreshWarning ? { refreshWarning: autoRefreshWarning } : {}),
-                    foundCount: found.length,
-                    symbols: found,
-                  },
-                  null,
-                  2
-                ),
-              },
-            ],
-          },
-        };
-      }
-
-      if (toolName === "kai_get_dependencies") {
-        if (typeof args.filePath !== "string" || !args.filePath.trim()) {
-          return {
-            jsonrpc: "2.0",
-            id: reqId,
-            error: {
-              code: -32602,
-              message: "filePath parameter is required and must be a non-empty string",
-            },
-          };
-        }
-        const rawRel = args.filePath.trim().slice(0, 1024);
-        // Normalize Windows separators so `src\a.ts` resolves like `src/a.ts`.
-        const targetRel = rawRel.replace(/\\/g, "/");
-        const isWindowsAbsolute = /^[a-zA-Z]:\//.test(targetRel) || targetRel.startsWith("//");
-        if (
-          !targetRel ||
-          targetRel.includes("\0") ||
-          rawRel.includes("\0") ||
-          targetRel.split("/").includes("..") ||
-          path.isAbsolute(targetRel) ||
-          path.isAbsolute(rawRel) ||
-          isWindowsAbsolute
-        ) {
-          return {
-            jsonrpc: "2.0",
-            id: reqId,
-            error: { code: -32602, message: `Invalid filePath` },
-          };
-        }
-
-        // Never expose sensitive files (credentials, private keys, environment files)
-        if (
-          isSensitiveFile(targetRel) ||
-          isSensitiveFile(rawRel) ||
-          isSensitiveFile(path.basename(targetRel))
-        ) {
-          return {
-            jsonrpc: "2.0",
-            id: reqId,
-            error: {
-              code: -32602,
-              message: `Access denied: sensitive or excluded file: ${targetRel}`,
-            },
-          };
-        }
-
-        // Confine file path to the authorized canonical project boundary
-        const fullFilePath = path.join(canonicalRoot, targetRel);
-        let canonicalFile: string;
-        try {
-          canonicalFile = resolveCanonicalPath(fullFilePath);
-        } catch {
-          return {
-            jsonrpc: "2.0",
-            id: reqId,
-            error: { code: -32602, message: `File not found in index: ${targetRel}` },
-          };
-        }
-        if (!isWithinProjectBoundary(canonicalFile, canonicalRoot)) {
-          return {
-            jsonrpc: "2.0",
-            id: reqId,
-            error: { code: -32602, message: `File path escapes project boundary: ${targetRel}` },
-          };
-        }
-
-        const file =
-          (Object.prototype.hasOwnProperty.call(index.files, targetRel)
-            ? index.files[targetRel]
-            : undefined) ??
-          (Object.prototype.hasOwnProperty.call(index.files, rawRel)
-            ? index.files[rawRel]
-            : undefined);
-        if (!file) {
-          return {
-            jsonrpc: "2.0",
-            id: reqId,
-            error: { code: -32602, message: `File not found in index: ${targetRel}` },
-          };
-        }
-
-        return {
-          jsonrpc: "2.0",
-          id: reqId,
-          result: {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(
-                  {
-                    filePath: targetRel,
-                    freshness: autoFreshness,
-                    refreshOutcome: autoRefreshOutcome,
-                    ...(autoRefreshWarning ? { refreshWarning: autoRefreshWarning } : {}),
-                    dependenciesCount: file.dependencies.length,
-                    dependencies: file.dependencies,
-                  },
-                  null,
-                  2
-                ),
-              },
-            ],
-          },
-        };
-      }
-
-      if (toolName === "kai_get_context") {
-        if (typeof args.task !== "string" || !args.task.trim()) {
-          return {
-            jsonrpc: "2.0",
-            id: reqId,
-            error: {
-              code: -32602,
-              message: "task parameter is required and must be a non-empty string",
-            },
-          };
-        }
-        const task = args.task.trim().slice(0, 4000);
-        const rawBudget = typeof args.tokenBudget === "number" ? args.tokenBudget : 4000;
-        const tokenBudget = Math.min(
-          Math.max(Number.isFinite(rawBudget) ? Math.floor(rawBudget) : 4000, 200),
-          20000
-        );
-        const VALID_CATEGORIES = new Set([
-          "explain",
-          "implement",
-          "debug",
-          "refactor",
-          "test",
-          "review",
-          "architecture",
-          "documentation",
-          "unknown",
-        ]);
-        const categoryOverride = (
-          typeof args.categoryOverride === "string" && VALID_CATEGORIES.has(args.categoryOverride)
-            ? args.categoryOverride
-            : undefined
-        ) as TaskCategory | undefined;
-
-        const { renderedPrompt, contextPackage } = assembleContext(index, {
-          task,
-          tokenBudget,
-          categoryOverride,
-        });
-
-        recordMetric({
-          projectId: meta.id,
-          operation: "mcp_call",
-          latencyMs: Date.now() - start,
-          tokensEstimated: contextPackage.tokenMetrics.estimatedTokens,
-          success: true,
-        });
-
-        // Stale fallback results must never look authoritative: when the
-        // freshness gate could not produce a fresh graph, surface it
-        // inline (additive prefix only; tool name/args unchanged).
-        let promptText = renderedPrompt;
-        if (autoFreshness !== "fresh") {
-          const warnLine =
-            autoRefreshOutcome === "refresh-failed"
-              ? `> Graph freshness warning: refresh failed (${autoRefreshWarning ?? "using last-known index"}); results below are a stale fallback, not authoritative. Run kai_sync_graph or kai_refresh_index, then retry.`
-              : `> Graph freshness note: index is ${autoFreshness}; results below may be incomplete. Run kai_sync_graph or kai_refresh_index for authoritative context.`;
-          promptText = `${warnLine}\n\n${renderedPrompt}`;
-        }
-
-        return {
-          jsonrpc: "2.0",
-          id: reqId,
-          result: {
-            content: [
-              {
-                type: "text",
-                text: promptText,
-              },
-            ],
-          },
-        };
-      }
-
-      if (toolName === "kai_refresh_index") {
-        if (args.forceRebuild !== undefined && typeof args.forceRebuild !== "boolean") {
-          return {
-            jsonrpc: "2.0",
-            id: reqId,
-            error: { code: -32602, message: "forceRebuild must be a boolean" },
-          };
-        }
-        const forceRebuild = Boolean(args.forceRebuild);
-        const refreshedIndex = await indexProject(meta, { forceRebuild });
-
-        return {
-          jsonrpc: "2.0",
-          id: reqId,
-          result: {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(
-                  {
-                    refreshed: true,
-                    totalFiles: Object.keys(refreshedIndex.files).length,
-                    totalSymbols: Object.keys(refreshedIndex.symbolIndex).length,
-                    changes: refreshedIndex.changes,
-                    timestamp: refreshedIndex.generatedAt,
-                  },
-                  null,
-                  2
-                ),
-              },
-            ],
-          },
-        };
-      }
-
-      if (toolName === "kai_get_lsp_status") {
-        const detected = detectInstalledLspServers();
-        const available = detected.some((d) => d.isAvailable);
-        return {
-          jsonrpc: "2.0",
-          id: reqId,
-          result: {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(
-                  {
-                    lspBridgeAvailable: available,
-                    degradedMode: !available,
-                    degradedReason: available
-                      ? undefined
-                      : "No local language servers detected. Operating in degraded syntax-only mode.",
-                    servers: detected,
-                  },
-                  null,
-                  2
-                ),
-              },
-            ],
-          },
-        };
-      }
-
-      if (toolName === "kai_plan_task") {
-        const mode = typeof args.mode === "string" ? args.mode : "code";
-        if (typeof args.task !== "string" || !args.task.trim()) {
-          return {
-            jsonrpc: "2.0",
-            id: reqId,
-            error: {
-              code: -32602,
-              message: "task parameter is required and must be a non-empty string",
-            },
-          };
-        }
-        // Mode isolation: other modes retain existing behavior (no options).
-        if (!isCodeMode(mode)) {
-          return {
-            jsonrpc: "2.0",
-            id: reqId,
-            result: {
-              content: [
-                {
-                  type: "text",
-                  text: JSON.stringify(
-                    {
-                      mode,
-                      options: [],
-                      modePreserved: true,
-                      reason: "prompt options are Code Mode only",
-                    },
-                    null,
-                    2
-                  ),
-                },
-              ],
-            },
-          };
-        }
-        const task = args.task.trim().slice(0, 4000);
-        const VALID_CATEGORIES = new Set([
-          "explain",
-          "implement",
-          "debug",
-          "refactor",
-          "test",
-          "review",
-          "architecture",
-          "documentation",
-          "unknown",
-        ]);
-        const categoryOverride = (
-          typeof args.categoryOverride === "string" && VALID_CATEGORIES.has(args.categoryOverride)
-            ? args.categoryOverride
-            : undefined
-        ) as TaskCategory | undefined;
-        // Backward-compatible selected files: array form preferred, single
-        // string alias accepted, absent when the task names no files.
-        const rawSelected =
-          args.selectedFiles !== undefined
-            ? args.selectedFiles
-            : args.selectedFile !== undefined
-              ? args.selectedFile
-              : undefined;
-        const plan = await planCodeTask(meta, index, {
-          task,
-          categoryOverride,
-          selectedFiles: rawSelected,
-        });
-        recordMetric({
-          projectId: meta.id,
-          operation: "mcp_call",
-          latencyMs: Date.now() - start,
-          tokensEstimated: 200,
-          success: true,
-        });
-        return {
-          jsonrpc: "2.0",
-          id: reqId,
-          result: {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(plan, null, 2),
-              },
-            ],
-          },
-        };
-      }
-
-      if (toolName === "kai_sync_graph") {
-        const mode = typeof args.mode === "string" ? args.mode : "code";
-        if (!isCodeMode(mode)) {
-          return {
-            jsonrpc: "2.0",
-            id: reqId,
-            result: {
-              content: [
-                {
-                  type: "text",
-                  text: JSON.stringify(
-                    {
-                      mode,
-                      synced: false,
-                      modePreserved: true,
-                      reason: "graph sync is Code Mode only",
-                    },
-                    null,
-                    2
-                  ),
-                },
-              ],
-            },
-          };
-        }
-        const changedFiles = Array.isArray(args.changedFiles)
-          ? (args.changedFiles as unknown[])
-              .filter((f): f is string => typeof f === "string")
-              .slice(0, 50)
-          : [];
-        // Deduped: duplicate completion callbacks share one rebuild instead
-        // of racing; project identity is verified before publishing.
-        const report = await synchronizeGraphDeduped(
-          meta,
-          changedFiles,
-          {
-            ran: typeof args.codeValidationRan === "boolean" ? args.codeValidationRan : false,
-            // Fail-closed: an omitted outcome must never be reported as passed.
-            passed:
-              typeof args.codeValidationPassed === "boolean" ? args.codeValidationPassed : false,
-            detail:
-              typeof args.codeValidationDetail === "string"
-                ? args.codeValidationDetail.slice(0, 500)
-                : "no validation detail provided",
-          },
-          {
-            uncertain: typeof args.uncertain === "boolean" ? args.uncertain : false,
-            forceFull: typeof args.forceFull === "boolean" ? args.forceFull : false,
-          }
-        );
-        return {
-          jsonrpc: "2.0",
-          id: reqId,
-          result: {
-            content: [{ type: "text", text: JSON.stringify(report, null, 2) }],
-          },
-        };
-      }
-
-      return {
-        jsonrpc: "2.0",
-        id: reqId,
-        error: { code: -32601, message: `Unknown tool: ${toolName}` },
+      const maxBytes = getMaxResponseBytes();
+      const ctx: ToolContext = {
+        meta,
+        index,
+        canonicalRoot,
+        gate,
+        maxBytes,
+        wrapperBytes: wrapperBytes(reqId),
       };
+
+      let outcome: ToolOutcome;
+      switch (toolName) {
+        case "kai_project_info":
+          outcome = toolProjectInfo(ctx, args);
+          break;
+        case "kai_search_code":
+          outcome = toolSearchCode(ctx, args);
+          break;
+        case "kai_read_range":
+          outcome = toolReadRange(ctx, args);
+          break;
+        case "kai_find_symbol":
+          outcome = toolFindSymbol(ctx, args);
+          break;
+        case "kai_get_dependencies":
+          outcome = toolGetDependencies(ctx, args);
+          break;
+        case "kai_get_context":
+          outcome = toolGetContext(ctx, args);
+          break;
+        case "kai_refresh_index":
+          outcome = await toolRefreshIndex(ctx, args);
+          break;
+        case "kai_get_lsp_status":
+          outcome = toolLspStatus();
+          break;
+        case "kai_plan_task":
+          outcome = await toolPlanTask(ctx, args);
+          break;
+        case "kai_sync_graph":
+          outcome = await toolSyncGraph(ctx, args);
+          break;
+        default:
+          return {
+            jsonrpc: "2.0",
+            id: reqId,
+            error: { code: -32601, message: `Unknown tool: ${clipForMessage(toolName, 80)}` },
+          };
+      }
+
+      if (outcome.kind === "error") {
+        return {
+          jsonrpc: "2.0",
+          id: reqId,
+          error: { code: outcome.code, message: clipForMessage(outcome.message, 400) },
+        };
+      }
+
+      const shaped =
+        outcome.kind === "json"
+          ? shapeToolResult(reqId, toolName, outcome.payload, {
+              maxBytes,
+              shrink: outcome.shrink,
+            })
+          : shapeTextResult(reqId, toolName, outcome.text, {
+              maxBytes,
+              preserve: outcome.preserve,
+            });
+
+      // Size of what was actually returned, by the heuristic counter (never
+      // model-reported usage); metadata only, no source or prompt text.
+      const responseText = (
+        shaped.response.result as { content?: Array<{ text?: string }> } | undefined
+      )?.content?.[0]?.text;
+      recordMetric({
+        projectId: meta.id,
+        operation: "mcp_call",
+        tool: toolName,
+        latencyMs: Date.now() - start,
+        ...(typeof responseText === "string"
+          ? { tokensEstimated: estimateTextTokens(responseText), tokensAreEstimate: true }
+          : {}),
+        responseBytes: shaped.bytes,
+        ...(outcome.metrics?.resultCount !== undefined
+          ? { resultCount: outcome.metrics.resultCount }
+          : {}),
+        ...(outcome.metrics?.sourceRanges !== undefined
+          ? { sourceRanges: outcome.metrics.sourceRanges }
+          : {}),
+        ...(GATED_TOOLS.has(toolName) ? { refreshOutcome: gate.refreshOutcome, refreshMs } : {}),
+        indexCache,
+        ...(outcome.metrics?.retrievalMs !== undefined
+          ? { retrievalMs: outcome.metrics.retrievalMs }
+          : {}),
+        ...(outcome.metrics?.graphSteps !== undefined
+          ? { graphSteps: outcome.metrics.graphSteps }
+          : {}),
+        truncated: shaped.truncated,
+        ...(outcome.metrics?.hasMore !== undefined ? { hasMore: outcome.metrics.hasMore } : {}),
+        success: true,
+      });
+      return shaped.response;
     }
 
     return {
       jsonrpc: "2.0",
       id: reqId,
-      error: { code: -32601, message: `Method not found: ${method}` },
+      error: { code: -32601, message: `Method not found: ${clipForMessage(method, 80)}` },
     };
   } catch (err: unknown) {
     return {
       jsonrpc: "2.0",
       id: reqId,
-      error: { code: -32603, message: `Internal server error: ${String(err)}` },
+      error: { code: -32603, message: `Internal server error: ${clipForMessage(err, 300)}` },
     };
   }
 }

@@ -10,7 +10,7 @@ Tauri 2 + Rust (`portable-pty`) + WebGL GPU terminal renderer (`xterm.js`). MIT 
 
 Live site: **https://kai-terminal.vercel.app/** · Releases: [latest](https://github.com/surajthaqurie/kai-terminal/releases/latest)
 
-> Status: v0.1.6 is an active release. If something breaks, please open an issue with OS, version and steps to reproduce.
+> Status: v0.2.0 is an active release. If something breaks, please open an issue with OS, version and steps to reproduce.
 
 <a href="https://kai-terminal.vercel.app/">
   <picture>
@@ -34,12 +34,12 @@ No auto-detection here. All installers are published on [GitHub Releases](https:
 
 | OS                  | File                                | Install                                            |
 | ------------------- | ----------------------------------- | -------------------------------------------------- |
-| macOS 12+ (M1–M4)   | `kai_0.1.6_aarch64.dmg`             | Open the `.dmg`, drag `Kai.app` to `/Applications` |
-| Linux x64           | `kai_0.1.6_amd64.deb`               | `sudo dpkg -i kai_0.1.6_amd64.deb`                 |
-| Linux (any distro)  | `kai_0.1.6_amd64.AppImage`          | `chmod +x kai_*.AppImage && ./kai_*.AppImage`      |
-| Linux ARM64         | `kai_0.1.6_arm64.deb` / `.AppImage` | Same as above, ARM build                           |
-| Windows 10/11 x64   | `kai_0.1.6_x64-setup.exe`           | Download and run                                   |
-| Windows x64 (admin) | `kai_0.1.6_x64_en-US.msi`           | For silent/admin installs                          |
+| macOS 12+ (M1–M4)   | `kai_0.2.0_aarch64.dmg`             | Open the `.dmg`, drag `Kai.app` to `/Applications` |
+| Linux x64           | `kai_0.2.0_amd64.deb`               | `sudo dpkg -i kai_0.2.0_amd64.deb`                 |
+| Linux (any distro)  | `kai_0.2.0_amd64.AppImage`          | `chmod +x kai_*.AppImage && ./kai_*.AppImage`      |
+| Linux ARM64         | `kai_0.2.0_arm64.deb` / `.AppImage` | Same as above, ARM build                           |
+| Windows 10/11 x64   | `kai_0.2.0_x64-setup.exe`           | Download and run                                   |
+| Windows x64 (admin) | `kai_0.2.0_x64_en-US.msi`           | For silent/admin installs                          |
 
 The website lists the same files and does not choose for you. If your browser guessed wrong, just click another tab — nothing is locked in.
 
@@ -83,7 +83,7 @@ kai close                 # close active Kai Terminal instances
 kai <agent> [path]        # run an AI tool: auto-wires MCP, enters Code Mode, builds & syncs graph
 kai agent add <agent|all> # wire tool(s) to Kai MCP (aliases: kai setup, kai mcp)
 kai agent remove <agent>  # un-wire tool from Kai MCP (or kai remove -a/-m)
-kai graph init .          # initialize AST symbol index and dependency graph
+kai graph init .          # initialize the symbol index and import graph
 kai graph update .        # force update and rebuild of project graph
 kai graph status .        # show graph index status and symbol counts
 kai stop                  # clear Code Mode and return to plain terminal
@@ -131,7 +131,8 @@ Your numbers will differ by repo size and hardware — run `kai bench .` to chec
 ### MCP tools (stdio)
 
 - `kai_project_info` — metadata, file counts, language breakdown.
-- `kai_search_code` — symbol/snippet search.
+- `kai_search_code` — ranked symbol search (metadata only; `includeSource: true` adds snippets).
+- `kai_read_range` — read one symbol or line range.
 - `kai_find_symbol` — function/class/struct locations with line ranges.
 - `kai_get_dependencies` — import graph.
 - `kai_get_context` — budgeted context for a task.
@@ -181,7 +182,7 @@ The tab, pane, search and settings shortcuts are remappable in **Settings → Sh
 - Indexes live in `~/.kai/`; `kai remove` deletes them.
 - Local diagnostics go to `~/.kai/metrics.jsonl`. No account, no telemetry in the app.
 
-See [KNOWN_LIMITATIONS](KNOWN_LIMITATIONS.md) for what v0.1.6 does not do yet.
+See [KNOWN_LIMITATIONS](KNOWN_LIMITATIONS.md) for what v0.2.0 does not do yet.
 
 ## Docs
 
