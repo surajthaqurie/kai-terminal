@@ -481,7 +481,7 @@ jobs:
           assets=$(gh release view "$TAG" --json assets --jq '.assets[].name')
           echo "Assets on $TAG:"
           echo "$assets"
-          foreign=$(echo "$assets" | grep -v "_${VERSION}_" || true)
+          foreign=$(echo "$assets" | grep -v "_${VERSION}_" | grep -v -E -- "-${VERSION}-[^/]*\.rpm$" || true)
           if [ -n "$foreign" ]; then
             echo "Release $TAG contains assets from another version:"
             echo "$foreign"
