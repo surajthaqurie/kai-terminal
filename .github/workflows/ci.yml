@@ -338,6 +338,13 @@ jobs:
           fi
           echo "WSL distribution: $name"
           wsl.exe --set-default "$name"
+          # WSL 2.x runs the distro's first-run experience ("Provisioning the new
+          # WSL instance ... Create a default Unix user account") on the first
+          # INTERACTIVE launch. Piped `-e` launches skip it, which is why the
+          # checks here pass while test_16's ConPTY launch of a bare `wsl.exe`
+          # stopped at the prompt. Remove the hook (root is already the default
+          # user) so no launch can show it.
+          MSYS_NO_PATHCONV=1 wsl.exe -d "$name" -u root -e sh -c 'rm -f /etc/wsl-distribution.conf'
           # Restart it so /etc/wsl.conf (default user) is re-read, then poll
           # until it answers; a cold WSL2 VM can take a while on a fresh runner.
           wsl.exe --terminate "$name" || true
