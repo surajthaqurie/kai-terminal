@@ -403,6 +403,54 @@ jobs:
             gh release delete-asset "$TAG" "$asset" --yes
           done
 
+      # The installer list is built from the files that actually passed
+      # verification, so the notes can never claim a build that is missing or
+      # omit one that shipped.
+      - name: Generate release notes from the staged artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "## Kai Terminal ${{ github.ref_name }}"
+            echo
+            echo "### Installers (each built on its own native runner)"
+            find release-artifacts -type f | sed 's|.*/||' | sort | while read -r f; do
+              case "$f" in
+                *_amd64.deb)        echo "- \`$f\` — Linux x86_64 (Debian/Ubuntu)" ;;
+                *_arm64.deb)        echo "- \`$f\` — Linux ARM64 (Debian/Ubuntu)" ;;
+                *_amd64.AppImage)   echo "- \`$f\` — Linux x86_64 (portable)" ;;
+                *_aarch64.AppImage) echo "- \`$f\` — Linux ARM64 (portable)" ;;
+                *.x86_64.rpm)       echo "- \`$f\` — Linux x86_64 (Fedora/RHEL family)" ;;
+                *.aarch64.rpm)      echo "- \`$f\` — Linux ARM64 (Fedora/RHEL family)" ;;
+                *_x64-setup.exe)    echo "- \`$f\` — Windows x86_64 (installer)" ;;
+                *_arm64-setup.exe)  echo "- \`$f\` — Windows ARM64 (installer)" ;;
+                *.msi)              echo "- \`$f\` — Windows x86_64 (MSI)" ;;
+                *_aarch64.dmg)      echo "- \`$f\` — macOS Apple Silicon" ;;
+                *_x64.dmg)          echo "- \`$f\` — macOS Intel" ;;
+                *)                  echo "- \`$f\`" ;;
+              esac
+            done
+            echo
+            echo "Snap and Flatpak are built and smoke-tested in CI (\`ci.yml\`, job \`linux-packages\`) but are not attached to releases."
+            echo "The \`.rpm\` and the other Linux packages are built on Ubuntu runners and have not been installed on a Fedora/RHEL system."
+            echo
+            cat <<'NOTES'
+          ### Signing status
+          - Windows/macOS binaries are signed only when the corresponding GitHub Actions
+            secrets are configured. Without secrets, artifacts are unsigned test builds.
+          - Unsigned macOS `.dmg` builds are NOT fully trusted consumer releases:
+            Gatekeeper will warn. Right-click > Open on first launch, or distribute only
+            signed + notarized builds for general users. See INSTALL.md.
+
+          ### AI CLI policy
+          - The app works with or without Codex CLI, Claude Code, or Gemini CLI installed.
+          - Presence detection is optional, local-only (PATH probe, never executes
+            third-party code). Detailed status runs a bounded `--version` probe
+            (direct exec, no shell, 8 s timeout) and reports failures as diagnostics.
+          - No third-party AI CLI executables are bundled in these installers.
+          NOTES
+          } > release-body.md
+
       - name: Create GitHub Release with verified artifacts
         uses: softprops/action-gh-release@v2
         with:
@@ -413,42 +461,14 @@ jobs:
             release-artifacts/**/*.deb
             release-artifacts/**/*.AppImage
             release-artifacts/**/*.appimage
+            release-artifacts/**/*.rpm
             release-artifacts/**/*.exe
             release-artifacts/**/*.msi
             release-artifacts/**/*.dmg
           draft: false
           prerelease: false
           generate_release_notes: true
-          body: |
-            ## Kai Terminal ${{ github.ref_name }}
-
-            ### Verified builds (native runners)
-            - Linux x86_64 (Ubuntu 22.04): `.deb`, `.AppImage`
-            - Linux ARM64 (Ubuntu 24.04 ARM): `.deb`, `.AppImage`
-            - Windows x86_64: NSIS `.exe`, MSI `.msi`
-            - macOS Apple Silicon (macOS 14): `.dmg`
-
-            ### Not configured / untested — do not treat as supported
-            - Windows ARM64: not built or tested.
-            - macOS Intel (x86_64): not built on native Intel hardware; no cross-compiled
-              binary is published as a tested release.
-            - Other Linux distributions/formats (RPM, Snap, Flatpak): not produced or verified.
-              The `.deb` is verified on Ubuntu 22.04; other Debian derivatives may work but
-              are not claimed as supported.
-
-            ### Signing status
-            - Windows/macOS binaries are signed only when the corresponding GitHub Actions
-              secrets are configured. Without secrets, artifacts are unsigned test builds.
-            - Unsigned macOS `.dmg` builds are NOT fully trusted consumer releases:
-              Gatekeeper will warn. Right-click > Open on first launch, or distribute only
-              signed + notarized builds for general users. See INSTALL.md.
-
-            ### AI CLI policy
-            - The app works with or without Codex CLI, Claude Code, or Gemini CLI installed.
-            - Presence detection is optional, local-only (PATH probe, never executes
-              third-party code). Detailed status runs a bounded `--version` probe
-              (direct exec, no shell, 8 s timeout) and reports failures as diagnostics.
-            - No third-party AI CLI executables are bundled in these installers.
+          body_path: release-body.md
 
       - name: Confirm release holds only this version's assets
         env:

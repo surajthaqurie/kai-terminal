@@ -237,6 +237,8 @@ function compactDependency(d: IndexedDependency, includeSource = false): Record<
     ...(includeSource ? { sourceFile: d.sourceFile } : {}),
     targetSpecifier: clipChars(d.targetSpecifier, 200),
     ...(typeof d.resolvedPath === "string" ? { resolvedPath: d.resolvedPath } : {}),
+    ...(d.resolvedPaths && d.resolvedPaths.length > 1 ? { resolvedPaths: d.resolvedPaths } : {}),
+    ...(d.reExportedNames && d.reExportedNames.length > 0 ? { reExport: true } : {}),
     ...(d.resolution ? { resolution: d.resolution } : {}),
     isExternal: d.isExternal,
     importedSymbols: d.importedSymbols.slice(0, MAX_SYMBOLS),

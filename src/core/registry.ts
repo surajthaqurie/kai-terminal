@@ -29,7 +29,17 @@ export function getCacheDir(): string {
 }
 
 export function normalizePathForIdentity(targetPath: string, platform?: string): string {
-  let resolved = resolveCanonicalPath(targetPath);
+  return normalizeCanonicalForIdentity(resolveCanonicalPath(targetPath), platform);
+}
+
+/**
+ * Identity form (separators, trailing slash, case folding) of a path that is
+ * ALREADY canonical. `normalizePathForIdentity` resolves the path first, which
+ * costs one `lstat` per path component; callers that built the path from a
+ * canonical parent (the indexer's directory walk) skip that.
+ */
+export function normalizeCanonicalForIdentity(canonicalPath: string, platform?: string): string {
+  let resolved = canonicalPath;
   if (resolved.startsWith("\\\\?\\UNC\\")) {
     resolved = "\\\\" + resolved.slice(8);
   } else if (resolved.startsWith("\\\\?\\")) {

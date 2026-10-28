@@ -450,7 +450,8 @@ pub fn run() {
             kai_cli::ensure_kai_cli_cmd,
             updater::download_update_asset_cmd,
             updater::launch_update_installer_cmd,
-            updater::get_update_install_hint_cmd
+            updater::get_update_install_hint_cmd,
+            updater::get_update_arch_cmd
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

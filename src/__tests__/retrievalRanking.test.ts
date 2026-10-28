@@ -377,7 +377,10 @@ describe("import-graph expansion is bounded, resolver-based and honest", () => {
       /Not followed: 2 package\/alias\/unsupported-language import\(s\) and 1 relative import/
     );
     const rs = expandSupportingFiles(index, ["src/lib.rs"]);
-    expect(rs.rationale.join(" ")).toMatch(/Not followed: 1 package\/alias\/unsupported-language/);
+    // `crate::other` names a module that is not an indexed file: a relative-style miss.
+    expect(rs.rationale.join(" ")).toMatch(
+      /Not followed: 0 package\/alias\/unsupported-language import\(s\) and 1 relative import/
+    );
     expect(rs.supporting).toEqual([]);
   });
 

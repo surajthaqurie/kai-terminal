@@ -11,6 +11,7 @@ vi.mock("@tauri-apps/api/event", () => ({ listen: async () => () => undefined })
 import {
   UPDATE_PENDING_KEY,
   applyInstallHint,
+  applyNativeArch,
   clearUpdatePending,
   consumeUpdateOutcome,
   downloadAndInstallUpdate,
@@ -31,6 +32,39 @@ const msi = asset("kai_9.9.9_x64_en-US.msi");
 const deb = asset("kai_9.9.9_amd64.deb");
 const image = asset("kai_9.9.9_amd64.AppImage");
 const all = [exe, msi, deb, image];
+
+const exeArm = asset("kai_9.9.9_arm64-setup.exe");
+const dmgArm = asset("kai_9.9.9_aarch64.dmg");
+const dmgIntel = asset("kai_9.9.9_x64.dmg");
+const debArm = asset("kai_9.9.9_arm64.deb");
+const releaseAssets = [exe, exeArm, msi, dmgArm, dmgIntel, deb, debArm, image];
+
+describe("applyNativeArch", () => {
+  it("keeps the pick when the architecture already matches or is unknown", () => {
+    expect(applyNativeArch(dmgIntel, releaseAssets, "x86_64")).toBe(dmgIntel);
+    expect(applyNativeArch(dmgArm, releaseAssets, "aarch64")).toBe(dmgArm);
+    expect(applyNativeArch(dmgIntel, releaseAssets, null)).toBe(dmgIntel);
+  });
+
+  it("moves an Apple Silicon Mac off the Intel .dmg its WebView user agent implies", () => {
+    expect(applyNativeArch(dmgIntel, releaseAssets, "aarch64")).toBe(dmgArm);
+  });
+
+  it("moves an Intel Mac off the Apple Silicon .dmg", () => {
+    expect(applyNativeArch(dmgArm, releaseAssets, "x86_64")).toBe(dmgIntel);
+  });
+
+  it("moves Windows and Linux ARM64 to their native installer of the same type", () => {
+    expect(applyNativeArch(exe, releaseAssets, "aarch64")).toBe(exeArm);
+    expect(applyNativeArch(deb, releaseAssets, "aarch64")).toBe(debArm);
+  });
+
+  it("keeps the pick when no installer of that type exists for the architecture", () => {
+    // No ARM64 .msi / AppImage in this list: x64 under emulation beats nothing.
+    expect(applyNativeArch(msi, [exe, msi], "aarch64")).toBe(msi);
+    expect(applyNativeArch(image, [image], "aarch64")).toBe(image);
+  });
+});
 
 describe("applyInstallHint", () => {
   it("keeps the default pick without a hint", () => {
@@ -58,6 +92,7 @@ describe("downloadAndInstallUpdate (desktop)", () => {
 
   it("downloads then hands the file to the installer, which owns its cleanup", async () => {
     invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_update_arch_cmd") return "x86_64";
       if (cmd === "get_update_install_hint_cmd") return null;
       if (cmd === "download_update_asset_cmd") {
         return { path: "/tmp/kai-update-x.exe", filename: "x.exe", bytes: 10 };
@@ -81,6 +116,7 @@ describe("downloadAndInstallUpdate (desktop)", () => {
     expect(phases).toEqual(["installing"]);
     const cmds = invoke.mock.calls.map((c) => c[0]);
     expect(cmds).toEqual([
+      "get_update_arch_cmd",
       "get_update_install_hint_cmd",
       "download_update_asset_cmd",
       "launch_update_installer_cmd",
@@ -103,6 +139,58 @@ describe("downloadAndInstallUpdate (desktop)", () => {
       url: msi.browser_download_url,
       filename: msi.name,
     });
+  });
+
+  it("downloads the build for the machine's CPU, not the user-agent guess", async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_update_arch_cmd") return "aarch64";
+      if (cmd === "get_update_install_hint_cmd") return null;
+      if (cmd === "download_update_asset_cmd") return { path: "p", filename: "f", bytes: 1 };
+      return { message: "ok", unattended: true };
+    });
+
+    await downloadAndInstallUpdate(dmgIntel, null, undefined, releaseAssets);
+
+    expect(invoke).toHaveBeenCalledWith("download_update_asset_cmd", {
+      url: dmgArm.browser_download_url,
+      filename: dmgArm.name,
+    });
+  });
+
+  it("downloads again by itself when the saved installer has vanished", async () => {
+    let launches = 0;
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "download_update_asset_cmd") return { path: "p", filename: "f", bytes: 1 };
+      if (cmd === "launch_update_installer_cmd") {
+        launches += 1;
+        if (launches === 1) {
+          throw new Error("Update installer not found. Please download it again.");
+        }
+        return { message: "ok", unattended: true };
+      }
+      return null;
+    });
+
+    await expect(downloadAndInstallUpdate(exe, null, undefined, all)).resolves.toEqual({
+      message: "ok",
+      unattended: true,
+    });
+    const downloads = invoke.mock.calls.filter((c) => c[0] === "download_update_asset_cmd");
+    expect(downloads).toHaveLength(2);
+  });
+
+  it("reports the failure when the retry cannot launch either", async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "download_update_asset_cmd") return { path: "p", filename: "f", bytes: 1 };
+      if (cmd === "launch_update_installer_cmd") throw new Error("Update installer not found.");
+      return null;
+    });
+
+    await expect(downloadAndInstallUpdate(exe, null, undefined, all)).rejects.toThrow(
+      "installer not found"
+    );
+    const downloads = invoke.mock.calls.filter((c) => c[0] === "download_update_asset_cmd");
+    expect(downloads).toHaveLength(2);
   });
 
   it("still installs when the hint command is unavailable", async () => {

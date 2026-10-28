@@ -24,7 +24,7 @@ import type { IndexedDependency, IndexedSymbol } from "./types";
  * Bump EXTRACTOR_VERSION whenever the output for the same input changes; stored
  * indexes carrying an older value are re-extracted on the next refresh.
  */
-export const EXTRACTOR_VERSION = 2;
+export const EXTRACTOR_VERSION = 5;
 
 const MAX_LINE_CHARS = 2048;
 const MAX_SYMBOLS_PER_FILE = 5000;
@@ -530,7 +530,14 @@ class Collector {
     this.symbols.push(sym);
   }
 
-  addDep(at: number, specifier: string, symbols: string[], isExternal: boolean): void {
+  addDep(
+    at: number,
+    specifier: string,
+    symbols: string[],
+    isExternal: boolean,
+    reExportedNames?: string[],
+    importBindings?: Array<"default" | "namespace">
+  ): void {
     if (!specifier) return;
     this.deps.push({
       at,
@@ -539,6 +546,8 @@ class Collector {
         targetSpecifier: specifier,
         isExternal,
         importedSymbols: symbols,
+        ...(reExportedNames && reExportedNames.length > 0 ? { reExportedNames } : {}),
+        ...(importBindings && importBindings.length > 0 ? { importBindings } : {}),
       },
     });
   }
@@ -612,6 +621,8 @@ interface Scope {
   name?: string;
   exported?: boolean;
   traitImpl?: boolean;
+  /** For `impl Trait for Type`: the trait's base name. */
+  traitName?: string;
   isTrait?: boolean;
 }
 
@@ -1177,7 +1188,6 @@ function detectTsMember(src: Source, out: Collector, p: number, scope: Scope): v
   const nameM = /^[A-Za-z_$#][\w$]*/.exec(code.slice(i, i + 120));
   if (!nameM) return;
   const name = nameM[0];
-  if (name === "constructor") return;
   const nameAt = i;
   let after = skipWs(code, i + name.length);
   if (code[after] === "?" || code[after] === "!") after = skipWs(code, after + 1);
@@ -1229,15 +1239,62 @@ function detectTsMember(src: Source, out: Collector, p: number, scope: Scope): v
           exported,
           container: scope.name,
         });
+        return;
       }
     }
+  } else if (code[after] !== ";") {
+    return;
   }
+
+  // Plain property declaration: `name: T;`, `static readonly MAX = 3;`, `count;`. Private
+  // ones (`private`, `#x`) are left out, like locals; the rest follow the class's visibility.
+  if (isPrivate) return;
+  const end = findStatementEnd(code, i + name.length);
+  out.addSymbol({
+    name,
+    kind:
+      /^[A-Z0-9_]+$/.test(name) && /\b(?:static|readonly)\b/.test(modifiers)
+        ? "constant"
+        : "variable",
+    at: p,
+    nameAt,
+    end,
+    signature: src.signature(p, Math.min(end + 1, nameAt + 120)),
+    exported,
+    container: scope.name,
+  });
 }
 
 interface ImportHit {
   at: number;
   specifier: string;
   symbols: string[];
+  /** Names a `export ... from` statement exports (`*` for a star export). */
+  reExported?: string[];
+  /** Default / namespace bindings of an `import ... from` statement. */
+  bindings?: Array<"default" | "namespace">;
+}
+
+/** Exported names of an `export { a as b, type c } from` / `export * [as ns] from` clause. */
+function parseReExportClause(clause: string): string[] {
+  const t = clause.trim();
+  if (t.startsWith("*")) {
+    const ns = /^\*\s+as\s+([\w$]+)/.exec(t);
+    return [ns ? ns[1] : "*"];
+  }
+  const names: string[] = [];
+  const braces = /\{([^}]*)\}/.exec(t);
+  if (braces) {
+    for (const part of braces[1].split(",")) {
+      const bits = part
+        .trim()
+        .replace(/^type\s+/, "")
+        .split(/\s+as\s+/);
+      const exported = (bits[1] ?? bits[0]).trim();
+      if (exported) names.push(exported);
+    }
+  }
+  return names;
 }
 
 function parseImportClause(clause: string): string[] {
@@ -1264,6 +1321,18 @@ function parseImportClause(clause: string): string[] {
   return names;
 }
 
+/** Whether an import clause binds a default (`X`, `X, { y }`) and/or a namespace (`* as ns`). */
+function parseImportBindings(clause: string): Array<"default" | "namespace"> {
+  const out: Array<"default" | "namespace"> = [];
+  for (const part of clause.replace(/\{[^}]*\}/, "").split(",")) {
+    const t = part.trim().replace(/^type\s+/, "");
+    if (!t) continue;
+    if (/^\*\s+as\s+[\w$]+/.test(t)) out.push("namespace");
+    else if (/^[A-Za-z_$][\w$]*$/.test(t)) out.push("default");
+  }
+  return out;
+}
+
 function collectTsImports(src: Source, out: Collector): void {
   const text = src.noComments;
   const code = src.code;
@@ -1279,7 +1348,12 @@ function collectTsImports(src: Source, out: Collector): void {
     /\bimport\s+(?:type\s+)?((?:(?!\b(?:import|export)\b)[^'"`;]){0,4000}?)\s*\bfrom\s*(['"])([^'"\n]+)\2/g;
   for (let m = importFrom.exec(text); m; m = importFrom.exec(text)) {
     if (!real(m.index, "import")) continue;
-    hits.push({ at: m.index, specifier: m[3], symbols: parseImportClause(m[1]) });
+    hits.push({
+      at: m.index,
+      specifier: m[3],
+      symbols: parseImportClause(m[1]),
+      bindings: parseImportBindings(m[1]),
+    });
   }
   const sideEffect = /\bimport\s*(['"])([^'"\n]+)\1/g;
   for (let m = sideEffect.exec(text); m; m = sideEffect.exec(text)) {
@@ -1290,14 +1364,28 @@ function collectTsImports(src: Source, out: Collector): void {
     /\bexport\s+(?:type\s+)?(\*(?:\s+as\s+[\w$]+)?|\{(?:(?!\bexport\b)[^}]){0,3000}\})\s*from\s*(['"])([^'"\n]+)\2/g;
   for (let m = exportFrom.exec(text); m; m = exportFrom.exec(text)) {
     if (!real(m.index, "export")) continue;
-    hits.push({ at: m.index, specifier: m[3], symbols: parseImportClause(m[1]) });
+    hits.push({
+      at: m.index,
+      specifier: m[3],
+      symbols: parseImportClause(m[1]),
+      reExported: parseReExportClause(m[1]),
+    });
   }
   const dynamic = /\b(?:import|require)\s*\(\s*(['"])([^'"\n]+)\1\s*\)/g;
   for (let m = dynamic.exec(text); m; m = dynamic.exec(text)) {
     if (!real(m.index, m[0].startsWith("import") ? "import" : "require")) continue;
     hits.push({ at: m.index, specifier: m[2], symbols: [] });
   }
-  for (const h of hits) out.addDep(h.at, h.specifier, h.symbols, !h.specifier.startsWith("."));
+  for (const h of hits) {
+    out.addDep(
+      h.at,
+      h.specifier,
+      h.symbols,
+      !h.specifier.startsWith("."),
+      h.reExported,
+      h.bindings
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1355,6 +1443,9 @@ function extractRust(content: string, relPath: string): Extraction {
   // where the item itself starts. The item is matched once, at `p`; the
   // statement start that the newline after the attributes creates is skipped.
   let suppressUntil = 0;
+  // Methods of `impl Trait for Type`: visibility comes from the trait and the type,
+  // not from a `pub` on the method (which Rust forbids there). Settled after the scan.
+  const traitImplMethods: Array<{ sym: IndexedSymbol; type?: string; trait?: string }> = [];
   scanBlocks(code, (p, scope) => {
     if (p < suppressUntil) return undefined;
     const c = code[p];
@@ -1385,6 +1476,7 @@ function extractRust(content: string, relPath: string): Extraction {
           end = header.semi;
         }
       }
+      const before = out.symbols.length;
       out.addSymbol({
         name,
         kind: "function",
@@ -1395,6 +1487,13 @@ function extractRust(content: string, relPath: string): Extraction {
         exported: rustExported(m[1]) || (scope.isTrait === true && scope.exported === true),
         container,
       });
+      if (scope.traitImpl && out.symbols.length > before) {
+        traitImplMethods.push({
+          sym: out.symbols[out.symbols.length - 1],
+          type: scope.name,
+          trait: scope.traitName,
+        });
+      }
       return undefined;
     }
 
@@ -1428,6 +1527,18 @@ function extractRust(content: string, relPath: string): Extraction {
         exported,
         container,
       });
+      // `mod foo;` (a declaration, not an inline `mod foo { }`) links this file to the
+      // file holding the module. Only at the top of a file: inside an inline module
+      // the file lives one directory deeper, which the resolver would have to guess.
+      if (
+        kw === "mod" &&
+        body < 0 &&
+        semi >= 0 &&
+        scope.kind === "top" &&
+        !/\bpath\s*=/.test(code.slice(p, q))
+      ) {
+        out.addDep(p, `self::${name}`, [], false);
+      }
       if (kw === "trait" || kw === "mod") {
         return {
           scope: {
@@ -1492,11 +1603,28 @@ function extractRust(content: string, relPath: string): Extraction {
       const typeText = forM ? header.slice(forM.index + forM[0].length) : header;
       const name = rustTypeBase(typeText);
       return {
-        scope: { kind: "class", name: name || undefined, exported: false, traitImpl: !!forM },
+        scope: {
+          kind: "class",
+          name: name || undefined,
+          exported: false,
+          traitImpl: !!forM,
+          ...(forM ? { traitName: rustTypeBase(header.slice(0, forM.index)) || undefined } : {}),
+        },
       };
     }
     return undefined;
   });
+
+  // A trait-impl method is callable from outside the crate when the type is
+  // unrestricted `pub` and the trait is not a private trait of this file. A type or
+  // trait declared elsewhere (`use`d) is unknown, so those methods stay unexported.
+  for (const { sym, type, trait } of traitImplMethods) {
+    const typeSym = out.symbols.find((s) => s.name === type && !s.container && s.kind === "class");
+    const traitSym = trait
+      ? out.symbols.find((s) => s.name === trait && !s.container && s.kind === "interface")
+      : undefined;
+    if (typeSym?.isExported && (!traitSym || traitSym.isExported)) sym.isExported = true;
+  }
 
   collectRustUses(src, out);
   return out.result();
@@ -1532,35 +1660,98 @@ function findRustItemEnd(code: string, from: number): number | undefined {
   return semi < 0 ? undefined : semi;
 }
 
+/** One imported item of a `use` tree: `parent::name`, visible to importers as `exported`. */
+interface UseLeaf {
+  parent: string;
+  name: string;
+  exported: string;
+}
+
+const MAX_USE_TREE_DEPTH = 8;
+const MAX_USE_LEAVES = 200;
+
+/** Split `a, b::{c, d}, e` at the commas that are not inside braces. */
+function splitUseList(text: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === "{") depth++;
+    else if (c === "}") depth = Math.max(0, depth - 1);
+    else if (c === "," && depth === 0) {
+      parts.push(text.slice(start, i));
+      start = i + 1;
+    }
+  }
+  parts.push(text.slice(start));
+  return parts.map((x) => x.trim()).filter(Boolean);
+}
+
+/**
+ * Leaves of a braced `use` tree, with nested groups flattened:
+ * `crate::a::{b::{c, d}, e as f, self}` gives `crate::a::b` -> c, d; `crate::a` -> e (as f)
+ * and `crate` -> a. A `self` leaf is the module named by its prefix.
+ */
+function expandUseTree(prefix: string, tree: string, leaves: UseLeaf[], depth: number): void {
+  if (depth > MAX_USE_TREE_DEPTH || leaves.length >= MAX_USE_LEAVES) return;
+  const text = tree.trim();
+  if (!text) return;
+  const open = text.indexOf("{");
+  if (open < 0) {
+    const [path, alias] = text.split(/\s+as\s+/).map((x) => x.trim());
+    const segs = (path === "self" ? prefix : `${prefix}${path}`).split("::").filter(Boolean);
+    if (segs.length === 0) return;
+    const name = segs[segs.length - 1];
+    leaves.push({ parent: segs.slice(0, -1).join("::"), name, exported: alias || name });
+    return;
+  }
+  const head = text.slice(0, open);
+  const close = skipBalanced(text, open, "{", "}");
+  if (close < 0) return;
+  for (const part of splitUseList(text.slice(open + 1, close - 1))) {
+    expandUseTree(`${prefix}${head}`, part, leaves, depth + 1);
+  }
+}
+
 function collectRustUses(src: Source, out: Collector): void {
   const text = src.noComments;
   const code = src.code;
   const useRe =
-    /(?:^|[\s;{}])(?:pub(?:\s*\([^)]{0,100}\))?\s+)?use\s+((?:(?!\buse\b)[^;]){1,3000});/g;
+    /(?:^|[\s;{}])(pub(?:\s*\([^)]{0,100}\))?\s+)?use\s+((?:(?!\buse\b)[^;]){1,3000});/g;
   for (let m = useRe.exec(text); m; m = useRe.exec(text)) {
     const at = m.index + m[0].indexOf("use");
     if (!code.startsWith("use", at)) continue;
-    const raw = m[1].replace(/\s+/g, " ").trim();
-    const group = /^(.*?)::\{(.*)\}$/.exec(raw);
-    let specifier: string;
-    let symbols: string[];
-    if (group) {
-      specifier = group[1].trim();
-      symbols = group[2]
-        .split(",")
-        .map((s) =>
-          s
-            .trim()
-            .split(/\s+as\s+/)[0]
-            .trim()
-        )
-        .filter(Boolean);
-    } else {
-      specifier = raw.split(/\s+as\s+/)[0].trim();
-      symbols = [specifier.split("::").pop() || ""].filter(Boolean);
+    const isPub = !!m[1];
+    const raw = m[2].replace(/\s+/g, " ").trim();
+    const addUse = (specifier: string, symbols: string[], exported: string[]): void => {
+      const internal = /^(?:crate|self|super)(?:::|$)/.test(specifier);
+      out.addDep(at, specifier, symbols, !internal, isPub ? exported : undefined);
+    };
+    if (!raw.includes("{")) {
+      // `use a::b::C [as D];`: one import; the specifier is the whole path.
+      const [path, alias] = raw.split(/\s+as\s+/).map((x) => x.trim());
+      const last = path.split("::").pop() || "";
+      if (path && last) addUse(path, [last], [last === "*" ? "*" : alias || last]);
+      continue;
     }
-    const internal = /^(?:crate|self|super)(?:::|$)/.test(specifier);
-    out.addDep(at, specifier, symbols, !internal);
+    const leaves: UseLeaf[] = [];
+    expandUseTree("", raw, leaves, 0);
+    // One dependency per parent module, in order of first appearance.
+    const byParent = new Map<string, UseLeaf[]>();
+    for (const leaf of leaves) {
+      const list = byParent.get(leaf.parent);
+      if (list) list.push(leaf);
+      else byParent.set(leaf.parent, [leaf]);
+    }
+    for (const [parent, group] of byParent) {
+      if (!parent) continue;
+      addUse(
+        parent,
+        group.map((l) => l.name),
+        group.map((l) => (l.name === "*" ? "*" : l.exported))
+      );
+    }
   }
 }
 
@@ -1887,7 +2078,21 @@ function extractPython(content: string, relPath: string): Extraction {
             .trim()
         )
         .filter(Boolean);
-      out.addDep(ll.start, from[1], names, !from[1].startsWith("."));
+      // Inside a package's `__init__.py`, a relative `from .mod import x` is how a
+      // package re-exports `x`: importers of the package reach `mod` through it.
+      let reExported: string[] | undefined;
+      if (from[1].startsWith(".") && /(?:^|\/)__init__\.py$/.test(relPath)) {
+        // The name importers use is the alias when there is one (`from .m import x as y`).
+        reExported = from[2]
+          .replace(/[()]/g, " ")
+          .split(",")
+          .map((part) => {
+            const bits = part.trim().split(/\s+as\s+/);
+            return (bits[1] ?? bits[0]).trim();
+          })
+          .filter(Boolean);
+      }
+      out.addDep(ll.start, from[1], names, !from[1].startsWith("."), reExported);
     } else if (imp) {
       for (const part of imp[1].split(",")) {
         const mod = part

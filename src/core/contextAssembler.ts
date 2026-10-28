@@ -59,7 +59,10 @@ function expansionFor(category: string): ExpansionOptions | undefined {
     category === "debug" ||
     category === "implement" ||
     category === "test";
-  return callers || tests ? { callers, tests } : undefined;
+  // Implementation tasks usually name no symbol ("add an endpoint"): let a dominant
+  // top file anchor the expansion so its contracts and tests are seen too.
+  const fileAnchor = category === "implement";
+  return callers || tests ? { callers, tests, ...(fileAnchor ? { fileAnchor } : {}) } : undefined;
 }
 
 /** Fraction of an adaptive package (after the fixed reserve) that rules and skills may use. */

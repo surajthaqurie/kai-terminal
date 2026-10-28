@@ -21,11 +21,15 @@ import {
   markProjectGraphStatus,
   isWithinProjectBoundary,
   normalizePathForIdentity,
+  normalizeCanonicalForIdentity,
   newProjectIncarnation,
   SCHEMA_VERSION,
 } from "./registry";
 import { extractSymbolsAndDeps, EXTRACTOR_VERSION } from "./symbolExtractor";
 import { resolveAllDependencies } from "./importResolver";
+import { buildAliasLookup } from "./tsconfigAliases";
+import { buildPythonRoots } from "./pythonRoots";
+import { buildGoModules, buildRustCrates } from "./rustGoModules";
 
 // Re-exported so existing importers of the extractor keep working.
 export { extractSymbolsAndDeps, EXTRACTOR_VERSION };
@@ -543,24 +547,24 @@ function detectUntrackedNewFiles(
 ): string[] {
   const found: string[] = [];
   const ignorePatterns = loadIgnorePatterns(canonicalRoot);
+  // Visit directories in the same order, and dedupe them under the same
+  // identity key, as the indexer's own walk. A directory reachable by two
+  // paths (a link into the project) is then claimed by the same path in both
+  // walks, so a file the indexer reached through the link is not reported as
+  // new because this walk met the real directory first.
   const visited = new Set<string>();
-  try {
-    visited.add(fs.realpathSync(canonicalRoot));
-  } catch {
-    visited.add(canonicalRoot);
-  }
-  const stack: Array<{ dir: string; depth: number }> = [{ dir: canonicalRoot, depth: 0 }];
-  while (stack.length > 0 && found.length < limit) {
-    const { dir, depth } = stack.pop()!;
-    if (depth > MAX_TRAVERSAL_DEPTH) continue;
+  visited.add(normalizeCanonicalForIdentity(canonicalRoot));
+
+  const walk = (dir: string, canonicalDir: string, depth: number): void => {
+    if (depth > MAX_TRAVERSAL_DEPTH) return;
     let entries: fs.Dirent[];
     try {
       entries = fs.readdirSync(dir, { withFileTypes: true });
     } catch {
-      continue;
+      return;
     }
     for (const entry of entries) {
-      if (found.length >= limit) break;
+      if (found.length >= limit) return;
       const fullPath = path.join(dir, entry.name);
       let rel: string;
       try {
@@ -572,9 +576,10 @@ function detectUntrackedNewFiles(
       // Only a symlink (a junction counts as one) can lead outside the root, so
       // only its target is resolved and boundary-checked here, exactly as the
       // indexer does. A real entry of a directory already verified to be inside
-      // the root is inside it too, and needs no realpath (the dominant cost of
-      // this walk). The walk never descends into a link that fails the check.
-      let canonical = fullPath;
+      // the root is inside it too, and its canonical path is the parent's plus
+      // its own name: no realpath (the dominant cost of this walk). The walk
+      // never descends into a link that fails the check.
+      let canonical: string;
       if (entry.isSymbolicLink()) {
         try {
           canonical = fs.realpathSync(fullPath);
@@ -582,6 +587,8 @@ function detectUntrackedNewFiles(
           continue;
         }
         if (!isWithinProjectBoundary(canonical, canonicalRoot)) continue;
+      } else {
+        canonical = path.join(canonicalDir, entry.name);
       }
       let isDir = entry.isDirectory();
       let isFile = entry.isFile();
@@ -598,9 +605,10 @@ function detectUntrackedNewFiles(
         if (DEFAULT_EXCLUDED_DIRS.has(entry.name)) continue;
         if (entry.name.startsWith(".") && entry.name !== ".") continue;
         if (matchesIgnorePattern(rel, entry.name, ignorePatterns)) continue;
-        if (visited.has(canonical)) continue;
-        visited.add(canonical);
-        stack.push({ dir: fullPath, depth: depth + 1 });
+        const key = normalizeCanonicalForIdentity(canonical);
+        if (visited.has(key)) continue;
+        visited.add(key);
+        walk(fullPath, canonical, depth + 1);
       } else if (isFile) {
         // Tracked files were already stat-checked above; only unknown files need a look.
         if (Object.prototype.hasOwnProperty.call(index.files, rel)) continue;
@@ -625,7 +633,8 @@ function detectUntrackedNewFiles(
         found.push(rel);
       }
     }
-  }
+  };
+  walk(canonicalRoot, canonicalRoot, 0);
   return found;
 }
 
@@ -708,7 +717,7 @@ export async function indexProject(
     const visitedDirs = new Set<string>();
     visitedDirs.add(normalizePathForIdentity(canonicalRoot));
 
-    function scanDir(dirPath: string, depth: number): void {
+    function scanDir(dirPath: string, depth: number, canonicalDir: string): void {
       // Every early exit below leaves part of the tree unvisited; each one is
       // recorded in the scan summary so a partial scan is never reported as
       // complete.
@@ -741,15 +750,24 @@ export async function indexProject(
         const fullPath = path.join(dirPath, entry.name);
         const relPath = toPosixRel(path.relative(canonicalRoot, fullPath));
 
-        // Security boundary check: ensure real path is within canonicalRoot
+        // Security boundary check: ensure real path is within canonicalRoot.
+        // Only a symlink (a junction counts as one) can lead somewhere else, so
+        // only its target is resolved. A real entry of a directory already
+        // verified to be inside the root is inside it too, and its canonical
+        // path is the parent's canonical path plus its own name: realpathSync
+        // on every entry was the dominant cost of a build on Windows.
         let entryCanonical: string;
-        try {
-          entryCanonical = fs.realpathSync(fullPath);
-        } catch {
-          continue; // Broken symlink or unresolvable
+        if (entry.isSymbolicLink()) {
+          try {
+            entryCanonical = fs.realpathSync(fullPath);
+          } catch {
+            continue; // Broken symlink or unresolvable
+          }
+        } else {
+          entryCanonical = path.join(canonicalDir, entry.name);
         }
 
-        if (!isWithinProjectBoundary(entryCanonical, canonicalRoot)) {
+        if (entry.isSymbolicLink() && !isWithinProjectBoundary(entryCanonical, canonicalRoot)) {
           // Path traversal attempt or symlink pointing outside project root
           continue;
         }
@@ -771,11 +789,11 @@ export async function indexProject(
           if (entry.name.startsWith(".") && entry.name !== ".") continue;
           if (matchesIgnorePattern(relPath, entry.name, ignorePatterns)) continue;
 
-          const normDir = normalizePathForIdentity(entryCanonical);
+          const normDir = normalizeCanonicalForIdentity(entryCanonical);
           if (visitedDirs.has(normDir)) continue; // Symlink loop prevention
           visitedDirs.add(normDir);
 
-          scanDir(fullPath, depth + 1);
+          scanDir(fullPath, depth + 1, entryCanonical);
         } else if (isFile) {
           totalFilesSeen++;
 
@@ -925,12 +943,20 @@ export async function indexProject(
       }
     }
 
-    scanDir(canonicalRoot, 0);
+    scanDir(canonicalRoot, 0, canonicalRoot);
 
     // Import targets depend on which other files exist, so they are resolved
     // for every file on every build (also for reused cache entries): a target
     // added or deleted elsewhere changes the answer.
-    resolveAllDependencies(indexedFiles);
+    resolveAllDependencies(
+      indexedFiles,
+      buildAliasLookup(canonicalRoot, Object.keys(indexedFiles)),
+      buildPythonRoots(canonicalRoot, Object.keys(indexedFiles)),
+      {
+        rustCrates: buildRustCrates(canonicalRoot, Object.keys(indexedFiles)),
+        go: buildGoModules(canonicalRoot, Object.keys(indexedFiles)),
+      }
+    );
 
     // Rename and deletion detection: one pass over the deletion candidates
     // keyed by content hash (first candidate in scan order wins, as before).

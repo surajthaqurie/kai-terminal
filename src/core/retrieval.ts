@@ -11,6 +11,7 @@ import type {
 import { estimateTokens, truncateToTokenBudget, type TokenizerFunction } from "./tokenCounter";
 import { isWithinProjectBoundary } from "./registry";
 import { extractSearchTokens } from "./classifier";
+import { dependencyTargets } from "./importResolver";
 import { isBinaryFile, isSensitiveContent, isSensitiveFile } from "./indexer";
 import {
   getReverseImports,
@@ -95,6 +96,15 @@ const ANCHORED_PART_WEIGHT = 0.25;
  * caller already opted into early stopping (`minScoreRatio` > 0).
  */
 export const ANCHORED_MIN_SCORE_RATIO = 0.5;
+
+/**
+ * A file anchors a query that names no symbol only when it clearly stands out:
+ * its score is at least this multiple of the runner-up's and at least
+ * `FILE_ANCHOR_MIN_SCORE` (about one real path or rare-word match). Starting
+ * points tuned on a synthetic fixture, not optima.
+ */
+export const FILE_ANCHOR_DOMINANCE = 1.5;
+export const FILE_ANCHOR_MIN_SCORE = 20;
 
 /** A source range is whole-file below this many lines. */
 const SMALL_FILE_LINES = 60;
@@ -318,6 +328,13 @@ export interface RankResult {
    * the defining file is where neighbour expansion starts.
    */
   anchor?: { name: string; filePath: string };
+  /**
+   * Set only when there is no symbol anchor: the top-ranked file, when it
+   * dominates the runner-up (`FILE_ANCHOR_DOMINANCE`). It names no symbol, so only
+   * neighbours that need none (tests that import it, the definitions it imports)
+   * can be added around it.
+   */
+  fileAnchor?: { filePath: string };
 }
 
 function prepareQueryTokens(query: string): {
@@ -632,7 +649,26 @@ export function rankCandidates(
     }
   }
 
-  return { ranked, matchedSymbols, dependencies: matchedDeps, queryTokens, anchor: anchored };
+  let fileAnchor: RankResult["fileAnchor"];
+  if (!anchored && ranked.length > 0) {
+    const [top, second] = ranked;
+    if (
+      !top.file.isTest &&
+      top.score >= FILE_ANCHOR_MIN_SCORE &&
+      (!second || top.score >= FILE_ANCHOR_DOMINANCE * second.score)
+    ) {
+      fileAnchor = { filePath: top.file.relativePath };
+    }
+  }
+
+  return {
+    ranked,
+    matchedSymbols,
+    dependencies: matchedDeps,
+    queryTokens,
+    anchor: anchored,
+    fileAnchor,
+  };
 }
 
 /** Short, deterministic explanation of why a file was selected. */
@@ -838,6 +874,11 @@ export interface ExpansionOptions {
   callers?: boolean;
   /** Test files that import the anchor's file. */
   tests?: boolean;
+  /**
+   * Also expand around a dominant top file when the query names no symbol (tests
+   * that import it and the definitions it imports). Never adds callers.
+   */
+  fileAnchor?: boolean;
 }
 
 // Bounds of neighbour expansion. One hop only: no transitive importers, no second anchor.
@@ -845,6 +886,9 @@ export const MAX_EXPANDED_CALLERS = 8;
 export const MAX_EXPANDED_TESTS = 2;
 /** Importers read at most (I/O bound): a barrel imported by thousands of files cannot stall a request. */
 export const MAX_EXAMINED_IMPORTERS = 40;
+/** Definitions (contracts, validators) imported by a file anchor, at most this many. */
+export const MAX_EXPANDED_IMPORTS = 3;
+const IMPORT_EXCERPT_LINES = 30;
 const CALLER_EXCERPT_LINES = 30;
 const TEST_EXCERPT_LINES = 40;
 
@@ -869,6 +913,34 @@ function usageExcerpt(
   return { startLine: start, endLine: end, snippet: lines.slice(start - 1, end).join("\n") };
 }
 
+/** A file's import block is looked for in its first lines only. */
+const IMPORT_SCAN_LINES = 80;
+
+/**
+ * How a neighbour uses the anchor symbol: the first run of lines that use it after
+ * the file's import block (the import statement itself, a `}` closing a multi-line
+ * import and the setup above the first use say nothing about how the symbol is
+ * called). Undefined when the file only imports the symbol.
+ */
+function usageAfterImports(
+  content: string,
+  name: string,
+  maxLines: number
+): { startLine: number; endLine: number; snippet: string } | undefined {
+  const lines = content.split("\n");
+  let codeStart = 0;
+  for (let i = 0; i < Math.min(lines.length, IMPORT_SCAN_LINES); i++) {
+    if (/^\s*(?:import\b|\}\s*from\b)|\brequire\(/.test(lines[i])) codeStart = i + 1;
+  }
+  const rest = usageExcerpt(lines.slice(codeStart).join("\n"), name, maxLines);
+  if (!rest) return undefined;
+  return {
+    startLine: rest.startLine + codeStart,
+    endLine: rest.endLine + codeStart,
+    snippet: rest.snippet,
+  };
+}
+
 /**
  * Bounded one-hop expansion around the symbol the task names. Neighbours come
  * from the import graph only, never from lexical matching: callers (files that
@@ -880,7 +952,7 @@ function usageExcerpt(
  */
 function expandNeighbors(
   index: ProjectIndex,
-  anchor: { name: string; filePath: string },
+  anchor: { name?: string; filePath: string },
   expand: ExpansionOptions,
   state: {
     matchedFiles: ScoredFileMatch[];
@@ -913,7 +985,8 @@ function expandNeighbors(
   for (const rel of importers) {
     const file = index.files[rel];
     const isTest = !!file.isTest;
-    if (isTest ? !expand.tests : !expand.callers) continue;
+    // A file anchor has no symbol name to look for, so it never produces callers.
+    if (isTest ? !expand.tests : !expand.callers || anchor.name === undefined) continue;
     const limit = isTest ? MAX_EXPANDED_TESTS : MAX_EXPANDED_CALLERS;
     if (exhausted || examined >= MAX_EXAMINED_IMPORTERS || (isTest ? tests : callers) >= limit) {
       skipUnexamined(file);
@@ -941,11 +1014,22 @@ function expandNeighbors(
 
     let excerpt: { startLine: number; endLine: number; snippet: string } | undefined;
     if (isTest) {
-      const lines = read.content.split("\n");
-      const end = Math.min(lines.length, TEST_EXCERPT_LINES);
-      excerpt = { startLine: 1, endLine: end, snippet: lines.slice(0, end).join("\n") };
+      // How the symbol is used when the test mentions it beyond its import; otherwise
+      // (and for a file anchor, which names no symbol) the top of the file.
+      excerpt =
+        anchor.name !== undefined
+          ? usageAfterImports(read.content, anchor.name, TEST_EXCERPT_LINES)
+          : undefined;
+      if (!excerpt) {
+        const lines = read.content.split("\n");
+        const end = Math.min(lines.length, TEST_EXCERPT_LINES);
+        excerpt = { startLine: 1, endLine: end, snippet: lines.slice(0, end).join("\n") };
+      }
     } else {
-      excerpt = usageExcerpt(read.content, anchor.name, CALLER_EXCERPT_LINES);
+      const name = anchor.name as string;
+      excerpt =
+        usageAfterImports(read.content, name, CALLER_EXCERPT_LINES) ??
+        usageExcerpt(read.content, name, CALLER_EXCERPT_LINES);
     }
     if (!excerpt) continue; // imports the file but never mentions the symbol: not a caller
 
@@ -989,6 +1073,108 @@ function expandNeighbors(
       reason: "budget_exceeded",
       estimatedTokens: notShownTokens,
     });
+  }
+  if (expand.fileAnchor && anchor.name === undefined && !exhausted) {
+    used += expandImportedDefinitions(index, anchor.filePath, {
+      ...state,
+      tokensLeft: state.tokensLeft - used,
+    });
+  }
+  return used;
+}
+
+/**
+ * The other half of a file anchor: the definitions the anchor file imports from
+ * the project (the contract types, validators and helpers a change to it must
+ * respect). For each imported project file the first exported symbol the anchor
+ * names is excerpted (at most `IMPORT_EXCERPT_LINES`), not the whole file. Side-effect
+ * imports, re-exports, files already present and test files are skipped; one hop, at
+ * most `MAX_EXPANDED_IMPORTS`. Everything read goes through `readIndexedSource`.
+ */
+function expandImportedDefinitions(
+  index: ProjectIndex,
+  anchorPath: string,
+  state: {
+    matchedFiles: ScoredFileMatch[];
+    seenContentHashes: Set<string>;
+    staleFiles: string[];
+    addOmission: (o: ContextOmission) => void;
+    tokensLeft: number;
+    tokenizer?: TokenizerFunction;
+  }
+): number {
+  const anchorFile = index.files[anchorPath];
+  if (!anchorFile) return 0;
+  const has = (p: string): boolean => Object.prototype.hasOwnProperty.call(index.files, p);
+  const present = new Set(state.matchedFiles.map((m) => m.file.relativePath));
+  let used = 0;
+  let added = 0;
+  for (const dep of anchorFile.dependencies) {
+    if (added >= MAX_EXPANDED_IMPORTS) break;
+    if (dep.importedSymbols.length === 0 || dep.reExportedNames) continue;
+    const wanted = new Set(dep.importedSymbols);
+    for (const rel of dependencyTargets(dep, anchorPath, has)) {
+      if (added >= MAX_EXPANDED_IMPORTS) break;
+      const file = has(rel) ? index.files[rel] : undefined;
+      if (!file || rel === anchorPath || present.has(rel) || file.isTest) continue;
+      const sym = file.symbols.find((s) => s.isExported && wanted.has(s.name));
+      if (!sym) continue;
+
+      const read = readIndexedSource(index, rel);
+      if (read.status === "missing") {
+        state.staleFiles.push(rel);
+        continue;
+      }
+      if (read.status === "untrusted" || read.status === "binary") {
+        state.addOmission({
+          type: "file",
+          identifier: rel,
+          reason: "untrusted",
+          estimatedTokens: estimateOmissionTokens(file.sizeBytes),
+        });
+        continue;
+      }
+      if (read.status !== "ok" || read.content === undefined) continue;
+      if (read.changedSinceIndex) state.staleFiles.push(rel);
+      if (state.seenContentHashes.has(read.contentHash as string)) continue;
+
+      const lines = read.content.split("\n");
+      const startLine = Math.min(sym.location.line, lines.length);
+      const endLine = Math.min(
+        lines.length,
+        sym.location.endLine ?? startLine,
+        startLine + IMPORT_EXCERPT_LINES - 1
+      );
+      const snippet = lines.slice(startLine - 1, endLine).join("\n");
+      const tokens = estimateTokens(snippet, state.tokenizer).estimatedTokens;
+      if (tokens > state.tokensLeft - used) {
+        state.addOmission({
+          type: "file",
+          identifier: rel,
+          reason: "budget_exceeded",
+          estimatedTokens: tokens,
+        });
+        return used;
+      }
+      state.seenContentHashes.add(read.contentHash as string);
+      present.add(rel);
+      state.matchedFiles.push({
+        file,
+        score: 0,
+        matchedSymbols: [],
+        symbolHits: [],
+        matchedDeps: [],
+        pathMatches: [],
+        matchedTokenCount: 0,
+        startLine,
+        endLine,
+        snippet,
+        changedSinceIndex: read.changedSinceIndex || undefined,
+        relation: `${sym.name} imported by ${anchorPath}`,
+      });
+      used += tokens;
+      added++;
+    }
   }
   return used;
 }
@@ -1147,8 +1333,17 @@ export function retrieveContext(
     currentTokens += snip.tokens ?? 0;
   }
 
-  if (options.expand && ranking.anchor && matchedFiles.length > 0) {
-    currentTokens += expandNeighbors(index, ranking.anchor, options.expand, {
+  // A symbol anchor, or (opt-in) a dominant top file that was actually delivered.
+  const fileAnchor =
+    options.expand?.fileAnchor &&
+    !ranking.anchor &&
+    ranking.fileAnchor &&
+    matchedFiles.some((m) => m.file.relativePath === ranking.fileAnchor?.filePath)
+      ? ranking.fileAnchor
+      : undefined;
+  const expansionAnchor = ranking.anchor ?? fileAnchor;
+  if (options.expand && expansionAnchor && matchedFiles.length > 0) {
+    currentTokens += expandNeighbors(index, expansionAnchor, options.expand, {
       matchedFiles,
       seenContentHashes,
       staleFiles,

@@ -1,4 +1,12 @@
 import type { DependencyResolution, IndexedDependency, ProjectIndex } from "./types";
+import { DEFAULT_PYTHON_ROOTS } from "./pythonRoots";
+import { PYTHON_STDLIB_MODULES } from "./pythonStdlib";
+import {
+  isGoProjectImport,
+  resolveGoTargets,
+  resolveRustTargets,
+  type WorkspaceResolvers,
+} from "./rustGoModules";
 
 /**
  * Import-specifier resolution against the set of indexed files.
@@ -7,18 +15,50 @@ import type { DependencyResolution, IndexedDependency, ProjectIndex } from "./ty
  *  - TypeScript/JavaScript relative specifiers (`./x`, `../y/z`), including the
  *    ESM convention of writing `.js` for a `.ts` source, and directory
  *    `index` files.
- *  - Python relative imports (`.mod`, `..pkg.mod`, `.`), including packages.
+ *  - Python relative imports (`.mod`, `..pkg.mod`, `.`), including packages. A
+ *    `from . import a, b` (or `from .pkg import a, b`) resolves every name that
+ *    is a sibling/child module, not only the package `__init__.py`.
+ *  - TypeScript/JavaScript path aliases declared in the nearest
+ *    `tsconfig.json` (`compilerOptions.paths` and `baseUrl`, see
+ *    `tsconfigAliases.ts`).
+ *  - Python absolute imports of project modules (`import pkg.mod`,
+ *    `from pkg import x`), looked up under the project root, `src/` and the source
+ *    directories declared in `pyproject.toml` / `setup.cfg` (see `pythonRoots.ts`),
+ *    including namespace packages whose modules sit in several of those roots. A
+ *    module named like a standard-library module counts as project code only when
+ *    the importing file sits in the same directory (where Python itself would pick
+ *    the local file); otherwise it stays the standard library.
+ *  - Re-exports: an import of a name that the target file re-exports
+ *    (`export { x } from './x'`, `export * from`, a Python `__init__.py`
+ *    `from .mod import x`) also records the file that defines it, so a barrel
+ *    does not hide who really uses a symbol (see `addReExportTargets`).
  *
- * Everything else is reported explicitly instead of guessed: non-relative
- * specifiers (packages and path aliases such as tsconfig `paths`, which are
- * NOT resolved) come back as `non-relative`, and languages without a resolver
- * (Rust, Go, ...) as `unsupported`. A relative specifier whose target is not
- * indexed is `unresolved`.
+ *  - Rust (`crate::`, `self::`, `super::`, `mod foo;`, workspace crates) and Go
+ *    (import paths under a `go.mod` module of the project); see `rustGoModules.ts`.
+ *
+ * Everything else is reported explicitly instead of guessed: package names
+ * come back as `non-relative`, and languages without a resolver as
+ * `unsupported`. A relative specifier, or a specifier that matches a
+ * configured alias, whose target is not indexed is `unresolved`.
  */
 
 export interface ImportResolution {
+  /** The first resolved target (kept for readers that know only one). */
   resolvedPath: string | null;
   resolution: DependencyResolution;
+  /** Every resolved target when an import names several modules (Python `from . import a, b`). */
+  resolvedPaths?: string[];
+  /** True when a non-relative specifier resolved to a project file (tsconfig alias, Python project module). */
+  internal?: boolean;
+}
+
+/**
+ * tsconfig `paths` / `baseUrl`, already anchored to the project root
+ * (posix, no leading `./`; `""` is the root itself).
+ */
+export interface PathAliases {
+  baseUrl: string | null;
+  paths: Array<{ pattern: string; targets: string[] }>;
 }
 
 const TS_JS_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts", ".json"];
@@ -56,22 +96,18 @@ function dirOf(rel: string): string {
   return i < 0 ? "" : rel.slice(0, i);
 }
 
-function languageOfPath(rel: string): "ts" | "py" | "other" {
+function languageOfPath(rel: string): "ts" | "py" | "rs" | "go" | "other" {
   const dot = rel.lastIndexOf(".");
   const ext = dot < 0 ? "" : rel.slice(dot).toLowerCase();
   if ([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"].includes(ext)) return "ts";
   if (ext === ".py") return "py";
+  if (ext === ".rs") return "rs";
+  if (ext === ".go") return "go";
   return "other";
 }
 
-function resolveTsRelative(
-  specifier: string,
-  sourceRel: string,
-  has: (p: string) => boolean
-): string | null {
-  const dir = dirOf(sourceRel);
-  const base = normalizeSegments(dir ? `${dir}/${specifier}` : specifier);
-  if (base === null) return null;
+/** Resolve a root-relative base path (no extension guessing done yet) to an indexed TS/JS file. */
+function resolveTsBase(base: string, has: (p: string) => boolean): string | null {
   if (base !== "" && has(base)) return base;
   const dot = base.lastIndexOf(".");
   const slash = base.lastIndexOf("/");
@@ -86,66 +122,318 @@ function resolveTsRelative(
   return null;
 }
 
-function resolvePythonRelative(
+function resolveTsRelative(
   specifier: string,
   sourceRel: string,
   has: (p: string) => boolean
 ): string | null {
+  const dir = dirOf(sourceRel);
+  const base = normalizeSegments(dir ? `${dir}/${specifier}` : specifier);
+  if (base === null) return null;
+  return resolveTsBase(base, has);
+}
+
+/**
+ * Candidate root-relative bases for a non-relative specifier, from tsconfig
+ * `paths` (most specific pattern first, as TypeScript does) and `baseUrl`.
+ * `matched` is true when a `paths` pattern applied at all, which makes a miss
+ * an `unresolved` alias rather than a package name.
+ */
+function aliasCandidates(
+  specifier: string,
+  aliases: PathAliases
+): { bases: string[]; matched: boolean } {
+  const matches: Array<{ prefixLen: number; targets: string[]; star: string }> = [];
+  for (const { pattern, targets } of aliases.paths) {
+    const starAt = pattern.indexOf("*");
+    if (starAt < 0) {
+      if (specifier === pattern) matches.push({ prefixLen: pattern.length, targets, star: "" });
+      continue;
+    }
+    const prefix = pattern.slice(0, starAt);
+    const suffix = pattern.slice(starAt + 1);
+    if (
+      specifier.length >= prefix.length + suffix.length &&
+      specifier.startsWith(prefix) &&
+      specifier.endsWith(suffix)
+    ) {
+      matches.push({
+        prefixLen: prefix.length,
+        targets,
+        star: specifier.slice(prefix.length, specifier.length - suffix.length),
+      });
+    }
+  }
+  matches.sort((x, y) => y.prefixLen - x.prefixLen);
+  const bases: string[] = [];
+  for (const m of matches) {
+    for (const t of m.targets) {
+      const norm = normalizeSegments(t.replace("*", m.star));
+      if (norm !== null) bases.push(norm);
+    }
+  }
+  const matched = matches.length > 0;
+  if (!matched && aliases.baseUrl !== null) {
+    const norm = normalizeSegments(aliases.baseUrl ? `${aliases.baseUrl}/${specifier}` : specifier);
+    if (norm !== null) bases.push(norm);
+  }
+  return { bases, matched };
+}
+
+/** `dir/name.py` or `dir/name/__init__.py` for a name imported from package `dir`. */
+function pythonChildModule(dir: string, name: string, has: (p: string) => boolean): string | null {
+  if (!/^[A-Za-z_]\w*$/.test(name)) return null;
+  const base = dir ? `${dir}/${name}` : name;
+  if (has(`${base}.py`)) return `${base}.py`;
+  if (has(`${base}/__init__.py`)) return `${base}/__init__.py`;
+  return null;
+}
+
+/**
+ * Every indexed module a Python relative import refers to. Imported names that
+ * are modules of the package (`from . import a, b` -> `a.py`, `b.py`) resolve
+ * to those files; the package `__init__.py` is included only when the import
+ * is bare or some name is not a module (it may be defined in `__init__`).
+ */
+function resolvePythonTargets(
+  specifier: string,
+  names: readonly string[],
+  sourceRel: string,
+  has: (p: string) => boolean
+): string[] {
   const m = /^(\.+)(.*)$/.exec(specifier);
-  if (!m) return null;
+  if (!m) return [];
   const up = m[1].length - 1; // one dot = the current package
   let dir = dirOf(sourceRel);
   for (let i = 0; i < up; i++) {
-    if (dir === "") return null;
+    if (dir === "") return [];
     dir = dirOf(dir);
   }
   const modulePath = m[2].split(".").filter(Boolean).join("/");
   const base = [dir, modulePath].filter(Boolean).join("/");
+  let packageDir: string;
+  let init: string | null;
   if (modulePath) {
-    if (has(`${base}.py`)) return `${base}.py`;
-    if (has(`${base}/__init__.py`)) return `${base}/__init__.py`;
-    return null;
+    if (has(`${base}.py`)) return [`${base}.py`];
+    init = has(`${base}/__init__.py`) ? `${base}/__init__.py` : null;
+    if (!init) return [];
+    packageDir = base;
+  } else {
+    // `from . import x`: the package itself.
+    packageDir = dir;
+    const candidate = dir ? `${dir}/__init__.py` : "__init__.py";
+    init = has(candidate) ? candidate : null;
   }
-  // `from . import x`: the package itself.
-  const init = dir ? `${dir}/__init__.py` : "__init__.py";
-  return has(init) ? init : null;
+  const out: string[] = [];
+  let nonModuleName = names.length === 0;
+  for (const name of names) {
+    const child = pythonChildModule(packageDir, name, has);
+    if (child) {
+      if (!out.includes(child)) out.push(child);
+    } else {
+      nonModuleName = true;
+    }
+  }
+  if (init && nonModuleName && !out.includes(init)) out.unshift(init);
+  return out;
 }
 
 /**
  * Resolve a relative specifier to an indexed file path, or null. Language is
  * taken from the importing file's extension.
  */
+/**
+ * Project modules behind an absolute Python import. A module is project code
+ * only when a file for it exists in the index under a source root (the project
+ * root, `src/` and the roots declared by the project's Python configs); anything
+ * else (the standard library, installed packages) stays `non-relative`. A
+ * package without `__init__.py` that has modules in several roots is a namespace
+ * package: each imported name is looked up in every root. Package dirs mapped to a
+ * different name, and namespace packages without any indexed child named in the
+ * import, are not resolved.
+ *
+ * A top-level name that is also a standard-library module (`logging`, `types`)
+ * resolves to the local file only when the importer sits in the directory that
+ * holds it: that is the one case where Python itself prefers the local file.
+ */
+function resolvePythonAbsoluteTargets(
+  specifier: string,
+  names: readonly string[],
+  sourceRel: string,
+  has: (p: string) => boolean,
+  roots: readonly string[]
+): string[] {
+  if (!/^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*$/.test(specifier)) return [];
+  const shadowsStdlib = PYTHON_STDLIB_MODULES.has(specifier.split(".")[0]);
+  const importerDir = dirOf(sourceRel);
+  for (const root of roots) {
+    if (shadowsStdlib && importerDir !== root) continue;
+    // Resolved as a relative import from a file that sits directly in `root`.
+    const anchor = root ? `${root}/_` : "_";
+    const found = resolvePythonTargets(`.${specifier}`, names, anchor, has);
+    if (found.length > 0) return found;
+  }
+  if (shadowsStdlib || names.length === 0) return [];
+  // Namespace package: `from ns import a, b` with `a` and `b` in different roots.
+  const modulePath = specifier.split(".").join("/");
+  const out: string[] = [];
+  for (const root of roots) {
+    const dir = root ? `${root}/${modulePath}` : modulePath;
+    for (const name of names) {
+      const child = pythonChildModule(dir, name, has);
+      if (child && !out.includes(child)) out.push(child);
+    }
+  }
+  return out;
+}
+
 export function resolveRelativeSpecifier(
   specifier: string,
   sourceRel: string,
-  has: (p: string) => boolean
+  has: (p: string) => boolean,
+  importedNames: readonly string[] = []
 ): string | null {
-  if (!specifier.startsWith(".")) return null;
+  return resolveRelativeTargets(specifier, sourceRel, has, importedNames)[0] ?? null;
+}
+
+function resolveRelativeTargets(
+  specifier: string,
+  sourceRel: string,
+  has: (p: string) => boolean,
+  importedNames: readonly string[]
+): string[] {
+  if (!specifier.startsWith(".")) return [];
   const source = posix(sourceRel);
   switch (languageOfPath(source)) {
-    case "ts":
-      return resolveTsRelative(specifier, source, has);
+    case "ts": {
+      const one = resolveTsRelative(specifier, source, has);
+      return one ? [one] : [];
+    }
     case "py":
-      return resolvePythonRelative(specifier, source, has);
+      return resolvePythonTargets(specifier, importedNames, source, has);
     default:
-      return null;
+      return [];
   }
 }
 
-export function resolveDependency(
-  dep: Pick<IndexedDependency, "targetSpecifier">,
-  sourceRel: string,
-  has: (p: string) => boolean
+/**
+ * Rust and Go. A Rust path through `crate` / `self` / `super` or a crate of the
+ * same workspace, and a Go import path under a module of the project, resolve to
+ * indexed files; the same forms that do not are `unresolved`, anything else (the
+ * standard library, other crates and modules) is `non-relative`.
+ */
+function resolveNativeDependency(
+  dep: Pick<IndexedDependency, "targetSpecifier"> &
+    Partial<Pick<IndexedDependency, "importedSymbols">>,
+  source: string,
+  has: (p: string) => boolean,
+  lang: "rs" | "go",
+  workspace: WorkspaceResolvers
 ): ImportResolution {
-  const lang = languageOfPath(posix(sourceRel));
+  const specifier = dep.targetSpecifier;
+  let targets: string[];
+  let ownForm: boolean;
+  if (lang === "rs") {
+    targets = resolveRustTargets(
+      specifier,
+      dep.importedSymbols ?? [],
+      source,
+      has,
+      workspace.rustCrates ?? null
+    );
+    const first = specifier.split("::")[0];
+    ownForm =
+      first === "crate" ||
+      first === "self" ||
+      first === "super" ||
+      !!workspace.rustCrates?.roots.has(first);
+  } else {
+    targets = specifier.startsWith(".") ? [] : resolveGoTargets(specifier, workspace.go ?? null);
+    ownForm = specifier.startsWith(".") || isGoProjectImport(specifier, workspace.go ?? null);
+  }
+  if (targets.length === 0) {
+    return { resolvedPath: null, resolution: ownForm ? "unresolved" : "non-relative" };
+  }
+  return {
+    resolvedPath: targets[0],
+    resolution: "resolved",
+    internal: true,
+    ...(targets.length > 1 ? { resolvedPaths: targets } : {}),
+  };
+}
+
+export function resolveDependency(
+  dep: Pick<IndexedDependency, "targetSpecifier"> &
+    Partial<Pick<IndexedDependency, "importedSymbols">>,
+  sourceRel: string,
+  has: (p: string) => boolean,
+  aliases: PathAliases | null = null,
+  pythonRoots: readonly string[] = DEFAULT_PYTHON_ROOTS,
+  workspace: WorkspaceResolvers = {}
+): ImportResolution {
+  const source = posix(sourceRel);
+  const lang = languageOfPath(source);
   if (lang === "other") return { resolvedPath: null, resolution: "unsupported" };
+  if (lang === "rs" || lang === "go")
+    return resolveNativeDependency(dep, source, has, lang, workspace);
   if (!dep.targetSpecifier.startsWith(".")) {
+    if (lang === "ts" && aliases) {
+      const { bases, matched } = aliasCandidates(dep.targetSpecifier, aliases);
+      for (const base of bases) {
+        const hit = resolveTsBase(base, has);
+        if (hit) return { resolvedPath: hit, resolution: "resolved", internal: true };
+      }
+      if (matched) return { resolvedPath: null, resolution: "unresolved" };
+    }
+    if (lang === "py") {
+      const targets = resolvePythonAbsoluteTargets(
+        dep.targetSpecifier,
+        dep.importedSymbols ?? [],
+        source,
+        has,
+        pythonRoots
+      );
+      if (targets.length > 0) {
+        return {
+          resolvedPath: targets[0],
+          resolution: "resolved",
+          internal: true,
+          ...(targets.length > 1 ? { resolvedPaths: targets } : {}),
+        };
+      }
+    }
     return { resolvedPath: null, resolution: "non-relative" };
   }
-  const resolved = resolveRelativeSpecifier(dep.targetSpecifier, sourceRel, has);
-  return resolved
-    ? { resolvedPath: resolved, resolution: "resolved" }
-    : { resolvedPath: null, resolution: "unresolved" };
+  const targets = resolveRelativeTargets(
+    dep.targetSpecifier,
+    sourceRel,
+    has,
+    dep.importedSymbols ?? []
+  );
+  if (targets.length === 0) return { resolvedPath: null, resolution: "unresolved" };
+  return {
+    resolvedPath: targets[0],
+    resolution: "resolved",
+    ...(targets.length > 1 ? { resolvedPaths: targets } : {}),
+  };
+}
+
+/**
+ * Every in-index target of a dependency: the persisted resolution when present,
+ * otherwise resolved on the fly (snapshots written before resolution was
+ * recorded). Aliases are not consulted on the fly; they only apply at build time.
+ */
+export function dependencyTargets(
+  dep: IndexedDependency,
+  sourceRel: string,
+  has: (p: string) => boolean
+): string[] {
+  if (dep.resolvedPath !== undefined && dep.resolution !== undefined) {
+    if (dep.resolvedPaths && dep.resolvedPaths.length > 0) return dep.resolvedPaths;
+    return dep.resolvedPath ? [dep.resolvedPath] : [];
+  }
+  const r = resolveDependency(dep, sourceRel, has);
+  return r.resolvedPaths ?? (r.resolvedPath ? [r.resolvedPath] : []);
 }
 
 /**
@@ -155,16 +443,127 @@ export function resolveDependency(
  * a target added or deleted elsewhere changes the answer.
  */
 export function resolveAllDependencies(
-  files: Record<string, { dependencies: IndexedDependency[] }>
+  files: Record<string, ReExportFile>,
+  aliases: PathAliases | ((sourceRel: string) => PathAliases | null) | null = null,
+  pythonRoots: readonly string[] = DEFAULT_PYTHON_ROOTS,
+  workspace: WorkspaceResolvers = {}
 ): void {
   const has = (p: string): boolean => Object.prototype.hasOwnProperty.call(files, p);
   for (const [rel, file] of Object.entries(files)) {
+    const fileAliases = typeof aliases === "function" ? aliases(rel) : aliases;
     for (const dep of file.dependencies) {
-      const r = resolveDependency(dep, rel, has);
+      const r = resolveDependency(dep, rel, has, fileAliases, pythonRoots, workspace);
       dep.resolvedPath = r.resolvedPath;
       dep.resolution = r.resolution;
+      if (r.resolvedPaths) dep.resolvedPaths = r.resolvedPaths;
+      else delete dep.resolvedPaths;
+      // A non-relative specifier that resolved to a project file is not an external package.
+      if (r.internal) dep.isExternal = false;
     }
   }
+  addReExportTargets(files);
+}
+
+/** A re-export chain deeper than this is not followed (barrels of barrels of barrels). */
+const MAX_REEXPORT_DEPTH = 3;
+/** Upper bound on files recorded per import, so a star-export hub cannot fan out without limit. */
+const MAX_REEXPORT_TARGETS = 8;
+
+/** What an importer asks a barrel for: named exports, `default`, or (namespace import) everything. */
+interface WantedNames {
+  names: ReadonlySet<string>;
+  all: boolean;
+}
+
+function wantedNames(dep: IndexedDependency): WantedNames {
+  const names = new Set(dep.importedSymbols);
+  const bindings = dep.importBindings ?? [];
+  if (bindings.includes("default")) names.add("default");
+  return { names, all: bindings.includes("namespace") };
+}
+
+type ReExportFile = {
+  dependencies: IndexedDependency[];
+  symbols?: ReadonlyArray<{ name: string; isExported: boolean }>;
+};
+
+/**
+ * Files that define the `wanted` names behind `barrel`, following re-exports:
+ * named ones (`export { x } from`) when `x` is wanted, star ones when the
+ * target exports a wanted name (or re-exports it onwards). A default import
+ * wants `default` (`export { default } from`, `export { x as default } from`;
+ * never through `export *`), a namespace import wants everything the barrel
+ * re-exports. Import edges only; a name imported under another alias
+ * (`export { a as b }`) matches as `b`, the name importers use.
+ */
+function reExportedDefiners(
+  files: Record<string, ReExportFile>,
+  barrel: string,
+  wanted: WantedNames,
+  depth: number,
+  seen: Set<string>
+): string[] {
+  if (depth >= MAX_REEXPORT_DEPTH) return [];
+  const file = Object.prototype.hasOwnProperty.call(files, barrel) ? files[barrel] : undefined;
+  if (!file) return [];
+  const out: string[] = [];
+  for (const dep of file.dependencies) {
+    const exportedNames = dep.reExportedNames;
+    if (!exportedNames || !dep.resolvedPath) continue;
+    const star = exportedNames.includes("*");
+    if (!wanted.all) {
+      // `export *` never re-exports `default`, so a default-only import cannot pass through one.
+      const relevant = star
+        ? [...wanted.names].some((n) => n !== "default")
+        : exportedNames.some((n) => wanted.names.has(n));
+      if (!relevant) continue;
+    }
+    for (const target of dep.resolvedPaths ?? [dep.resolvedPath]) {
+      if (seen.has(target) || !Object.prototype.hasOwnProperty.call(files, target)) continue;
+      seen.add(target);
+      const onwards = reExportedDefiners(files, target, wanted, depth + 1, seen);
+      const definesWanted = files[target].symbols?.some(
+        (sym) => sym.isExported && (wanted.all || wanted.names.has(sym.name))
+      );
+      // A star export proves nothing by itself: keep the target only when it
+      // really exports a wanted name or leads to a file that does.
+      if (!star || definesWanted || onwards.length > 0) out.push(target);
+      out.push(...onwards);
+    }
+  }
+  return out;
+}
+
+/**
+ * Second pass over resolved imports: when an import targets a file that
+ * re-exports one of the imported names, the file defining that name is added to
+ * the dependency's `resolvedPaths` after the direct target. Persisted, so the
+ * reverse import map and neighbour expansion see importers of a symbol that
+ * reach it through a barrel. Bounded in depth and fan-out.
+ */
+function addReExportTargets(files: Record<string, ReExportFile>): void {
+  // Compute every addition against the direct resolutions first, then apply:
+  // a re-export dependency must not see targets added to it earlier in this pass.
+  const additions: Array<{ dep: IndexedDependency; targets: string[] }> = [];
+  for (const [rel, file] of Object.entries(files)) {
+    for (const dep of file.dependencies) {
+      if (dep.resolution !== "resolved" || !dep.resolvedPath) continue;
+      if (!dep.importedSymbols || dep.importedSymbols.length === 0) continue;
+      const wanted = wantedNames(dep);
+      const direct = dep.resolvedPaths ?? [dep.resolvedPath];
+      const extra: string[] = [];
+      for (const barrel of direct) {
+        const seen = new Set<string>([rel, ...direct]);
+        for (const t of reExportedDefiners(files, barrel, wanted, 0, seen)) {
+          if (!extra.includes(t) && !direct.includes(t)) extra.push(t);
+        }
+      }
+      if (extra.length > 0) {
+        additions.push({ dep, targets: [...direct, ...extra.slice(0, MAX_REEXPORT_TARGETS)] });
+      }
+    }
+  }
+  for (const { dep, targets } of additions) dep.resolvedPaths = targets;
 }
 
 /**
@@ -179,17 +578,15 @@ export function buildReverseImportMap(index: Pick<ProjectIndex, "files">): Map<s
   const reverse = new Map<string, Set<string>>();
   for (const [rel, file] of Object.entries(files)) {
     for (const dep of file.dependencies) {
-      const target =
-        dep.resolvedPath !== undefined && dep.resolution !== undefined
-          ? dep.resolvedPath
-          : resolveDependency(dep, rel, has).resolvedPath;
-      if (!target || target === rel || !has(target)) continue;
-      let set = reverse.get(target);
-      if (!set) {
-        set = new Set<string>();
-        reverse.set(target, set);
+      for (const target of dependencyTargets(dep, rel, has)) {
+        if (target === rel || !has(target)) continue;
+        let set = reverse.get(target);
+        if (!set) {
+          set = new Set<string>();
+          reverse.set(target, set);
+        }
+        set.add(rel);
       }
-      set.add(rel);
     }
   }
   const out = new Map<string, string[]>();

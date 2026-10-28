@@ -1,16 +1,29 @@
+# Kai Terminal Flatpak. Repackages the .deb that Tauri builds, so the app keeps
+# the layout the .deb already verifies. org.freedesktop.Platform has no
+# WebKitGTK, so this uses the GNOME runtime, which does.
+#
+# Build (the CI job `linux-packages` in .github/workflows/ci.yml does this):
+#   npm ci && npx tauri build --bundles deb
+#   mkdir -p packaging/build
+#   cp src-tauri/target/release/bundle/deb/*.deb packaging/build/kai.deb
+#   flatpak-builder --user --install --force-clean build-dir packaging/flatpak/com.kai.terminal.yml
+#   flatpak run com.kai.terminal
 app-id: com.kai.terminal
-runtime: org.freedesktop.Platform
-runtime-version: '23.08'
-sdk: org.freedesktop.Sdk
+runtime: org.gnome.Platform
+runtime-version: '48'
+sdk: org.gnome.Sdk
 command: kai
 separate-locales: false
 
 finish-args:
-  # Terminal emulator needs access to PTY driver and host filesystem
   - --share=ipc
-  - --socket=x11
+  - --share=network
   - --socket=wayland
-  - --device=all
+  - --socket=fallback-x11
+  - --device=dri
+  # Music Time plays audio.
+  - --socket=pulseaudio
+  # The terminal opens and edits the user's own files.
   - --filesystem=host
   - --talk-name=org.freedesktop.Notifications
 
@@ -18,10 +31,17 @@ modules:
   - name: kai
     buildsystem: simple
     build-commands:
-      - npm ci
-      - npm run build
-      - cargo build --manifest-path src-tauri/Cargo.toml --release --no-default-features
-      - install -D -m 755 src-tauri/target/release/kai /app/bin/kai
+      # A .deb is an ar archive; data.tar.gz holds ./usr/{bin,lib,share}.
+      - ar -x kai.deb data.tar.gz
+      - mkdir deb-root && tar -xzf data.tar.gz -C deb-root
+      - cp -a deb-root/usr/. /app/
+      # Flatpak requires the desktop file and icon to be named after the app id.
+      - mv /app/share/applications/kai.desktop /app/share/applications/com.kai.terminal.desktop
+      - sed -i 's/^Icon=.*/Icon=com.kai.terminal/' /app/share/applications/com.kai.terminal.desktop
+      - mv /app/share/icons/hicolor/128x128/apps/kai.png /app/share/icons/hicolor/128x128/apps/com.kai.terminal.png
+      - mv '/app/share/icons/hicolor/256x256@2/apps/kai.png' '/app/share/icons/hicolor/256x256@2/apps/com.kai.terminal.png'
+      - mv /app/share/icons/hicolor/32x32/apps/kai.png /app/share/icons/hicolor/32x32/apps/com.kai.terminal.png
     sources:
-      - type: dir
-        path: ../..
+      - type: file
+        path: ../build/kai.deb
+        dest-filename: kai.deb

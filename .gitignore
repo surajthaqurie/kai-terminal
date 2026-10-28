@@ -28,3 +28,10 @@ Thumbs.db
 scripts/bench/results/
 
 kai-website/tsconfig.tsbuildinfo
+
+# Snap / Flatpak build inputs and outputs (see packaging/)
+packaging/build/
+/snap/
+*.snap
+build-dir/
+.flatpak-builder/

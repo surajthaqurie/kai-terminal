@@ -29,6 +29,7 @@ import {
   Download,
   ExternalLink,
 } from "lucide-react";
+import { APP_VERSION_FALLBACK } from "../services/updateService";
 import type { UpdateCheckResult, UpdateDownloadState } from "../services/updateService";
 import { UpdateProgressBar, describeUpdateStep } from "./UpdateProgressBar";
 
@@ -163,7 +164,7 @@ export const SettingsModal: FC<SettingsModalProps> = ({
   settings,
   onSaveSettings,
   shells,
-  appVersion = "0.1.4",
+  appVersion = APP_VERSION_FALLBACK,
   updateInfo = null,
   isCheckingUpdates = false,
   updateDownload = null,

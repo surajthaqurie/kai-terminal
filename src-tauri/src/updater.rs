@@ -103,7 +103,7 @@ pub fn sanitize_update_filename(filename: &str) -> Result<String, TerminalError>
     Ok(trimmed.to_string())
 }
 
-#[cfg(feature = "tauri")]
+#[cfg_attr(not(feature = "tauri"), allow(dead_code))]
 fn update_temp_path(filename: &str) -> PathBuf {
     std::env::temp_dir().join(format!("kai-update-{filename}"))
 }
@@ -113,20 +113,32 @@ fn update_temp_path(filename: &str) -> PathBuf {
 const UPDATE_TEMP_PREFIX: &str = "kai-update-";
 
 /// True when `path` is exactly where `download_update_asset_cmd` writes an
-/// installer: a safe, prefixed filename directly inside the OS temp dir.
+/// installer: `kai-update-<asset>` directly inside the OS temp dir, where
+/// `<asset>` is a safe release-asset filename (see [`sanitize_update_filename`]).
 ///
 /// Compares whole path components, not strings: on Windows `temp_dir()`
 /// keeps a trailing `\` while `Path::parent()` drops it, so a string
 /// `starts_with` check rejected every freshly downloaded installer with
-/// "Update installer not found".
-#[cfg(feature = "tauri")]
+/// "Update installer not found". The expected path is rebuilt from the asset
+/// name alone — never from the on-disk name, which already carries the
+/// prefix — so the prefix is not appended a second time.
+#[cfg_attr(not(feature = "tauri"), allow(dead_code))]
 fn is_update_download_path(path: &Path) -> bool {
     let name = match path.file_name().and_then(|n| n.to_str()) {
         Some(name) => name,
         None => return false,
     };
-    match sanitize_update_filename(name) {
-        Ok(safe) => safe.starts_with(UPDATE_TEMP_PREFIX) && path == update_temp_path(&safe),
+    let asset = match name.strip_prefix(UPDATE_TEMP_PREFIX) {
+        Some(asset) => asset,
+        None => return false,
+    };
+    // Exactly one prefix: a name that is itself prefixed again never came
+    // from `download_update_asset_cmd`.
+    if asset.starts_with(UPDATE_TEMP_PREFIX) {
+        return false;
+    }
+    match sanitize_update_filename(asset) {
+        Ok(safe) => path == update_temp_path(&safe),
         Err(_) => false,
     }
 }
@@ -575,6 +587,18 @@ pub fn get_update_install_hint_cmd() -> Option<String> {
     install_hint(&exe, appimage.as_deref(), &program_dirs).map(str::to_string)
 }
 
+/// CPU architecture of the running Kai build (`x86_64`, `aarch64`, ...).
+///
+/// The frontend picks the installer from this, not from the WebView user
+/// agent: WKWebView on Apple Silicon reports an Intel Mac and WebView2 on
+/// Windows ARM64 reports x64, which would install the wrong build now that
+/// releases carry both.
+#[cfg(feature = "tauri")]
+#[tauri::command]
+pub fn get_update_arch_cmd() -> String {
+    std::env::consts::ARCH.to_string()
+}
+
 /// Installs a previously downloaded installer and returns a short
 /// human-readable status for the UI.
 ///
@@ -722,7 +746,9 @@ mod tests {
         assert!(sanitize_update_filename("").is_err());
     }
 
-    #[cfg(feature = "tauri")]
+    // Not tauri-gated on purpose: the release configs run `cargo test
+    // --no-default-features`, which would compile this out and let exactly
+    // the double-prefix regression below through CI unseen.
     #[test]
     fn download_path_check_matches_download_location() {
         let _env = crate::test_support::lock_test_env();
@@ -730,6 +756,23 @@ mod tests {
         // separator on Windows) must be accepted.
         let dest = update_temp_path("kai_0.1.5_x64-setup.exe");
         assert!(is_update_download_path(&dest));
+        // Every installer flavour the three OSes produce is on this path.
+        for name in [
+            "kai_0.1.5_amd64.deb",
+            "kai_0.1.5_aarch64.dmg",
+            "kai_0.1.5_amd64.AppImage",
+        ] {
+            assert!(
+                is_update_download_path(&update_temp_path(name)),
+                "path check rejected {name}"
+            );
+        }
+        // The prefix must be handled exactly once: a file literally named
+        // `kai-update-kai-update-<asset>` (what a double-append would expect)
+        // is not a download location.
+        assert!(!is_update_download_path(
+            &std::env::temp_dir().join("kai-update-kai-update-kai_0.1.5_x64-setup.exe")
+        ));
         // Other files in temp, other dirs and non-prefixed names are refused.
         assert!(!is_update_download_path(
             &std::env::temp_dir().join("kai_0.1.5_x64-setup.exe")

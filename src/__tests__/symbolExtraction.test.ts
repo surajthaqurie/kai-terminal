@@ -129,9 +129,55 @@ describe("TypeScript / JavaScript extraction", () => {
     expect(one(symbols, "create").location.line).toBe(13);
     expect(one(symbols, "size").location.line).toBe(14);
     expect(one(symbols, "handler")).toMatchObject({ kind: "function", container: "Service" });
-    expect(byName(symbols, "constructor")).toHaveLength(0);
+    expect(one(symbols, "constructor")).toMatchObject({
+      kind: "function",
+      container: "Service",
+      isExported: true,
+    });
+    expect(one(symbols, "constructor").location).toMatchObject({ line: 6, endLine: 6 });
     expect(byName(symbols, "secret")).toHaveLength(0);
     expect(byName(symbols, "x")).toHaveLength(0);
+  });
+
+  it("indexes class properties (not private ones) and constructors with their visibility", () => {
+    const src = [
+      "export class Config {", // 1
+      "  readonly name: string;", // 2
+      "  static readonly MAX_RETRIES = 3;", // 3
+      "  protected timeout?: number = 30;", // 4
+      "  private secret = 'x';", // 5
+      "  #hidden = 1;", // 6
+      "  items: Array<{ id: string }> = [];", // 7
+      "  count;", // 8
+      "  [key: string]: unknown;", // 9
+      "  @Input() label = 'a';", // 10
+      "  private constructor(name: string) { this.name = name; }", // 11
+      "  total = (a: number) => a;", // 12
+      "}", // 13
+      "class Local {", // 14
+      "  value = 1;", // 15
+      "}", // 16
+    ].join("\n");
+    const { symbols } = ts(src);
+    expect(one(symbols, "name")).toMatchObject({
+      kind: "variable",
+      container: "Config",
+      isExported: true,
+    });
+    expect(one(symbols, "name").location).toMatchObject({ line: 2, endLine: 2 });
+    expect(one(symbols, "name").signature).toContain("readonly name: string");
+    expect(one(symbols, "MAX_RETRIES")).toMatchObject({ kind: "constant", isExported: true });
+    expect(one(symbols, "timeout")).toMatchObject({ kind: "variable", isExported: false });
+    expect(one(symbols, "items").location.line).toBe(7);
+    expect(one(symbols, "count").container).toBe("Config");
+    expect(one(symbols, "label").location.line).toBe(10);
+    expect(one(symbols, "total").kind).toBe("function"); // function-valued: still a function
+    expect(byName(symbols, "secret")).toHaveLength(0);
+    expect(byName(symbols, "#hidden")).toHaveLength(0);
+    expect(byName(symbols, "key")).toHaveLength(0);
+    // A private constructor is indexed but not exported.
+    expect(one(symbols, "constructor")).toMatchObject({ container: "Config", isExported: false });
+    expect(one(symbols, "value")).toMatchObject({ container: "Local", isExported: false });
   });
 
   it("indexes interfaces, type aliases, enums and namespaces with ranges", () => {
@@ -379,6 +425,44 @@ describe("Rust extraction", () => {
     expect(one(symbols, "private_helper")).toMatchObject({ container: "Cache", isExported: false });
     expect(one(symbols, "fmt").container).toBe("Cache");
     expect(byName(symbols, "local")).toHaveLength(0);
+  });
+
+  it("marks trait-impl methods exported when the type and the trait are public", () => {
+    const src = [
+      "pub struct Cache {}", // 1
+      "pub(crate) struct Hidden {}", // 2
+      "trait Local { fn go(&self); }", // 3
+      "pub trait Open { fn open(&self); }", // 4
+      "impl Display for Cache {", // 5
+      "    fn fmt(&self, f: &mut Formatter) -> Result { Ok(()) }", // 6
+      "}", // 7
+      "impl Display for Hidden {", // 8
+      "    fn fmt(&self, f: &mut Formatter) -> Result { Ok(()) }", // 9
+      "}", // 10
+      "impl Local for Cache {", // 11
+      "    fn go(&self) {}", // 12
+      "}", // 13
+      "impl Open for Cache {", // 14
+      "    fn open(&self) {}", // 15
+      "}", // 16
+      "impl Display for Elsewhere {", // 17
+      "    fn fmt(&self, f: &mut Formatter) -> Result { Ok(()) }", // 18
+      "}", // 19
+      "impl Cache {", // 20
+      "    fn private_inherent(&self) {}", // 21
+      "}", // 22
+    ].join("\n");
+    const { symbols } = rs(src);
+    const atLine = (line: number) => symbols.find((s) => s.location.line === line)!;
+    expect(atLine(6)).toMatchObject({ name: "fmt", container: "Cache", isExported: true });
+    expect(atLine(9)).toMatchObject({ name: "fmt", container: "Hidden", isExported: false });
+    // A private trait of this file does not make its methods public.
+    expect(atLine(12)).toMatchObject({ name: "go", isExported: false });
+    expect(atLine(15)).toMatchObject({ name: "open", container: "Cache", isExported: true });
+    // A type declared elsewhere is unknown, so it stays unexported.
+    expect(atLine(18)).toMatchObject({ container: "Elsewhere", isExported: false });
+    // Inherent methods still need their own `pub`.
+    expect(atLine(21)).toMatchObject({ name: "private_inherent", isExported: false });
   });
 
   it("ignores items in comments, strings, raw strings and char literals", () => {
@@ -658,7 +742,14 @@ describe("dependency resolution", () => {
     expect(resolveDependency({ targetSpecifier: "react" }, "src/a.ts", has).resolution).toBe(
       "non-relative"
     );
+    // Rust: a `crate::` path whose module is not an indexed file is unresolved, a crate name is not followed.
     expect(resolveDependency({ targetSpecifier: "crate::x" }, "src/lib.rs", has).resolution).toBe(
+      "unresolved"
+    );
+    expect(resolveDependency({ targetSpecifier: "std::fmt" }, "src/lib.rs", has).resolution).toBe(
+      "non-relative"
+    );
+    expect(resolveDependency({ targetSpecifier: "x" }, "notes.txt", has).resolution).toBe(
       "unsupported"
     );
     expect(resolveDependency({ targetSpecifier: "../../escape" }, "src/a.ts", has).resolution).toBe(

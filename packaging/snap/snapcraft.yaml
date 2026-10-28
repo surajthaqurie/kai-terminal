@@ -1,29 +1,37 @@
+# Kai Terminal snap. Repackages the .deb that Tauri builds, so the snap ships
+# exactly the layout (/usr/bin/kai, /usr/lib/kai resources) the .deb already
+# verifies. It does not rebuild the app: a `cargo build --no-default-features`
+# binary has no desktop window.
+#
+# Build (the CI job `linux-packages` in .github/workflows/ci.yml does this):
+#   npm ci && npx tauri build --bundles deb
+#   mkdir -p snap packaging/build
+#   sed "s/^version: .*/version: '$(node -p "require('./package.json').version")'/" packaging/snap/snapcraft.yaml > snap/snapcraft.yaml
+#   cp src-tauri/target/release/bundle/deb/*.deb packaging/build/kai.deb
+#   snapcraft            # LXD or Multipass; add --destructive-mode on a throwaway host
 name: kai
 base: core22
-version: '0.1.0'
-summary: A modern cross-platform terminal for Windows, Linux, and macOS.
+version: 'set-from-package-json' # replaced by the build step below; never edit per release
+summary: A modern cross-platform terminal with project intelligence.
 description: |
   Kai is a standalone cross-platform terminal emulator built with Tauri 2,
   Rust, React, TypeScript, and xterm.js. Works with or without local AI CLIs.
 
 grade: stable
+# A terminal has to start the user's own shell and reach their files, which
+# strict confinement forbids. Publishing a classic snap needs store approval.
 confinement: classic
 
 apps:
   kai:
-    command: bin/kai
-    plugs:
-      - home
-      - network
-      - desktop
-      - x11
+    command: usr/bin/kai
 
 parts:
   kai:
-    plugin: nil
-    override-build: |
-      npm ci
-      npm run build
-      cargo build --manifest-path src-tauri/Cargo.toml --release --no-default-features
-      mkdir -p $CRAFT_PART_INSTALL/bin
-      cp src-tauri/target/release/kai $CRAFT_PART_INSTALL/bin/kai
+    plugin: dump
+    source: packaging/build/kai.deb
+    source-type: deb
+    stage-packages:
+      - libwebkit2gtk-4.1-0
+      - libgtk-3-0
+      - libayatana-appindicator3-1

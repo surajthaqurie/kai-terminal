@@ -8,14 +8,14 @@ This guide explains how to install pre-built packages of Kai Terminal or build t
 
 | Operating System | Minimum Version | Package Formats | Build Status |
 | :--- | :--- | :--- | :--- |
-| **Linux (x86_64)** | Ubuntu 22.04 LTS (glibc >= 2.35) | `.deb`, `.AppImage`, `.rpm` | Verified native build (`.rpm` added to release.yml; first published with the next tag) |
-| **Linux (ARM64)** | Ubuntu 24.04 LTS | `.deb`, `.AppImage`, `.rpm` | Verified native build (`.rpm` as above) |
+| **Linux (x86_64)** | Ubuntu 22.04 LTS (glibc >= 2.35) | `.deb`, `.AppImage`, `.rpm` | Verified native build (`.deb`, `.AppImage`); `.rpm` is built but was left out of the v0.2.0 upload list, now fixed, so it first ships with the next tag |
+| **Linux (ARM64)** | Ubuntu 24.04 LTS | `.deb`, `.AppImage`, `.rpm` | Verified native build (`.deb`, `.AppImage`); `.rpm` as above |
 | **Windows** | Windows 10 (build 17763 / 1809+) or Windows 11 | `.exe` (NSIS), `.msi` | Verified native build |
-| **Windows (ARM64)** | Windows 11 ARM64 | `.exe` (NSIS) | Configured in CI + release.yml on a native `windows-11-arm` runner; not yet confirmed by a published release |
+| **Windows (ARM64)** | Windows 11 ARM64 | `.exe` (NSIS) | Verified native build (`windows-11-arm` runner; shipped in v0.2.0) |
 | **macOS (Apple Silicon)** | macOS 12 (Monterey) or later | `.dmg` | Verified native build |
-| **macOS (Intel x86_64)** | macOS 12 (Monterey) or later | `.dmg` | Configured in CI + release.yml on a native `macos-15-intel` runner; not yet confirmed by a published release |
+| **macOS (Intel x86_64)** | macOS 12 (Monterey) or later | `.dmg` | Verified native build (`macos-15-intel` runner; shipped in v0.2.0) |
 
-*Note: the Windows ARM64 and macOS Intel rows become "verified" once their CI jobs and the next tagged release build pass. Snap and Flatpak remain manifest templates only (see `packaging/`).*
+*Note: Snap and Flatpak manifests are complete and built + smoke-tested by the `linux-packages` job in `ci.yml`, but they are not published with releases and the Flatpak/Snap build has not yet had a CI run (see `KNOWN_LIMITATIONS.md`).*
 
 ---
 
@@ -85,8 +85,8 @@ See [USER_MANUAL.md](USER_MANUAL.md) for full syntax and command reference.
    ```
    *(If FUSE is not installed on your system, extract and run: `./kai_0.2.0_amd64.AppImage --appimage-extract && ./squashfs-root/AppRun`)*
 
-#### Other Linux Packaging Templates
-Templates for building non-Debian formats are located in the `packaging/` folder:
+#### Other Linux Packaging
+Manifests for non-Debian formats are located in the `packaging/` folder. Snap and Flatpak repackage the Tauri-built `.deb`; their header comments give the build steps:
 - **RPM Spec:** `packaging/rpm/kai.spec`
 - **Flatpak Manifest:** `packaging/flatpak/com.kai.terminal.yml`
 - **Snapcraft Manifest:** `packaging/snap/snapcraft.yaml`

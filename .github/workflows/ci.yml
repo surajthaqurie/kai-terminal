@@ -214,3 +214,80 @@ jobs:
           echo "- Symlink-boundary subtests skip (reported as skipped by Vitest, with a reason) where the runner disallows symlinks."
           echo "- WSL: no GitHub-hosted WSL runner exists. WSL2 verification is manual-only (run scripts/docker-test.sh or cargo/vitest natively inside WSL2 + Windows Terminal) and is NOT claimed here."
           echo "- Full Tauri installer bundles (.deb/.AppImage/.msi/.exe/.dmg) are built only by release.yml on native runners; this CI verifies the web bundle + release binary."
+
+  # Snap and Flatpak repackage the .deb that Tauri builds (a --no-default-features
+  # build has no desktop window), so this job builds the .deb once and then
+  # builds, installs and smoke-tests each format. Packages are not published;
+  # release.yml does not attach them.
+  linux-packages:
+    name: Snap & Flatpak (linux-x86_64)
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js v24 environment
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: "npm"
+          cache-dependency-path: "package-lock.json"
+
+      - name: Install Rust stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri"
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libssl-dev libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - name: Install Frontend Dependencies
+        run: npm ci
+
+      - name: Build .deb with Tauri
+        run: npx tauri build --bundles deb
+
+      - name: Stage .deb for the snap and Flatpak manifests
+        run: |
+          set -euo pipefail
+          mkdir -p packaging/build snap
+          cp src-tauri/target/release/bundle/deb/*.deb packaging/build/kai.deb
+          # The snap version always follows package.json; nothing to bump per release.
+          VERSION=$(node -p "require('./package.json').version")
+          sed "s/^version: .*/version: '${VERSION}'/" packaging/snap/snapcraft.yaml > snap/snapcraft.yaml
+
+      - name: Build snap
+        id: snap
+        uses: snapcore/action-build@v1
+
+      - name: Install and smoke-test snap
+        run: |
+          set -euo pipefail
+          VERSION=$(node -p "require('./package.json').version")
+          sudo snap install --dangerous --classic "${{ steps.snap.outputs.snap }}"
+          # The desktop binary answers --version before it opens a window; this
+          # proves the staged WebKit/GTK libraries resolve inside the snap.
+          out=$(/snap/bin/kai --version || true)
+          echo "$out"
+          echo "$out" | grep -q "kai-desktop ${VERSION}"
+
+      - name: Install Flatpak toolchain and GNOME 48 runtime
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y flatpak flatpak-builder binutils
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y flathub org.gnome.Platform//48 org.gnome.Sdk//48
+
+      - name: Build and smoke-test Flatpak
+        run: |
+          set -euo pipefail
+          VERSION=$(node -p "require('./package.json').version")
+          flatpak-builder --user --install --force-clean build-dir packaging/flatpak/com.kai.terminal.yml
+          out=$(flatpak run com.kai.terminal --version || true)
+          echo "$out"
+          echo "$out" | grep -q "kai-desktop ${VERSION}"

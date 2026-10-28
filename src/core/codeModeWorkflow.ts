@@ -23,7 +23,7 @@ import {
 } from "./registry";
 import { rankCandidates, isPotentialSecretPath } from "./retrieval";
 import { getReverseImports } from "./indexDerived";
-import { resolveDependency } from "./importResolver";
+import { dependencyTargets } from "./importResolver";
 import { TERMINAL_MODE_RESET_SEQ } from "../services/terminalModes";
 
 export type GraphFreshness = "fresh" | "stale" | "unindexed" | "unknown" | "refresh-failed";
@@ -1087,11 +1087,9 @@ function importTargets(index: ProjectIndex, rel: string): string[] {
   const has = (p: string): boolean => Object.prototype.hasOwnProperty.call(index.files, p);
   const out: string[] = [];
   for (const dep of file.dependencies) {
-    const target =
-      dep.resolvedPath !== undefined && dep.resolution !== undefined
-        ? dep.resolvedPath
-        : resolveDependency(dep, rel, has).resolvedPath;
-    if (target && target !== rel && has(target) && !out.includes(target)) out.push(target);
+    for (const target of dependencyTargets(dep, rel, has)) {
+      if (target !== rel && has(target) && !out.includes(target)) out.push(target);
+    }
   }
   return out;
 }

@@ -74,9 +74,9 @@ export interface IndexedSymbol {
 
 /**
  * Why `resolvedPath` is empty. `resolved` means it is set. `unresolved` is a
- * relative specifier whose target is not an indexed file. `non-relative` is a
- * package or path alias (alias maps such as tsconfig `paths` are NOT
- * resolved). `unsupported` marks languages without a resolver.
+ * relative specifier (or a specifier matching a tsconfig `paths` alias) whose
+ * target is not an indexed file. `non-relative` is a package name or an
+ * unconfigured alias. `unsupported` marks languages without a resolver.
  */
 export type DependencyResolution = "resolved" | "unresolved" | "non-relative" | "unsupported";
 
@@ -84,6 +84,27 @@ export interface IndexedDependency {
   sourceFile: string;
   targetSpecifier: string;
   resolvedPath?: string | null;
+  /**
+   * All resolved targets when one import names several modules (Python
+   * `from . import a, b`) or reaches a symbol through a re-exporting file (a
+   * barrel `export { x } from './x'`, a Python `__init__.py` import); the
+   * direct target stays first, `resolvedPath` is the first entry.
+   */
+  resolvedPaths?: string[];
+  /**
+   * Set on a dependency that re-exports what it imports (`export { a as b }
+   * from`, `export * from`, `from .mod import x` inside `__init__.py`): the
+   * names this file exports through it (`b`; `*` for a star export). Importers
+   * of this file reach the target's symbols through it.
+   */
+  reExportedNames?: string[];
+  /**
+   * What an `import` statement binds besides named imports: `default` for
+   * `import X from`, `namespace` for `import * as ns from`. Their local names
+   * are in `importedSymbols` but say nothing about what the target exports, so
+   * re-export resolution needs to know which kind they were.
+   */
+  importBindings?: Array<"default" | "namespace">;
   resolution?: DependencyResolution;
   isExternal: boolean;
   importedSymbols: string[];

@@ -8,7 +8,10 @@
  * resolve to "no update" so the UI never blocks on this.
  */
 
-export const APP_VERSION_FALLBACK = "0.1.4";
+import packageJson from "../../package.json";
+
+/** Used only when the Tauri runtime cannot report a version (browser build); always the packaged version. */
+export const APP_VERSION_FALLBACK: string = packageJson.version;
 const GITHUB_REPO = "surajthaqurie/kai-terminal";
 /** Repo owner shown as the release author fallback ("by surajthaqurie"). */
 const GITHUB_OWNER = GITHUB_REPO.split("/")[0] || "surajthaqurie";
@@ -405,6 +408,29 @@ export function applyInstallHint(
 }
 
 /**
+ * Corrects the default pick to the CPU architecture of the running app
+ * (`arch` from the backend: `x86_64`, `aarch64`, ...). The WebView user agent
+ * cannot be trusted for this: WKWebView on Apple Silicon reports an Intel Mac
+ * and WebView2 on Windows ARM64 reports x64, so a user-agent pick installs the
+ * wrong build once a release carries both. Keeps `asset` when no installer of
+ * the same type exists for that architecture.
+ */
+export function applyNativeArch(
+  asset: ReleaseAsset,
+  assets: ReleaseAsset[],
+  arch: string | null
+): ReleaseAsset {
+  if (!arch) return asset;
+  const isArmName = (name: string) => /aarch64|arm64/i.test(name);
+  const wantArm = /^(aarch64|arm64)$/i.test(arch);
+  if (isArmName(asset.name) === wantArm) return asset;
+  const ext = asset.name.slice(asset.name.lastIndexOf(".")).toLowerCase();
+  return (
+    assets.find((a) => a.name.toLowerCase().endsWith(ext) && isArmName(a.name) === wantArm) ?? asset
+  );
+}
+
+/**
  * Downloads the selected installer via the Tauri backend and installs it.
  * The whole flow runs in the background: the async backend streams the
  * file (progress events keep the UI bar moving), then hands it to a
@@ -447,17 +473,35 @@ export async function downloadAndInstallUpdate(
     }
     let target = asset;
     try {
+      const arch = await invoke<string | null>("get_update_arch_cmd");
+      target = applyNativeArch(target, assets, arch);
+    } catch {
+      // Best-effort; the user-agent based pick still installs.
+    }
+    try {
       const hint = await invoke<string | null>("get_update_install_hint_cmd");
-      target = applyInstallHint(asset, assets, hint);
+      target = applyInstallHint(target, assets, hint);
     } catch {
       // Hint is best-effort; the default pick still installs.
     }
-    const dl = await invoke<{ path: string; filename: string; bytes: number }>(
-      "download_update_asset_cmd",
-      { url: target.browser_download_url, filename: target.name }
-    );
-    hooks?.onInstalling?.();
-    return await invoke<InstallLaunchResult>("launch_update_installer_cmd", { path: dl.path });
+    const downloadAndLaunch = async (): Promise<InstallLaunchResult> => {
+      const dl = await invoke<{ path: string; filename: string; bytes: number }>(
+        "download_update_asset_cmd",
+        { url: target.browser_download_url, filename: target.name }
+      );
+      hooks?.onInstalling?.();
+      return await invoke<InstallLaunchResult>("launch_update_installer_cmd", { path: dl.path });
+    };
+    try {
+      return await downloadAndLaunch();
+    } catch (err) {
+      // The saved installer vanished between download and launch (antivirus
+      // quarantine, a temp-dir cleaner). Fetch it once more instead of making
+      // the user press the button again; a second failure is reported.
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!/installer not found/i.test(msg)) throw err;
+      return await downloadAndLaunch();
+    }
   } finally {
     for (const off of unlistenProgress) {
       try {

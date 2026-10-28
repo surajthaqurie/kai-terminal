@@ -14,6 +14,8 @@ const CATEGORY_RULES: CategoryRule[] = [
     patterns: [
       /\b(?:fix|debug|troubleshoot|resolve)\s+(?:the\s+)?(?:bug|error|issue|crash|failure|exception|panic)\b/i,
       /\bwhy\s+(?:is|does)\s+.*\s+(?:failing|crashing|broken|returning\s+null|erroring)\b/i,
+      /\b(?:debug|troubleshoot|diagnose)\b/i,
+      /\bwhy\s+(?:is|are|does|do|did)\b.*\b(?:fail\w*|crash\w*|broke\w*|wrong|hang\w*|throw\w*|slow)\b/i,
       /\bstack\s*trace\b/i,
       /\b(?:error|exception|panic|segfault|cannot\s+read\s+properties)\b/i,
     ],
@@ -51,7 +53,12 @@ const CATEGORY_RULES: CategoryRule[] = [
       /\b(?:refactor|clean\s+up|restructure|modularize|deduplicate|extract\s+method|extract\s+class)\b/i,
       /\bsimplify\s+(?:the\s+)?(?:code|logic|function|class|module)\b/i,
       /\brename\s+symbol\b/i,
-      /\brename\s+[\w.$]+\s+(?:to|into|as)\s+\w/i,
+      // "rename foo to bar", "rename the function `foo` to bar", "rename class Foo as Bar"
+      /\brename\s+(?:the\s+)?(?:(?:function|method|class|type|interface|enum|variable|constant|field|property|parameter|param|file|module|component|symbol)\s+)?[`'"]?[\w.$]+[`'"]?\s+(?:to|into|as)\s+[`'"]?\w/i,
+      /\b(?:change|update)\s+(?:the\s+)?name\s+of\s+(?:the\s+)?(?:\w+\s+)?[`'"]?[\w.$]+[`'"]?\s+to\s+\S/i,
+      /\breplace\s+[`'"]?[\w.$]+[`'"]?\s+with\s+[`'"]?\w/i,
+      /\b(?:migrate|switch|swap)\s+(?:from\s+)?[`'"]?[\w.$]+[`'"]?\s+(?:to|for)\s+[`'"]?\w/i,
+      /\bmove\s+(?:the\s+)?(?:\w+\s+)?[`'"]?[\w.$]+[`'"]?\s+(?:to|into)\s+(?:its\s+own\s+|another\s+|a\s+new\s+|the\s+\w+\s+)?(?:file|module|folder|directory|package)\b/i,
     ],
     keywords: [
       "refactor",
@@ -69,6 +76,7 @@ const CATEGORY_RULES: CategoryRule[] = [
     category: "review",
     patterns: [
       /\b(?:review|audit|critique|inspect)\s+(?:this\s+)?(?:code|pr|pull\s+request|diff|changes?)\b/i,
+      /\b(?:review|audit|critique)\b/i,
       /\bsecurity\s+review\b/i,
       /\bcode\s+smells?\b/i,
     ],

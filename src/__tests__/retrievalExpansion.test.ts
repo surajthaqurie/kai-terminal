@@ -11,6 +11,7 @@ import {
   MAX_EXPANDED_CALLERS,
   MAX_EXPANDED_TESTS,
   MAX_EXAMINED_IMPORTERS,
+  MAX_EXPANDED_IMPORTS,
 } from "../core/retrieval";
 import { assembleContext } from "../core/contextAssembler";
 import { classifyTask } from "../core/classifier";
@@ -194,6 +195,23 @@ describe("bounded neighbour expansion", () => {
     expect(caller.startLine).toBeGreaterThanOrEqual(1);
   });
 
+  it("finds a caller that reaches the symbol through a barrel file", async () => {
+    write("src/utils/money.ts", "export function formatMoney(n: number) { return String(n); }\n");
+    write("src/utils/index.ts", 'export { formatMoney } from "./money";\n');
+    write(
+      "src/users/viaBarrel.ts",
+      'import { formatMoney } from "../utils";\nexport const label = (n: number) => formatMoney(n);\n'
+    );
+    const index = await build();
+    const r = retrieveContext(index, "rename formatMoney to formatCurrency", {
+      expand: expandAll,
+      tokenBudget: 4000,
+    });
+    const caller = r.matchedFiles.find((f) => f.file.relativePath === "src/users/viaBarrel.ts");
+    expect(caller?.relation).toBe("caller of formatMoney (src/utils/money.ts)");
+    expect(caller?.snippet).toContain("formatMoney(n)");
+  });
+
   it("does nothing unless asked", async () => {
     writeCallerProject(3);
     const index = await build();
@@ -369,5 +387,218 @@ describe("expansion through assembleContext", () => {
       adaptiveBudget: true,
     });
     expect(contextPackage.sourceReferences.some((s) => s.relation)).toBe(false);
+  });
+});
+
+/** `routes/ledger.ts` is the obvious file for the task; its contract, validator and test never match the query words. */
+function writeLedgerProject(): void {
+  write(
+    "src/contracts/api.ts",
+    [
+      "export interface RowShape {",
+      "  id: string;",
+      "  amount: number;",
+      "}",
+      "export interface Unused {",
+      "  x: number;",
+      "}",
+    ].join("\n")
+  );
+  write(
+    "src/validators/check.ts",
+    "export function ensureValid(row: object) {\n  return row !== null;\n}\n"
+  );
+  write("src/lib/log.ts", "export const logLine = (s: string) => s;\n");
+  write(
+    "src/routes/ledger.ts",
+    [
+      'import { RowShape } from "../contracts/api";',
+      'import { ensureValid } from "../validators/check";',
+      'import { logLine } from "../lib/log";',
+      'import "../lib/log";',
+      "export function listLedger(): RowShape[] {",
+      "  logLine('list');",
+      "  return [];",
+      "}",
+      "export function postLedger(row: RowShape) {",
+      "  return ensureValid(row);",
+      "}",
+    ].join("\n")
+  );
+  write(
+    "src/__tests__/ledger.test.ts",
+    'import { listLedger } from "../routes/ledger";\ndescribe("ledger", () => { it("x", () => listLedger()); });\n'
+  );
+  for (let i = 0; i < 6; i++) write(`src/other/o${i}.ts`, `export const keep${i} = ${i};\n`);
+}
+
+describe("file anchor for a query that names no symbol", () => {
+  const task = "add an endpoint to the ledger routes";
+
+  it("ranks one file clearly ahead and records it as the file anchor", async () => {
+    writeLedgerProject();
+    const index = await build();
+    const ranking = rankCandidates(index, task);
+    expect(ranking.anchor).toBeUndefined();
+    expect(ranking.ranked[0].file.relativePath).toBe("src/routes/ledger.ts");
+    expect(ranking.fileAnchor).toEqual({ filePath: "src/routes/ledger.ts" });
+  });
+
+  it("adds the importing test and the imported definitions for an implement task", async () => {
+    writeLedgerProject();
+    const index = await build();
+    const { contextPackage, renderedPrompt } = assembleContext(index, {
+      task,
+      adaptiveBudget: true,
+    });
+    const relations = contextPackage.sourceReferences.flatMap((s) =>
+      s.relation ? [`${s.relativePath} | ${s.relation}`] : []
+    );
+    expect(relations).toContain(
+      "src/__tests__/ledger.test.ts | test importing src/routes/ledger.ts"
+    );
+    expect(relations).toContain("src/contracts/api.ts | RowShape imported by src/routes/ledger.ts");
+    expect(relations).toContain(
+      "src/validators/check.ts | ensureValid imported by src/routes/ledger.ts"
+    );
+    // The definition is excerpted, not the whole file.
+    const contract = contextPackage.sourceReferences.find(
+      (s) => s.relativePath === "src/contracts/api.ts"
+    )!;
+    expect(contract.content).toContain("interface RowShape");
+    expect(contract.content).not.toContain("Unused");
+    expect(renderedPrompt).toContain("[RowShape imported by src/routes/ledger.ts]");
+    // No callers without a symbol, and every neighbour is unscored.
+    expect(relations.some((r) => r.includes("caller of"))).toBe(false);
+  });
+
+  it("is limited to implement tasks and to the opt-in option", async () => {
+    writeLedgerProject();
+    const index = await build();
+    const plain = retrieveContext(index, task, { expand: { tests: true }, tokenBudget: 4000 });
+    expect(plain.matchedFiles.some((f) => f.relation)).toBe(false);
+    const explain = assembleContext(index, {
+      task: "explain the ledger routes",
+      adaptiveBudget: true,
+    });
+    expect(explain.contextPackage.sourceReferences.some((s) => s.relation)).toBe(false);
+  });
+
+  it("keeps the plain ranked list for an explicit tokenBudget", async () => {
+    writeLedgerProject();
+    const index = await build();
+    const { contextPackage } = assembleContext(index, {
+      task,
+      adaptiveBudget: true,
+      tokenBudget: 4000,
+    });
+    expect(contextPackage.sourceReferences.some((s) => s.relation)).toBe(false);
+  });
+
+  it("does not anchor when two files match about equally", async () => {
+    write("src/routes/ledger.ts", "export function a() { return 1; }\n");
+    write("src/models/ledger.ts", "export function b() { return 2; }\n");
+    const index = await build();
+    expect(rankCandidates(index, task).fileAnchor).toBeUndefined();
+  });
+
+  it("caps the definitions it adds", async () => {
+    const imports: string[] = [];
+    for (let i = 0; i < MAX_EXPANDED_IMPORTS + 2; i++) {
+      write(`src/defs/d${i}.ts`, `export interface Def${i} {\n  v: number;\n}\n`);
+      imports.push(`import { Def${i} } from "../defs/d${i}";`);
+    }
+    write("src/routes/ledger.ts", [...imports, "export function f() { return 1; }"].join("\n"));
+    for (let i = 0; i < 4; i++) write(`src/other/o${i}.ts`, `export const keep${i} = ${i};\n`);
+    const index = await build();
+    const { contextPackage } = assembleContext(index, { task, adaptiveBudget: true });
+    const defs = contextPackage.sourceReferences.filter((s) => s.relation?.includes("imported by"));
+    expect(defs).toHaveLength(MAX_EXPANDED_IMPORTS);
+  });
+});
+
+describe("test neighbours show how the anchor is used", () => {
+  const importBlock = [
+    'import { describe, it, expect } from "vitest";',
+    "import {",
+    "  formatMoney,",
+    '} from "../utils/money";',
+  ];
+  const setup = Array.from({ length: 60 }, (_, i) => `const fixture${i} = ${i};`);
+
+  it("starts at the first use after the import block, not at the top of the file", async () => {
+    write("src/utils/money.ts", "export function formatMoney(c: number) {\n  return c / 100;\n}\n");
+    write(
+      "src/__tests__/money.test.ts",
+      [
+        ...importBlock,
+        ...setup,
+        'describe("money", () => {',
+        '  it("formats", () => expect(formatMoney(250)).toBe(2.5));',
+        "});",
+      ].join("\n")
+    );
+    const index = await build();
+    const r = retrieveContext(index, "rename formatMoney to formatCurrency", {
+      expand: { tests: true },
+      includeTests: false,
+      tokenBudget: 4000,
+    });
+    const test = r.matchedFiles.find((f) => f.file.relativePath.endsWith("money.test.ts"))!;
+    expect(test.relation).toBe("test importing src/utils/money.ts");
+    expect(test.snippet).toContain("expect(formatMoney(250))");
+    expect(test.snippet).not.toContain("fixture3");
+    expect(test.snippet).not.toContain("} from");
+    expect(test.startLine).toBeGreaterThan(importBlock.length + setup.length - 2);
+  });
+
+  it("falls back to the top of the file when the test only imports the symbol", async () => {
+    write("src/utils/money.ts", "export function formatMoney(c: number) {\n  return c / 100;\n}\n");
+    write(
+      "src/__tests__/money.test.ts",
+      [...importBlock, 'describe("money", () => { it("x", () => {}); });'].join("\n")
+    );
+    const index = await build();
+    const r = retrieveContext(index, "rename formatMoney to formatCurrency", {
+      expand: { tests: true },
+      includeTests: false,
+      tokenBudget: 4000,
+    });
+    const test = r.matchedFiles.find((f) => f.file.relativePath.endsWith("money.test.ts"))!;
+    expect(test.startLine).toBe(1);
+    expect(test.snippet).toContain('import { describe, it, expect } from "vitest";');
+  });
+});
+
+describe("caller neighbours show the call, not the import", () => {
+  it("skips the import line even when the first real use is far below it", async () => {
+    write("src/utils/money.ts", "export function formatMoney(c: number) {\n  return c / 100;\n}\n");
+    const filler = Array.from({ length: 50 }, (_, i) => `const unrelated${i} = ${i};`);
+    write(
+      "src/users/late.ts",
+      [
+        'import { formatMoney } from "../utils/money";',
+        ...filler,
+        "export const label = (c: number) => formatMoney(c);",
+      ].join("\n")
+    );
+    write(
+      "src/users/importOnly.ts",
+      'import { formatMoney } from "../utils/money";\nexport { formatMoney };\n'
+    );
+    const index = await build();
+    const r = retrieveContext(index, "rename formatMoney to formatCurrency", {
+      expand: { callers: true },
+      tokenBudget: 4000,
+    });
+    const late = r.matchedFiles.find((f) => f.file.relativePath === "src/users/late.ts")!;
+    expect(late.snippet).toContain("formatMoney(c)");
+    expect(late.snippet).not.toContain("import { formatMoney }");
+    expect(late.startLine).toBeGreaterThan(50);
+    // A file that only imports and re-exports it still reports that one mention.
+    const importOnly = r.matchedFiles.find(
+      (f) => f.file.relativePath === "src/users/importOnly.ts"
+    )!;
+    expect(importOnly.snippet).toContain("formatMoney");
   });
 });
