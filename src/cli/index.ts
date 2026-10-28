@@ -31,6 +31,34 @@ function isInsideKaiTerminal(): boolean {
   return false;
 }
 
+/**
+ * True when a BARE `kai` invocation (no arguments, no `--help`) comes from a
+ * non-interactive launcher rather than a person typing in a shell.
+ *
+ * Why: Linux/RPM .desktop entries are generated with `Exec=kai` and the menu
+ * resolves `kai` through PATH. When the Node CLI shim (`~/.local/bin/kai`)
+ * shadows the GUI binary, the drawer click used to print the help text into
+ * nowhere and silently exit — the app "would not open". Windows NSIS and
+ * macOS pinned-launcher clicks can hit the same non-TTY path when the CLI
+ * shim is the pinned command.
+ *
+ * Detection: a launcher runs the CLI with no controlling terminal, so
+ * `process.stdin.isTTY` is falsy. An interactive user typing `kai` always
+ * has a TTY (or a redirected stdin like `echo | kai — rare, and opening the
+ * app there is the friendlier behavior than help text).
+ *
+ * Test environments (VITEST / NODE_ENV=test) must keep the help behavior —
+ * CI calls runCli with no args as a smoke probe. Works on all OSes: Linux,
+ * macOS, and Windows all run the CLI without a TTY when a launcher/window
+ * service spawns it.
+ */
+export function shouldOpenGuiFromBareLaunch(): boolean {
+  if (process.env.VITEST || process.env.NODE_ENV === "test") return false;
+  if (isInsideKaiTerminal()) return false;
+  if (process.stdin.isTTY) return false;
+  return true;
+}
+
 /** Commands that may run from any shell (everything else needs Kai Terminal). */
 const EXTERNAL_COMMANDS = new Set([
   "open",
@@ -90,7 +118,18 @@ async function executeCli(argv: string[]): Promise<number> {
   const args = argv.slice(2);
   const command = args[0];
 
-  if (!command || command === "--help" || command === "-h" || command === "help") {
+  if (!command) {
+    // Bare `kai` from a desktop launcher / non-interactive caller: open the
+    // app instead of dumping help text that nobody can see (the
+    // "app-drawer click does nothing" bug). Interactive shells keep help.
+    if (shouldOpenGuiFromBareLaunch()) {
+      return dispatch("open", ["open"]);
+    }
+    printHelp();
+    return 0;
+  }
+
+  if (command === "--help" || command === "-h" || command === "help") {
     printHelp();
     return 0;
   }

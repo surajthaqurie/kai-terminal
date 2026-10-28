@@ -10,6 +10,7 @@ import {
 import {
   ChevronLeft,
   Contrast,
+  ExternalLink,
   Heart,
   ListMusic,
   Maximize2,
@@ -33,6 +34,7 @@ import {
 } from "lucide-react";
 import { useCallPause } from "../../hooks/useCallPause";
 import { isTypingTarget } from "../../services/shortcuts";
+import { openExternalUrl } from "../../services/updateService";
 import {
   MusicTrack,
   isYouTubeEmbedOrigin,
@@ -50,6 +52,7 @@ import {
   saveFavorites,
   searchYouTubeVideos,
   toggleFavoriteTrack,
+  watchUrlForTrack,
   youtubeCommand,
 } from "../../services/musicService";
 
@@ -717,6 +720,10 @@ export const MusicPanel: FC<MusicPanelProps> = ({
       case "M":
         toggleMute();
         break;
+      case "o":
+      case "O":
+        if (track) openExternalUrl(watchUrlForTrack(track));
+        break;
       case "Escape":
         if (drawerOpen) {
           setDrawerOpen(false);
@@ -1265,6 +1272,17 @@ export const MusicPanel: FC<MusicPanelProps> = ({
             >
               {isPinned ? <PinOff size={13} /> : <Pin size={13} />}
             </button>
+            {track && (
+              <button
+                type="button"
+                className="btn btn-icon"
+                onClick={() => openExternalUrl(watchUrlForTrack(track))}
+                title="Open in YouTube (O)"
+                aria-label="Open in YouTube"
+              >
+                <ExternalLink size={13} />
+              </button>
+            )}
             <button
               type="button"
               className="btn btn-icon"
@@ -1324,7 +1342,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
               <iframe
                 key={src}
                 ref={frameRef}
-                referrerPolicy="strict-origin-when-cross-origin"
+                referrerPolicy="no-referrer-when-downgrade"
                 onLoad={() => {
                   frameRef.current?.contentWindow?.postMessage(YOUTUBE_LISTENING_HANDSHAKE, "*");
                   sendCommand("setVolume", [volume]);
@@ -1359,6 +1377,17 @@ export const MusicPanel: FC<MusicPanelProps> = ({
               <h3 className="music-track-title" title={track?.title ?? "Nothing playing"}>
                 {track?.title ?? "Nothing playing"}
               </h3>
+              {track && (
+                <button
+                  type="button"
+                  className="btn btn-icon music-open-browser-btn"
+                  onClick={() => openExternalUrl(watchUrlForTrack(track))}
+                  title="Open on YouTube (O)"
+                  aria-label="Open on YouTube"
+                >
+                  <ExternalLink size={12} />
+                </button>
+              )}
             </div>
 
             <div className="music-progress-wrap">
@@ -1439,6 +1468,16 @@ export const MusicPanel: FC<MusicPanelProps> = ({
                 aria-pressed={isCurrentFavorite}
               >
                 <Heart size={14} fill={isCurrentFavorite ? "currentColor" : "none"} />
+              </button>
+              <button
+                type="button"
+                className="btn btn-icon music-ctrl-btn"
+                onClick={() => track && openExternalUrl(watchUrlForTrack(track))}
+                disabled={!track}
+                title="Open in YouTube (O)"
+                aria-label="Open in YouTube"
+              >
+                <ExternalLink size={14} />
               </button>
 
               <div className="music-volume-group" title={`Volume: ${muted ? 0 : volume}%`}>

@@ -635,7 +635,7 @@ export async function openReleasePage(url: string): Promise<void> {
  * Tauri this goes through the allow-listed `open_external_url_cmd` backend
  * command instead (releases page and exact YouTube link shapes only).
  */
-async function openExternalUrl(target: string): Promise<void> {
+export async function openExternalUrl(target: string): Promise<void> {
   try {
     const { isTauriAvailable } = await import("./ptyService");
     if (isTauriAvailable()) {

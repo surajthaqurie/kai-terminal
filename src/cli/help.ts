@@ -62,6 +62,8 @@ Usage:
 
 Outside Kai (any shell):
   open [path]             Launch Kai Terminal (defaults to current folder)
+  kai (no args, from a    Opens the app — any non-interactive launcher
+    launcher / script)    click (desktop drawer, pinned shortcut) counts
   health                  System readiness and health check
   doctor                  Environment, PATH, and install diagnostics
   list [-a|-m|-i|-s|-c]   Look up agents (-a, default), MCP (-m),

@@ -4377,6 +4377,7 @@ button.status-git-btn-clickable:focus-visible {
   display: flex;
   align-items: center;
   flex-shrink: 0;
+  gap: 6px;
 }
 .music-track-title-bar h3,
 .music-track-title {
@@ -4388,7 +4389,16 @@ button.status-git-btn-clickable:focus-visible {
   text-overflow: ellipsis;
   margin: 0;
   display: block;
-  width: 100%;
+  flex: 1;
+  min-width: 0;
+}
+.music-open-browser-btn {
+  flex-shrink: 0;
+  padding: 2px 4px;
+  opacity: 0.7;
+}
+.music-open-browser-btn:hover {
+  opacity: 1;
 }
 .music-progress-wrap {
   display: flex;

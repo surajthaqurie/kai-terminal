@@ -44,10 +44,14 @@
     ],
     "linux": {
       "deb": {
-        "depends": ["libwebkit2gtk-4.1-0", "libgtk-3-0", "libayatana-appindicator3-1"]
+        "depends": ["libwebkit2gtk-4.1-0", "libgtk-3-0", "libayatana-appindicator3-1"],
+        "desktopTemplate": "../packaging/linux/kai.desktop"
       },
       "appimage": {
         "bundleMediaFramework": true
+      },
+      "rpm": {
+        "desktopTemplate": "../packaging/linux/kai.desktop"
       }
     },
     "windows": {

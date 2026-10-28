@@ -3,7 +3,7 @@ import fs from "fs";
 import os from "os";
 import { getKaiHomeDir } from "../core/registry";
 import { KAI_VERSION } from "./constants";
-import { findKaiAppBinary } from "./desktopApp";
+import { findKaiAppBinary, isKaiCliShim } from "./desktopApp";
 
 /** One app-drawer entry audit (Linux .desktop file). */
 export interface DesktopEntryAudit {
@@ -12,6 +12,9 @@ export interface DesktopEntryAudit {
   execLine: string | null;
   execTarget: string | null;
   execFound: boolean;
+  /** True when Exec resolves to the Node CLI shim instead of the GUI — the
+   * shim prints help on a drawer click and the app appears to never open. */
+  execIsCliShim: boolean;
   icon: string | null;
   iconFound: boolean;
 }
@@ -127,6 +130,7 @@ export function auditDesktopFile(file: string): DesktopEntryAudit | null {
     execLine,
     execTarget,
     execFound: execTarget !== null,
+    execIsCliShim: execTarget !== null && isKaiCliShim(execTarget),
     icon,
     iconFound,
   };
@@ -210,6 +214,14 @@ export function printDoctorReport(): void {
             : ` -> target NOT FOUND (drawer click will do nothing)`)
       );
       console.log(`      Icon: ${audit.icon ?? "(missing)"} ${iconMark}`);
+      if (audit.execIsCliShim) {
+        console.log(
+          `      └─ Fix: Exec resolves to the Node CLI shim (${audit.execTarget}), ` +
+            `not the GUI. Recent CLI versions open the app on a bare, ` +
+            `non-TTY launch, but the .desktop should ideally point at the ` +
+            `GUI binary directly (absolute path) — report this to the Kai packagers.`
+        );
+      }
       if (!audit.execFound) {
         console.log(
           `      └─ Fix: verify the installed binary path, then reinstall the .deb. ` +

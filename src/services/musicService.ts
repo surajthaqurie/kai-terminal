@@ -133,7 +133,8 @@ export function embedSrcForTrack(
 ): string | null {
   // Only pass `origin` if it is a standard web HTTP/HTTPS origin (e.g. dev server).
   // In desktop webviews (Tauri), `window.location.origin` is `tauri://localhost` or `tauri://`,
-  // which causes YouTube's embed configuration validator to crash with Error 153.
+  // which causes YouTube's embed configuration validator to crash with Error 153 if passed as-is.
+  // We provide https://www.youtube-nocookie.com as the safe fallback origin and widget_referrer.
   const isWebOrigin =
     typeof window !== "undefined" &&
     window.location?.origin &&
@@ -141,7 +142,7 @@ export function embedSrcForTrack(
 
   const originParam = isWebOrigin
     ? `&origin=${encodeURIComponent(window.location.origin)}`
-    : `&widget_referrer=${encodeURIComponent("https://www.youtube-nocookie.com")}`;
+    : `&origin=${encodeURIComponent("https://www.youtube-nocookie.com")}&widget_referrer=${encodeURIComponent("https://www.youtube-nocookie.com")}`;
 
   const loopParam = loop && track.videoId ? `&loop=1&playlist=${track.videoId}` : "";
   const startParam = startSeconds > 0 ? `&start=${Math.max(0, Math.floor(startSeconds))}` : "";
