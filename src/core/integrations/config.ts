@@ -104,9 +104,25 @@ export function removeAccount(id: string): boolean {
 // Project binding
 // ---------------------------------------------------------------------------
 
+/**
+ * `resolveCanonicalPath`, plus the long spelling of a Windows 8.3 short path
+ * (`C:\Users\RUNNER~1\...`). Git reports the long spelling, and the binding's
+ * storage id is a hash of the path, so the two spellings of one folder would
+ * otherwise get different ids and a binding written under one is never found
+ * from the other.
+ */
+function canonicalLongPath(target: string): string {
+  const canonical = resolveCanonicalPath(target);
+  try {
+    return fs.realpathSync.native(canonical);
+  } catch {
+    return canonical;
+  }
+}
+
 /** The git top-level of `dir`, or `dir` itself when it is not inside a repository. */
 export function projectRootFor(dir: string): string {
-  const canonical = resolveCanonicalPath(dir);
+  const canonical = canonicalLongPath(dir);
   try {
     const top = execFileSync("git", ["-C", canonical, "rev-parse", "--show-toplevel"], {
       encoding: "utf8",
@@ -114,7 +130,7 @@ export function projectRootFor(dir: string): string {
       timeout: 5000,
       windowsHide: true,
     }).trim();
-    if (top) return resolveCanonicalPath(top);
+    if (top) return canonicalLongPath(top);
   } catch {
     // not a repository, or git is missing
   }
@@ -151,7 +167,7 @@ function parseBinding(raw: string): ProjectBinding | null {
 /** Candidate project roots for `dir`: itself, then each parent up to the git top-level. */
 function ancestorsUpTo(dir: string, stopAt: string): string[] {
   const out: string[] = [];
-  let current = resolveCanonicalPath(dir);
+  let current = canonicalLongPath(dir);
   for (let i = 0; i < 40; i++) {
     out.push(current);
     if (current === stopAt) break;

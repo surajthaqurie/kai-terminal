@@ -27,7 +27,8 @@ export function useTempKaiHome(): { home: string; restore: () => void } {
 
 /** A temp git repository, optionally with an `origin` remote. */
 export function makeRepo(remote?: string): { dir: string; cleanup: () => void } {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "kai-repo-")));
+  // `.native` also expands a Windows 8.3 short temp path, which is the spelling git reports.
+  const dir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "kai-repo-")));
   execFileSync("git", ["init", "-q", dir], { stdio: "ignore" });
   if (remote)
     execFileSync("git", ["-C", dir, "remote", "add", "origin", remote], { stdio: "ignore" });
