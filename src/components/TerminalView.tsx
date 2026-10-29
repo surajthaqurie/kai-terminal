@@ -13,6 +13,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
+import { canFitPane } from "./terminalFit";
 import { ptyService, PtyService } from "../services/ptyService";
 import {
   isCopyKeyEvent,
@@ -280,6 +281,17 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       lastPtySizeRef.current = key;
       ptyService.resizePty(backendId, term.cols, term.rows).catch(() => {});
     };
+    /**
+     * Fits xterm to its container, but only while the pane is really on screen
+     * (see `canFitPane`). Returns whether a fit ran, so callers only resize the
+     * PTY when it did.
+     */
+    const fitWhenShown = (): boolean => {
+      const fitAddon = fitAddonRef.current;
+      if (!fitAddon || !canFitPane(visibleRef.current, containerRef.current)) return false;
+      fitAddon.fit();
+      return true;
+    };
     // Tracks whether the initial PTY spawn has been scheduled, so tab
     // switches don't re-spawn a live session.
     const initialLaunchScheduledRef = useRef(false);
@@ -334,10 +346,9 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       },
       refit: () => {
         const term = xtermRef.current;
-        const fitAddon = fitAddonRef.current;
-        if (!term || !fitAddon) return;
+        if (!term) return;
         try {
-          fitAddon.fit();
+          if (!fitWhenShown()) return;
         } catch {
           return;
         }
@@ -403,7 +414,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       }
 
       try {
-        fitAddon.fit();
+        fitWhenShown();
       } catch {
         // Ignore fit errors during hidden-tab layout.
       }
@@ -486,7 +497,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       try {
         term.clearTextureAtlas?.();
         term.refresh(0, Math.max(0, term.rows - 1));
-        fitAddonRef.current?.fit();
+        fitWhenShown();
       } catch {
         // ignore hidden-tab layout errors
       }
@@ -931,8 +942,9 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         resizeTimer = setTimeout(() => {
           resizeTimer = null;
           try {
-            fitAddon.fit();
-            pushPtySize(term);
+            // The trailing timer can fire after the tab was hidden: never size
+            // the PTY from a hidden pane (see `fitWhenShown`).
+            if (fitWhenShown()) pushPtySize(term);
           } catch {
             // Ignore layout errors during component unmount
           }
