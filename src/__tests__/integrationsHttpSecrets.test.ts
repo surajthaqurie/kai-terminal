@@ -234,7 +234,7 @@ describe("secret stores", () => {
       } catch {
         return; // DPAPI unreachable in this session; covered by the test above.
       }
-      const { code, stdout, stderr } = await runProcess(
+      const { code, stdout, stderr, spawnError } = await runProcess(
         "powershell.exe",
         [
           "-NoProfile",
@@ -242,9 +242,10 @@ describe("secret stores", () => {
           "-Command",
           "ConvertFrom-SecureString (ConvertTo-SecureString 'legacy-pat' -AsPlainText -Force)",
         ],
-        { env: windowsPowerShellEnv() }
+        // Cold module autoload on a slow runner (windows-aarch64) can outlast runProcess's 20s default.
+        { env: windowsPowerShellEnv(), timeoutMs: 50_000 }
       );
-      expect(code, stderr).toBe(0);
+      expect(code, `${spawnError ?? ""} ${stderr}`).toBe(0);
       const file = path.join(
         dir,
         fs.readdirSync(dir).find((f) => f.endsWith(".dpapi"))!
@@ -254,6 +255,6 @@ describe("secret stores", () => {
       // The probe's key maps to that file name, so read it back through the same key.
       expect(await store.get("kai/test/probe")).toBe("legacy-pat");
     },
-    60_000
+    90_000
   );
 });

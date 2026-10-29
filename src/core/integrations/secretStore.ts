@@ -139,15 +139,17 @@ $enc = [Convert]::FromBase64String($raw.Substring('${DPAPI_V2}'.Length))
 $plain = [Security.Cryptography.ProtectedData]::Unprotect($enc, $null, $scope)
 [Console]::Out.Write([Convert]::ToBase64String($plain))`;
 
-/** Blobs written by 0.2.1 (`ConvertFrom-SecureString`, hex text). Still readable; rewritten on the next sign-in. */
-const DPAPI_GET_LEGACY = `$ErrorActionPreference='Stop'
-$enc = [IO.File]::ReadAllText($env:KAI_SECRET_FILE)
-$sec = ConvertTo-SecureString -String $enc
-$bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec)
-try {
-  $plain = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
-  [Console]::Out.Write([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($plain)))
-} finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }`;
+/**
+ * Blobs written by 0.2.1 (`ConvertFrom-SecureString` without a key: the hex of a plain DPAPI blob over
+ * the UTF-16 text). Still readable; rewritten on the next sign-in. Decoded through .NET like the v2
+ * path, because autoloading `ConvertTo-SecureString` is slow enough to hit the timeout on cold runners.
+ */
+const DPAPI_GET_LEGACY = `${DPAPI_PREAMBLE}
+$hex = [IO.File]::ReadAllText($env:KAI_SECRET_FILE).Trim()
+$enc = New-Object byte[] ($hex.Length / 2)
+for ($i = 0; $i -lt $enc.Length; $i++) { $enc[$i] = [Convert]::ToByte($hex.Substring($i * 2, 2), 16) }
+$plain = [Security.Cryptography.ProtectedData]::Unprotect($enc, $null, $scope)
+[Console]::Out.Write([Convert]::ToBase64String([Text.Encoding]::Convert([Text.Encoding]::Unicode, [Text.Encoding]::UTF8, $plain)))`;
 
 /** The inbox Windows PowerShell, by full path so a `powershell.exe` earlier on PATH cannot shadow it. */
 const POWERSHELL = (() => {
@@ -161,8 +163,8 @@ const DPAPI_TIMEOUT_MS = 15_000;
 
 /**
  * The child environment for Windows PowerShell 5.1, minus any inherited `PSModulePath`. A PowerShell 7
- * parent points it at 7-only modules, so 5.1 cannot autoload `ConvertTo-SecureString` (the legacy
- * read path) and exits non-zero; unset, it falls back to its own defaults.
+ * parent points it at 7-only modules, so 5.1 cannot autoload cmdlets and exits non-zero; unset, it
+ * falls back to its own defaults.
  */
 export function windowsPowerShellEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
