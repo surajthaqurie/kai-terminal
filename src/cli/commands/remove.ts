@@ -111,7 +111,11 @@ function removeProjectIndex(target: string, dryRun: boolean): number {
 }
 
 /** 2. Remove Kai's MCP wiring from an agent. */
-function removeAgent(target: string, dryRun: boolean): number {
+function removeAgent(
+  target: string,
+  dryRun: boolean,
+  scope: "auto" | "project" | "global" = "auto"
+): number {
   if (!target) {
     console.error(
       `[kai] Error: Please specify an agent name to remove with -m/--mcp (or -a/--agent).`
@@ -119,7 +123,7 @@ function removeAgent(target: string, dryRun: boolean): number {
     console.error(`Example: kai remove -m <name>`);
     return 1;
   }
-  return removeAgentWiring(target, dryRun);
+  return removeAgentWiring(target, { dryRun, scope });
 }
 
 /** 3. Remove session and cache files, for every project or one project. */
@@ -215,8 +219,13 @@ export async function runRemove(args: string[]): Promise<number> {
   // `kai remove azure`: an integration name in the first position.
   if (args[1] && findProvider(args[1])) return runProviderRemove(args[1], args.slice(2));
   const opts = parseRemoveArgs(args);
+  const scope = args.includes("--project")
+    ? ("project" as const)
+    : args.includes("--global")
+      ? ("global" as const)
+      : ("auto" as const);
   if (opts.indexTarget !== null) return removeProjectIndex(opts.indexTarget, opts.dryRun);
-  if (opts.agentTarget !== null) return removeAgent(opts.agentTarget, opts.dryRun);
+  if (opts.agentTarget !== null) return removeAgent(opts.agentTarget, opts.dryRun, scope);
   if (opts.removeSessions) return removeSessions(opts.sessionTarget, opts.dryRun);
   printRemoveUsage();
   return 1;

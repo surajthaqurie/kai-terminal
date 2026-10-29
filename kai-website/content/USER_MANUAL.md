@@ -104,7 +104,7 @@ kai list -a                     # list installed tools (also: kai list --agent, 
 
 Connect Kai's MCP server to an outside service so your AI tools can read it. Today that is Azure DevOps (work items, pull requests, builds). Signing in is per user and shared by every folder; each folder has exactly one active project.
 
-> These commands run inside a Kai Terminal tab. Outside it they stop with a pointer to `kai open [path]`. The organization, project and repository always come from the folder's git remote, when it has one, so there is usually nothing to type.
+> These commands can run directly in any standard terminal (Bash, Zsh, PowerShell) or inside a Kai Terminal tab. The organization, project and repository always come from the folder's git remote, when it has one, so there is usually nothing to type.
 
 ---
 
@@ -112,7 +112,7 @@ Connect Kai's MCP server to an outside service so your AI tools can read it. Tod
 
 The same setup is in **AI CLI Providers → Integrations**. It reads the same sign-ins and the same per-folder connection as the commands below.
 
-- **Sign in with** the Azure CLI (run `az login` in a Kai Terminal tab first; Kai stores nothing) or an **access token (PAT)**. A personal access token is a password-like key you create in Azure DevOps so Kai can read your work items, pull requests and builds. **Open the token page in your browser** takes you to `https://dev.azure.com/<organization>/_usersSettings/tokens`: choose **New Token**, give it read access to Work Items, Code and Build, copy it and paste it into Kai.
+- **Sign in with** the Azure CLI (run `az login` first; Kai stores nothing) or an **access token (PAT)**. A personal access token is a password-like key you create in Azure DevOps so Kai can read your work items, pull requests and builds. **Open the token page in your browser** takes you to `https://dev.azure.com/<organization>/_usersSettings/tokens`: choose **New Token**, give it read access to Work Items, Code and Build, copy it and paste it into Kai.
 - **One step to active.** The organization, project and repository come from the folder's git remote. Signing in for that organization also makes it active for the folder. With no matching remote, a project and repository picker opens instead.
 - **Several accounts, one active.** A folder has exactly one active account. Every other signed-in account has **Make active**, and **Switch project** changes the project inside the active one. Each organization has a single sign-in: connecting it again replaces the old one, whether it used the Azure CLI or a token.
 - Azure DevOps Server (on-premises) is set up with the command line only (`--server-url`).
@@ -132,9 +132,10 @@ kai integration list            # add --json for scripts
 ### kai integration azure
 
 - One command sets Azure DevOps up for the current folder. It is safe to run again: it checks what is already done and only asks about what is missing.
-- **Sign-in:** reuses a working sign-in, or signs in with the Azure CLI (offering to run `az login` for you) or an access token. Tokens go to the OS secret store (Windows DPAPI, macOS Keychain, Linux Secret Service), never to a file in a repository or an agent config.
+- **Sign-in:** reuses a working sign-in, or signs in with the Azure CLI (offering to run `az login` for you) or an access token. Tokens go to the OS secret store (Windows DPAPI, macOS Keychain piped via stdin without argv exposure, Linux Secret Service), never to a file in a repository or an agent config. Concurrent token requests reuse in-flight authentication calls.
 - **Project (auto-detected):** organization, project and repository come from the folder's git remotes: `dev.azure.com`, `*.visualstudio.com`, their SSH forms, and Azure DevOps Server `https://<host>/<collection>/<project>/_git/<repo>` addresses. It works from any sub-folder of the repository, ignores a trailing `.git`, and never reads a credential embedded in the remote. If the repository has several Azure remotes it asks which one (or uses `origin`'s and says so). With no Azure remote you pick from a list. Names are checked against what Azure really has and stored with their true spelling, and a remote's project is never paired with a different organization's account.
-- **Agents:** wires Kai's MCP server into every installed agent that is not wired yet (the same as `kai mcp all`, after asking once). Nothing else in an agent's config is touched.
+- **Agents:** wires Kai's MCP server into every installed agent that is not wired yet (the same as `kai mcp all`, after asking once). Supports both global agent configs (e.g. `~/.claude.json`) and project-scoped configs (e.g. `.mcp.json` for Claude Code, `.cursor/mcp.json`, `.vscode/mcp.json`). Nothing else in an agent's config is touched.
+- **Safety & Boundaries:** work item searches and custom WIQL queries are strictly validated to ensure they remain scoped within the active project boundary, preventing cross-project information leakage.
 - **Check:** makes a small real call for work items, pull requests and builds, so a token that signs in but cannot read is caught now, with a hint about the missing scope.
 
 ```bash

@@ -233,7 +233,11 @@ export class DpapiSecretStore implements SecretStore {
   }
 }
 
-/** macOS login keychain. `security` only takes the secret as an argument, briefly visible to this user's `ps`. */
+function escapeSecurityArg(s: string): string {
+  return `"${s.replace(/["\\]/g, "\\$&")}"`;
+}
+
+/** macOS login keychain. `security -i` runs the command over stdin, avoiding argument leakage in `ps`. */
 export class KeychainSecretStore implements SecretStore {
   constructor(private readonly run: Runner = runProcess) {}
 
@@ -248,16 +252,9 @@ export class KeychainSecretStore implements SecretStore {
   }
 
   async set(key: string, value: string): Promise<SecretLocation> {
-    const r = await this.run("security", [
-      "add-generic-password",
-      "-U",
-      "-a",
-      "kai",
-      "-s",
-      key,
-      "-w",
-      value,
-    ]);
+    // Pipe the command via stdin using `security -i` so the secret is never exposed in argv (ps).
+    const cmd = `add-generic-password -U -a ${escapeSecurityArg("kai")} -s ${escapeSecurityArg(key)} -w ${escapeSecurityArg(value)}\n`;
+    const r = await this.run("security", ["-i"], { input: cmd });
     if (r.code !== 0) throw new Error(r.spawnError ?? "keychain write failed");
     return "os";
   }

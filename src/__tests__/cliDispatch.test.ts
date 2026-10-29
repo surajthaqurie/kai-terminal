@@ -108,19 +108,23 @@ describe("cli dispatch", () => {
 });
 
 describe("Kai Terminal boundary for integrations", () => {
-  it("keeps `kai integration …` and `kai azure …` inside Kai Terminal", () => {
-    expect(requiresKaiTerminal("integration", ["integration", "azure"])).toBe(true);
-    expect(requiresKaiTerminal("integrations", ["integrations", "list"])).toBe(true);
-    expect(requiresKaiTerminal("azure", ["azure", "list"])).toBe(true);
-    expect(requiresKaiTerminal("ado", ["ado", "active"])).toBe(true);
-  });
-
-  it("lets the desktop app reach `azure rpc` from outside a tab", () => {
+  it("allows `kai integration …` and `kai azure …` from normal shells", () => {
+    expect(requiresKaiTerminal("integration", ["integration", "azure"])).toBe(false);
+    expect(requiresKaiTerminal("integrations", ["integrations", "list"])).toBe(false);
+    expect(requiresKaiTerminal("azure", ["azure", "list"])).toBe(false);
+    expect(requiresKaiTerminal("ado", ["ado", "active"])).toBe(false);
     expect(requiresKaiTerminal("azure", ["azure", "rpc"])).toBe(false);
   });
 
+  it("still requires Kai Terminal for internal commands", () => {
+    expect(requiresKaiTerminal("stop", ["stop"])).toBe(true);
+    expect(requiresKaiTerminal("graph", ["graph", "status"])).toBe(true);
+    expect(requiresKaiTerminal("metrics", ["metrics"])).toBe(true);
+    expect(requiresKaiTerminal("lsp", ["lsp"])).toBe(true);
+  });
+
   it("leaves the any-shell commands alone", () => {
-    for (const c of ["open", "mcp", "doctor", "list", "remove", "health"]) {
+    for (const c of ["open", "mcp", "doctor", "list", "remove", "health", "integration"]) {
       expect(requiresKaiTerminal(c, [c])).toBe(false);
     }
   });

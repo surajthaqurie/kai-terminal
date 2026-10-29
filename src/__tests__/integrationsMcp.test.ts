@@ -132,6 +132,7 @@ describe("tool calls", () => {
         body: {
           id: 42,
           fields: {
+            "System.TeamProject": "Payments",
             "System.Title": "Crash on save",
             "System.WorkItemType": "Bug",
             "System.State": "Active",
@@ -156,6 +157,60 @@ describe("tool calls", () => {
     expect(fs.existsSync(getProjectMetaPath(computeProjectId(resolveCanonicalPath(repoDir))))).toBe(
       false
     );
+  });
+
+  it("rejects work item from another project via MCP without returning foreign data", async () => {
+    saveAccount(azAccount("Contoso", "az"));
+    bind("azure-devops", repoDir);
+    useFakeAzure([
+      {
+        match: "/wit/workitems/99",
+        body: {
+          id: 99,
+          fields: {
+            "System.TeamProject": "OtherSecretProject",
+            "System.Title": "Secret foreign title",
+            "System.WorkItemType": "Bug",
+            "System.Description": "Super confidential foreign project details",
+            "Microsoft.VSTS.Common.AcceptanceCriteria": "Secret criteria",
+          },
+          relations: [{ rel: "System.LinkTypes.Hierarchy-Forward", url: "https://secret/child" }],
+        },
+      },
+      {
+        match: "/comments",
+        body: { comments: [{ text: "Secret foreign comment" }] },
+      },
+    ]);
+    const res = await callTool(repoDir, "kai_work_item_get", { id: 99 });
+    expect(res.error).toBeDefined();
+    expect(res.error?.code).toBe(-32000);
+    expect(res.error?.message).toBe("Work item 99 was not found.");
+    // Ensure no foreign data leaked into error response
+    expect(JSON.stringify(res)).not.toContain("OtherSecretProject");
+    expect(JSON.stringify(res)).not.toContain("Secret foreign title");
+    expect(JSON.stringify(res)).not.toContain("confidential");
+    expect(JSON.stringify(res)).not.toContain("Secret criteria");
+  });
+
+  it("fails closed via MCP when work item is missing project field", async () => {
+    saveAccount(azAccount("Contoso", "az"));
+    bind("azure-devops", repoDir);
+    useFakeAzure([
+      {
+        match: "/wit/workitems/100",
+        body: {
+          id: 100,
+          fields: {
+            "System.Title": "Missing project field",
+          },
+        },
+      },
+    ]);
+    const res = await callTool(repoDir, "kai_work_item_get", { id: 100 });
+    expect(res.error).toBeDefined();
+    expect(res.error?.code).toBe(-32000);
+    expect(res.error?.message).toBe("Work item 100 was not found.");
   });
 
   it("pages lists with limit, offset and nextOffset", async () => {
@@ -244,6 +299,47 @@ describe("tool calls", () => {
       repo: "api",
       capabilities: ["work-items", "pull-requests", "builds"],
     });
+  });
+
+  it("executes work item search with custom project-scoped WIQL via MCP", async () => {
+    saveAccount(azAccount("Contoso", "az"));
+    bind("azure-devops", repoDir);
+    useFakeAzure([
+      { match: "/wiql", body: { workItems: [{ id: 101 }] } },
+      {
+        match: "/workitemsbatch",
+        body: {
+          value: [
+            {
+              id: 101,
+              fields: {
+                "System.WorkItemType": "Task",
+                "System.Title": "Bound Task",
+                "System.State": "Active",
+              },
+            },
+          ],
+        },
+      },
+    ]);
+    const res = await callTool(repoDir, "kai_work_item_search", {
+      wiql: "SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = @project AND [System.State] = 'Active'",
+    });
+    expect(res.error).toBeUndefined();
+    expect(res.json!.items).toEqual([
+      expect.objectContaining({ id: 101, title: "Bound Task", state: "Active" }),
+    ]);
+  });
+
+  it("rejects unscoped custom WIQL via MCP", async () => {
+    saveAccount(azAccount("Contoso", "az"));
+    bind("azure-devops", repoDir);
+    const res = await callTool(repoDir, "kai_work_item_search", {
+      wiql: "SELECT [System.Id] FROM WorkItems WHERE [System.State] = 'Active'",
+    });
+    expect(res.error).toBeDefined();
+    expect(res.error?.code).toBe(-32000);
+    expect(res.error?.message).toContain("must be scoped to the bound project");
   });
 
   it("still rejects genuinely unknown tools", async () => {

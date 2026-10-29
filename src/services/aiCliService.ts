@@ -71,7 +71,7 @@ function unavailableFallback(): AiCliStatus[] {
     { id: "claude", name: "Claude Code", available: false, path: null },
     { id: "gemini", name: "Gemini CLI", available: false, path: null },
     { id: "opencode", name: "opencode", available: false, path: null },
-    { id: "copilot", name: "Muse CLI", available: false, path: null },
+    { id: "copilot", name: "GitHub Copilot", available: false, path: null },
     { id: "aider", name: "Aider", available: false, path: null },
     { id: "cursor", name: "Cursor", available: false, path: null },
     { id: "windsurf", name: "Windsurf", available: false, path: null },

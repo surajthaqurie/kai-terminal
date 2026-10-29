@@ -48,17 +48,23 @@ export async function runMcp(args: string[]): Promise<number> {
   }
 
   if (REMOVE_SUBCOMMANDS.has(sub)) {
-    const target = flagValue(args, AGENT_FLAGS) ?? args[2];
+    const target = flagValue(args, AGENT_FLAGS) ?? args.slice(2).find((a) => !a.startsWith("-"));
     if (!target || target.startsWith("-")) {
       console.error(`[kai] Error: Please specify an agent name to remove.`);
       console.error(`Example: kai mcp remove claude`);
       return 1;
     }
-    return removeAgentWiring(target, args.includes("--dry-run"));
+    const scope = args.includes("--project")
+      ? ("project" as const)
+      : args.includes("--global")
+        ? ("global" as const)
+        : ("auto" as const);
+    return removeAgentWiring(target, { dryRun: args.includes("--dry-run"), scope });
   }
 
   if (SETUP_SUBCOMMANDS.has(sub)) {
-    return await executeAgentSetupWorkflow((args[2] || "").toLowerCase(), args);
+    const target = args.slice(2).find((a) => !a.startsWith("-")) || "";
+    return await executeAgentSetupWorkflow(target.toLowerCase(), args);
   }
   if (isKnownAgent(sub)) {
     return await executeAgentSetupWorkflow(sub, args);

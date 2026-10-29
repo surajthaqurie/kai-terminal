@@ -155,7 +155,7 @@ fn agent_mcp_target(id: &str) -> Option<(&'static str, McpKeyStyle, Option<&'sta
         "claude" => Some((".claude.json", McpKeyStyle::McpServers, None)),
         "cursor" => Some((".cursor/mcp.json", McpKeyStyle::McpServers, None)),
         "codex" => Some((".codex/config.toml", McpKeyStyle::TomlCodex, None)),
-        "gemini" => Some((".muse/settings.json", McpKeyStyle::McpServers, None)),
+        "gemini" => Some((".gemini/settings.json", McpKeyStyle::McpServers, None)),
         // copilot is project-scoped (.vscode/mcp.json) and needs a project
         // directory, so the desktop command declines it with guidance.
         "copilot" => None,
@@ -1008,7 +1008,7 @@ pub fn agent_setup_snippet(id: &str, project_arg: &str) -> Result<String, String
             match id {
                 "claude" => "~/.claude.json",
                 "cursor" => ".cursor/mcp.json",
-                "gemini" => "~/.muse/settings.json",
+                "gemini" => "~/.gemini/settings.json",
                 "windsurf" => "~/.codeium/windsurf/mcp_config.json",
                 "cline" => "cline_mcp_settings.json (VS Code Cline extension storage)",
                 "aider" => "~/.config/aider/mcp.json",
@@ -1086,7 +1086,7 @@ fn ai_cli_catalog() -> Vec<(
         ),
         (
             "copilot",
-            "Muse CLI",
+            "GitHub Copilot",
             vec!["copilot", "gh-copilot", "github-copilot"],
             "Install via npm: npm install -g @github/copilot — docs: https://docs.github.com/en/copilot",
             false,

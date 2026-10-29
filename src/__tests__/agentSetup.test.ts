@@ -170,7 +170,7 @@ describe("applyAgentSetup (automatic install)", () => {
     const res = applyAgentSetup("gemini", KAI_BIN, { homeDir: home, dryRun: true });
     expect(res.wrote).toBe(false);
     expect(res.created).toBe(true);
-    expect(fs.existsSync(path.join(home, ".muse/settings.json"))).toBe(false);
+    expect(fs.existsSync(path.join(home, ".gemini/settings.json"))).toBe(false);
   });
 
   it("migrates a legacy 'kai' server entry to 'kai-terminal'", () => {
@@ -239,7 +239,7 @@ describe("applyAgentSetup (automatic install)", () => {
 
   it("refuses invalid JSON instead of destroying user config", () => {
     const home = makeTempHome();
-    const dir = path.join(home, ".muse");
+    const dir = path.join(home, ".gemini");
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, "settings.json"), "{broken");
     const res = applyAgentSetup("gemini", KAI_BIN, { homeDir: home });
@@ -413,5 +413,429 @@ describe("Harden Phase: Path escaping, spaces, Unicode, quotes & dynamic agent v
   it("kai stop clears Code Mode without arguments", async () => {
     const { runCli } = await import("../cli/index");
     expect(await runCli(["node", "kai", "stop"])).toBe(0);
+  });
+});
+
+describe("Claude Code configuration predictability & scope enforcement", () => {
+  it("prefers project-level .mcp.json when auto setup runs inside a git repository", () => {
+    const home = makeTempHome();
+    const repo = makeTempHome();
+    fs.mkdirSync(path.join(repo, ".git"));
+
+    const res = applyAgentSetup("claude", KAI_BIN, {
+      homeDir: home,
+      projectDir: repo,
+      scope: "auto",
+    });
+    expect(res.wrote).toBe(true);
+    expect(res.scope).toBe("project");
+    expect(res.path).toBe(path.join(repo, ".mcp.json"));
+    expect(fs.existsSync(path.join(repo, ".mcp.json"))).toBe(true);
+    expect(fs.existsSync(path.join(home, ".claude.json"))).toBe(false);
+
+    const content = JSON.parse(fs.readFileSync(res.path, "utf-8"));
+    expect(content.mcpServers["kai-terminal"]).toEqual({
+      command: "node",
+      args: [KAI_BIN, "mcp", "."],
+    });
+  });
+
+  it("prefers global-level ~/.claude.json when auto setup runs outside a git repository", () => {
+    const home = makeTempHome();
+    const nonRepo = makeTempHome();
+
+    const res = applyAgentSetup("claude", KAI_BIN, {
+      homeDir: home,
+      projectDir: nonRepo,
+      scope: "auto",
+    });
+    expect(res.wrote).toBe(true);
+    expect(res.scope).toBe("global");
+    expect(res.path).toBe(path.join(home, ".claude.json"));
+    expect(fs.existsSync(path.join(home, ".claude.json"))).toBe(true);
+    expect(fs.existsSync(path.join(nonRepo, ".mcp.json"))).toBe(false);
+
+    const content = JSON.parse(fs.readFileSync(res.path, "utf-8"));
+    expect(content.mcpServers["kai-terminal"]).toEqual({
+      command: "node",
+      args: [KAI_BIN, "mcp", "."],
+    });
+  });
+
+  it("explicit --project flag selects project scope even outside a git repository", () => {
+    const home = makeTempHome();
+    const nonRepo = makeTempHome();
+
+    const res = applyAgentSetup("claude", KAI_BIN, {
+      homeDir: home,
+      projectDir: nonRepo,
+      scope: "project",
+    });
+    expect(res.wrote).toBe(true);
+    expect(res.scope).toBe("project");
+    expect(res.path).toBe(path.join(nonRepo, ".mcp.json"));
+    expect(fs.existsSync(path.join(nonRepo, ".mcp.json"))).toBe(true);
+  });
+
+  it("explicit --global flag selects global scope even inside a git repository", () => {
+    const home = makeTempHome();
+    const repo = makeTempHome();
+    fs.mkdirSync(path.join(repo, ".git"));
+
+    const res = applyAgentSetup("claude", KAI_BIN, {
+      homeDir: home,
+      projectDir: repo,
+      scope: "global",
+    });
+    expect(res.wrote).toBe(true);
+    expect(res.scope).toBe("global");
+    expect(res.path).toBe(path.join(home, ".claude.json"));
+    expect(fs.existsSync(path.join(home, ".claude.json"))).toBe(true);
+    expect(fs.existsSync(path.join(repo, ".mcp.json"))).toBe(false);
+  });
+
+  it("updates existing kai-terminal entry with force without duplicate entries or losing other servers", () => {
+    const home = makeTempHome();
+    const repo = makeTempHome();
+    fs.mkdirSync(path.join(repo, ".git"));
+    const configPath = path.join(repo, ".mcp.json");
+
+    const initial = {
+      unrelatedTopLevel: "preserve-me",
+      mcpServers: {
+        "other-server": { command: "python", args: ["-m", "other"] },
+        "kai-terminal": { command: "node", args: ["/old/bin/kai.js", "mcp", "."] },
+      },
+    };
+    fs.writeFileSync(configPath, JSON.stringify(initial, null, 2));
+
+    // Without force: reports already configured
+    const noForce = applyAgentSetup("claude", KAI_BIN, {
+      homeDir: home,
+      projectDir: repo,
+      force: false,
+    });
+    expect(noForce.alreadyConfigured).toBe(true);
+    expect(noForce.wrote).toBe(false);
+
+    // With force: updates entry and creates backup
+    const withForce = applyAgentSetup("claude", KAI_BIN, {
+      homeDir: home,
+      projectDir: repo,
+      force: true,
+    });
+    expect(withForce.wrote).toBe(true);
+    expect(withForce.backupPath).toBeTruthy();
+    expect(fs.existsSync(withForce.backupPath!)).toBe(true);
+
+    const updated = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+    expect(updated.unrelatedTopLevel).toBe("preserve-me");
+    expect(updated.mcpServers["other-server"]).toEqual({
+      command: "python",
+      args: ["-m", "other"],
+    });
+    expect(updated.mcpServers["kai-terminal"]).toEqual({
+      command: "node",
+      args: [KAI_BIN, "mcp", "."],
+    });
+    // Ensure no duplicate registration keys
+    expect(Object.keys(updated.mcpServers)).toEqual(["other-server", "kai-terminal"]);
+  });
+
+  it("refuses to overwrite malformed JSON to avoid data loss", () => {
+    const home = makeTempHome();
+    const repo = makeTempHome();
+    fs.mkdirSync(path.join(repo, ".git"));
+    const configPath = path.join(repo, ".mcp.json");
+    fs.writeFileSync(configPath, "{ invalid json content");
+
+    const res = applyAgentSetup("claude", KAI_BIN, {
+      homeDir: home,
+      projectDir: repo,
+      force: true,
+    });
+    expect(res.skipped).toBe(true);
+    expect(res.wrote).toBe(false);
+    expect(res.message).toContain("not valid JSON");
+    // Original malformed content preserved
+    expect(fs.readFileSync(configPath, "utf-8")).toBe("{ invalid json content");
+  });
+
+  it("handles write failures gracefully without throwing", () => {
+    const home = makeTempHome();
+    const repo = makeTempHome();
+    fs.mkdirSync(path.join(repo, ".git"));
+    // Make .mcp.json a directory so atomic rename / write fails
+    fs.mkdirSync(path.join(repo, ".mcp.json"));
+
+    const res = applyAgentSetup("claude", KAI_BIN, { homeDir: home, projectDir: repo });
+    expect(res.wrote).toBe(false);
+    expect(res.skipped).toBe(true);
+    expect(res.message).toContain("Failed to write config file");
+  });
+
+  it("removes MCP wiring with matching scope without affecting other scopes", () => {
+    const home = makeTempHome();
+    const repo = makeTempHome();
+    fs.mkdirSync(path.join(repo, ".git"));
+
+    // Wire both global and project
+    applyAgentSetup("claude", KAI_BIN, { homeDir: home, projectDir: repo, scope: "global" });
+    applyAgentSetup("claude", KAI_BIN, { homeDir: home, projectDir: repo, scope: "project" });
+
+    expect(fs.existsSync(path.join(home, ".claude.json"))).toBe(true);
+    expect(fs.existsSync(path.join(repo, ".mcp.json"))).toBe(true);
+
+    // Remove project scope only
+    const remProject = removeAgentSetup("claude", {
+      homeDir: home,
+      projectDir: repo,
+      scope: "project",
+    });
+    expect(remProject.removed).toBe(true);
+
+    const projectCfg = JSON.parse(fs.readFileSync(path.join(repo, ".mcp.json"), "utf-8"));
+    expect(projectCfg.mcpServers["kai-terminal"]).toBeUndefined();
+
+    // Global config remains wired
+    const globalCfg = JSON.parse(fs.readFileSync(path.join(home, ".claude.json"), "utf-8"));
+    expect(globalCfg.mcpServers["kai-terminal"]).toBeDefined();
+
+    // Remove global scope
+    const remGlobal = removeAgentSetup("claude", {
+      homeDir: home,
+      projectDir: repo,
+      scope: "global",
+    });
+    expect(remGlobal.removed).toBe(true);
+
+    const globalCfgAfter = JSON.parse(fs.readFileSync(path.join(home, ".claude.json"), "utf-8"));
+    expect(globalCfgAfter.mcpServers["kai-terminal"]).toBeUndefined();
+  });
+
+  it("never writes credentials or tokens into agent configuration files", () => {
+    const home = makeTempHome();
+    const repo = makeTempHome();
+    fs.mkdirSync(path.join(repo, ".git"));
+
+    const res = applyAgentSetup("claude", KAI_BIN, { homeDir: home, projectDir: repo });
+    const content = fs.readFileSync(res.path, "utf-8");
+    expect(content).not.toMatch(/token|secret|password|pat|auth|bearer/i);
+  });
+});
+
+describe("All-Agent Integration Matrix & Unified Workflow", () => {
+  const ALL_AGENT_IDS = [
+    "claude",
+    "cursor",
+    "codex",
+    "gemini",
+    "copilot",
+    "windsurf",
+    "cline",
+    "opencode",
+    "aider",
+    "agy",
+  ];
+
+  it("verifies all 10 registered agents are present in AGENT_REGISTRY", () => {
+    const registryIds = AGENT_REGISTRY.map((a) => a.id);
+    for (const id of ALL_AGENT_IDS) {
+      expect(registryIds).toContain(id);
+    }
+    expect(registryIds).toHaveLength(ALL_AGENT_IDS.length);
+  });
+
+  it("verifies lifecycle (setup -> isWired -> remove -> !isWired) for every registered agent", () => {
+    for (const id of ALL_AGENT_IDS) {
+      const home = makeTempHome();
+      const proj = makeTempHome();
+      fs.mkdirSync(path.join(proj, ".git"));
+
+      const def = getAgentDefinition(id)!;
+      // If the agent requires an app directory (like Cline), pre-create it so setup succeeds
+      for (const t of def.targets) {
+        if (t.requireAppDir) {
+          fs.mkdirSync(path.join(home, t.requireAppDir), { recursive: true });
+        }
+      }
+
+      // 1. Initial state: not wired
+      expect(isAgentWired(id, { homeDir: home, projectDir: proj })).toBe(false);
+
+      // 2. Setup
+      const setupRes = applyAgentSetup(id, KAI_BIN, { homeDir: home, projectDir: proj });
+      expect(setupRes.wrote).toBe(true);
+      expect(setupRes.skipped).toBe(false);
+      expect(fs.existsSync(setupRes.path)).toBe(true);
+
+      // 3. Wired state
+      expect(isAgentWired(id, { homeDir: home, projectDir: proj })).toBe(true);
+
+      // 4. Content verification based on keyStyle
+      const target = def.targets.find((t) => t.scope === setupRes.scope) || def.targets[0];
+      if (target.keyStyle === "toml-codex") {
+        const raw = fs.readFileSync(setupRes.path, "utf-8");
+        expect(raw).toContain("[mcp_servers.kai-terminal]");
+        expect(raw).toContain(KAI_BIN);
+      } else if (target.keyStyle === "mcp-opencode") {
+        const parsed = JSON.parse(fs.readFileSync(setupRes.path, "utf-8"));
+        expect(parsed.mcp["kai-terminal"]).toBeDefined();
+        expect(parsed.mcp["kai-terminal"].command).toContain(KAI_BIN);
+      } else if (target.keyStyle === "vscode-servers") {
+        const parsed = JSON.parse(fs.readFileSync(setupRes.path, "utf-8"));
+        expect(parsed.servers["kai-terminal"]).toBeDefined();
+        expect(parsed.servers["kai-terminal"].args).toContain(KAI_BIN);
+      } else {
+        const parsed = JSON.parse(fs.readFileSync(setupRes.path, "utf-8"));
+        expect(parsed.mcpServers["kai-terminal"]).toBeDefined();
+        expect(parsed.mcpServers["kai-terminal"].args).toContain(KAI_BIN);
+      }
+
+      // 5. Remove
+      const removeRes = removeAgentSetup(id, { homeDir: home, projectDir: proj });
+      expect(removeRes.removed).toBe(true);
+
+      // 6. After removal: not wired
+      expect(isAgentWired(id, { homeDir: home, projectDir: proj })).toBe(false);
+    }
+  });
+
+  it("strictly rejects unsupported scope for global-only agents", () => {
+    const globalOnlyAgents = ["codex", "gemini", "windsurf", "cline", "opencode", "aider", "agy"];
+
+    for (const id of globalOnlyAgents) {
+      const home = makeTempHome();
+      const proj = makeTempHome();
+
+      // Attempting project scope setup must fail closed
+      const setupRes = applyAgentSetup(id, KAI_BIN, {
+        homeDir: home,
+        projectDir: proj,
+        scope: "project",
+      });
+      expect(setupRes.wrote).toBe(false);
+      expect(setupRes.skipped).toBe(true);
+      expect(setupRes.message).toBe(`No project-scope config target is defined for "${id}".`);
+
+      // Attempting project scope remove must fail closed
+      const removeRes = removeAgentSetup(id, {
+        homeDir: home,
+        projectDir: proj,
+        scope: "project",
+      });
+      expect(removeRes.removed).toBe(false);
+      expect(removeRes.message).toBe(`No project-scope config target is defined for "${id}".`);
+    }
+  });
+
+  it("strictly rejects unsupported scope for project-only agent (copilot)", () => {
+    const home = makeTempHome();
+    const proj = makeTempHome();
+
+    // Attempting global scope setup on copilot must fail closed
+    const setupRes = applyAgentSetup("copilot", KAI_BIN, {
+      homeDir: home,
+      projectDir: proj,
+      scope: "global",
+    });
+    expect(setupRes.wrote).toBe(false);
+    expect(setupRes.skipped).toBe(true);
+    expect(setupRes.message).toBe(`No global-scope config target is defined for "copilot".`);
+
+    // Attempting global scope remove on copilot must fail closed
+    const removeRes = removeAgentSetup("copilot", {
+      homeDir: home,
+      projectDir: proj,
+      scope: "global",
+    });
+    expect(removeRes.removed).toBe(false);
+    expect(removeRes.message).toBe(`No global-scope config target is defined for "copilot".`);
+  });
+
+  it("handles multi-scope agent cursor correctly in git and non-git environments", () => {
+    const home = makeTempHome();
+    const gitRepo = makeTempHome();
+    fs.mkdirSync(path.join(gitRepo, ".git"));
+    const nonGit = makeTempHome();
+
+    // Auto-scope inside git repo selects project-level .cursor/mcp.json
+    const gitRes = applyAgentSetup("cursor", KAI_BIN, {
+      homeDir: home,
+      projectDir: gitRepo,
+      scope: "auto",
+    });
+    expect(gitRes.wrote).toBe(true);
+    expect(gitRes.scope).toBe("project");
+    expect(gitRes.path).toBe(path.join(gitRepo, ".cursor/mcp.json"));
+    const gitCfg = JSON.parse(fs.readFileSync(gitRes.path, "utf-8"));
+    expect(gitCfg.mcpServers["kai-terminal"].args).toEqual([KAI_BIN, "mcp", "${workspaceFolder}"]);
+
+    // Auto-scope outside git repo selects global-level ~/.cursor/mcp.json
+    const nonGitRes = applyAgentSetup("cursor", KAI_BIN, {
+      homeDir: home,
+      projectDir: nonGit,
+      scope: "auto",
+    });
+    expect(nonGitRes.wrote).toBe(true);
+    expect(nonGitRes.scope).toBe("global");
+    expect(nonGitRes.path).toBe(path.join(home, ".cursor/mcp.json"));
+    const globalCfg = JSON.parse(fs.readFileSync(nonGitRes.path, "utf-8"));
+    expect(globalCfg.mcpServers["kai-terminal"].args).toEqual([
+      KAI_BIN,
+      "mcp",
+      "${workspaceFolder}",
+    ]);
+
+    // Explicit scope overrides
+    const explicitGlobal = applyAgentSetup("cursor", KAI_BIN, {
+      homeDir: home,
+      projectDir: gitRepo,
+      scope: "global",
+      force: true,
+    });
+    expect(explicitGlobal.scope).toBe("global");
+    expect(explicitGlobal.path).toBe(path.join(home, ".cursor/mcp.json"));
+
+    // Scoped removal: removing project config leaves global config intact
+    const remProj = removeAgentSetup("cursor", {
+      homeDir: home,
+      projectDir: gitRepo,
+      scope: "project",
+    });
+    expect(remProj.removed).toBe(true);
+    expect(isAgentWired("cursor", { homeDir: home, projectDir: gitRepo, scope: "project" })).toBe(
+      false
+    );
+    expect(isAgentWired("cursor", { homeDir: home, projectDir: gitRepo, scope: "global" })).toBe(
+      true
+    );
+  });
+
+  it("verifies CLI workflow commands and dry-run output", async () => {
+    const { runCli } = await import("../cli/index");
+
+    // kai mcp <agent> with --dry-run
+    const codeMcpDry = await runCli(["node", "kai", "mcp", "aider", "--dry-run"]);
+    expect(codeMcpDry).toBe(0);
+
+    // kai agent setup <agent> with --dry-run
+    const codeAgentDry = await runCli(["node", "kai", "agent", "setup", "claude", "--dry-run"]);
+    expect(codeAgentDry).toBe(0);
+
+    // kai mcp remove <agent> with --dry-run
+    const codeMcpRemDry = await runCli(["node", "kai", "mcp", "remove", "claude", "--dry-run"]);
+    expect(codeMcpRemDry).toBe(0);
+
+    // Unsupported scope via CLI rejects with exit code 2
+    const codeInvalidScope = await runCli([
+      "node",
+      "kai",
+      "mcp",
+      "codex",
+      "--project",
+      "--dry-run",
+    ]);
+    expect(codeInvalidScope).toBe(2);
   });
 });
