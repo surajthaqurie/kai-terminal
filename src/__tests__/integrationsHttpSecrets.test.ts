@@ -10,6 +10,7 @@ import {
   SecretToolStore,
   secretKeyFor,
   runProcess,
+  windowsPowerShellEnv,
   type RunResult,
   type Runner,
   type SecretStore,
@@ -233,12 +234,17 @@ describe("secret stores", () => {
       } catch {
         return; // DPAPI unreachable in this session; covered by the test above.
       }
-      const { code, stdout } = await runProcess("powershell.exe", [
-        "-NoProfile",
-        "-Command",
-        "ConvertFrom-SecureString (ConvertTo-SecureString 'legacy-pat' -AsPlainText -Force)",
-      ]);
-      expect(code).toBe(0);
+      const { code, stdout, stderr } = await runProcess(
+        "powershell.exe",
+        [
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          "ConvertFrom-SecureString (ConvertTo-SecureString 'legacy-pat' -AsPlainText -Force)",
+        ],
+        { env: windowsPowerShellEnv() }
+      );
+      expect(code, stderr).toBe(0);
       const file = path.join(
         dir,
         fs.readdirSync(dir).find((f) => f.endsWith(".dpapi"))!

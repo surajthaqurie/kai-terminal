@@ -159,6 +159,19 @@ const POWERSHELL = (() => {
 /** Windows PowerShell can take a few seconds to start cold; a hung one must not stall a sign-in. */
 const DPAPI_TIMEOUT_MS = 15_000;
 
+/**
+ * The child environment for Windows PowerShell 5.1, minus any inherited `PSModulePath`. A PowerShell 7
+ * parent points it at 7-only modules, so 5.1 cannot autoload `ConvertTo-SecureString` (the legacy
+ * read path) and exits non-zero; unset, it falls back to its own defaults.
+ */
+export function windowsPowerShellEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [k, v] of Object.entries(process.env)) {
+    if (k.toLowerCase() !== "psmodulepath") env[k] = v;
+  }
+  return { ...env, ...extra };
+}
+
 /** Windows: the blob on disk is DPAPI-encrypted for this user and cannot be read by others. */
 export class DpapiSecretStore implements SecretStore {
   private readonly blobs = new FileSecretStore("dpapi");
@@ -184,7 +197,7 @@ export class DpapiSecretStore implements SecretStore {
     if (blob === null) return null;
     const script = blob.startsWith(DPAPI_V2) ? DPAPI_GET : DPAPI_GET_LEGACY;
     const r = await this.run(POWERSHELL, this.psArgs(script), {
-      env: { ...process.env, KAI_SECRET_FILE: this.blobPath(key) },
+      env: windowsPowerShellEnv({ KAI_SECRET_FILE: this.blobPath(key) }),
       timeoutMs: DPAPI_TIMEOUT_MS,
     });
     if (r.code !== 0 || !r.stdout.trim()) return null;
@@ -198,11 +211,10 @@ export class DpapiSecretStore implements SecretStore {
   async set(key: string, value: string): Promise<SecretLocation> {
     fs.mkdirSync(credentialsDir(), { recursive: true, mode: 0o700 });
     const r = await this.run(POWERSHELL, this.psArgs(DPAPI_SET), {
-      env: {
-        ...process.env,
+      env: windowsPowerShellEnv({
         KAI_SECRET_FILE: this.blobPath(key),
         KAI_SECRET_B64: Buffer.from(value, "utf8").toString("base64"),
-      },
+      }),
       timeoutMs: DPAPI_TIMEOUT_MS,
     });
     if (r.code !== 0) {
