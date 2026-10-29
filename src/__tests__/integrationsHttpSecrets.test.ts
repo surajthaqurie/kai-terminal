@@ -225,7 +225,14 @@ describe("secret stores", () => {
   it.runIf(process.platform === "win32")(
     "Windows DPAPI still reads a blob written by 0.2.1 (ConvertFrom-SecureString)",
     async () => {
-      const store = new DpapiSecretStore();
+      // Record what the read-back child did, so a null from `get` says why (timeout vs. DPAPI error).
+      const reads: Awaited<ReturnType<typeof runProcess>>[] = [];
+      const store = new DpapiSecretStore(async (cmd, args, opts) => {
+        const started = Date.now();
+        const r = await runProcess(cmd, args, opts);
+        reads.push({ ...r, stderr: `${r.stderr} (${Date.now() - started}ms)` });
+        return r;
+      });
       const dir = path.join(env.home, "credentials");
       fs.mkdirSync(dir, { recursive: true });
       const probe = new DpapiSecretStore();
@@ -253,7 +260,8 @@ describe("secret stores", () => {
       fs.writeFileSync(file, stdout.trim());
       expect(fs.readFileSync(file, "utf8")).not.toContain("dpapi2:");
       // The probe's key maps to that file name, so read it back through the same key.
-      expect(await store.get("kai/test/probe")).toBe("legacy-pat");
+      const got = await store.get("kai/test/probe");
+      expect(got, JSON.stringify(reads)).toBe("legacy-pat");
     },
     90_000
   );
