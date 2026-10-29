@@ -143,10 +143,11 @@ $plain = [Security.Cryptography.ProtectedData]::Unprotect($enc, $null, $scope)
  * Blobs written by 0.2.1 (`ConvertFrom-SecureString` without a key: the hex of a plain DPAPI blob over
  * the UTF-16 text). Still readable; rewritten on the next sign-in. Decoded through .NET like the v2
  * path, because autoloading `ConvertTo-SecureString` is slow enough to hit the timeout on cold runners.
+ * Any cmdlet (even `New-Object`) triggers that same module autoload, so this script uses none.
  */
 const DPAPI_GET_LEGACY = `${DPAPI_PREAMBLE}
 $hex = [IO.File]::ReadAllText($env:KAI_SECRET_FILE).Trim()
-$enc = New-Object byte[] ($hex.Length / 2)
+$enc = [byte[]]::new([int]($hex.Length / 2))
 for ($i = 0; $i -lt $enc.Length; $i++) { $enc[$i] = [Convert]::ToByte($hex.Substring($i * 2, 2), 16) }
 $plain = [Security.Cryptography.ProtectedData]::Unprotect($enc, $null, $scope)
 [Console]::Out.Write([Convert]::ToBase64String([Text.Encoding]::Convert([Text.Encoding]::Unicode, [Text.Encoding]::UTF8, $plain)))`;
