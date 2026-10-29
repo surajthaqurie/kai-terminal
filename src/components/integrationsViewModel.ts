@@ -120,3 +120,17 @@ export function isSameSelection(
 ): boolean {
   return binding.project === project && (binding.repo ?? null) === (repo ?? null);
 }
+
+const ORG_SLUG = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+
+/**
+ * Where an Azure DevOps (cloud) user creates a personal access token: the
+ * organization's token page, or the dev.azure.com start page when the typed
+ * organization is not a plain name (a URL, a space, nothing yet).
+ */
+export function patPageUrl(org: string): string {
+  const name = normalizeOrgInput(org);
+  return ORG_SLUG.test(name)
+    ? `https://dev.azure.com/${name}/_usersSettings/tokens`
+    : "https://dev.azure.com/";
+}

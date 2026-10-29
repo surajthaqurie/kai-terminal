@@ -1,11 +1,12 @@
 import { FC, FormEvent, useCallback, useEffect, useRef, useState } from "react";
-import { CheckCircle, Plug, RefreshCw } from "lucide-react";
+import { CheckCircle, ExternalLink, Plug, RefreshCw } from "lucide-react";
 import {
   PROVIDER_CATALOG,
   type IntegrationAuthMethod,
   type ProviderInfo,
 } from "../core/integrations/providerCatalog";
 import type {
+  IntegrationAccountView,
   IntegrationErrorBody,
   IntegrationProjectView,
   IntegrationRepoView,
@@ -21,7 +22,9 @@ import {
   unbindIntegration,
   verifyIntegration,
 } from "../services/integrationService";
+import { openExternalUrl } from "../services/updateService";
 import {
+  authMethodLabel,
   badgeFor,
   deriveCardState,
   describeAccount,
@@ -31,6 +34,7 @@ import {
   isSameSelection,
   needsRelogin,
   normalizeOrgInput,
+  patPageUrl,
   pickRepoForProject,
   pickSwitchProject,
   preferredAccountId,
@@ -51,23 +55,14 @@ export const IntegrationsPanel: FC<IntegrationsPanelProps> = ({ projectDir }) =>
     className="modal-body"
     role="tabpanel"
     aria-labelledby="ai-cli-tab-integrations"
-    style={{
-      maxHeight: "70vh",
-      overflowY: "auto",
-      display: "flex",
-      flexDirection: "column",
-      gap: "12px",
-    }}
+    style={{ gap: "12px" }}
   >
     <p className="muted-text" style={{ margin: 0 }}>
       Connect a service once, then choose it for each project. Agents reach it through Kai&apos;s
       MCP server; nothing is contacted until a project is bound. Scoped to{" "}
       <code>{projectDir || "no project folder"}</code>.
     </p>
-    <div
-      className="ai-provider-list"
-      style={{ display: "flex", flexDirection: "column", gap: "10px" }}
-    >
+    <div className="ai-provider-list">
       {PROVIDER_CATALOG.map((provider) => (
         <ProviderCard key={provider.id} provider={provider} projectDir={projectDir} />
       ))}
@@ -102,7 +97,6 @@ const ProviderCard: FC<ProviderCardProps> = ({ provider, projectDir }) => {
   const [org, setOrg] = useState("");
   const [authMethod, setAuthMethod] = useState<IntegrationAuthMethod>("az");
   const [pat, setPat] = useState("");
-  const [baseUrl, setBaseUrl] = useState("");
   const [accountChoice, setAccountChoice] = useState<string | null>(null);
   const [confirmReplace, setConfirmReplace] = useState(false);
   const [confirmLogout, setConfirmLogout] = useState<string | null>(null);
@@ -167,6 +161,10 @@ const ProviderCard: FC<ProviderCardProps> = ({ provider, projectDir }) => {
   const binding = status?.project.binding ?? null;
   const otherProvider = status?.project.otherProvider ?? null;
   const selectedAccount = accountChoice ?? preferredAccountId(status);
+  const typedOrg = normalizeOrgInput(org).toLowerCase();
+  const existingAccount = typedOrg
+    ? accounts.find((a) => a.org.toLowerCase() === typedOrg)
+    : undefined;
   const disabled = busy !== null;
 
   const handleConnect = (e: FormEvent) => {
@@ -183,23 +181,53 @@ const ProviderCard: FC<ProviderCardProps> = ({ provider, projectDir }) => {
     // The token leaves component state the moment it is submitted.
     const token = authMethod === "pat" ? pat.trim() : undefined;
     setPat("");
+    let chooseProjectFor: string | null = null;
     void run("connect", async () => {
       const res = await loginIntegration({
         org: orgName,
         authMethod,
         ...(token ? { pat: token } : {}),
-        ...(baseUrl.trim() ? { baseUrl: baseUrl.trim() } : {}),
       });
       if (!res.ok) {
         setError(res.error);
         return;
       }
+      const account = res.value.account;
       const who = res.value.user.email ?? res.value.user.name;
+      setAccountChoice(account.id);
+      setShowForm(false);
+      // Signing in for the folder's own organization is the whole job: make it
+      // active right away instead of leaving a second "Use for this project" click.
+      const ownRemote = detected && detected.org.toLowerCase() === account.org.toLowerCase();
+      if (!binding && ownRemote) {
+        const bound = await bindIntegration({ projectDir, account: account.id });
+        if (!mounted.current) return;
+        if (bound.ok) {
+          await refresh();
+          if (mounted.current) {
+            setNotice(
+              `Connected to ${account.org} as ${who}. Active for this project (${bound.value.project}${
+                bound.value.repo ? ` / ${bound.value.repo}` : ""
+              }).`
+            );
+          }
+          return;
+        }
+        // Signed in, but something (another integration, a name mismatch) needs a decision.
+        await refresh();
+        if (!mounted.current) return;
+        if (bound.error.code === "needs_confirmation") setConfirmReplace(true);
+        else setError(bound.error);
+        setNotice(`Connected to ${account.org} as ${who}.`);
+        return;
+      }
       await refresh();
       if (!mounted.current) return;
-      setAccountChoice(res.value.account.id);
-      setShowForm(false);
-      setNotice(`Connected to ${res.value.account.org} as ${who}.`);
+      setNotice(`Connected to ${account.org} as ${who}.`);
+      // No usable remote for this account: let the user pick the project instead.
+      if (!binding) chooseProjectFor = account.id;
+    }).then(() => {
+      if (chooseProjectFor && mounted.current) void openPicker(chooseProjectFor, null);
     });
   };
 
@@ -255,32 +283,48 @@ const ProviderCard: FC<ProviderCardProps> = ({ provider, projectDir }) => {
     );
   };
 
-  /** Opens the picker. The project list is a network call, so it is only fetched here. */
-  const openSwitch = async () => {
-    if (!binding) return;
+  /**
+   * Opens the project picker for `account`. `current` is the active project
+   * (a switch) or null (first activation). The project list is a network call,
+   * so it is only fetched here, never on tab open.
+   */
+  const openPicker = async (
+    account: string,
+    current: { project: string; repo: string | null } | null
+  ) => {
     const seq = ++switchSeq.current;
     setNotice(null);
     setError(null);
     setBusy("projects");
     setSwitching({
-      account: binding.account,
+      account,
       projects: null,
-      project: binding.project,
+      project: current?.project ?? "",
       repos: null,
-      repo: binding.repo,
+      repo: current?.repo ?? null,
     });
-    const res = await listProjects(binding.account);
+    const res = await listProjects(account);
     if (!mounted.current || seq !== switchSeq.current) return;
     if (!res.ok) {
-      // The binding is untouched; show why the list is unavailable.
+      // Nothing is bound or changed; show why the list is unavailable.
       setError(res.error);
       setSwitching(null);
       setBusy(null);
       return;
     }
-    const project = pickSwitchProject(res.value, binding.project);
+    if (res.value.length === 0) {
+      setError({
+        code: "not_found",
+        message: "This account has no projects Kai can read.",
+        hint: "Check the token's access, or pick another organization.",
+      });
+      setSwitching(null);
+      setBusy(null);
+      return;
+    }
+    const project = pickSwitchProject(res.value, current?.project ?? "");
     setSwitching((prev) => (prev ? { ...prev, projects: res.value, project } : prev));
-    await loadRepos(binding.account, project, binding.repo);
+    await loadRepos(account, project, current?.repo ?? null);
   };
 
   const applySwitch = () => {
@@ -295,11 +339,40 @@ const ProviderCard: FC<ProviderCardProps> = ({ provider, projectDir }) => {
       closeSwitch();
       await refresh();
       if (mounted.current) {
-        setNotice(
-          `Switched to ${res.value.project}${res.value.repo ? ` / ${res.value.repo}` : ""}.`
-        );
+        const picked = `${res.value.project}${res.value.repo ? ` / ${res.value.repo}` : ""}`;
+        setNotice(binding ? `Switched to ${picked}.` : `Active for this project (${picked}).`);
       }
     });
+  };
+
+  /**
+   * Makes a signed-in account the one active for this folder (a folder has one
+   * at a time). When the git remote belongs to that organization the remote's
+   * project is used; otherwise the user picks the project.
+   */
+  const activateAccount = (target: IntegrationAccountView) => {
+    closeSwitch();
+    if (detected && detected.org.toLowerCase() === target.org.toLowerCase()) {
+      void run("bind", async () => {
+        const res = await bindIntegration({ projectDir, account: target.id });
+        if (!res.ok) {
+          setError(res.error);
+          return;
+        }
+        setAccountChoice(target.id);
+        await refresh();
+        if (mounted.current) {
+          setNotice(
+            `${target.org} is now active for this project (${res.value.project}${
+              res.value.repo ? ` / ${res.value.repo}` : ""
+            }).`
+          );
+        }
+      });
+      return;
+    }
+    setAccountChoice(target.id);
+    void openPicker(target.id, null);
   };
 
   const handleVerify = () => {
@@ -350,7 +423,6 @@ const ProviderCard: FC<ProviderCardProps> = ({ provider, projectDir }) => {
   return (
     <div
       className={`ai-provider-card integration-card${state === "active" ? " is-available" : ""}`}
-      style={{ display: "flex", flexDirection: "column", gap: "8px", padding: "12px" }}
       aria-label={provider.label}
     >
       <div className="ai-provider-head">
@@ -395,7 +467,7 @@ const ProviderCard: FC<ProviderCardProps> = ({ provider, projectDir }) => {
                 type="button"
                 className="btn btn-secondary btn-small"
                 disabled={disabled}
-                onClick={() => void openSwitch()}
+                onClick={() => binding && void openPicker(binding.account, binding)}
               >
                 Switch project
               </button>
@@ -404,9 +476,15 @@ const ProviderCard: FC<ProviderCardProps> = ({ provider, projectDir }) => {
 
           {switching && (
             <div className="integration-switch" role="group" aria-label="Switch project">
+              <span className="muted-text integration-detected">
+                Account:{" "}
+                <strong>
+                  {accounts.find((a) => a.id === switching.account)?.org ?? switching.account}
+                </strong>
+              </span>
               {switching.projects === null ? (
                 <span className="muted-text" role="status">
-                  Loading projects�
+                  Loading projects…
                 </span>
               ) : (
                 <>
@@ -432,7 +510,7 @@ const ProviderCard: FC<ProviderCardProps> = ({ provider, projectDir }) => {
                     <label htmlFor={`${provider.id}-switch-repo`}>Repository</label>
                     {switching.repos === null ? (
                       <span className="muted-text" role="status">
-                        Loading repositories�
+                        Loading repositories…
                       </span>
                     ) : (
                       <select
@@ -466,11 +544,12 @@ const ProviderCard: FC<ProviderCardProps> = ({ provider, projectDir }) => {
                       disabled ||
                       switching.repos === null ||
                       (binding !== null &&
+                        binding.account === switching.account &&
                         isSameSelection(binding, switching.project, switching.repo))
                     }
                     onClick={applySwitch}
                   >
-                    {busy === "bind" ? "Applying�" : "Apply"}
+                    {busy === "bind" ? "Applying…" : "Apply"}
                   </button>
                 )}
                 <button type="button" className="btn btn-secondary btn-small" onClick={closeSwitch}>
@@ -524,15 +603,28 @@ const ProviderCard: FC<ProviderCardProps> = ({ provider, projectDir }) => {
                       </button>
                     </span>
                   ) : (
-                    <button
-                      type="button"
-                      className="btn btn-secondary btn-small"
-                      disabled={disabled}
-                      onClick={() => setConfirmLogout(account.id)}
-                      aria-label={`Sign out ${account.org}`}
-                    >
-                      Sign out
-                    </button>
+                    <span className="integration-row-actions">
+                      {!account.usedByThisProject && !needsRelogin(account) && (
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-small"
+                          disabled={disabled}
+                          onClick={() => activateAccount(account)}
+                          aria-label={`Make ${account.org} active for this project`}
+                        >
+                          Make active
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-small"
+                        disabled={disabled}
+                        onClick={() => setConfirmLogout(account.id)}
+                        aria-label={`Sign out ${account.org}`}
+                      >
+                        Sign out
+                      </button>
+                    </span>
                   )}
                 </li>
               ))}
@@ -559,15 +651,19 @@ const ProviderCard: FC<ProviderCardProps> = ({ provider, projectDir }) => {
               <button
                 type="button"
                 className="btn btn-primary btn-small"
-                disabled={disabled || !detected || !selectedAccount}
+                disabled={disabled || !selectedAccount}
+                onClick={() =>
+                  detected && selectedAccount
+                    ? handleBind(false)
+                    : selectedAccount && void openPicker(selectedAccount, null)
+                }
                 title={
                   detected
                     ? undefined
-                    : "This folder has no Azure DevOps git remote to configure from"
+                    : "This folder has no Azure DevOps git remote, so you pick the project"
                 }
-                onClick={() => handleBind(false)}
               >
-                Use for this project
+                {detected ? "Use for this project" : "Choose project"}
               </button>
             )}
             {(state === "active" || accounts.length > 0) && (
@@ -661,6 +757,23 @@ const ProviderCard: FC<ProviderCardProps> = ({ provider, projectDir }) => {
                   spellCheck={false}
                   onChange={(e) => setOrg(e.target.value)}
                 />
+                {existingAccount && (
+                  <p className="integration-warn integration-detected">
+                    {existingAccount.org} is already connected with{" "}
+                    {authMethodLabel(existingAccount.authMethod)}. Connecting again replaces that
+                    sign-in: there is one sign-in per organization.
+                  </p>
+                )}
+                <p className="muted-text integration-detected">
+                  {detected ? (
+                    <>
+                      Taken from this folder&apos;s git remote ({detectedText}). Change it only to
+                      sign in to a different organization.
+                    </>
+                  ) : (
+                    <>No Azure DevOps git remote in this folder, so type the organization.</>
+                  )}
+                </p>
               </div>
               <fieldset className="integration-methods" disabled={disabled}>
                 <legend>Sign in with</legend>
@@ -685,14 +798,31 @@ const ProviderCard: FC<ProviderCardProps> = ({ provider, projectDir }) => {
               </fieldset>
               {authMethod === "az" ? (
                 <p className="muted-text" style={{ margin: 0, fontSize: "12px" }}>
-                  Run <code>az login</code> in a terminal tab first. Kai stores nothing: it asks the
-                  Azure CLI for a short-lived token when it needs one.
+                  Run <code>az login</code> in a Kai Terminal tab first. Kai stores nothing: it asks
+                  the Azure CLI for a short-lived token when it needs one.
                   {status.azCli === false && (
                     <span className="integration-warn"> The Azure CLI was not found on PATH.</span>
                   )}
                 </p>
               ) : (
                 <div className="setting-field">
+                  <p className="muted-text integration-detected">
+                    A personal access token (PAT) is a password-like key you create in Azure DevOps
+                    so Kai can read your work items, pull requests and builds. Open the token page,
+                    choose <strong>New Token</strong>, give it read access to Work Items, Code and
+                    Build, then copy it and paste it below.
+                  </p>
+                  <div>
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-small"
+                      onClick={() => void openExternalUrl(patPageUrl(org))}
+                      title="Opens Azure DevOps in your browser"
+                    >
+                      <ExternalLink size={13} />
+                      <span>Open the token page in your browser</span>
+                    </button>
+                  </div>
                   <label htmlFor={`${provider.id}-pat`}>Access token</label>
                   <input
                     id={`${provider.id}-pat`}
@@ -710,23 +840,6 @@ const ProviderCard: FC<ProviderCardProps> = ({ provider, projectDir }) => {
                   </span>
                 </div>
               )}
-              <details className="integration-server">
-                <summary>Azure DevOps Server (on-premises)</summary>
-                <div className="setting-field">
-                  <label htmlFor={`${provider.id}-url`}>Server URL</label>
-                  <input
-                    id={`${provider.id}-url`}
-                    type="text"
-                    className="text-input modal-input"
-                    placeholder="https://tfs.example.com/tfs/DefaultCollection"
-                    value={baseUrl}
-                    disabled={disabled}
-                    autoComplete="off"
-                    spellCheck={false}
-                    onChange={(e) => setBaseUrl(e.target.value)}
-                  />
-                </div>
-              </details>
               <div className="ai-provider-actions">
                 <button type="submit" className="btn btn-primary btn-small" disabled={disabled}>
                   {busy === "connect" ? "Connecting…" : "Connect"}

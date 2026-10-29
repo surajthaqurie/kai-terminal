@@ -36,7 +36,7 @@ function isFailure(value: unknown): value is Failure {
 export async function integrationRpc(req: IntegrationRpcRequest): Promise<IntegrationRpcResponse> {
   if (!isTauriAvailable()) {
     return unavailable(
-      "Integrations are managed by the desktop app. Use `kai integration azure` in a shell."
+      "Integrations are managed by the desktop app. Use `kai integration azure` in a Kai Terminal tab."
     );
   }
   let raw: string;

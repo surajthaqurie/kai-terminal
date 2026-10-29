@@ -74,9 +74,6 @@ kai health                # check system readiness and health
 kai doctor                # run environment, PATH, and desktop diagnostics
 kai list [-a|-m|-i|-s|-c] # look up tools (-a), MCP (-m), projects (-i), sessions (-s), config (-c)
 kai remove [-m|-a|-i|-s]  # un-wire tools (-m/-a <name>) or delete index (-i)/session (-s) data
-kai integration list      # every integration (Azure DevOps today) and its state for this folder
-kai integration azure     # set up Azure DevOps here: sign in, connect, wire your agents, verify
-kai azure list|active|remove  # list projects, switch this folder's active project, disconnect it
 kai remove --name <id>    # remove an integration account everywhere (token + every folder)
 kai close                 # close active Kai Terminal instances
 ```
@@ -161,6 +158,8 @@ The status bar in the app shows the indexed project, file/symbol counts and last
 Connect a folder to Azure DevOps and your AI tools can read its work items, pull requests and builds through the same `kai mcp` server. One command does the setup, and it is safe to run again:
 
 ```bash
+# Run these in a Kai Terminal tab. Organization, project and repository come from the folder's git remote.
+kai integration list       # every integration and its state for this folder
 kai integration azure      # sign in, connect this folder, wire your agents, verify with real calls
 kai azure list             # accounts and their projects; * marks this folder's active project
 kai azure active --name Payments   # switch this folder's active project

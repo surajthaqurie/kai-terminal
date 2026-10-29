@@ -5,7 +5,7 @@ import path from "path";
 import { AGENT_FLAGS, agentTargetFrom, flagValue } from "../cli/args";
 import { listSessionCacheFiles, removeFiles, clearSessionCacheFiles } from "../cli/sessionFiles";
 import { loadKaiConfig, kaiConfigPath } from "../cli/kaiConfig";
-import { runCli } from "../cli/index";
+import { requiresKaiTerminal, runCli } from "../cli/index";
 
 describe("cli argument helpers", () => {
   it("flagValue returns the value after the first matching flag", () => {
@@ -104,5 +104,24 @@ describe("cli dispatch", () => {
   it("ignores unknown subcommands of session and agent instead of crashing", async () => {
     expect(await runCli(["node", "kai", "session", "bogus"])).toBe(1);
     expect(await runCli(["node", "kai", "agent", "bogus"])).toBe(1);
+  });
+});
+
+describe("Kai Terminal boundary for integrations", () => {
+  it("keeps `kai integration …` and `kai azure …` inside Kai Terminal", () => {
+    expect(requiresKaiTerminal("integration", ["integration", "azure"])).toBe(true);
+    expect(requiresKaiTerminal("integrations", ["integrations", "list"])).toBe(true);
+    expect(requiresKaiTerminal("azure", ["azure", "list"])).toBe(true);
+    expect(requiresKaiTerminal("ado", ["ado", "active"])).toBe(true);
+  });
+
+  it("lets the desktop app reach `azure rpc` from outside a tab", () => {
+    expect(requiresKaiTerminal("azure", ["azure", "rpc"])).toBe(false);
+  });
+
+  it("leaves the any-shell commands alone", () => {
+    for (const c of ["open", "mcp", "doctor", "list", "remove", "health"]) {
+      expect(requiresKaiTerminal(c, [c])).toBe(false);
+    }
   });
 });

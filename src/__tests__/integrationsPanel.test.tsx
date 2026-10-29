@@ -27,6 +27,7 @@ import {
   isSameSelection,
   needsRelogin,
   normalizeOrgInput,
+  patPageUrl,
   pickRepoForProject,
   pickSwitchProject,
   preferredAccountId,
@@ -113,6 +114,15 @@ describe("integrations view model", () => {
     expect(normalizeOrgInput("  contoso ")).toBe("contoso");
     expect(normalizeOrgInput("https://dev.azure.com/contoso/")).toBe("contoso");
     expect(normalizeOrgInput("https://dev.azure.com/contoso/Payments/_git/api")).toBe("contoso");
+  });
+
+  it("points a PAT user at their organization's token page, or the start page", () => {
+    expect(patPageUrl("contoso")).toBe("https://dev.azure.com/contoso/_usersSettings/tokens");
+    expect(patPageUrl("https://dev.azure.com/contoso/Payments")).toBe(
+      "https://dev.azure.com/contoso/_usersSettings/tokens"
+    );
+    expect(patPageUrl("")).toBe("https://dev.azure.com/");
+    expect(patPageUrl("not an org&calc")).toBe("https://dev.azure.com/");
   });
 
   it("preselects the active project, falling back to the first", () => {
@@ -230,6 +240,10 @@ describe("IntegrationsPanel", () => {
           });
       })
     );
+    svc.bindIntegration.mockResolvedValue({
+      ok: true,
+      value: { account: "azure-devops:contoso", project: "Payments", repo: "api" },
+    });
     await render();
     await type(q<HTMLInputElement>("#azure-devops-pat")!, "super-secret");
     await act(async () => {
@@ -252,7 +266,171 @@ describe("IntegrationsPanel", () => {
     expect(container.textContent).toContain("Connected to contoso as s@contoso.com.");
     expect(container.innerHTML).not.toContain("super-secret");
     expect(q("form")).toBeNull();
-    expect(button("Use for this project")).toBeTruthy();
+    // The folder's own organization is activated by the same click.
+    expect(svc.bindIntegration).toHaveBeenCalledWith({
+      projectDir: "/repo",
+      account: "azure-devops:contoso",
+    });
+    expect(container.textContent).toContain("Active for this project (Payments / api).");
+  });
+
+  it("lets the user pick the project after connecting when the folder has no remote", async () => {
+    const noRemote = { ...status().project, detected: null };
+    svc.getIntegrationStatus
+      .mockResolvedValueOnce({ ok: true, value: status({ project: noRemote }) })
+      .mockResolvedValue({
+        ok: true,
+        value: status({ accounts: [account()], project: noRemote }),
+      });
+    svc.loginIntegration.mockResolvedValue({
+      ok: true,
+      value: { account: account(), user: { name: "Suraj", email: "s@contoso.com" } },
+    });
+    svc.listProjects.mockResolvedValue({
+      ok: true,
+      value: [{ name: "Payments" }, { name: "Web" }],
+    });
+    svc.listRepos.mockResolvedValue({ ok: true, value: [{ name: "api" }] });
+    svc.bindIntegration.mockResolvedValue({
+      ok: true,
+      value: { account: "azure-devops:contoso", project: "Payments", repo: null },
+    });
+    await render();
+    await type(q<HTMLInputElement>("#azure-devops-org")!, "contoso");
+    await act(async () => {
+      q<HTMLFormElement>("form")!.dispatchEvent(
+        new Event("submit", { bubbles: true, cancelable: true })
+      );
+    });
+    await flush();
+    // Nothing is bound without a project; the picker opens instead.
+    expect(svc.bindIntegration).not.toHaveBeenCalled();
+    expect(svc.listProjects).toHaveBeenCalledWith("azure-devops:contoso");
+    expect(q("#azure-devops-switch-project")).toBeTruthy();
+    await click(button("Apply"));
+    expect(svc.bindIntegration).toHaveBeenCalledWith({
+      projectDir: "/repo",
+      account: "azure-devops:contoso",
+      project: "Payments",
+      repo: null,
+    });
+    expect(container.textContent).toContain("Active for this project (Payments).");
+  });
+
+  it("keeps the sign-in and asks before replacing another integration", async () => {
+    svc.getIntegrationStatus
+      .mockResolvedValueOnce({ ok: true, value: status() })
+      .mockResolvedValue({ ok: true, value: status({ accounts: [account()] }) });
+    svc.loginIntegration.mockResolvedValue({
+      ok: true,
+      value: { account: account(), user: { name: "Suraj" } },
+    });
+    svc.bindIntegration.mockResolvedValue({
+      ok: false,
+      error: { code: "needs_confirmation", message: "Already connected to Jira." },
+    });
+    await render();
+    await act(async () => {
+      q<HTMLFormElement>("form")!.dispatchEvent(
+        new Event("submit", { bubbles: true, cancelable: true })
+      );
+    });
+    await flush();
+    expect(container.textContent).toContain("Connected to contoso as Suraj.");
+    expect(q("[role=group][aria-label='Confirm replace']")).toBeTruthy();
+  });
+
+  const twoAccounts = () => {
+    const fabrikam = account({ id: "azure-devops:fabrikam", org: "fabrikam" });
+    const contoso = account({ usedByThisProject: true });
+    const base = status({
+      accounts: [contoso, fabrikam],
+      project: {
+        ...status().project,
+        state: "ready",
+        binding: {
+          account: "azure-devops:contoso",
+          provider: "azure-devops",
+          project: "Payments",
+          repo: "api",
+          boundAt: "2026-10-29T00:00:00Z",
+        },
+      },
+    });
+    return { fabrikam, contoso, base };
+  };
+
+  it("marks one account active and offers Make active only on the others", async () => {
+    svc.getIntegrationStatus.mockResolvedValue({ ok: true, value: twoAccounts().base });
+    await render();
+    expect(container.textContent).toContain("contoso · Azure CLI · this project");
+    expect(q("button[aria-label='Make contoso active for this project']")).toBeNull();
+    expect(q("button[aria-label='Make fabrikam active for this project']")).toBeTruthy();
+  });
+
+  it("switches the active account by picking a project when the remote is elsewhere", async () => {
+    svc.getIntegrationStatus.mockResolvedValue({ ok: true, value: twoAccounts().base });
+    svc.listProjects.mockResolvedValue({ ok: true, value: [{ name: "Payments" }] });
+    svc.listRepos.mockResolvedValue({ ok: true, value: [{ name: "api" }] });
+    svc.bindIntegration.mockResolvedValue({
+      ok: true,
+      value: { account: "azure-devops:fabrikam", project: "Payments", repo: null },
+    });
+    await render();
+    await click(q("button[aria-label='Make fabrikam active for this project']"));
+    expect(svc.listProjects).toHaveBeenCalledWith("azure-devops:fabrikam");
+    // The picker says which account the project is being chosen in.
+    expect(q("[aria-label='Switch project']")?.textContent).toContain("Account: fabrikam");
+    // Same project name as today's binding, but a different account: still applicable.
+    expect(button("Apply")?.disabled).toBe(false);
+    await click(button("Apply"));
+    expect(svc.bindIntegration).toHaveBeenCalledWith({
+      projectDir: "/repo",
+      account: "azure-devops:fabrikam",
+      project: "Payments",
+      repo: null,
+    });
+  });
+
+  it("switches straight to the account that owns the git remote", async () => {
+    const { fabrikam, base } = twoAccounts();
+    const onFabrikam = status({
+      accounts: [account({ usedByThisProject: false }), { ...fabrikam, usedByThisProject: true }],
+      project: {
+        ...base.project,
+        binding: { ...base.project.binding!, account: "azure-devops:fabrikam" },
+      },
+    });
+    svc.getIntegrationStatus.mockResolvedValue({ ok: true, value: onFabrikam });
+    svc.bindIntegration.mockResolvedValue({
+      ok: true,
+      value: { account: "azure-devops:contoso", project: "Payments", repo: "api" },
+    });
+    await render();
+    await click(q("button[aria-label='Make contoso active for this project']"));
+    expect(svc.bindIntegration).toHaveBeenCalledWith({
+      projectDir: "/repo",
+      account: "azure-devops:contoso",
+    });
+    expect(svc.listProjects).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("contoso is now active for this project");
+  });
+
+  it("warns that connecting an organization twice replaces its sign-in", async () => {
+    svc.getIntegrationStatus.mockResolvedValue({ ok: true, value: twoAccounts().base });
+    await render();
+    await click(button("Connect another account"));
+    await type(q<HTMLInputElement>("#azure-devops-org")!, "Contoso");
+    expect(container.textContent).toContain("one sign-in per organization");
+    await type(q<HTMLInputElement>("#azure-devops-org")!, "newco");
+    expect(container.textContent).not.toContain("one sign-in per organization");
+  });
+
+  it("offers no server URL field", async () => {
+    svc.getIntegrationStatus.mockResolvedValue({ ok: true, value: status() });
+    await render();
+    expect(container.textContent).not.toContain("Server URL");
+    expect(q("#azure-devops-url")).toBeNull();
   });
 
   it("validates the form without calling the CLI", async () => {
@@ -354,7 +532,7 @@ describe("IntegrationsPanel", () => {
     expect(container.textContent).not.toContain("Replace jira in this project?");
   });
 
-  it("disables Use for this project when the folder has no remote", async () => {
+  it("offers Choose project instead when the folder has no remote", async () => {
     svc.getIntegrationStatus.mockResolvedValue({
       ok: true,
       value: status({
@@ -363,7 +541,8 @@ describe("IntegrationsPanel", () => {
       }),
     });
     await render();
-    expect(button("Use for this project")?.disabled).toBe(true);
+    expect(button("Use for this project")).toBeUndefined();
+    expect(button("Choose project")?.disabled).toBe(false);
   });
 
   it("tests the connection and reports who is signed in", async () => {
@@ -551,7 +730,7 @@ describe("IntegrationsPanel: switch project", () => {
     await render();
     await click(button("Switch project"));
     expect(svc.listProjects).toHaveBeenCalledWith("azure-devops:contoso");
-    expect(container.textContent).toContain("Loading projects�");
+    expect(container.textContent).toContain("Loading projects…");
     expect(button("Cancel")).toBeTruthy();
 
     await act(async () => release());
@@ -687,7 +866,7 @@ describe("IntegrationsPanel: switch project", () => {
     );
     await choose(q<HTMLSelectElement>("#azure-devops-switch-project")!, "Web");
     expect(q<HTMLSelectElement>("#azure-devops-switch-project")?.disabled).toBe(true);
-    expect(container.textContent).toContain("Loading repositories�");
+    expect(container.textContent).toContain("Loading repositories…");
     expect(button("Apply")?.disabled).toBe(true);
     expect(button("Remove from this project")?.disabled).toBe(true);
 

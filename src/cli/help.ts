@@ -70,12 +70,6 @@ Outside Kai (any shell):
                           projects (-i), sessions (-s), config (-c)
   remove [-m|-a|-i|-s]    Delete Kai data: MCP/agent wiring (-m/-a <name>),
                           project index (-i <path|id>), project session (-s [path])
-  integration list        Every integration and its state
-  integration azure       Set up Azure DevOps for this folder: sign in, connect,
-                          wire your agents, verify
-  azure <list|active|remove>
-                          Azure DevOps: list projects, switch this folder's active
-                          project (--name), or disconnect it
   close                   Quit Kai Terminal
 
 Inside Kai Terminal — Run:
@@ -83,6 +77,13 @@ Inside Kai Terminal — Run:
   stop                    Back to plain terminal (maps and files are kept)
 
 Manage & Integrate:
+  integration list        Every integration and its state
+  integration azure       Set up Azure DevOps for this folder: sign in, connect,
+                          wire your agents, verify (organization, project and
+                          repository come from the git remote)
+  azure <list|active|remove>
+                          Azure DevOps: list projects, switch this folder's active
+                          project (--name), or disconnect it
   agent <add|remove> [name]
                         Wire one tool (--print, --dry-run, --force,
                         --project), or unwire one (aliases: agents; add =

@@ -17,7 +17,7 @@ import { runMcp } from "./commands/mcp";
 import { runIntegration } from "./commands/integration";
 import { runProvider } from "./commands/provider";
 import { runRemove } from "./commands/remove";
-import { findProvider, PROVIDER_CATALOG } from "../core/integrations/providerCatalog";
+import { findProvider } from "../core/integrations/providerCatalog";
 import { runSessionClean, runSessionList } from "./commands/session";
 
 // Public surface consumed by tests and the doctor/launch tooling.
@@ -73,10 +73,6 @@ const EXTERNAL_COMMANDS = new Set([
   "list",
   "remove",
   "unregister",
-  // Integrations (`kai integration azure`, `kai azure …`): setup and sign-in work from any shell.
-  "integration",
-  "integrations",
-  ...PROVIDER_CATALOG.flatMap((p) => [p.id, ...p.aliases]),
   // Hidden compat for `kai list -c` (already external): keeps the CI smoke
   // probe `kai config list` working outside Kai Terminal.
   "config",
@@ -88,6 +84,19 @@ const EXTERNAL_COMMANDS = new Set([
   "--version",
   "-v",
 ]);
+
+/**
+ * True when `kai <command> <args>` is refused outside Kai Terminal.
+ *
+ * Integrations (`kai integration …`, `kai azure …`) are typed by a person, so
+ * they run in a Kai Terminal tab. The one exception is `<provider> rpc`: the
+ * desktop app's Integrations panel spawns it itself, outside any tab.
+ */
+export function requiresKaiTerminal(command: string, args: string[]): boolean {
+  if (EXTERNAL_COMMANDS.has(command)) return false;
+  if (findProvider(command) && args[1] === "rpc") return false;
+  return true;
+}
 
 /** Removed commands (single redirect, kept for old muscle memory). */
 const REMOVED_HINTS = new Map<string, string>([
@@ -170,7 +179,7 @@ async function dispatch(command: string, args: string[]): Promise<number> {
   }
 
   // Boundary enforcement: internal commands must run inside Kai Terminal.
-  if (!isInsideKaiTerminal() && !EXTERNAL_COMMANDS.has(command)) {
+  if (!isInsideKaiTerminal() && requiresKaiTerminal(command, args)) {
     console.error(`[kai] Error: 'kai ${command}' can only be executed inside Kai Terminal.`);
     console.error(`To open or focus Kai Terminal for your project, run:\n  kai open [path]`);
     return 1;

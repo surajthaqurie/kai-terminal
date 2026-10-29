@@ -104,6 +104,19 @@ kai list -a                     # list installed tools (also: kai list --agent, 
 
 Connect Kai's MCP server to an outside service so your AI tools can read it. Today that is Azure DevOps (work items, pull requests, builds). Signing in is per user and shared by every folder; each folder has exactly one active project.
 
+> These commands run inside a Kai Terminal tab. Outside it they stop with a pointer to `kai open [path]`. The organization, project and repository always come from the folder's git remote, when it has one, so there is usually nothing to type.
+
+---
+
+### In the desktop app
+
+The same setup is in **AI CLI Providers → Integrations**. It reads the same sign-ins and the same per-folder connection as the commands below.
+
+- **Sign in with** the Azure CLI (run `az login` in a Kai Terminal tab first; Kai stores nothing) or an **access token (PAT)**. A personal access token is a password-like key you create in Azure DevOps so Kai can read your work items, pull requests and builds. **Open the token page in your browser** takes you to `https://dev.azure.com/<organization>/_usersSettings/tokens`: choose **New Token**, give it read access to Work Items, Code and Build, copy it and paste it into Kai.
+- **One step to active.** The organization, project and repository come from the folder's git remote. Signing in for that organization also makes it active for the folder. With no matching remote, a project and repository picker opens instead.
+- **Several accounts, one active.** A folder has exactly one active account. Every other signed-in account has **Make active**, and **Switch project** changes the project inside the active one. Each organization has a single sign-in: connecting it again replaces the old one, whether it used the Azure CLI or a token.
+- Azure DevOps Server (on-premises) is set up with the command line only (`--server-url`).
+
 ---
 
 ### kai integration list
