@@ -1921,6 +1921,14 @@ select.modal-input {
   min-height: min(650px, 92vh);
 }
 
+/* The fixed-height modal scrolls only its body; the chrome around it keeps its
+   natural height (an overflow:auto tab strip would otherwise shrink to nothing). */
+.settings-tabs-modal .modal-header,
+.settings-tabs-modal .modal-tabs,
+.settings-tabs-modal .modal-footer {
+  flex: 0 0 auto;
+}
+
 .settings-tabs-modal .modal-body {
   flex: 1 1 auto;
   min-height: 0;
@@ -1954,6 +1962,18 @@ select.modal-input {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+
+.label-with-value > label {
+  flex: 1 1 260px;
+  min-width: 0;
+  line-height: 1.5;
+}
+
+.label-with-value > .btn {
+  flex: 0 0 auto;
 }
 
 .setting-row {
@@ -2076,19 +2096,15 @@ select.modal-input {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  flex: 1 1 auto;
-  min-height: 320px;
-  max-height: 380px;
-  overflow-y: auto;
-  padding-right: 4px;
+  margin-top: 8px;
 }
 
 .shortcut-row-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 7px 10px;
+  gap: 16px;
+  padding: 8px 12px;
   background-color: var(--bg-surface-sunken);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-sm);
@@ -2100,26 +2116,48 @@ select.modal-input {
 }
 
 .shortcut-label {
+  flex: 1 1 auto;
+  min-width: 0;
   font-size: var(--text-sm);
   color: var(--text-primary);
-  min-width: 140px;
   font-weight: 500;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 
 .shortcut-input-group {
-  flex: 1;
+  flex: 0 0 200px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  align-items: stretch;
+  gap: 4px;
 }
 
 .shortcut-input {
-  max-width: 160px;
-  align-self: flex-end;
+  width: 100%;
   text-align: center;
   font-family: var(--font-mono);
   font-size: var(--text-xs);
-  padding: 4px 8px;
+  padding: 5px 8px;
+  text-overflow: ellipsis;
+}
+
+.shortcut-input-group .error-text {
+  margin: 0;
+  line-height: 1.4;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.shortcut-row-item kbd {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  padding: 2px 8px;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-xs);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
 }
 
 .shortcut-input.recording {
@@ -2168,6 +2206,7 @@ select.modal-input {
   flex-direction: column;
   gap: 12px;
   margin-top: 12px;
+  min-width: 0;
 }
 
 .ai-provider-card {
@@ -2179,6 +2218,7 @@ select.modal-input {
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
   transition: all var(--transition-fast);
+  min-width: 0;
 }
 
 .ai-provider-card:hover {
@@ -2193,16 +2233,25 @@ select.modal-input {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 12px;
+  min-width: 0;
 }
 
 .ai-provider-name {
+  flex: 1 1 auto;
+  min-width: 0;
   font-size: var(--text-md);
   font-weight: 600;
   color: var(--text-primary);
+  overflow-wrap: anywhere;
 }
 
 .ai-provider-badge {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-size: var(--text-xs);
   font-weight: 600;
   white-space: nowrap;
@@ -2230,14 +2279,23 @@ select.modal-input {
 
 .ai-provider-card .muted-text {
   user-select: text;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .ai-provider-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px 14px;
+  align-items: center;
+  gap: 6px 16px;
   font-size: var(--text-xs);
   color: var(--text-tertiary);
+  min-width: 0;
+}
+
+.ai-provider-meta > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .ai-provider-meta strong {
@@ -2254,6 +2312,7 @@ select.modal-input {
 
 .ai-provider-actions .text-input {
   flex: 1 1 180px;
+  min-width: 0;
 }
 
 /* =========================================================================
@@ -5086,6 +5145,18 @@ button.status-git-btn-clickable:focus-visible {
   flex-wrap: wrap;
 }
 
+.integration-row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.integration-accounts li > span:first-child {
+  flex: 1 1 200px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .integration-confirm {
   display: flex;
   align-items: center;
@@ -5136,6 +5207,18 @@ button.status-git-btn-clickable:focus-visible {
   flex-direction: column;
   gap: 2px;
   font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+.integration-error code {
+  white-space: pre-wrap;
+}
+
+.integration-detected {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 /* Integrations tab: "Switch project" picker (fetched on demand, never on tab open) */

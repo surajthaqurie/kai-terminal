@@ -19,6 +19,7 @@ import {
   getKaiCliLaunch,
   getAgentSetupSnippet,
   setupAgentMcp,
+  versionBadgeLabel,
   AiCliDetails,
 } from "../services/aiCliService";
 
@@ -63,8 +64,11 @@ export const AiCliPanel: FC<AiCliPanelProps> = ({ isOpen, onClose, projectDir })
 
   useEffect(() => {
     if (isOpen) {
-      setActiveTab("providers");
       refresh(false);
+    } else {
+      // Reset while hidden: doing it on open paints the previous tab for a
+      // frame before switching, which reads as the modal flickering open.
+      setActiveTab("providers");
     }
   }, [isOpen, refresh]);
 
@@ -163,7 +167,11 @@ export const AiCliPanel: FC<AiCliPanelProps> = ({ isOpen, onClose, projectDir })
 
   return (
     <div className="modal-backdrop" onClick={onClose} role="dialog" aria-label="AI CLI providers">
-      <div className="settings-modal" onClick={(e) => e.stopPropagation()} role="document">
+      <div
+        className="settings-modal settings-tabs-modal"
+        onClick={(e) => e.stopPropagation()}
+        role="document"
+      >
         <div className="modal-header">
           <h3>AI CLI Providers</h3>
           <button
@@ -207,10 +215,7 @@ export const AiCliPanel: FC<AiCliPanelProps> = ({ isOpen, onClose, projectDir })
           role="tabpanel"
           aria-labelledby="ai-cli-tab-providers"
           style={{
-            maxHeight: "70vh",
-            overflowY: "auto",
             display: activeTab === "providers" ? "flex" : "none",
-            flexDirection: "column",
             gap: "12px",
           }}
         >
@@ -306,218 +311,221 @@ export const AiCliPanel: FC<AiCliPanelProps> = ({ isOpen, onClose, projectDir })
             </div>
           )}
 
-          <div
-            className="ai-provider-list"
-            style={{ display: "flex", flexDirection: "column", gap: "10px" }}
-          >
-            {details.map((d) => (
-              <div
-                key={d.id}
-                className={`ai-provider-card${d.available ? " is-available" : ""}`}
-                style={{ display: "flex", flexDirection: "column", gap: "8px", padding: "12px" }}
-              >
-                <div
-                  className="ai-provider-head"
-                  style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}
-                >
-                  <span className="ai-provider-name" style={{ fontWeight: 600 }}>
-                    {d.name}
-                  </span>
-                  <span
-                    className={`ai-provider-badge${d.available ? " found" : ""}`}
-                    title={d.available ? "Binary detected on this system" : "Binary not found"}
-                  >
-                    {d.available ? `Found${d.version ? ` · ${d.version}` : ""}` : "Not found"}
-                  </span>
-                </div>
-                {d.path && <code className="ai-provider-path">{d.path}</code>}
-                <div
-                  className="ai-provider-meta"
-                  style={{ display: "flex", gap: "16px", fontSize: "12px", alignItems: "center" }}
-                >
-                  <span title="Local config-file presence only — never credential validity">
-                    Local config:{" "}
-                    <strong>
-                      {(d.auth_status === "config_present"
-                        ? "file present"
-                        : d.auth_status === "config_missing"
-                          ? "no file"
-                          : d.auth_status === "configured"
-                            ? "file present"
-                            : d.auth_status === "not_configured"
-                              ? "no file"
-                              : "unknown"
-                      ).replace(/_/g, " ")}
-                    </strong>
-                  </span>
-                  <span>
-                    Kai wiring:{" "}
-                    {d.kai_wired ? (
-                      <span
-                        style={{
-                          color: "var(--color-success)",
-                          fontWeight: 600,
-                          backgroundColor: "var(--color-success-bg)",
-                          padding: "2px 6px",
-                          borderRadius: "var(--radius-xs)",
-                          display: "inline-block",
-                        }}
-                      >
-                        Configured ✓
-                      </span>
-                    ) : (
-                      <span style={{ color: "var(--text-secondary)" }}>Not configured</span>
-                    )}
-                  </span>
-                </div>
-                <p className="muted-text" style={{ margin: 0, fontSize: "12px" }}>
-                  {d.diagnostic}
-                </p>
-                {!d.available && (
-                  <p className="muted-text" style={{ margin: 0, fontSize: "12px" }}>
-                    {d.install_guidance}
-                  </p>
-                )}
-
-                <div
-                  className="ai-provider-actions"
-                  style={{
-                    display: "flex",
-                    gap: "8px",
-                    alignItems: "center",
-                    marginTop: "4px",
-                    flexWrap: "wrap",
-                  }}
-                >
-                  {/* Configure / Reconfigure button for available CLIs with a
-                      known config format. Custom-registered binaries are
-                      launch targets, not config owners, so they get guidance
-                      instead of a button that can only fail. */}
-                  {d.available && !d.id.startsWith("custom:") && (
-                    <button
-                      type="button"
-                      className={`btn ${d.kai_wired ? "btn-secondary" : "btn-primary"} btn-small`}
-                      onClick={() => void handleConfigureMcp(d)}
-                      disabled={configuringId === d.id}
+          <div className="ai-provider-list">
+            {details.length === 0 && (
+              <p className="muted-text" role="status" style={{ margin: 0 }}>
+                {isRefreshing ? "Detecting providers…" : "No providers detected."}
+              </p>
+            )}
+            {details.map((d) => {
+              const versionLabel = d.version ? versionBadgeLabel(d.version) : null;
+              return (
+                <div key={d.id} className={`ai-provider-card${d.available ? " is-available" : ""}`}>
+                  <div className="ai-provider-head">
+                    <span className="ai-provider-name">{d.name}</span>
+                    <span
+                      className={`ai-provider-badge${d.available ? " found" : ""}`}
                       title={
-                        d.id === "copilot"
-                          ? `Configure ${d.name} with Kai MCP in this project (.vscode/mcp.json)`
-                          : d.kai_wired
-                            ? `Reconfigure ${d.name} with Kai MCP`
-                            : `Configure ${d.name} with Kai MCP`
+                        d.available
+                          ? d.version
+                            ? `Binary detected on this system — ${d.version}`
+                            : "Binary detected on this system"
+                          : "Binary not found"
                       }
                     >
-                      <Wrench size={13} />
-                      <span>
-                        {configuringId === d.id
-                          ? "Configuring…"
-                          : d.kai_wired
-                            ? "Reconfigure"
-                            : d.id === "copilot"
-                              ? "Configure in this project"
-                              : "Configure"}
-                      </span>
-                    </button>
-                  )}
-                  {d.available && d.id.startsWith("custom:") && (
+                      {d.available
+                        ? `Found${versionLabel ? ` · ${versionLabel}` : ""}`
+                        : "Not found"}
+                    </span>
+                  </div>
+                  {d.path && <code className="ai-provider-path">{d.path}</code>}
+                  <div className="ai-provider-meta">
+                    <span title="Local config-file presence only — never credential validity">
+                      Local config:{" "}
+                      <strong>
+                        {(d.auth_status === "config_present"
+                          ? "file present"
+                          : d.auth_status === "config_missing"
+                            ? "no file"
+                            : d.auth_status === "configured"
+                              ? "file present"
+                              : d.auth_status === "not_configured"
+                                ? "no file"
+                                : "unknown"
+                        ).replace(/_/g, " ")}
+                      </strong>
+                    </span>
+                    <span>
+                      Kai wiring:{" "}
+                      {d.kai_wired ? (
+                        <span
+                          style={{
+                            color: "var(--color-success)",
+                            fontWeight: 600,
+                            backgroundColor: "var(--color-success-bg)",
+                            padding: "2px 6px",
+                            borderRadius: "var(--radius-xs)",
+                            display: "inline-block",
+                          }}
+                        >
+                          Configured ✓
+                        </span>
+                      ) : (
+                        <span style={{ color: "var(--text-secondary)" }}>Not configured</span>
+                      )}
+                    </span>
+                  </div>
+                  <p className="muted-text" style={{ margin: 0, fontSize: "12px" }}>
+                    {d.diagnostic}
+                  </p>
+                  {!d.available && (
                     <p className="muted-text" style={{ margin: 0, fontSize: "12px" }}>
-                      Registered custom binary — launch it from a terminal tab. Kai MCP wiring
-                      applies to the built-in providers above.
+                      {d.install_guidance}
                     </p>
                   )}
 
-                  {/* Manual setup fallback: verified snippet + terminal
-                      command, for declined writes or hand-edit preference. */}
-                  {!d.id.startsWith("custom:") && (
-                    <button
-                      type="button"
-                      className="btn btn-secondary btn-small"
-                      onClick={() => void ensureManualSnippet(d.id, !manualOpen[d.id])}
-                      title={`Show manual MCP setup for ${d.name}`}
-                      aria-expanded={Boolean(manualOpen[d.id])}
-                    >
-                      <BookOpen size={13} />
-                      <span>Manual setup</span>
-                    </button>
-                  )}
+                  <div
+                    className="ai-provider-actions"
+                    style={{
+                      display: "flex",
+                      gap: "8px",
+                      alignItems: "center",
+                      marginTop: "4px",
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    {/* Configure / Reconfigure button for available CLIs with a
+                      known config format. Custom-registered binaries are
+                      launch targets, not config owners, so they get guidance
+                      instead of a button that can only fail. */}
+                    {d.available && !d.id.startsWith("custom:") && (
+                      <button
+                        type="button"
+                        className={`btn ${d.kai_wired ? "btn-secondary" : "btn-primary"} btn-small`}
+                        onClick={() => void handleConfigureMcp(d)}
+                        disabled={configuringId === d.id}
+                        title={
+                          d.id === "copilot"
+                            ? `Configure ${d.name} with Kai MCP in this project (.vscode/mcp.json)`
+                            : d.kai_wired
+                              ? `Reconfigure ${d.name} with Kai MCP`
+                              : `Configure ${d.name} with Kai MCP`
+                        }
+                      >
+                        <Wrench size={13} />
+                        <span>
+                          {configuringId === d.id
+                            ? "Configuring…"
+                            : d.kai_wired
+                              ? "Reconfigure"
+                              : d.id === "copilot"
+                                ? "Configure in this project"
+                                : "Configure"}
+                        </span>
+                      </button>
+                    )}
+                    {d.available && d.id.startsWith("custom:") && (
+                      <p className="muted-text" style={{ margin: 0, fontSize: "12px" }}>
+                        Registered custom binary — launch it from a terminal tab. Kai MCP wiring
+                        applies to the built-in providers above.
+                      </p>
+                    )}
 
-                  {/* Only show custom path input if the CLI is NOT already available/found */}
-                  {!d.available && !d.id.startsWith("custom:") && (
-                    <div
-                      style={{ display: "flex", gap: "8px", alignItems: "center", width: "100%" }}
-                    >
-                      <input
-                        type="text"
-                        className="text-input modal-input"
-                        placeholder={`Custom path to ${d.id} binary…`}
-                        value={customPaths[d.id] || ""}
-                        onChange={(e) => setCustomPaths({ ...customPaths, [d.id]: e.target.value })}
-                        aria-label={`Custom path for ${d.name}`}
-                        style={{ flex: 1 }}
-                      />
+                    {/* Manual setup fallback: verified snippet + terminal
+                      command, for declined writes or hand-edit preference. */}
+                    {!d.id.startsWith("custom:") && (
                       <button
                         type="button"
                         className="btn btn-secondary btn-small"
-                        onClick={() => void handleCheckCustom(d.id)}
-                        disabled={!customPaths[d.id]?.trim()}
+                        onClick={() => void ensureManualSnippet(d.id, !manualOpen[d.id])}
+                        title={`Show manual MCP setup for ${d.name}`}
+                        aria-expanded={Boolean(manualOpen[d.id])}
                       >
-                        Validate
+                        <BookOpen size={13} />
+                        <span>Manual setup</span>
                       </button>
+                    )}
+
+                    {/* Only show custom path input if the CLI is NOT already available/found */}
+                    {!d.available && !d.id.startsWith("custom:") && (
+                      <div
+                        style={{ display: "flex", gap: "8px", alignItems: "center", width: "100%" }}
+                      >
+                        <input
+                          type="text"
+                          className="text-input modal-input"
+                          placeholder={`Custom path to ${d.id} binary…`}
+                          value={customPaths[d.id] || ""}
+                          onChange={(e) =>
+                            setCustomPaths({ ...customPaths, [d.id]: e.target.value })
+                          }
+                          aria-label={`Custom path for ${d.name}`}
+                          style={{ flex: 1 }}
+                        />
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-small"
+                          onClick={() => void handleCheckCustom(d.id)}
+                          disabled={!customPaths[d.id]?.trim()}
+                        >
+                          Validate
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  {manualOpen[d.id] && !d.id.startsWith("custom:") && (
+                    <div
+                      style={{
+                        background: "var(--bg-surface-sunken)",
+                        border: "1px solid var(--border-default)",
+                        borderRadius: "var(--radius-sm)",
+                        padding: "8px 10px",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: "6px",
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                        }}
+                      >
+                        <span style={{ fontSize: "12px", fontWeight: 600 }}>
+                          Manual setup — {d.name}
+                        </span>
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-small"
+                          onClick={() => void handleCopySnippet(d.id)}
+                          disabled={!manualSnippet[d.id] || manualLoading[d.id]}
+                          title="Copy snippet to clipboard"
+                        >
+                          {manualCopied[d.id] ? <Check size={13} /> : <Copy size={13} />}
+                          <span>{manualCopied[d.id] ? "Copied!" : "Copy"}</span>
+                        </button>
+                      </div>
+                      <pre
+                        style={{
+                          margin: 0,
+                          whiteSpace: "pre-wrap",
+                          wordBreak: "break-word",
+                          fontSize: "12px",
+                          userSelect: "text",
+                        }}
+                        tabIndex={0}
+                        aria-label={`Manual MCP setup snippet for ${d.name}`}
+                      >
+                        {manualLoading[d.id]
+                          ? "Loading verified snippet…"
+                          : manualSnippet[d.id] || "No snippet yet."}
+                      </pre>
                     </div>
                   )}
                 </div>
-                {manualOpen[d.id] && !d.id.startsWith("custom:") && (
-                  <div
-                    style={{
-                      background: "var(--bg-surface-sunken)",
-                      border: "1px solid var(--border-default)",
-                      borderRadius: "var(--radius-sm)",
-                      padding: "8px 10px",
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: "6px",
-                    }}
-                  >
-                    <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center",
-                      }}
-                    >
-                      <span style={{ fontSize: "12px", fontWeight: 600 }}>
-                        Manual setup — {d.name}
-                      </span>
-                      <button
-                        type="button"
-                        className="btn btn-secondary btn-small"
-                        onClick={() => void handleCopySnippet(d.id)}
-                        disabled={!manualSnippet[d.id] || manualLoading[d.id]}
-                        title="Copy snippet to clipboard"
-                      >
-                        {manualCopied[d.id] ? <Check size={13} /> : <Copy size={13} />}
-                        <span>{manualCopied[d.id] ? "Copied!" : "Copy"}</span>
-                      </button>
-                    </div>
-                    <pre
-                      style={{
-                        margin: 0,
-                        whiteSpace: "pre-wrap",
-                        wordBreak: "break-word",
-                        fontSize: "12px",
-                        userSelect: "text",
-                      }}
-                      tabIndex={0}
-                      aria-label={`Manual MCP setup snippet for ${d.name}`}
-                    >
-                      {manualLoading[d.id]
-                        ? "Loading verified snippet…"
-                        : manualSnippet[d.id] || "No snippet yet."}
-                    </pre>
-                  </div>
-                )}
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           <div
