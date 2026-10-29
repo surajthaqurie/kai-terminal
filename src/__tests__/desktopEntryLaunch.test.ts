@@ -4,6 +4,7 @@ import os from "os";
 import path from "path";
 import { shouldOpenGuiFromBareLaunch } from "../cli/index";
 import { auditDesktopFile } from "../cli/index";
+import { symlinkOrSkip } from "./helpers/symlink";
 
 /**
  * Regression tests for the "app-drawer click does nothing" bug.
@@ -35,12 +36,12 @@ describe("doctor: .desktop Exec resolving to the CLI shim", () => {
     fs.rmSync(base, { recursive: true, force: true });
   });
 
-  it("flags a shim-resolving Exec and keeps a real binary unflagged", () => {
+  it("flags a shim-resolving Exec and keeps a real binary unflagged", (ctx) => {
     // A probe that mimics the CLI: a symlink whose realpath is kai.js.
     const kaiJs = path.join(base, "kai.js");
     fs.writeFileSync(kaiJs, "#!/usr/bin/env node\n// cli bundle bootstrap\n");
     fs.mkdirSync(path.join(base, "bin"));
-    fs.symlinkSync(kaiJs, path.join(base, "bin", "kai3"));
+    symlinkOrSkip(ctx, kaiJs, path.join(base, "bin", "kai3"), "file");
     process.env.PATH = path.join(base, "bin");
 
     const shimEntry = auditDesktopFile(writeDesktop(base, "Exec=kai3\n"));
