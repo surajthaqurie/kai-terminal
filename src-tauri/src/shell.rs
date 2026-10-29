@@ -342,6 +342,23 @@ fn hide_console(cmd: &mut std::process::Command) {
     cmd.creation_flags(0x08000000);
 }
 
+/// Environment variables a Chromium/Electron parent (WebView2, VS Code, Edge)
+/// leaves behind for the processes it starts.
+///
+/// `CHROME_CRASHPAD_PIPE_NAME` names the crash-reporter pipe of that parent.
+/// A shell or tool that inherits it and is itself Chromium-based tries to
+/// register with a pipe that is not its own and prints
+/// `registration_protocol_win.cc: CreateFile: The system cannot find the file
+/// specified. (0x2)`. Nothing Kai starts on the user's behalf should carry it.
+pub const LEAKED_CHROMIUM_ENV: &[&str] = &["CHROME_CRASHPAD_PIPE_NAME"];
+
+/// Removes [`LEAKED_CHROMIUM_ENV`] from a child about to be spawned.
+pub fn scrub_chromium_env(cmd: &mut std::process::Command) {
+    for key in LEAKED_CHROMIUM_ENV {
+        cmd.env_remove(key);
+    }
+}
+
 /// Warms the cached Windows build number off the hot path (background
 /// thread, runs once per process). Called at app startup so the first
 /// `create_pty` below never pays `reg` + `cmd /c ver` synchronously.
@@ -980,6 +997,7 @@ pub fn open_in_editor(requested_editor: Option<&str>, cwd: &str) -> Result<Strin
         if let Some(exe_path) = exe_candidate {
             let mut c = std::process::Command::new(exe_path);
             c.arg(&valid_cwd);
+            scrub_chromium_env(&mut c);
             hide_console(&mut c);
             c.spawn().map_err(|e| {
                 TerminalError::IoError(format!("Failed to launch editor '{}': {}", editor_bin, e))
@@ -1001,6 +1019,7 @@ pub fn open_in_editor(requested_editor: Option<&str>, cwd: &str) -> Result<Strin
             }
             let mut c = std::process::Command::new("cmd");
             c.raw_arg(format!("/d /s /c \"\"{}\" \"{}\"\"", editor_bin, valid_cwd));
+            scrub_chromium_env(&mut c);
             hide_console(&mut c);
             c.spawn().map_err(|e| {
                 TerminalError::IoError(format!("Failed to launch editor '{}': {}", editor_bin, e))
@@ -1028,6 +1047,7 @@ pub fn open_in_editor(requested_editor: Option<&str>, cwd: &str) -> Result<Strin
     // the main window (same CREATE_NO_WINDOW treatment as the branches above).
     let mut editor_cmd = std::process::Command::new(&editor_bin);
     editor_cmd.arg(&valid_cwd);
+    scrub_chromium_env(&mut editor_cmd);
     #[cfg(target_os = "windows")]
     hide_console(&mut editor_cmd);
     editor_cmd.spawn().map_err(|e| {
@@ -1043,7 +1063,8 @@ pub fn open_in_editor(requested_editor: Option<&str>, cwd: &str) -> Result<Strin
 /// opener plugin shipped), so "View release" and friends go through this
 /// backend command instead. Only our own releases page (and release URLs
 /// under it) and three exact YouTube link shapes (the music player's
-/// "Open in browser") may be opened — never arbitrary user input.
+/// "Open in browser") and Azure DevOps' own token page (the Integrations
+/// panel's "Create a token") may be opened — never arbitrary user input.
 pub const EXTERNAL_URL_BASE: &str = "https://github.com/surajthaqurie/kai-terminal/";
 pub const EXTERNAL_URL_FALLBACK: &str =
     "https://github.com/surajthaqurie/kai-terminal/releases/latest";
@@ -1084,6 +1105,28 @@ fn is_allowed_youtube_url(url: &str) -> bool {
     false
 }
 
+const AZURE_DEVOPS_URL_BASE: &str = "https://dev.azure.com/";
+
+/// True only for `https://dev.azure.com/` and
+/// `https://dev.azure.com/<org>/_usersSettings/tokens`, where `<org>` is
+/// `[A-Za-z0-9._-]` (no cmd metacharacter, no leading dot).
+fn is_allowed_azure_devops_url(url: &str) -> bool {
+    let Some(rest) = url.strip_prefix(AZURE_DEVOPS_URL_BASE) else {
+        return false;
+    };
+    if rest.is_empty() {
+        return true;
+    }
+    let Some(org) = rest.strip_suffix("/_usersSettings/tokens") else {
+        return false;
+    };
+    (1..=64).contains(&org.len())
+        && !org.starts_with('.')
+        && org
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+}
+
 /// Pure validation for external URLs (unit-tested; no process is spawned).
 pub fn validate_external_url(url: &str) -> Result<(), TerminalError> {
     if url.is_empty() || url.len() > 512 {
@@ -1098,10 +1141,11 @@ pub fn validate_external_url(url: &str) -> Result<(), TerminalError> {
     }
     if !(url == EXTERNAL_URL_FALLBACK
         || url.starts_with(EXTERNAL_URL_BASE)
-        || is_allowed_youtube_url(url))
+        || is_allowed_youtube_url(url)
+        || is_allowed_azure_devops_url(url))
     {
         return Err(TerminalError::IoError(
-            "Refusing to open a URL outside the Kai Terminal releases page or a YouTube link."
+            "Refusing to open a URL outside the Kai Terminal releases page, a YouTube link or the Azure DevOps token page."
                 .to_string(),
         ));
     }
@@ -1121,6 +1165,7 @@ pub fn open_external_url(url: &str) -> Result<(), TerminalError> {
         // `start` treats the first quoted arg as a window title: the empty
         // `""` keeps the URL in the right slot. Argv-only, no shell string.
         c.args(["/c", "start", "", url]);
+        scrub_chromium_env(&mut c);
         hide_console(&mut c);
         c.spawn()
             .map_err(|e| TerminalError::IoError(format!("Failed to open URL: {e}")))?;
@@ -1136,12 +1181,12 @@ pub fn open_external_url(url: &str) -> Result<(), TerminalError> {
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
-        std::process::Command::new("xdg-open")
-            .arg(url)
-            .spawn()
-            .map_err(|e| {
-                TerminalError::IoError(format!("Failed to open URL (is xdg-open installed?): {e}"))
-            })?;
+        let mut c = std::process::Command::new("xdg-open");
+        c.arg(url);
+        scrub_chromium_env(&mut c);
+        c.spawn().map_err(|e| {
+            TerminalError::IoError(format!("Failed to open URL (is xdg-open installed?): {e}"))
+        })?;
         Ok(())
     }
 }
@@ -1949,6 +1994,19 @@ mod tests {
     }
 
     #[test]
+    fn test_scrub_chromium_env_removes_the_leaked_crashpad_pipe() {
+        let mut c = std::process::Command::new("tool");
+        c.env("CHROME_CRASHPAD_PIPE_NAME", "crashpad_1_X");
+        scrub_chromium_env(&mut c);
+        for key in LEAKED_CHROMIUM_ENV {
+            assert!(
+                c.get_envs().any(|(k, v)| k == *key && v.is_none()),
+                "{key} must be explicitly removed from the child"
+            );
+        }
+    }
+
+    #[test]
     fn test_validate_external_url_allowlists_releases_only() {
         // Our own releases page and children pass (spawn is NOT tested here).
         assert!(validate_external_url(EXTERNAL_URL_FALLBACK).is_ok());
@@ -1963,6 +2021,26 @@ mod tests {
         assert!(validate_external_url("http://github.com/surajthaqurie/kai-terminal/").is_err());
         assert!(validate_external_url("https://github.com/surajthaqurie/kai-terminal/ x").is_err());
         assert!(validate_external_url("").is_err());
+    }
+
+    #[test]
+    fn test_validate_external_url_allows_only_the_azure_devops_token_page() {
+        assert!(validate_external_url("https://dev.azure.com/").is_ok());
+        assert!(
+            validate_external_url("https://dev.azure.com/contoso/_usersSettings/tokens").is_ok()
+        );
+        for bad in [
+            "https://dev.azure.com/contoso",
+            "https://dev.azure.com/contoso/_usersSettings/tokens?x=1",
+            "https://dev.azure.com//_usersSettings/tokens",
+            "https://dev.azure.com/../_usersSettings/tokens",
+            "https://dev.azure.com/a&calc/_usersSettings/tokens",
+            "https://dev.azure.com/a/b/_usersSettings/tokens",
+            "http://dev.azure.com/contoso/_usersSettings/tokens",
+            "https://dev.azure.com.evil.com/contoso/_usersSettings/tokens",
+        ] {
+            assert!(validate_external_url(bad).is_err(), "should refuse {bad}");
+        }
     }
 
     #[test]

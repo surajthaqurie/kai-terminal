@@ -1377,6 +1377,20 @@ fn details_for_entry(
                 };
             }
             match probe_version(&path) {
+                // An IDE shim (VS Code's `copilot-shim`) answers `--version`
+                // with "not installed" text: the shim is on PATH, the CLI is not.
+                Some(v) if version_output_means_missing(&v) => AiCliDetails {
+                    id: id.to_string(),
+                    name: name.to_string(),
+                    available: false,
+                    path: Some(path),
+                    version: None,
+                    install_guidance: guidance.to_string(),
+                    diagnostic: "A launcher shim is on PATH, but it reports that the CLI itself is not installed. Install it, then restart detection.".to_string(),
+                    state: AiCliDiagnosticState::NotFound,
+                    auth_status,
+                    kai_wired,
+                },
                 Some(v) => {
                     let min = min_supported_version(id);
                     let state = classify_version(min, &v);
@@ -1449,6 +1463,12 @@ pub fn check_custom_ai_cli_path(id: &str, custom_path: &str) -> Result<AiCliDeta
         }
     }
     let version = probe_version(trimmed);
+    if version.as_deref().is_some_and(version_output_means_missing) {
+        return Err(format!(
+            "'{}' is a launcher shim that reports the CLI is not installed",
+            trimmed
+        ));
+    }
     let min = min_supported_version(id);
     let state = match &version {
         Some(v) => classify_version(min, v),
@@ -1574,6 +1594,21 @@ fn version_diagnostic(
     }
 }
 
+/// True when a `--version` line is a "the real CLI is missing" message rather
+/// than a version, e.g. "GitHub Copilot CLI was not found. Run Copilot in a
+/// terminal to install it" from VS Code's `copilot-shim`.
+fn version_output_means_missing(line: &str) -> bool {
+    let l = line.to_ascii_lowercase();
+    [
+        "was not found",
+        "not installed",
+        "is not recognized",
+        "command not found",
+    ]
+    .iter()
+    .any(|needle| l.contains(needle))
+}
+
 /// Bounded `<binary> --version` probe executed directly (no shell).
 /// Timeout: 5 seconds (was 8 s — panels felt stuck). Output truncated to
 /// 512 chars / first line.
@@ -1594,6 +1629,9 @@ fn probe_version(binary_path: &str) -> Option<String> {
     use std::time::Instant;
     let build_child = |via_shell_fallback: bool| -> Option<std::process::Child> {
         let mut c = build_probe_command(binary_path, via_shell_fallback);
+        // VS Code's `copilot-shim` is Electron-based: keep the parent's
+        // crash-reporter pipe out of the probe (see `LEAKED_CHROMIUM_ENV`).
+        crate::shell::scrub_chromium_env(&mut c);
         c.stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .stdin(Stdio::null());
@@ -2151,6 +2189,18 @@ mod tests {
             classify_version(None, "tool 0.0.1"),
             AiCliDiagnosticState::VersionDetected
         );
+    }
+
+    #[test]
+    fn test_missing_cli_shim_output_is_not_a_version() {
+        assert!(version_output_means_missing(
+            "GitHub Copilot CLI was not found. Run Copilot in a terminal to install it, or see https://docs.github.com/en/copilot"
+        ));
+        assert!(version_output_means_missing(
+            "'copilot' is not recognized as a command"
+        ));
+        assert!(!version_output_means_missing("copilot 1.0.12"));
+        assert!(!version_output_means_missing("2.1.5 (Claude Code)"));
     }
 
     #[test]

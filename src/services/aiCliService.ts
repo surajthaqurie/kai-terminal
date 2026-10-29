@@ -89,6 +89,17 @@ function detailsFallback(): AiCliDetails[] {
   }));
 }
 
+const VERSION_TOKEN = /v?\d+\.\d+(?:\.\d+)?(?:[-+][0-9A-Za-z.]+)?/;
+
+/**
+ * The version token of a probed `--version` line, or null. Vendors print
+ * anything from `1.2.3` to a whole sentence; only a real version belongs in a
+ * badge. The full line stays available for the tooltip.
+ */
+export function versionBadgeLabel(version: string): string | null {
+  return VERSION_TOKEN.exec(version.trim())?.[0] ?? null;
+}
+
 export async function getAiCliStatus(): Promise<AiCliStatus[]> {
   if (!isTauriAvailable()) {
     return unavailableFallback();

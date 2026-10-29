@@ -8,7 +8,7 @@ use uuid::Uuid;
 use crate::error::TerminalError;
 use crate::shell::{
     check_host_pty_support, is_wsl_shell_path, validate_and_resolve_cwd,
-    validate_and_resolve_shell, wsl_failure_hint,
+    validate_and_resolve_shell, wsl_failure_hint, LEAKED_CHROMIUM_ENV,
 };
 
 /// Abstract event emitter trait for PTY output streaming and process exit notification.
@@ -323,6 +323,13 @@ impl PtyManager {
         cmd.env("COLORTERM", "truecolor");
         cmd.env("KAI_TERMINAL", "1");
         cmd.env("TERM_PROGRAM", "kai");
+        // The parent (WebView2, or the Electron app that launched Kai) can leak
+        // its crash-reporter pipe into every tab; a Chromium-based tool run
+        // there then fails with "registration_protocol_win.cc: CreateFile".
+        // Dropped before the caller's own env so an explicit value still wins.
+        for key in LEAKED_CHROMIUM_ENV {
+            cmd.env_remove(key);
+        }
         if let Some(ref env_vars) = options.env {
             validate_spawn_env(env_vars)?;
             for (k, v) in env_vars {
