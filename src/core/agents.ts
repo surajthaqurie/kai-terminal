@@ -1,3 +1,4 @@
+import { execFileSync } from "child_process";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -115,7 +116,10 @@ export const AGENT_REGISTRY: AgentDefinition[] = [
     configPaths: [".claude.json", ".config/claude-code"],
     installGuidance:
       "Install via npm: npm install -g @anthropic-ai/claude-code — docs: https://docs.anthropic.com/en/docs/claude-code",
-    targets: [{ scope: "global", relPath: ".claude.json", keyStyle: "mcpServers" }],
+    targets: [
+      { scope: "global", relPath: ".claude.json", keyStyle: "mcpServers" },
+      { scope: "project", relPath: ".mcp.json", keyStyle: "mcpServers" },
+    ],
     buildSetup: (kaiBin: string) => {
       const quotedBin = JSON.stringify(kaiBin);
       return `
@@ -204,16 +208,16 @@ Launch Codex with MCP stdio configuration pointing to Kai:
     kind: "cli",
     binaries: ["gemini", "gemini-cli"],
     aliases: [],
-    configFile: "~/.muse/settings.json",
+    configFile: "~/.gemini/settings.json",
     configPaths: [".gemini", ".config/gemini-cli"],
     installGuidance:
       "Install via npm: npm install -g @google/gemini-cli — docs: https://github.com/google-gemini/gemini-cli",
-    targets: [{ scope: "global", relPath: ".muse/settings.json", keyStyle: "mcpServers" }],
+    targets: [{ scope: "global", relPath: ".gemini/settings.json", keyStyle: "mcpServers" }],
     buildSetup: (kaiBin: string) => {
       const quotedBin = JSON.stringify(kaiBin);
       return `
 Verified Gemini CLI MCP Configuration:
-Add to ~/.muse/settings.json (or .muse/settings.json for project scope):
+Add to ~/.gemini/settings.json:
 
 {
   "mcpServers": {
@@ -232,14 +236,13 @@ In chat: "Use kai_project_info to inspect the codebase."
   },
   {
     id: "copilot",
-    name: "Muse CLI",
-    kind: "cli",
+    name: "GitHub Copilot",
+    kind: "ide",
     binaries: ["copilot", "gh-copilot"],
     aliases: ["vscode"],
     configFile: ".vscode/mcp.json",
     configPaths: [".config/github-copilot", ".copilot"],
-    installGuidance:
-      "Install via npm: npm install -g @github/copilot — docs: https://docs.github.com/en/copilot",
+    installGuidance: "Install GitHub Copilot in VS Code — docs: https://docs.github.com/en/copilot",
     targets: [{ scope: "project", relPath: ".vscode/mcp.json", keyStyle: "vscode-servers" }],
     buildSetup: (kaiBin: string) => {
       const quotedBin = JSON.stringify(kaiBin);
@@ -384,7 +387,7 @@ In chat: "Use kai_project_info to inspect the codebase."
       const quotedBin = JSON.stringify(kaiBin);
       return `
 Verified Aider MCP Configuration:
-Aider reads MCP servers from ~/.config/aider/mcp.json (Claude Desktop convention):
+Writes standard Claude Desktop/MCP format to ~/.config/aider/mcp.json:
 
 {
   "mcpServers": {
@@ -394,6 +397,10 @@ Aider reads MCP servers from ~/.config/aider/mcp.json (Claude Desktop convention
     }
   }
 }
+
+Note:
+Stock Aider connects via CLI flags (e.g. aider --mcp-server "node ${quotedBin} mcp .")
+or community MCP wrappers (e.g. mcpm-aider) rather than auto-reading mcp.json files.
 
 Verification:
 Run: aider
@@ -816,6 +823,39 @@ export function buildKaiMcpEntry(def: AgentDefinition, kaiBin: string): Record<s
 }
 
 /**
+ * Check whether a directory is inside a Git repository.
+ * Checks upward for a `.git` directory or file, falling back to `git rev-parse`.
+ */
+export function isGitRepository(dir: string): boolean {
+  if (!dir) return false;
+  try {
+    let cur = path.resolve(dir);
+    while (true) {
+      if (fs.existsSync(path.join(cur, ".git"))) {
+        return true;
+      }
+      const parent = path.dirname(cur);
+      if (parent === cur) break;
+      cur = parent;
+    }
+  } catch {
+    // ignore filesystem errors
+  }
+  try {
+    const res = execFileSync("git", ["rev-parse", "--is-inside-work-tree"], {
+      cwd: dir,
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+    }).trim();
+    if (res === "true") return true;
+  } catch {
+    // not a git repo or git not found
+  }
+  return false;
+}
+
+/**
  * Resolve the writable config file for an agent.
  * Returns an error message when no target applies (e.g. Cline without
  * VS Code installed) so callers can print manual steps instead of
@@ -829,10 +869,16 @@ export function resolveAgentConfigPath(
   const projectDir = opts.projectDir || process.cwd();
   const wanted = opts.scope || "auto";
   const candidates = def.targets.filter((t) => wanted === "auto" || t.scope === wanted);
-  // Auto scope prefers global targets first, then project ones.
-  const ordered = [...candidates].sort((a, b) =>
-    wanted === "auto" && a.scope !== b.scope ? (a.scope === "global" ? -1 : 1) : 0
-  );
+  const inGit = isGitRepository(projectDir);
+  // Auto scope prefers project targets first when inside a git repo,
+  // or global targets first when outside a git repo.
+  const ordered = [...candidates].sort((a, b) => {
+    if (wanted !== "auto" || a.scope === b.scope) return 0;
+    if (inGit) {
+      return a.scope === "project" ? -1 : 1;
+    }
+    return a.scope === "global" ? -1 : 1;
+  });
   for (const target of ordered) {
     if (target.requireAppDir) {
       try {
@@ -1019,26 +1065,37 @@ function applyCodexTomlSetup(
       message: `Would ${fileExists ? "append kai-terminal section to" : "create"} ${filePath}.${note}`,
     };
   }
-  ensureParentDir(filePath);
-  let backupPath: string | null = null;
-  if (fileExists) backupPath = backupFile(filePath);
-  const section = buildCodexTomlSection(kaiBin, projectArg);
-  // Forced refresh (or legacy migration) replaces any stale kai section with
-  // the new one, so TOML never ends up with a duplicate table.
-  const cleaned = stripKaiTomlSections(existing);
-  const next =
-    !fileExists || !cleaned.endsWith("\n")
-      ? `${cleaned}${fileExists ? "\n" : ""}\n${section}`
-      : `${cleaned}\n${section}`;
-  atomicWriteFile(filePath, fileExists ? next : `${section}`);
-  return {
-    wrote: true,
-    created: !fileExists,
-    alreadyConfigured: false,
-    skipped: false,
-    backupPath,
-    message: `Wrote kai-terminal MCP section to ${filePath}.${note}`,
-  };
+  try {
+    ensureParentDir(filePath);
+    let backupPath: string | null = null;
+    if (fileExists) backupPath = backupFile(filePath);
+    const section = buildCodexTomlSection(kaiBin, projectArg);
+    // Forced refresh (or legacy migration) replaces any stale kai section with
+    // the new one, so TOML never ends up with a duplicate table.
+    const cleaned = stripKaiTomlSections(existing);
+    const next =
+      !fileExists || !cleaned.endsWith("\n")
+        ? `${cleaned}${fileExists ? "\n" : ""}\n${section}`
+        : `${cleaned}\n${section}`;
+    atomicWriteFile(filePath, fileExists ? next : `${section}`);
+    return {
+      wrote: true,
+      created: !fileExists,
+      alreadyConfigured: false,
+      skipped: false,
+      backupPath,
+      message: `Wrote kai-terminal MCP section to ${filePath}.${note}`,
+    };
+  } catch (err) {
+    return {
+      wrote: false,
+      created: false,
+      alreadyConfigured: false,
+      skipped: true,
+      backupPath: null,
+      message: `Failed to write config file ${filePath}: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
 }
 
 function ensureParentDir(filePath: string): void {
@@ -1244,21 +1301,36 @@ export function applyAgentSetup(
       message: `Would ${exists ? "merge kai-terminal entry into" : "create"} ${filePath}.${missingNote}`,
     };
   }
-  ensureParentDir(filePath);
-  const backupPath = exists ? backupFile(filePath) : null;
-  atomicWriteFile(filePath, `${JSON.stringify(data, null, 2)}\n`);
-  return {
-    id: def.id,
-    name: def.name,
-    path: filePath,
-    scope: target.scope,
-    wrote: true,
-    created: !exists,
-    alreadyConfigured: false,
-    skipped: false,
-    backupPath,
-    message: `${!exists ? "Created" : "Updated"} ${filePath} with kai-terminal MCP entry.${missingNote}`,
-  };
+  try {
+    ensureParentDir(filePath);
+    const backupPath = exists ? backupFile(filePath) : null;
+    atomicWriteFile(filePath, `${JSON.stringify(data, null, 2)}\n`);
+    return {
+      id: def.id,
+      name: def.name,
+      path: filePath,
+      scope: target.scope,
+      wrote: true,
+      created: !exists,
+      alreadyConfigured: false,
+      skipped: false,
+      backupPath,
+      message: `${!exists ? "Created" : "Updated"} ${filePath} with kai-terminal MCP entry.${missingNote}`,
+    };
+  } catch (err) {
+    return {
+      id: def.id,
+      name: def.name,
+      path: filePath,
+      scope: target.scope,
+      wrote: false,
+      created: false,
+      alreadyConfigured: false,
+      skipped: true,
+      backupPath: null,
+      message: `Failed to write config file ${filePath}: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
 }
 
 export interface AutoSetupOptions extends AgentSetupOptions {
@@ -1364,16 +1436,26 @@ export function removeAgentSetup(agent: string, opts: AgentSetupOptions = {}): A
         message: `Would remove kai-terminal MCP section from ${filePath}.`,
       };
     }
-    backupFile(filePath);
-    const updated = stripKaiTomlSections(raw);
-    atomicWriteFile(filePath, updated);
-    return {
-      id: def.id,
-      name: def.name,
-      path: filePath,
-      removed: true,
-      message: `Removed kai-terminal MCP section from ${filePath}.`,
-    };
+    try {
+      backupFile(filePath);
+      const updated = stripKaiTomlSections(raw);
+      atomicWriteFile(filePath, updated);
+      return {
+        id: def.id,
+        name: def.name,
+        path: filePath,
+        removed: true,
+        message: `Removed kai-terminal MCP section from ${filePath}.`,
+      };
+    } catch (err) {
+      return {
+        id: def.id,
+        name: def.name,
+        path: filePath,
+        removed: false,
+        message: `Failed to update config file ${filePath}: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
   }
 
   const parsed = readJsonConfig(filePath);
@@ -1421,15 +1503,25 @@ export function removeAgentSetup(agent: string, opts: AgentSetupOptions = {}): A
     };
   }
 
-  backupFile(filePath);
-  delete container[MCP_SERVER_NAME];
-  delete container[LEGACY_MCP_SERVER_NAME];
-  atomicWriteFile(filePath, JSON.stringify(parsed.data, null, 2) + "\n");
-  return {
-    id: def.id,
-    name: def.name,
-    path: filePath,
-    removed: true,
-    message: `Removed kai-terminal MCP entry from ${filePath}.`,
-  };
+  try {
+    backupFile(filePath);
+    delete container[MCP_SERVER_NAME];
+    delete container[LEGACY_MCP_SERVER_NAME];
+    atomicWriteFile(filePath, JSON.stringify(parsed.data, null, 2) + "\n");
+    return {
+      id: def.id,
+      name: def.name,
+      path: filePath,
+      removed: true,
+      message: `Removed kai-terminal MCP entry from ${filePath}.`,
+    };
+  } catch (err) {
+    return {
+      id: def.id,
+      name: def.name,
+      path: filePath,
+      removed: false,
+      message: `Failed to update config file ${filePath}: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
 }

@@ -163,6 +163,34 @@ describe("authentication", () => {
     expect(runs).toBe(1);
   });
 
+  it("deduplicates concurrent in-flight Azure CLI token requests", async () => {
+    let runs = 0;
+    const { fetchImpl } = fakeFetch([{ match: "connectionData", body: { authenticatedUser: {} } }]);
+    const provider = createAzureDevOpsProvider({
+      http: { fetchImpl },
+      auth: {
+        run: async () => {
+          runs++;
+          // Add a short delay to simulate slow CLI spawn
+          await new Promise((r) => setTimeout(r, 20));
+          return {
+            code: 0,
+            stdout: JSON.stringify({ accessToken: "concurrent-token", expires_on: 4102444800 }),
+            stderr: "",
+          };
+        },
+      },
+    });
+    const account = azAccount("contoso", "az");
+    const results = await Promise.all([
+      provider.verify(account, new MemorySecrets()),
+      provider.verify(account, new MemorySecrets()),
+      provider.verify(account, new MemorySecrets()),
+    ]);
+    expect(results).toHaveLength(3);
+    expect(runs).toBe(1);
+  });
+
   it("explains a signed-out Azure CLI", async () => {
     const provider = createAzureDevOpsProvider({
       auth: { run: async () => ({ code: 1, stdout: "", stderr: "Please run 'az login'" }) },
@@ -215,6 +243,93 @@ describe("work items", () => {
     ).rejects.toMatchObject({ code: "bad_request" });
   });
 
+  it("accepts custom WIQL scoped with @project", async () => {
+    const { provider, ctx } = setup([{ match: "/wiql", body: { workItems: [] } }]);
+    const page = await provider.workItems!.search(ctx, {
+      wiql: "SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = @project AND [System.State] = 'Active'",
+      limit: 5,
+      offset: 0,
+    });
+    expect(page).toEqual({ items: [], hasMore: false });
+  });
+
+  it("accepts custom WIQL scoped with matching literal project name", async () => {
+    const { provider, ctx } = setup([{ match: "/wiql", body: { workItems: [] } }]);
+    const page = await provider.workItems!.search(ctx, {
+      wiql: "SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = 'My Project' AND [System.State] = 'Active'",
+      limit: 5,
+      offset: 0,
+    });
+    expect(page).toEqual({ items: [], hasMore: false });
+  });
+
+  it("rejects custom WIQL without project scope", async () => {
+    const { provider, ctx } = setup([]);
+    await expect(
+      provider.workItems!.search(ctx, {
+        wiql: "SELECT [System.Id] FROM WorkItems WHERE [System.State] = 'Active'",
+        limit: 5,
+        offset: 0,
+      })
+    ).rejects.toMatchObject({
+      code: "bad_request",
+      message: expect.stringContaining("must be scoped to the bound project"),
+    });
+  });
+
+  it("rejects custom WIQL targeting a different project", async () => {
+    const { provider, ctx } = setup([]);
+    await expect(
+      provider.workItems!.search(ctx, {
+        wiql: "SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = 'OtherSecretProject'",
+        limit: 5,
+        offset: 0,
+      })
+    ).rejects.toMatchObject({
+      code: "bad_request",
+      message: expect.stringContaining('targets project "OtherSecretProject"'),
+    });
+  });
+
+  it("rejects custom WIQL negating the project boundary", async () => {
+    const { provider, ctx } = setup([]);
+    await expect(
+      provider.workItems!.search(ctx, {
+        wiql: "SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] <> @project",
+        limit: 5,
+        offset: 0,
+      })
+    ).rejects.toMatchObject({
+      code: "bad_request",
+      message: expect.stringContaining("cannot negate the project boundary"),
+    });
+
+    await expect(
+      provider.workItems!.search(ctx, {
+        wiql: "SELECT [System.Id] FROM WorkItems WHERE NOT ([System.TeamProject] = @project)",
+        limit: 5,
+        offset: 0,
+      })
+    ).rejects.toMatchObject({
+      code: "bad_request",
+      message: expect.stringContaining("cannot negate the project boundary"),
+    });
+  });
+
+  it("rejects custom WIQL with top-level OR disjunctions that could bypass project scope", async () => {
+    const { provider, ctx } = setup([]);
+    await expect(
+      provider.workItems!.search(ctx, {
+        wiql: "SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = @project OR [System.State] = 'Active'",
+        limit: 5,
+        offset: 0,
+      })
+    ).rejects.toMatchObject({
+      code: "bad_request",
+      message: expect.stringContaining("cannot use top-level OR clauses"),
+    });
+  });
+
   it("returns an empty page without calling the batch endpoint", async () => {
     const { provider, ctx, calls } = setup([{ match: "/wiql", body: { workItems: [] } }]);
     const page = await provider.workItems!.search(ctx, { limit: 5, offset: 0 });
@@ -229,6 +344,7 @@ describe("work items", () => {
         body: {
           id: 42,
           fields: {
+            "System.TeamProject": "My Project",
             "System.Title": "Crash",
             "System.WorkItemType": "Bug",
             "System.State": "New",
@@ -246,7 +362,13 @@ describe("work items", () => {
 
   it("reads comments newest first", async () => {
     const { provider, ctx, calls } = setup([
-      { match: "/wit/workitems/7", body: { id: 7, fields: { "System.Title": "T" } } },
+      {
+        match: "/wit/workitems/7",
+        body: {
+          id: 7,
+          fields: { "System.TeamProject": "My Project", "System.Title": "T" },
+        },
+      },
       {
         match: "/comments",
         body: {
@@ -265,6 +387,108 @@ describe("work items", () => {
     expect(calls.find((c) => c.url.includes("/comments"))!.url).toContain(
       "api-version=7.1-preview.4"
     );
+  });
+
+  it("retrieves work item belonging to active project (case-insensitive)", async () => {
+    const { provider, ctx } = setup([
+      {
+        match: "/wit/workitems/50",
+        body: {
+          id: 50,
+          fields: {
+            "System.TeamProject": "my project",
+            "System.Title": "Bound Project Task",
+            "System.WorkItemType": "Task",
+            "System.State": "Active",
+            "System.Description": "<p>Task details</p>",
+          },
+          relations: [],
+        },
+      },
+      { match: "/comments", body: { comments: [] } },
+    ]);
+    const item = await provider.workItems!.get(ctx, 50);
+    expect(item).toMatchObject({
+      id: 50,
+      title: "Bound Project Task",
+      description: "Task details",
+      comments: [],
+    });
+  });
+
+  it("rejects work item belonging to another project with not_found and suppresses foreign comments and details", async () => {
+    const { provider, ctx, calls } = setup([
+      {
+        match: "/wit/workitems/99",
+        body: {
+          id: 99,
+          fields: {
+            "System.TeamProject": "SecretOtherProject",
+            "System.Title": "Highly Confidential Data",
+            "System.WorkItemType": "Bug",
+            "System.State": "Active",
+            "System.Description": "Confidential foreign project content",
+          },
+          relations: [{ rel: "System.LinkTypes.Hierarchy-Forward", url: "https://secret/child" }],
+        },
+      },
+      {
+        match: "/comments",
+        body: {
+          comments: [{ text: "Secret foreign comment" }],
+        },
+      },
+    ]);
+
+    await expect(provider.workItems!.get(ctx, 99)).rejects.toMatchObject({
+      code: "not_found",
+      message: "Work item 99 was not found.",
+    });
+
+    // Verify comments were never fetched
+    expect(calls.some((c) => c.url.includes("/comments"))).toBe(false);
+  });
+
+  it("fails closed when work item response is missing project identity", async () => {
+    const { provider, ctx, calls } = setup([
+      {
+        match: "/wit/workitems/100",
+        body: {
+          id: 100,
+          fields: {
+            "System.Title": "Item without project field",
+            "System.WorkItemType": "Task",
+          },
+        },
+      },
+    ]);
+
+    await expect(provider.workItems!.get(ctx, 100)).rejects.toMatchObject({
+      code: "not_found",
+      message: "Work item 100 was not found.",
+    });
+    expect(calls.some((c) => c.url.includes("/comments"))).toBe(false);
+  });
+
+  it("fails closed when work item response contains malformed project information", async () => {
+    const { provider, ctx, calls } = setup([
+      {
+        match: "/wit/workitems/101",
+        body: {
+          id: 101,
+          fields: {
+            "System.TeamProject": "   ",
+            "System.Title": "Item with whitespace project field",
+          },
+        },
+      },
+    ]);
+
+    await expect(provider.workItems!.get(ctx, 101)).rejects.toMatchObject({
+      code: "not_found",
+      message: "Work item 101 was not found.",
+    });
+    expect(calls.some((c) => c.url.includes("/comments"))).toBe(false);
   });
 });
 

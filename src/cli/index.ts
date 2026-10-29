@@ -77,6 +77,8 @@ const EXTERNAL_COMMANDS = new Set([
   // probe `kai config list` working outside Kai Terminal.
   "config",
   "session",
+  "integration",
+  "integrations",
   "help",
   "--help",
   "-h",
@@ -88,13 +90,13 @@ const EXTERNAL_COMMANDS = new Set([
 /**
  * True when `kai <command> <args>` is refused outside Kai Terminal.
  *
- * Integrations (`kai integration …`, `kai azure …`) are typed by a person, so
- * they run in a Kai Terminal tab. The one exception is `<provider> rpc`: the
- * desktop app's Integrations panel spawns it itself, outside any tab.
+ * Integrations (`kai integration …`, `kai azure …`) and external management
+ * commands may run from any shell. Internal commands (agents, Code Mode,
+ * graph operations, diagnostics) require Kai Terminal.
  */
-export function requiresKaiTerminal(command: string, args: string[]): boolean {
+export function requiresKaiTerminal(command: string, _args: string[] = []): boolean {
   if (EXTERNAL_COMMANDS.has(command)) return false;
-  if (findProvider(command) && args[1] === "rpc") return false;
+  if (findProvider(command)) return false;
   return true;
 }
 

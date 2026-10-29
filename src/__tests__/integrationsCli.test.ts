@@ -62,7 +62,8 @@ afterEach(() => {
   env.restore();
 });
 
-const claudeConfig = () => path.join(agents.home, ".claude.json");
+const claudeConfig = (dir?: string) =>
+  dir ? path.join(dir, ".mcp.json") : path.join(agents.home, ".claude.json");
 
 describe("kai integration list", () => {
   it("says nothing is set up and points at the command, with the folder's remote", async () => {
@@ -155,35 +156,38 @@ describe("kai integration azure (setup)", () => {
     expect(res.out).toContain("Agents now get 7 Azure DevOps tools");
 
     expect(findBinding(dir)?.binding).toMatchObject({ project: "Payments", repo: "api" });
-    const cfg = JSON.parse(fs.readFileSync(claudeConfig(), "utf8"));
+    const cfg = JSON.parse(fs.readFileSync(claudeConfig(dir), "utf8"));
     expect(cfg.mcpServers["kai-terminal"]).toBeDefined();
   });
 
   it("is safe to run again: nothing is re-asked and nothing is wired twice", async () => {
     const dir = repo(REMOTE);
     await kai("integration", "azure", dir, "--yes");
-    const before = fs.readFileSync(claudeConfig(), "utf8");
+    const before = fs.readFileSync(claudeConfig(dir), "utf8");
     const res = await kai("integration", "azure", dir, "--yes");
     expect(res.code).toBe(0);
     expect(res.out).toContain("✔ Already connected");
     expect(res.out).toMatch(/= claude\s+already wired/);
-    expect(fs.readFileSync(claudeConfig(), "utf8")).toBe(before);
+    expect(fs.readFileSync(claudeConfig(dir), "utf8")).toBe(before);
   });
 
   it("leaves every agent config alone with --no-agents", async () => {
-    const res = await kai("integration", "azure", repo(REMOTE), "--yes", "--no-agents");
+    const r = repo(REMOTE);
+    const res = await kai("integration", "azure", r, "--yes", "--no-agents");
     expect(res.code).toBe(0);
     expect(res.out).toContain("Skipped (--no-agents)");
+    expect(fs.existsSync(claudeConfig(r))).toBe(false);
     expect(fs.existsSync(claudeConfig())).toBe(false);
   });
 
   it("keeps unrelated keys when it wires an agent", async () => {
+    const r = repo(REMOTE);
     fs.writeFileSync(
-      claudeConfig(),
+      claudeConfig(r),
       JSON.stringify({ theme: "dark", mcpServers: { other: { command: "x" } } })
     );
-    await kai("integration", "azure", repo(REMOTE), "--yes");
-    const cfg = JSON.parse(fs.readFileSync(claudeConfig(), "utf8"));
+    await kai("integration", "azure", r, "--yes");
+    const cfg = JSON.parse(fs.readFileSync(claudeConfig(r), "utf8"));
     expect(cfg.theme).toBe("dark");
     expect(cfg.mcpServers.other).toEqual({ command: "x" });
     expect(cfg.mcpServers["kai-terminal"]).toBeDefined();

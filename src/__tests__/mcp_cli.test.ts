@@ -19,6 +19,7 @@ beforeEach(() => {
   // os.homedir() ignores $HOME on Windows (uses USERPROFILE), so mock it
   // to keep CLI home-relative writes hermetic on every OS.
   vi.spyOn(os, "homedir").mockReturnValue(tempHome);
+  vi.spyOn(process, "cwd").mockReturnValue(tempHome);
   vi.spyOn(console, "log").mockImplementation(() => {});
   vi.spyOn(console, "error").mockImplementation(() => {});
 });

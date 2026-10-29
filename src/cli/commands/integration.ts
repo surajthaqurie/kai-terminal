@@ -53,15 +53,21 @@ function printHelp(): void {
 Kai integrations
 
 Usage:
-  kai integration list [--json]      Every integration and its state
-  kai integration <${names}>       Set one up for THIS folder: sign in, connect the
-                                     project, wire your agents, and verify it works
+  kai integration list               Every integration and its state
+  kai integration <${names}>         Set one up for THIS folder: sign in, connect the
+                                     project, select your agents, and verify it works
+
+Steps:
+  1. Sign-in     Authenticate with organization
+  2. Scope       Select organization, project, and repository
+  3. Agents      Select agents to configure (default: all)
+  4. Check       Verify tool access with live API checks
 
 Options for \`kai integration azure\`:
   --org <name>          Organization (default: from the git remote)
   --project <name>      Project (default: from the git remote, or you pick one)
   --repo <name|none>    Repository (default: from the git remote)
-  --az | --pat-stdin    Sign in with the Azure CLI, or pipe an access token on stdin
+  --pat-stdin           Pipe an access token on stdin
   --server-url <url>    Azure DevOps Server (on-premises)
   --no-agents           Do not touch any agent's config
   -y, --yes             Do not ask for confirmation
@@ -311,15 +317,31 @@ export async function wireAgents(opts: WireOptions): Promise<WireOutcome> {
   const todo = installed.filter((d) => !d.kaiWired);
   if (todo.length === 0) return out;
 
+  let targets = todo;
   if (opts.interactive && !opts.yes) {
-    const names = todo.map((d) => d.name).join(", ");
-    if (!(await confirm(`  Wire Kai's MCP server into ${names}?`, true))) {
+    console.log(`  Detected installed agents:`);
+    todo.forEach((d, i) => console.log(`    ${i + 1}. ${d.name} (${d.id})`));
+    const answer = (
+      await ask(`  Which agents to wire? (Enter for all, or comma-separated numbers/ids): `)
+    ).trim();
+    if (answer.toLowerCase() === "none" || answer.toLowerCase() === "n") {
       out.declined = true;
       return out;
     }
+    if (
+      answer &&
+      answer.toLowerCase() !== "all" &&
+      answer.toLowerCase() !== "y" &&
+      answer.toLowerCase() !== "yes"
+    ) {
+      const parts = answer.split(",").map((s) => s.trim().toLowerCase());
+      targets = todo.filter(
+        (d, i) => parts.includes(String(i + 1)) || parts.includes(d.id.toLowerCase())
+      );
+    }
   }
   const kaiBin = opts.kaiBin ?? resolveKaiBin();
-  for (const d of todo) {
+  for (const d of targets) {
     const r = applyAgentSetup(d.id, kaiBin, {
       projectDir: opts.dir,
       homeDir: opts.homeDir,
