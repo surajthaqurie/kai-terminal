@@ -10,7 +10,7 @@ Tauri 2 + Rust (`portable-pty`) + WebGL GPU terminal renderer (`xterm.js`). MIT 
 
 Live site: **https://kai-terminal.vercel.app/** · Releases: [latest](https://github.com/surajthaqurie/kai-terminal/releases/latest)
 
-> Status: v0.2.0 is an active release. If something breaks, please open an issue with OS, version and steps to reproduce.
+> Status: v0.2.1 is an active release. If something breaks, please open an issue with OS, version and steps to reproduce.
 
 <a href="https://kai-terminal.vercel.app/">
   <picture>
@@ -34,12 +34,12 @@ No auto-detection here. All installers are published on [GitHub Releases](https:
 
 | OS                  | File                                | Install                                            |
 | ------------------- | ----------------------------------- | -------------------------------------------------- |
-| macOS 12+ (M1–M4)   | `kai_0.2.0_aarch64.dmg`             | Open the `.dmg`, drag `Kai.app` to `/Applications` |
-| Linux x64           | `kai_0.2.0_amd64.deb`               | `sudo dpkg -i kai_0.2.0_amd64.deb`                 |
-| Linux (any distro)  | `kai_0.2.0_amd64.AppImage`          | `chmod +x kai_*.AppImage && ./kai_*.AppImage`      |
-| Linux ARM64         | `kai_0.2.0_arm64.deb` / `.AppImage` | Same as above, ARM build                           |
-| Windows 10/11 x64   | `kai_0.2.0_x64-setup.exe`           | Download and run                                   |
-| Windows x64 (admin) | `kai_0.2.0_x64_en-US.msi`           | For silent/admin installs                          |
+| macOS 12+ (M1–M4)   | `kai_0.2.1_aarch64.dmg`             | Open the `.dmg`, drag `Kai.app` to `/Applications` |
+| Linux x64           | `kai_0.2.1_amd64.deb`               | `sudo dpkg -i kai_0.2.1_amd64.deb`                 |
+| Linux (any distro)  | `kai_0.2.1_amd64.AppImage`          | `chmod +x kai_*.AppImage && ./kai_*.AppImage`      |
+| Linux ARM64         | `kai_0.2.1_arm64.deb` / `.AppImage` | Same as above, ARM build                           |
+| Windows 10/11 x64   | `kai_0.2.1_x64-setup.exe`           | Download and run                                   |
+| Windows x64 (admin) | `kai_0.2.1_x64_en-US.msi`           | For silent/admin installs                          |
 
 The website lists the same files and does not choose for you. If your browser guessed wrong, just click another tab — nothing is locked in.
 
@@ -74,6 +74,10 @@ kai health                # check system readiness and health
 kai doctor                # run environment, PATH, and desktop diagnostics
 kai list [-a|-m|-i|-s|-c] # look up tools (-a), MCP (-m), projects (-i), sessions (-s), config (-c)
 kai remove [-m|-a|-i|-s]  # un-wire tools (-m/-a <name>) or delete index (-i)/session (-s) data
+kai integration list      # every integration (Azure DevOps today) and its state for this folder
+kai integration azure     # set up Azure DevOps here: sign in, connect, wire your agents, verify
+kai azure list|active|remove  # list projects, switch this folder's active project, disconnect it
+kai remove --name <id>    # remove an integration account everywhere (token + every folder)
 kai close                 # close active Kai Terminal instances
 ```
 
@@ -152,6 +156,26 @@ To remove the hook later, delete
 
 The status bar in the app shows the indexed project, file/symbol counts and last query cost.
 
+### Integrations (Azure DevOps)
+
+Connect a folder to Azure DevOps and your AI tools can read its work items, pull requests and builds through the same `kai mcp` server. One command does the setup, and it is safe to run again:
+
+```bash
+kai integration azure      # sign in, connect this folder, wire your agents, verify with real calls
+kai azure list             # accounts and their projects; * marks this folder's active project
+kai azure active --name Payments   # switch this folder's active project
+kai azure remove           # disconnect this folder (your sign-in stays)
+kai remove --name contoso  # remove the account everywhere: token and every folder's connection
+```
+
+- **Auto-detected:** organization, project and repository come from the folder's git remotes (Azure DevOps Services and Azure DevOps Server HTTPS remotes), from any sub-folder. Names are checked against what Azure really has.
+- **One active project per folder.** Sign-in is per user and shared by every folder. The connection is a private file under `~/.kai/projects/`, never in your repository.
+- **Tokens stay safe:** the Azure CLI is used when installed, so Kai stores nothing; otherwise an access token goes to the OS secret store (Windows DPAPI, macOS Keychain, Linux Secret Service), never to a repository or an agent config.
+- **Read-only tools, added only where connected:** `kai_integration_status`, `kai_work_item_search`, `kai_work_item_get`, `kai_pr_list`, `kai_pr_get`, `kai_build_list`, `kai_build_log`. A folder that is not connected sees exactly the tools listed above. Text from Azure is returned as untrusted data. Restart a running agent session after setup so it re-reads its tools.
+- **Desktop app:** the **Integrations** tab of the AI CLI providers panel (robot icon) offers the same actions, including switching the project.
+
+Details: [MCP.md](MCP.md) · [USER_MANUAL.md](USER_MANUAL.md).
+
 ### Keyboard shortcuts
 
 On macOS use `Cmd` where `Ctrl` is shown. Plain `Ctrl+C` always stays the shell interrupt, and plain `Ctrl+V` always reaches the shell.
@@ -171,7 +195,7 @@ On macOS use `Cmd` where `Ctrl` is shown. Plain `Ctrl+C` always stays the shell 
 | `Ctrl+Shift+F` | Find in output |
 | `Ctrl+Shift+G` | Review git changes |
 
-Every shortcut above is remappable in **Settings → Shortcuts** except `Ctrl/Shift+Insert`, `Shift+PageUp` / `PageDown` and `Ctrl+Shift+G`, which stay fixed and are listed there read-only. Music Time pauses for calls automatically.
+Every shortcut above is remappable in **Settings → Shortcuts** except `Ctrl/Shift+Insert`, `Shift+PageUp` / `PageDown` and `Ctrl+Shift+G`, which stay fixed and are listed there read-only. `Ctrl+T` also always opens a new tab, so Settings will not let you bind `Ctrl+T`, `Ctrl+Shift+T` (other than to New tab) or `Ctrl+Shift+G` to anything else. Music Time pauses for calls automatically.
 
 ### Privacy and limits
 
@@ -181,8 +205,9 @@ Every shortcut above is remappable in **Settings → Shortcuts** except `Ctrl/Sh
 - Retrieval checks file hashes and warns on stale indexes.
 - Indexes live in `~/.kai/`; `kai remove` deletes them.
 - Local diagnostics go to `~/.kai/metrics.jsonl`. No account, no telemetry in the app.
+- The code-map tools never touch the network. Integrations are opt-in per folder: `kai integration azure` is the only thing that contacts an outside service, only with the sign-in you give it, and `kai remove --name <id>` deletes that sign-in and its stored token.
 
-See [KNOWN_LIMITATIONS](KNOWN_LIMITATIONS.md) for what v0.2.0 does not do yet.
+See [KNOWN_LIMITATIONS](KNOWN_LIMITATIONS.md) for what v0.2.1 does not do yet.
 
 ## Docs
 

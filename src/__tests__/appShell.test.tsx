@@ -884,7 +884,6 @@ describe("App shell: settings, themes and terminal actions", () => {
       "close-tab",
       "search-terminal",
       "clear-terminal",
-      "reset-terminal-modes",
       "ai-cli",
       "diagnostics",
       "open-settings",
@@ -915,20 +914,18 @@ describe("App shell: settings, themes and terminal actions", () => {
     expect(tabTitles()).toEqual(["Terminal 1"]);
   });
 
-  it("search / clear / reset-modes target the active pane's terminal", async () => {
+  it("search / clear target the active pane's terminal", async () => {
     await mount();
     await newTabKey();
     const active = paneId(1);
     registry.refCalls.length = 0;
     await press("KeyF", "f", { ctrl: true, shift: true });
     await runAction("clear-terminal");
-    await runAction("reset-terminal-modes");
     // New-tab now also focuses the new terminal (rAF-scheduled), so focus
     // entries are expected noise around the asserted imperative calls.
     expect(registry.refCalls.filter((c) => !c.endsWith(":focus"))).toEqual([
       `${active}:toggleSearch`,
       `${active}:clear`,
-      `${active}:resetModes`,
     ]);
   });
 

@@ -1,5 +1,0 @@
----
-"kai-terminal": patch
----
-
-The app-drawer / Start-menu click now opens the app on every OS. Linux `.deb`/`.rpm` builds generate the launcher with `Exec=kai`, and when the Node CLI shim (`~/.local/bin/kai`) shadows the GUI binary on PATH the click ran the CLI: it printed the usage text into nowhere and exited, so the app "would not open" (Windows and macOS non-pinned launchers hit the same non-TTY path). A bare `kai` invocation with no TTY (any desktop-launcher or script launch, including piped stdin) now opens Kai Terminal for the current directory instead of printing help; typing `kai` in an interactive shell still prints help, and test environments (Vitest, `NODE_ENV=test`) keep the help behavior so CI smoke probes are unchanged. The Linux bundle ships `packaging/linux/kai.desktop` (wired via `bundle.linux.deb.desktopTemplate` and `bundle.linux.rpm.desktopTemplate`) so `Exec` targets the bundled GUI binary with an `open` fallback regardless of PATH shadowing. `kai doctor` flags a drawer entry resolving to the CLI shim (`execIsCliShim` in the audit) instead of showing a misleading ✓.

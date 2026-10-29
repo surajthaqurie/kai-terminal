@@ -7,10 +7,12 @@ pub mod clipboard;
 pub mod diagnostics;
 pub mod error;
 pub mod git;
+pub mod integrations;
 pub mod intelligence;
 pub mod kai_cli;
 pub mod pty;
 pub mod shell;
+pub mod shutdown;
 pub mod updater;
 
 #[cfg(test)]
@@ -64,16 +66,34 @@ use shell::{
 #[cfg(feature = "tauri")]
 use tauri::{AppHandle, Emitter, Manager, State};
 
-/// Reaps every PTY child, closes the window and terminates the process.
+/// How long exit waits for terminal children to be reaped before leaving anyway.
+#[cfg(feature = "tauri")]
+const REAP_BUDGET: std::time::Duration = std::time::Duration::from_millis(1500);
+
+/// Ends the process without ever leaving a frozen window behind.
+///
+/// Every window is hidden first, so nothing is on screen while teardown runs.
+/// Reaping the PTY children can block (closing a Windows pseudo-console waits
+/// for its output to drain), and a visible window whose thread is stuck is what
+/// Windows paints as a blank "Not Responding" ghost. The reaping runs on its
+/// own thread for at most [`REAP_BUDGET`]; then the process exits regardless.
+#[cfg(feature = "tauri")]
+pub(crate) fn exit_now(app_handle: &AppHandle) -> ! {
+    for window in app_handle.webview_windows().values() {
+        let _ = window.hide();
+    }
+    let handle = app_handle.clone();
+    let _ = shutdown::finish_within(REAP_BUDGET, move || {
+        let state: State<'_, PtyManager> = handle.state();
+        state.close_all();
+    });
+    std::process::exit(0)
+}
+
+/// Reaps every PTY child and terminates the process (see [`exit_now`]).
 #[cfg(feature = "tauri")]
 pub(crate) fn shutdown_app(app_handle: &AppHandle) {
-    let state: State<'_, PtyManager> = app_handle.state();
-    state.close_all();
-    if let Some(window) = app_handle.get_webview_window("main") {
-        let _ = window.close();
-    }
-    app_handle.exit(0);
-    std::process::exit(0);
+    exit_now(app_handle)
 }
 
 #[cfg(feature = "tauri")]
@@ -158,6 +178,12 @@ fn setup_agent_mcp_cmd(
 #[tauri::command(async)]
 fn get_agent_setup_snippet_cmd(id: String, project_arg: String) -> Result<String, String> {
     ai_cli::agent_setup_snippet(&id, &project_arg)
+}
+
+#[cfg(feature = "tauri")]
+#[tauri::command(async)]
+fn run_integration_rpc_cmd(request_json: String) -> Result<String, String> {
+    integrations::run_integration_rpc(&request_json)
 }
 
 #[cfg(feature = "tauri")]
@@ -407,11 +433,8 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { .. } = event {
-                // Reap all active PTY child processes when window is closed
-                let state: State<'_, PtyManager> = window.state();
-                state.close_all();
-                window.app_handle().exit(0);
-                std::process::exit(0);
+                // Hide at once, reap PTY children within a time limit, then exit.
+                exit_now(window.app_handle());
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -423,6 +446,7 @@ pub fn run() {
             get_kai_cli_launch_cmd,
             setup_agent_mcp_cmd,
             get_agent_setup_snippet_cmd,
+            run_integration_rpc_cmd,
             get_git_info_cmd,
             run_git_action_cmd,
             get_git_changes_cmd,
@@ -464,10 +488,8 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|app_handle, event| {
             if let tauri::RunEvent::ExitRequested { .. } = event {
-                // Reap all active PTY child processes on application shutdown
-                let state: State<'_, PtyManager> = app_handle.state();
-                state.close_all();
-                std::process::exit(0);
+                // Same bounded shutdown as closing the window.
+                exit_now(app_handle);
             }
         });
 }

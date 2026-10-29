@@ -1,6 +1,6 @@
 # MCP
 
-Kai includes a local MCP server that runs automatically over stdio for connected AI coding tools. It lets a coding tool read your code map: project info, search, symbols, dependencies, context, task planning, graph sync, language servers, and refresh. Everything runs privately on your machine.
+Kai includes a local MCP server that runs automatically over stdio for connected AI coding tools. It lets a coding tool read your code map: project info, search, symbols, dependencies, context, task planning, graph sync, language servers, and refresh. The code-map tools run entirely on your machine; connecting an external service is opt-in per project (see External services).
 
 ## Commands
 
@@ -49,6 +49,31 @@ Option: `--dry-run` to preview changes without modifying files.
 | `kai_get_lsp_status` | Language server state |
 | `kai_plan_task` | Task plan with file priorities |
 | `kai_sync_graph` | Sync the map after writes |
+
+## External services
+
+By default the server only reads your code map, and nothing leaves your machine. If you connect an external service to a project, extra tools appear for that project only and make HTTPS requests to that service.
+
+```bash
+kai integration azure           # sign in, connect this folder, wire your agents, verify
+kai azure remove                # disconnect this folder
+```
+
+Only one integration is active per project. A project that is not connected sees exactly the tools listed above, no more.
+
+| Tool | Does |
+| :--- | :--- |
+| `kai_integration_status` | Which service and account this project uses, and which tools it offers |
+| `kai_work_item_search` | Search work items (`text`, `state`, `type`, `assignedTo` or read-only `wiql`), paged |
+| `kai_work_item_get` | One work item: description, acceptance criteria, relations, recent comments |
+| `kai_pr_list` | Pull requests (`status`, `repo`), paged |
+| `kai_pr_get` | One pull request: reviewers, changed files, review threads |
+| `kai_build_list` | Recent builds (`status`, `result`, `branch`), paged |
+| `kai_build_log` | A build's failed steps and log list; `logId` reads log text (last 150 lines, max 400) |
+
+These tools are read-only. Text from the service (work item bodies, comments, PR threads) is written by other people, so each response carries a notice marking it as untrusted data, and rich text is reduced to plain text. They follow the same response limits and paging as the code tools. A failure says what to run, for example `kai integration azure`, and a signed-out account is never replaced by another account.
+
+The tool list is read when an agent connects, so restart a running agent session after `kai integration azure` to see the new tools.
 
 ## Response limits
 

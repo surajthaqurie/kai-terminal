@@ -247,11 +247,6 @@ function App() {
     closeActiveTab: () => tabsState.closeTab(activeTabId),
     toggleSearch,
     clearTerminal: () => getActiveTerminal()?.clear(),
-    // Manual ghost-typing recovery: re-feeds the DECSET mode-reset to the
-    // active pane's emulator (output path, screen-safe). Covers TUIs run
-    // outside `kai` (plain `claude`, vim, pagers killed mid-run) that never
-    // print the auto-detected "[kai] Agent finished" marker.
-    resetTerminalModes: () => getActiveTerminal()?.resetModes(),
     openAiCli,
     openDiagnostics: () => setIsDiagnosticsOpen(true),
     openSettings,

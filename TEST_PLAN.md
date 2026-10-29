@@ -40,7 +40,7 @@ The real PTY integration suite covers 15 scenarios:
 
 ## 3. Project Intelligence & MCP Verification Matrix
 
-The intelligence test suite covers comprehensive automated scenarios within the full Vitest run of 80 test files (1128 passed, 7 skipped on 2026-10-28; the skips are tests gated on the environment, such as creating file symlinks on Windows without Developer Mode or having a `git` binary):
+The intelligence test suite covers comprehensive automated scenarios within the full Vitest run of 94 test files (1398 passed, 8 skipped, 1 failed on 2026-10-29 on a Windows machine without file-symlink privileges; the skips are tests gated on the environment, such as POSIX file modes or having a `git` binary, and the one failure is `desktopEntryLaunch.test.ts`, which creates a file symlink):
 
 | # | Test Area | Description | Automated Target | Status |
 | :--- | :--- | :--- | :--- | :--- |
@@ -76,6 +76,12 @@ The intelligence test suite covers comprehensive automated scenarios within the 
 | **30** | **Ranking & Anchoring** | Rarity-weighted symbol ranking; exact identifiers outrank split-word matches; anchored relevance floor | `retrievalRanking.test.ts`, `retrievalExpansion.test.ts` | **Passed** |
 | **31** | **Bounded Neighbour Expansion** | Callers and tests of the anchored symbol: caps, token budget, summary omission, secret screening, deleted files, determinism, explicit-budget opt-out | `retrievalExpansion.test.ts` | **Passed** |
 | **32** | **Symbol Extraction** | Text-based extractor fixtures: wrapped signatures, members, ranges, import forms | `symbolExtraction.test.ts` | **Passed** |
+| **33** | **Integration Parsing & Detection** | Azure DevOps remote forms (cloud, legacy, SSH, Server), trailing `.git`, embedded credentials never read, WIQL escaping, HTML to text, mappers | `integrationsParsing.test.ts` | **Passed** |
+| **34** | **Integration Core** | Accounts apart from the single per-folder binding, token never in `config.json`, project switching validated against Azure, removal everywhere, access checks, remote/account pairing rules | `integrationsCore.test.ts` | **Passed** |
+| **35** | **Integration Provider, HTTP & Secrets** | Azure REST calls against a fake server (WIQL, pull requests, builds, discovery), retry/size/auth handling, secret redaction, DPAPI / Keychain / Secret Service stores | `integrationsAzureProvider.test.ts`, `integrationsHttpSecrets.test.ts` | **Passed** |
+| **36** | **Integration MCP Tools** | Tool list is exactly the code tools when a folder is not connected; bounded, paged responses marked as untrusted data; no code-map indexing for these calls | `integrationsMcp.test.ts` | **Passed** |
+| **37** | **Integration CLI & Desktop Bridge** | `kai integration`, `kai azure`, `kai remove --name`, agent wiring in a sandboxed home; desktop service and Integrations tab; Rust JSON bridge | `integrationsCli.test.ts`, `integrationService.test.ts`, `integrationsPanel.test.tsx`, `src-tauri/src/integrations.rs` | **Passed** |
+| **38** | **Shortcuts, Palette & First Paint** | Reserved shortcut conflicts, palette contents, startup colors in step with the theme table, bounded shutdown | `shortcutsReserved.test.ts`, `startupPaint.test.ts`, `src-tauri/src/shutdown.rs` | **Passed** |
 
 ---
 
@@ -84,7 +90,7 @@ The intelligence test suite covers comprehensive automated scenarios within the 
 Run all verification checks locally prior to committing:
 
 ```bash
-# 1. Full TypeScript, Formatting & Intelligence Test Suite (Vitest - 80 test files, 1135 tests: 1128 pass, 7 environment-skipped)
+# 1. Full TypeScript, Formatting & Intelligence Test Suite (Vitest - 94 test files, 1407 tests: 1398 pass, 8 environment-skipped, 1 needs file-symlink privileges on Windows)
 npm run check
 
 # 1b. Same gate inside Docker (no host Node/Rust install needed)
@@ -108,9 +114,9 @@ cargo fmt --manifest-path src-tauri/Cargo.toml --check
 # 5. Rust Backend Linter Check
 cargo clippy --no-default-features --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 
-# 6. Rust Backend Unit Tests (163 tests)
+# 6. Rust Backend Unit Tests (177 tests)
 cargo test --no-default-features --manifest-path src-tauri/Cargo.toml --lib
 
-# 7. Real PTY Integration Tests (15 tests)
+# 7. Real PTY Integration Tests (19 tests)
 cargo test --no-default-features --manifest-path src-tauri/Cargo.toml --test pty_integration_tests
 ```

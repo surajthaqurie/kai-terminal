@@ -1,5 +1,17 @@
 import { FC, useCallback, useEffect, useState } from "react";
-import { X, Plus, RefreshCw, Wrench, CheckCircle, Copy, Check, BookOpen } from "lucide-react";
+import {
+  X,
+  Plus,
+  RefreshCw,
+  Wrench,
+  CheckCircle,
+  Copy,
+  Check,
+  BookOpen,
+  Bot,
+  Plug,
+} from "lucide-react";
+import { IntegrationsPanel } from "./IntegrationsPanel";
 import {
   getAiCliDetails,
   checkCustomAiCliPath,
@@ -23,6 +35,7 @@ interface AiCliPanelProps {
  * and kai MCP configuration with one-click Configure / Reconfigure.
  */
 export const AiCliPanel: FC<AiCliPanelProps> = ({ isOpen, onClose, projectDir }) => {
+  const [activeTab, setActiveTab] = useState<"providers" | "integrations">("providers");
   const [details, setDetails] = useState<AiCliDetails[]>([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [customPaths, setCustomPaths] = useState<Record<string, string>>({});
@@ -49,7 +62,10 @@ export const AiCliPanel: FC<AiCliPanelProps> = ({ isOpen, onClose, projectDir })
   }, []);
 
   useEffect(() => {
-    if (isOpen) refresh(false);
+    if (isOpen) {
+      setActiveTab("providers");
+      refresh(false);
+    }
   }, [isOpen, refresh]);
 
   if (!isOpen) return null;
@@ -159,12 +175,41 @@ export const AiCliPanel: FC<AiCliPanelProps> = ({ isOpen, onClose, projectDir })
             <X size={18} />
           </button>
         </div>
+        <div className="modal-tabs" role="tablist" aria-label="AI CLI sections">
+          <button
+            type="button"
+            id="ai-cli-tab-providers"
+            className={`modal-tab-btn ${activeTab === "providers" ? "active" : ""}`}
+            onClick={() => setActiveTab("providers")}
+            role="tab"
+            aria-selected={activeTab === "providers"}
+          >
+            <Bot size={16} />
+            <span>AI Providers</span>
+          </button>
+          <button
+            type="button"
+            id="ai-cli-tab-integrations"
+            className={`modal-tab-btn ${activeTab === "integrations" ? "active" : ""}`}
+            onClick={() => setActiveTab("integrations")}
+            role="tab"
+            aria-selected={activeTab === "integrations"}
+          >
+            <Plug size={16} />
+            <span>Integrations</span>
+          </button>
+        </div>
+        {activeTab === "integrations" && <IntegrationsPanel projectDir={projectDir} />}
+        {/* Kept mounted but hidden on the other tab so detection state survives a tab switch. */}
         <div
           className="modal-body"
+          hidden={activeTab !== "providers"}
+          role="tabpanel"
+          aria-labelledby="ai-cli-tab-providers"
           style={{
             maxHeight: "70vh",
             overflowY: "auto",
-            display: "flex",
+            display: activeTab === "providers" ? "flex" : "none",
             flexDirection: "column",
             gap: "12px",
           }}

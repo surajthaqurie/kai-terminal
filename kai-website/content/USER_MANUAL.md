@@ -26,7 +26,7 @@ kai health
 
 Output:
 ```text
-✔ Kai v0.2.0 is ready
+✔ Kai v0.2.1 is ready
 
 ✔ Fast and private · Free
 ```
@@ -99,6 +99,76 @@ Option: `--dry-run` previews first. Same pattern for every id: `kai agent remove
 ```bash
 kai list -a                     # list installed tools (also: kai list --agent, kai list)
 ```
+
+## Integrations
+
+Connect Kai's MCP server to an outside service so your AI tools can read it. Today that is Azure DevOps (work items, pull requests, builds). Signing in is per user and shared by every folder; each folder has exactly one active project.
+
+---
+
+### kai integration list
+
+- Show every integration and where it stands for the current folder: not set up, signed in but not used here, active here, or needing a new sign-in.
+
+```bash
+kai integration list            # add --json for scripts
+```
+
+---
+
+### kai integration azure
+
+- One command sets Azure DevOps up for the current folder. It is safe to run again: it checks what is already done and only asks about what is missing.
+- **Sign-in:** reuses a working sign-in, or signs in with the Azure CLI (offering to run `az login` for you) or an access token. Tokens go to the OS secret store (Windows DPAPI, macOS Keychain, Linux Secret Service), never to a file in a repository or an agent config.
+- **Project (auto-detected):** organization, project and repository come from the folder's git remotes: `dev.azure.com`, `*.visualstudio.com`, their SSH forms, and Azure DevOps Server `https://<host>/<collection>/<project>/_git/<repo>` addresses. It works from any sub-folder of the repository, ignores a trailing `.git`, and never reads a credential embedded in the remote. If the repository has several Azure remotes it asks which one (or uses `origin`'s and says so). With no Azure remote you pick from a list. Names are checked against what Azure really has and stored with their true spelling, and a remote's project is never paired with a different organization's account.
+- **Agents:** wires Kai's MCP server into every installed agent that is not wired yet (the same as `kai mcp all`, after asking once). Nothing else in an agent's config is touched.
+- **Check:** makes a small real call for work items, pull requests and builds, so a token that signs in but cannot read is caught now, with a hint about the missing scope.
+
+```bash
+kai integration azure                       # run inside the project folder (also: ado)
+kai integration azure --yes                 # no questions (scripts)
+kai integration azure --org contoso --pat-stdin   # token piped in, never an argument
+kai integration azure --project Payments --repo api   # when there is no Azure DevOps remote
+kai integration azure --no-agents           # do not touch any agent's config
+```
+
+Other options: `--az` (use the Azure CLI), `--server-url <url>` (Azure DevOps Server). Restart a running agent session afterwards so it re-reads its tools.
+
+---
+
+### kai azure list
+
+- Show each signed-in account with its projects. The folder's active project is marked `*` and shows its repositories.
+
+```bash
+kai azure list                  # --repos shows every project's repositories, --json for scripts
+```
+
+---
+
+### kai azure active
+
+- Switch this folder's active project. Switching changes only this folder.
+
+```bash
+kai azure active --name Payments            # add --repo <name|none>, --org <name>
+kai azure active                            # in a terminal: pick a project and repository from a list
+```
+
+---
+
+### kai azure remove
+
+- `kai azure remove` disconnects this folder. Your sign-in and every other folder stay as they are.
+- `kai azure remove --name <id>` (or `kai remove --name <id>`) removes an account everywhere: it signs it out, deletes its stored token and disconnects every folder that used it. `<id>` is the account id from `kai integration list` (for example `azure-devops:contoso`) or the organization name. No repository is ever touched.
+
+```bash
+kai azure remove                # this folder only
+kai remove --name contoso             # shows what it will remove (folders, token), then asks
+kai remove --name contoso --yes       # remove it without asking
+```
+
+In the desktop app, the same actions are in the **Integrations** tab of the AI CLI providers panel (toolbar robot icon).
 
 ## Project graph
 

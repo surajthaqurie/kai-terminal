@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "kai",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "identifier": "com.kai.terminal",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -19,7 +19,8 @@
         "minWidth": 400,
         "minHeight": 300,
         "resizable": true,
-        "decorations": true
+        "decorations": true,
+        "backgroundColor": "#070d18"
       }
     ],
     "security": {

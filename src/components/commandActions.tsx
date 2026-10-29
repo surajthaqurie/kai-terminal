@@ -13,10 +13,9 @@ import {
   Search,
   Settings,
   Trash2,
-  Wrench,
   XCircle,
 } from "lucide-react";
-import { platformLabel } from "../services/shortcuts";
+import { REVIEW_CHANGES_BINDING, platformLabel } from "../services/shortcuts";
 import type { KeybindingsConfig, SplitDirection } from "../types/terminal";
 import type { CommandAction } from "./CommandPalette";
 
@@ -39,7 +38,6 @@ export interface CommandActionContext {
   closeActiveTab: () => void;
   toggleSearch: () => void;
   clearTerminal: () => void;
-  resetTerminalModes: () => void;
   openAiCli: () => void;
   openDiagnostics: () => void;
   openSettings: () => void;
@@ -145,7 +143,7 @@ export function buildCommandActions(ctx: CommandActionContext): CommandAction[] 
       id: "review-changes",
       label: "Git: Review Changes & Diff",
       category: "Git",
-      shortcut: "Ctrl+Shift+G",
+      shortcut: key(REVIEW_CHANGES_BINDING),
       icon: <GitCompare size={16} />,
       perform: ctx.reviewChanges,
     },
@@ -178,13 +176,6 @@ export function buildCommandActions(ctx: CommandActionContext): CommandAction[] 
       category: "Terminal",
       icon: <Trash2 size={16} />,
       perform: ctx.clearTerminal,
-    },
-    {
-      id: "reset-terminal-modes",
-      label: "Fix Ghost Typing (Reset Terminal Input Modes)",
-      category: "Terminal",
-      icon: <Wrench size={16} />,
-      perform: ctx.resetTerminalModes,
     },
     {
       id: "ai-cli",

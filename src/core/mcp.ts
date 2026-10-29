@@ -36,6 +36,7 @@ import {
   type ToolContext,
   type ToolOutcome,
 } from "./mcpTools";
+import { integrationToolDefs, isIntegrationTool, runIntegrationTool } from "./integrations/tools";
 import packageJson from "../../package.json";
 
 export interface McpRequest {
@@ -410,7 +411,8 @@ async function dispatchMcpMessage(
         jsonrpc: "2.0",
         id: reqId,
         result: {
-          tools: MCP_TOOLS,
+          // Integration tools exist only for a project bound to one; otherwise this is MCP_TOOLS.
+          tools: [...MCP_TOOLS, ...integrationToolDefs(defaultProjectRoot)],
         },
       };
     }
@@ -457,7 +459,7 @@ async function dispatchMcpMessage(
       // auto-indexing run a full synchronous scan, which must not be
       // triggerable by a misspelled or malicious tool name.
       const KNOWN_TOOLS = new Set(MCP_TOOLS.map((t) => t.name));
-      if (!KNOWN_TOOLS.has(toolName)) {
+      if (!KNOWN_TOOLS.has(toolName) && !isIntegrationTool(toolName)) {
         return {
           jsonrpc: "2.0",
           id: reqId,
@@ -515,6 +517,28 @@ async function dispatchMcpMessage(
           id: reqId,
           error: { code: -32602, message: `Project path does not exist or is not a directory` },
         };
+      }
+
+      // External-service tools need neither the code map nor an index scan, so
+      // they run before project registration and auto-indexing.
+      if (isIntegrationTool(toolName)) {
+        const outcome = await runIntegrationTool(toolName, args, canonicalRoot);
+        if (outcome.kind === "error") {
+          return {
+            jsonrpc: "2.0",
+            id: reqId,
+            error: { code: outcome.code, message: clipForMessage(outcome.message, 400) },
+          };
+        }
+        const maxBytes = getMaxResponseBytes();
+        return (
+          outcome.kind === "json"
+            ? shapeToolResult(reqId, toolName, outcome.payload, {
+                maxBytes,
+                shrink: outcome.shrink,
+              })
+            : shapeTextResult(reqId, toolName, outcome.text, { maxBytes })
+        ).response;
       }
 
       const meta = registerProject(canonicalRoot);

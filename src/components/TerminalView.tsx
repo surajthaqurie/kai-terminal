@@ -107,13 +107,6 @@ export interface TerminalViewRef {
   focus: () => void;
   toggleSearch: () => void;
   /**
-   * Feed the DECSET mode-reset sequence to the emulator (output path).
-   * Recovery for "ghost typing": a dead TUI left mouse/focus/bracketed-
-   * paste reporting on, so every mouse move or window focus injects escape
-   * sequences the shell echoes as stray input. Screen-safe (modes only).
-   */
-  resetModes: () => void;
-  /**
    * Re-fit the xterm viewport to its container and push the real cols/rows
    * to the backend PTY. Called when the OS window is restored / refocused /
    * resized: a terminal that was laid out while hidden (or while the
@@ -364,13 +357,6 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       pasteText: (text: string) => pasteToPty(text),
       focus: () => {
         xtermRef.current?.focus();
-      },
-      resetModes: () => {
-        try {
-          xtermRef.current?.write(TERMINAL_MODE_RESET_SEQ);
-        } catch {
-          // Terminal disposed; nothing to reset.
-        }
       },
       toggleSearch: () => {
         setIsSearchVisible((prev) => !prev);

@@ -71,7 +71,7 @@ The following items are implemented and tested at the unit and mock level, but a
 
 ### 1. Local-Only Persistence
 - **Context:** Workspaces, tab layouts, settings, and project indexes are stored strictly in local browser storage (`localStorage`) and `~/.kai/projects/`.
-- **Boundary:** Kai Terminal includes no remote synchronization service, cloud storage, or telemetry export by design. Keystrokes, terminal history, scrollback logs, environment variables, and credentials are never stored to disk or transmitted over the network.
+- **Boundary:** Kai Terminal includes no remote synchronization service, cloud storage, or telemetry export by design. Keystrokes, terminal history, scrollback logs, and environment variables are never stored to disk or transmitted over the network. The one opt-in exception is an external-service sign-in (`kai integration azure`), described in limitation 8 below.
 
 ### 2. Local AI CLI Diagnostics (No Network Verification)
 - **Context:** The AI CLI diagnostics panel discovers installed AI tools via local executable detection (`PATH`), direct bounded `--version` probes, and local configuration file presence (`auth_status: config_present`).
@@ -100,6 +100,13 @@ The following items are implemented and tested at the unit and mock level, but a
 - **Context:** Code Mode is scoped to one terminal: `kai <agent>` announces start and end on its own output as a private `OSC 1337` sequence (`src/core/codeModeSignal.ts`) and the pane that receives it shows the Code Mode pill. No shared state is read by the footer.
 - **Verified:** The real CLI's signal arrives intact and in order through Windows 11 ConPTY (build 26300), through a Linux PTY, and through the real xterm.js parser (including a signal split across output chunks).
 - **Boundary:** Older Windows builds whose ConPTY may drop escape sequences it does not recognise, and macOS, have not been tested; there the pill would simply stay on "Terminal". Shells that do not receive `KAI_TERMINAL=1` (for example WSL without `WSLENV`) cannot run `kai <agent>` at all, so they never reach this path. A `kai` CLI older than the app does not send the signal.
+
+### 8. External Service Integrations (Azure DevOps)
+- **Context:** `kai integration azure` connects a project to Azure DevOps; its tools are read-only and listed only for connected projects (see `MCP.md`).
+- **Boundary:** Azure DevOps Services and Azure DevOps Server projects are detected from git remotes; a Server remote must be an HTTPS address of the form `https://<host>/<collection>/<project>/_git/<repo>`. SSH remotes of a Server install are not recognized (the HTTPS address behind them cannot be derived), so use `kai integration azure --server-url ... --project ...` there. Server support has not been run against a real server. There are no write tools yet. The tool list is read when an agent connects, so a running agent session must be restarted after `kai integration azure` or `kai azure remove`.
+- **Boundary:** Azure CLI sign-in needs `az` on the PATH of whatever starts it. A desktop app launched from a menu on macOS or Linux can have a shorter PATH than your shell; the Integrations tab then offers an access token instead. Access tokens go to the OS secret store; macOS `security` takes the token as an argument, briefly visible to the same user's `ps`.
+- **Boundary:** The macOS Keychain and Linux Secret Service paths are unit-tested with a fake runner, not run on those systems; Windows DPAPI is tested for real. Requests are built to the public Azure DevOps REST API and tested against a fake server, not yet against a live organization.
+- **Boundary:** The desktop tab runs the installed `kai` CLI. An older `kai` earlier on PATH does not know the command, and the tab says so.
 
 ---
 

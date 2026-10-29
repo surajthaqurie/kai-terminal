@@ -70,6 +70,12 @@ Outside Kai (any shell):
                           projects (-i), sessions (-s), config (-c)
   remove [-m|-a|-i|-s]    Delete Kai data: MCP/agent wiring (-m/-a <name>),
                           project index (-i <path|id>), project session (-s [path])
+  integration list        Every integration and its state
+  integration azure       Set up Azure DevOps for this folder: sign in, connect,
+                          wire your agents, verify
+  azure <list|active|remove>
+                          Azure DevOps: list projects, switch this folder's active
+                          project (--name), or disconnect it
   close                   Quit Kai Terminal
 
 Inside Kai Terminal — Run:
@@ -101,6 +107,11 @@ Examples:
   kai agent remove claude
   kai mcp claude
   kai mcp list
+  kai integration azure
+  kai azure list
+  kai azure active --name <project>
+  kai azure remove
+  kai remove --name <account-id>
   kai remove -m claude
   kai list -a
   kai list -m

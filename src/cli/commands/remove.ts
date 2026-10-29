@@ -10,6 +10,8 @@ import {
 import { clearActiveProjectState } from "../activeProject";
 import { removeAgentWiring } from "../agentWorkflow";
 import { listSessionCacheFiles, removeFiles } from "../sessionFiles";
+import { findProvider, PROVIDER_CATALOG } from "../../core/integrations/providerCatalog";
+import { runProviderRemove, runRemoveByName } from "./provider";
 
 interface RemoveOptions {
   dryRun: boolean;
@@ -191,16 +193,27 @@ function printRemoveUsage(): void {
   console.error(`  -i, --index <path|id>         Remove project index (repo is untouched)`);
   console.error(`  -m, --mcp, -a, --agent <name> Remove Kai MCP configuration from an agent`);
   console.error(`  -s, --session [target]        Remove session and cache files`);
+  for (const p of PROVIDER_CATALOG) {
+    const name = p.aliases[0] ?? p.id;
+    console.error(`  ${name.padEnd(30)}Disconnect ${p.label} from this folder`);
+  }
   console.error(`\nExamples:`);
   console.error(`  kai remove -i .`);
   console.error(`  kai remove -i /path/to/project`);
   console.error(`  kai remove -m claude`);
   console.error(`  kai remove -a claude`);
   console.error(`  kai remove -s`);
+  console.error(`  kai remove azure`);
+  console.error(`  kai remove --name <account-id>`);
 }
 
 /** `kai remove -i <path|id> | -a <name> | -s [target] [--dry-run]` */
 export async function runRemove(args: string[]): Promise<number> {
+  // `kai remove --name <id>`: an account id or organization, for any integration.
+  const nameAt = args.indexOf("--name");
+  if (nameAt !== -1) return runRemoveByName(args[nameAt + 1] ?? "", args.slice(1));
+  // `kai remove azure`: an integration name in the first position.
+  if (args[1] && findProvider(args[1])) return runProviderRemove(args[1], args.slice(2));
   const opts = parseRemoveArgs(args);
   if (opts.indexTarget !== null) return removeProjectIndex(opts.indexTarget, opts.dryRun);
   if (opts.agentTarget !== null) return removeAgent(opts.agentTarget, opts.dryRun);

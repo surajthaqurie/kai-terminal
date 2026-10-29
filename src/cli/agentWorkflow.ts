@@ -273,7 +273,7 @@ export async function executeAgentWorkflow(
  * written into agents' MCP configs. Falls back to the bare name when the
  * script was deleted or moved since launch.
  */
-function resolveKaiBin(): string {
+export function resolveKaiBin(): string {
   let kaiBin = process.argv[1] ? path.resolve(process.argv[1]) : "kai";
   try {
     const real = fs.realpathSync(kaiBin);

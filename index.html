@@ -7,6 +7,19 @@
     <meta name="referrer" content="no-referrer-when-downgrade" />
     <meta name="theme-color" content="#080e1a" />
     <title>Kai — One Terminal. Every Platform.</title>
+    <style>
+      /* Painted before any script or stylesheet loads, so the window never shows a
+         blank white frame while the app starts. The boot script below sets data-theme
+         from the saved settings; the colors match getThemeCanvasColor. */
+      html { background: #070d18; }
+      html[data-theme="catppuccin-mocha"] { background: #181825; }
+      html[data-theme="tokyo-night"] { background: #16161e; }
+      html[data-theme="nord"] { background: #242933; }
+      html[data-theme="one-dark"] { background: #1e2227; }
+      html[data-theme="dracula"] { background: #1e1f29; }
+      html[data-theme="solarized-dark"] { background: #00212b; }
+      html[data-theme="solarized-light"] { background: #eee8d5; }
+    </style>
     <script>
       (function () {
         try {

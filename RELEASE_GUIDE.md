@@ -67,8 +67,8 @@ Before releasing a new version tag:
 - [ ] **Run Backend Unit Tests:** Pass all Rust tests (`cargo test --no-default-features --manifest-path src-tauri/Cargo.toml --lib`).
 - [ ] **Run PTY Integration Tests:** Pass integration scenarios (`cargo test --no-default-features --manifest-path src-tauri/Cargo.toml --test pty_integration_tests`).
 - [ ] **Update Version:** Update version numbers in `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json`.
-- [ ] **Tag & Push:** Create git tag (`v0.2.0`) and push to trigger automated release publishing on GitHub:
+- [ ] **Tag & Push:** Create git tag (`v0.2.1`) and push to trigger automated release publishing on GitHub:
   ```bash
-  git tag v0.2.0
-  git push origin v0.2.0
+  git tag v0.2.1
+  git push origin v0.2.1
   ```

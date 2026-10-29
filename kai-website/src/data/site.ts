@@ -21,8 +21,8 @@ export const FEATURES: Feature[] = [
   { icon: Cpu, tone: 't-icon--neutral', tag: 'Rust · portable-pty', title: 'Native PTY', body: 'Real system terminals underneath — ConPTY on Windows, POSIX pty on macOS and Linux. No Electron in the path.' },
   { icon: Zap, tone: 't-icon--neutral', tag: 'xterm.js · WebGL', title: 'Smooth Rendering', body: 'GPU rendering with a canvas fallback, so big outputs like npm install stay readable instead of freezing.' },
   { icon: Layers, tone: 't-icon--neutral', tag: 'tabs & splits', title: 'Tabs & Split Panes', body: 'Split panes keep your running programs intact while you resize. Drag tabs to reorder them.' },
-  { icon: Bot, tone: 't-icon--neutral', tag: 'CLI', title: 'Works With AI Tools', body: 'Kai maps out your code (functions, imports, files) and shares it with the AI tool you already use.' },
-  { icon: ShieldCheck, tone: 't-icon--neutral', tag: 'local only', title: 'Private by Default', body: 'Everything stays on your machine. No accounts, no tracking, no cloud. Secret files like .env are skipped automatically.' },
+  { icon: Bot, tone: 't-icon--neutral', tag: 'CLI', title: 'Works With AI Tools', body: 'Kai maps out your code (functions, imports, files) and shares it with the AI tool you already use. One command connects Azure DevOps, so your tools can read work items, pull requests and builds too.' },
+  { icon: ShieldCheck, tone: 't-icon--neutral', tag: 'local first', title: 'Private by Default', body: 'Your code stays on your machine. No accounts, no tracking. Azure DevOps access is opt-in per folder, with tokens kept in your OS secret store. Secret files like .env are skipped automatically.' },
   { icon: Monitor, tone: 't-icon--neutral', tag: 'Tauri 2', title: 'Small & Open Source', body: '~30MB idle RAM with one tab. MIT licensed, with installers for macOS, Linux, and Windows built on GitHub Actions.' },
 ];
 

@@ -15,6 +15,7 @@ import {
   FixedActionId,
   ShortcutActionId,
   findConflicts,
+  findReservedConflicts,
   validateBinding,
   validateFixedBinding,
   isMacPlatform,
@@ -232,6 +233,11 @@ export const SettingsModal: FC<SettingsModalProps> = ({
 
   const conflicts = findConflicts(formData.keybindings, formData.fixedKeybindings);
   const conflictedActions = new Set<AnyShortcutId>(conflicts.flatMap((c) => c.actions));
+  // Combos the app handles itself would never reach a user binding.
+  const reservedConflicts = findReservedConflicts(formData.keybindings);
+  const reservedFor = new Map<AnyShortcutId, string>(
+    reservedConflicts.map((c) => [c.action, c.reservedFor])
+  );
 
   const isFixedAction = (action: AnyShortcutId): action is FixedActionId =>
     action in DEFAULT_FIXED_SHORTCUTS;
@@ -318,7 +324,8 @@ export const SettingsModal: FC<SettingsModalProps> = ({
     }
   };
 
-  const hasBindingErrors = Object.keys(bindingErrors).length > 0 || conflicts.length > 0;
+  const hasBindingErrors =
+    Object.keys(bindingErrors).length > 0 || conflicts.length > 0 || reservedConflicts.length > 0;
 
   const handleSave = () => {
     if (hasBindingErrors) return;
@@ -753,7 +760,7 @@ export const SettingsModal: FC<SettingsModalProps> = ({
                   <label>
                     Keyboard Shortcuts{" "}
                     <span className="muted-text">
-                      (Click field and press key combination, or type)
+                      (Click a field and press the key combination; Backspace clears it)
                     </span>
                   </label>
                   <button
@@ -785,7 +792,9 @@ export const SettingsModal: FC<SettingsModalProps> = ({
                                   isRecording ? "recording" : ""
                                 }`}
                                 value={isRecording ? "Press shortcut..." : bindingFor(action) || ""}
-                                onChange={(e) => handleBindingChange(action, e.target.value)}
+                                // A recorder, not a text box: typing here used to write
+                                // "Press shortcut...x" into the binding.
+                                readOnly
                                 onKeyDown={(e) => handleShortcutKeyDown(action, e)}
                                 onFocus={() => setRecordingAction(action)}
                                 onBlur={() => {
@@ -794,13 +803,17 @@ export const SettingsModal: FC<SettingsModalProps> = ({
                                 placeholder={placeholder}
                                 aria-label={`${BINDING_LABELS[action]} shortcut`}
                               />
-                              {(bindingErrors[action] || conflictedActions.has(action)) && (
+                              {(bindingErrors[action] ||
+                                conflictedActions.has(action) ||
+                                reservedFor.has(action)) && (
                                 <p className="error-text" role="alert">
                                   {bindingErrors[action] ??
-                                    `Conflicts with another action (${platformLabel(
-                                      bindingFor(action),
-                                      isMac
-                                    )}).`}
+                                    (reservedFor.has(action)
+                                      ? `${platformLabel(bindingFor(action), isMac)} is reserved for "${reservedFor.get(action)}".`
+                                      : `Conflicts with another action (${platformLabel(
+                                          bindingFor(action),
+                                          isMac
+                                        )}).`)}
                                 </p>
                               )}
                             </div>
@@ -811,7 +824,7 @@ export const SettingsModal: FC<SettingsModalProps> = ({
                   </div>
                 ))}
 
-                {conflicts.length > 0 && (
+                {(conflicts.length > 0 || reservedConflicts.length > 0) && (
                   <p className="error-text" role="alert" style={{ marginTop: "8px" }}>
                     Conflicting shortcuts must be resolved before saving.
                   </p>

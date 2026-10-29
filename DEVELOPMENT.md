@@ -79,6 +79,8 @@ kai-terminal/
 │   │   ├── contextAssembler.ts # Multi-stage context package builder
 │   │   ├── codeModeWorkflow.ts # Task planning, lifecycle & graph auto-sync
 │   │   ├── mcp.ts            # Stdio JSON-RPC Model Context Protocol server
+│   │   ├── integrations/     # External services (Azure DevOps): accounts, secret store, tools
+│   │   │   └── providers/azure-devops/  # Remote parsing, auth, REST calls, mappers
 │   │   ├── benchmarks.ts     # 4-configuration benchmark harness
 │   │   └── telemetry.ts      # Privacy-safe local metrics logging
 │   ├── components/           # UI Components (Desktop app)

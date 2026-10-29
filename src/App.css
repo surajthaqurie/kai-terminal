@@ -5039,3 +5039,112 @@ button.status-git-btn-clickable:focus-visible {
   box-shadow: 0 0 5px var(--accent-glow, rgba(99, 102, 241, 0.6));
   transition: width 0.3s ease;
 }
+
+/* =========================================================================
+   AI CLI Panel: Integrations tab
+   ========================================================================= */
+
+.integration-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  font-size: 12px;
+  align-items: center;
+}
+
+.ai-provider-badge.integration-badge-warn {
+  color: var(--color-warning);
+  border-color: var(--color-warning);
+  background-color: var(--color-warning-bg);
+}
+
+.integration-warn {
+  color: var(--color-warning);
+}
+
+.integration-ok {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-success);
+}
+
+.integration-accounts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.integration-accounts li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.integration-confirm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+
+.integration-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-default);
+}
+
+.integration-methods {
+  display: flex;
+  gap: 16px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  font-size: var(--text-sm);
+}
+
+.integration-methods legend {
+  padding: 0;
+  margin-bottom: 4px;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.integration-methods label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.integration-server summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.integration-error {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: var(--text-sm);
+}
+
+/* Integrations tab: "Switch project" picker (fetched on demand, never on tab open) */
+.integration-switch {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background-color: var(--bg-surface-sunken);
+}

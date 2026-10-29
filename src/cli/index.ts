@@ -14,7 +14,10 @@ import { runLsp, runMetrics } from "./commands/diagnostics";
 import { runGraph } from "./commands/graph";
 import { runList } from "./commands/list";
 import { runMcp } from "./commands/mcp";
+import { runIntegration } from "./commands/integration";
+import { runProvider } from "./commands/provider";
 import { runRemove } from "./commands/remove";
+import { findProvider, PROVIDER_CATALOG } from "../core/integrations/providerCatalog";
 import { runSessionClean, runSessionList } from "./commands/session";
 
 // Public surface consumed by tests and the doctor/launch tooling.
@@ -70,6 +73,10 @@ const EXTERNAL_COMMANDS = new Set([
   "list",
   "remove",
   "unregister",
+  // Integrations (`kai integration azure`, `kai azure …`): setup and sign-in work from any shell.
+  "integration",
+  "integrations",
+  ...PROVIDER_CATALOG.flatMap((p) => [p.id, ...p.aliases]),
   // Hidden compat for `kai list -c` (already external): keeps the CI smoke
   // probe `kai config list` working outside Kai Terminal.
   "config",
@@ -84,6 +91,10 @@ const EXTERNAL_COMMANDS = new Set([
 
 /** Removed commands (single redirect, kept for old muscle memory). */
 const REMOVED_HINTS = new Map<string, string>([
+  [
+    "init",
+    "'kai init' has been replaced by 'kai integration azure' (sign in, connect this folder, wire your agents).",
+  ],
   [
     "code",
     "'kai code' has been removed. Use 'kai graph init [path]' to index or 'kai <agent>' to run a tool.",
@@ -164,6 +175,10 @@ async function dispatch(command: string, args: string[]): Promise<number> {
     console.error(`To open or focus Kai Terminal for your project, run:\n  kai open [path]`);
     return 1;
   }
+
+  // Integrations: `kai integration …`, then `kai azure …` (provider ids and aliases come from the catalog).
+  if (command === "integration" || command === "integrations") return runIntegration(args);
+  if (findProvider(command)) return runProvider(args);
 
   // Internal command: AI agent execution (kai <agent> [path])
   if (resolveAgent(command)) {

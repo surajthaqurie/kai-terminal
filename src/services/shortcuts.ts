@@ -217,7 +217,6 @@ export function matchShortcut(
   e: KeyboardEvent,
   bindings: KeybindingsConfig
 ): ShortcutActionId | null {
-  (Object.keys(bindings) as ShortcutActionId[]).forEach(() => {});
   for (const action of Object.keys(bindings) as ShortcutActionId[]) {
     const binding = bindings[action];
     if (typeof binding === "string" && eventMatchesBinding(e, binding)) {
@@ -280,6 +279,45 @@ export function findConflicts(
         binding: actions.map((a) => labels.get(a)).join(" / "),
         actions,
       });
+    }
+  }
+  return out;
+}
+
+/** The review-changes shortcut; handled before user bindings, so it is not remappable. */
+export const REVIEW_CHANGES_BINDING = "Ctrl+Shift+G";
+
+/**
+ * Combos the app claims before it looks at user bindings (see useAppShortcuts).
+ * A user binding on one of these would never fire, so Settings rejects it.
+ * `ownedBy` names the one action that may use a combo (the new-tab accelerator
+ * is also the default New tab binding).
+ */
+export const RESERVED_SHORTCUTS: ReadonlyArray<{
+  binding: string;
+  label: string;
+  ownedBy?: ShortcutActionId;
+}> = [
+  { binding: REVIEW_CHANGES_BINDING, label: "Review git changes" },
+  { binding: "Ctrl+T", label: "New tab", ownedBy: "newTab" },
+  { binding: "Ctrl+Shift+T", label: "New tab", ownedBy: "newTab" },
+];
+
+/** Actions bound to a combo the app handles itself, with the label of what owns it. */
+export function findReservedConflicts(
+  bindings: KeybindingsConfig
+): Array<{ action: ShortcutActionId; binding: string; reservedFor: string }> {
+  const out: Array<{ action: ShortcutActionId; binding: string; reservedFor: string }> = [];
+  for (const reserved of RESERVED_SHORTCUTS) {
+    const parsedReserved = parseBinding(reserved.binding);
+    if (!parsedReserved) continue;
+    for (const action of Object.keys(bindings) as ShortcutActionId[]) {
+      if (action === reserved.ownedBy) continue;
+      const raw = bindings[action];
+      const parsed = typeof raw === "string" ? parseBinding(raw) : null;
+      if (parsed && comboKey(parsed) === comboKey(parsedReserved)) {
+        out.push({ action, binding: raw, reservedFor: reserved.label });
+      }
     }
   }
   return out;
@@ -530,7 +568,8 @@ export function matchTerminalAction(
 export const FIXED_SHORTCUT_HELP: ReadonlyArray<{ keys: string; label: string }> = [
   { keys: "Ctrl+Insert / Shift+Insert", label: "Copy / paste (alternate)" },
   { keys: "Shift+PageUp / PageDown", label: "Scroll one page" },
-  { keys: "Ctrl+Shift+G", label: "Review git changes" },
+  { keys: REVIEW_CHANGES_BINDING, label: "Review git changes" },
+  { keys: "Ctrl+T / Ctrl+Shift+T", label: "New tab (always available)" },
 ];
 
 /** Next zoomed font size, clamped to the same 8-36 range settings enforce. */

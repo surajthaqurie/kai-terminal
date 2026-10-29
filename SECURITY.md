@@ -28,6 +28,7 @@ This document describes process execution controls, IPC capabilities, permission
 
 - **User Privileges:** Kai runs with standard OS user permissions. It does not auto-elevate or run as Administrator/root. Admin privileges are only granted when the user explicitly runs `sudo` or elevation prompts within their shell.
 - **No Telemetry or Secret Persistence:** Keystrokes typed into shell sessions, environment variable values, and terminal outputs are never logged to disk or external servers.
+- **Integration Credentials:** Signing in to an external service (`kai integration azure`) is opt-in. With the Azure CLI, Kai stores no secret and asks `az` for a short-lived token per session. An access token is kept in the OS secret store (Windows DPAPI, macOS Keychain, Linux Secret Service) or, only if none is usable, in a `0600` file under `~/.kai/credentials`. It is never written to `config.json`, a repository, or an agent's MCP config, never passed as a command-line argument (it is piped on stdin, including from the desktop app), and redacted from error messages. `KAI_ADO_PAT` can supply a token for headless runs.
 - **Local Settings Storage:** User settings (`kai_user_settings`) and saved workspace tab structures (`kai_workspaces_v1`) store layout information, shell paths, and UI preferences in browser `localStorage`. Command history, scrollback logs, and credentials are never stored.
 
 ---
@@ -54,7 +55,10 @@ This document describes process execution controls, IPC capabilities, permission
   - Dual-copy crash consistency checks (`checkPersistenceConsistency`) detect schema, id, status, or timestamp skew between `meta.json` and `index.json`, triggering a safe rebuild rather than serving corrupted state.
   - Status transitions (`markProjectGraphStatus`) atomically synchronize both `meta.json` and embedded index copies.
 - **MCP Stdio Isolation & Stream Protection:**
-  - The MCP server operates exclusively over standard input/output (`stdio`) JSON-RPC. It does not open network sockets or unauthenticated network ports.
+  - The MCP server operates exclusively over standard input/output (`stdio`) JSON-RPC. It does not listen on network sockets or open network ports.
+  - The code-map tools make no network requests. If a project is connected to an external service (`kai integration azure`), that project's integration tools make outbound HTTPS requests to that service only, with bounded size and time, and expose no write operations. A project that is not connected lists none of them.
+  - Text returned by an external service is untrusted (other people write it): it is reduced to plain text, size-capped, and every response carries a notice saying so.
+  - A project's connection is a private file under `~/.kai/projects/<id>/`, never inside the repository, so cloning a repository cannot switch an integration on or aim it at an organization.
   - All tools are strictly read-only on project sources.
   - All tool arguments resolving file paths enforce strict workspace confinement using `fs.realpathSync`, rejecting unauthorized path traversal and out-of-boundary access.
   - Stream-level line size enforcement (`BoundedLineTransform`) discards requests exceeding 10 MB directly on the byte stream before Node buffers or `readline` can accumulate unbounded memory.
