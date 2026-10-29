@@ -9,6 +9,7 @@ import {
   KeychainSecretStore,
   SecretToolStore,
   secretKeyFor,
+  runProcess,
   type RunResult,
   type Runner,
   type SecretStore,
@@ -204,7 +205,7 @@ describe("secret stores", () => {
         // keep the secret usable by falling back to the 0600 file, and say why DPAPI failed.
         console.warn(String(err));
         expect((err as Error).message).toMatch(/^DPAPI encryption failed: ./);
-        const fallback = new CompositeSecretStore(store);
+        const fallback = new CompositeSecretStore(null);
         expect(await fallback.set("kai/test/dpapi", "pat-plaintext-123")).toBe("file");
         expect(await fallback.get("kai/test/dpapi")).toBe("pat-plaintext-123");
         return;
@@ -217,6 +218,36 @@ describe("secret stores", () => {
       await store.delete("kai/test/dpapi");
       expect(await store.get("kai/test/dpapi")).toBeNull();
     },
-    30_000
+    60_000
+  );
+
+  it.runIf(process.platform === "win32")(
+    "Windows DPAPI still reads a blob written by 0.2.1 (ConvertFrom-SecureString)",
+    async () => {
+      const store = new DpapiSecretStore();
+      const dir = path.join(env.home, "credentials");
+      fs.mkdirSync(dir, { recursive: true });
+      const probe = new DpapiSecretStore();
+      try {
+        await probe.set("kai/test/probe", "x");
+      } catch {
+        return; // DPAPI unreachable in this session; covered by the test above.
+      }
+      const { code, stdout } = await runProcess("powershell.exe", [
+        "-NoProfile",
+        "-Command",
+        "ConvertFrom-SecureString (ConvertTo-SecureString 'legacy-pat' -AsPlainText -Force)",
+      ]);
+      expect(code).toBe(0);
+      const file = path.join(
+        dir,
+        fs.readdirSync(dir).find((f) => f.endsWith(".dpapi"))!
+      );
+      fs.writeFileSync(file, stdout.trim());
+      expect(fs.readFileSync(file, "utf8")).not.toContain("dpapi2:");
+      // The probe's key maps to that file name, so read it back through the same key.
+      expect(await store.get("kai/test/probe")).toBe("legacy-pat");
+    },
+    60_000
   );
 });

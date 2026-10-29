@@ -112,17 +112,35 @@ export class FileSecretStore implements SecretStore {
   }
 }
 
+const DPAPI_V2 = "dpapi2:";
+
 function psEncode(script: string): string {
   return Buffer.from(script, "utf16le").toString("base64");
 }
 
-const DPAPI_SET = `$ErrorActionPreference='Stop'
-$b64 = [Console]::In.ReadToEnd().Trim()
-$plain = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($b64))
-$sec = ConvertTo-SecureString -String $plain -AsPlainText -Force
-[IO.File]::WriteAllText($env:KAI_SECRET_FILE, (ConvertFrom-SecureString -SecureString $sec))`;
+/**
+ * Straight .NET calls, no cmdlets: nothing to autoload, so a PowerShell 7 `PSModulePath` inherited
+ * from the parent shell (CI runners, many terminals) cannot break Windows PowerShell 5.1 here.
+ * The secret arrives in the child's environment, never in argv, and the child's output only ever
+ * carries the plaintext of a `get`.
+ */
+const DPAPI_PREAMBLE = `$ErrorActionPreference='Stop'
+[void][Reflection.Assembly]::LoadWithPartialName('System.Security')
+$scope = [Security.Cryptography.DataProtectionScope]::CurrentUser`;
 
-const DPAPI_GET = `$ErrorActionPreference='Stop'
+const DPAPI_SET = `${DPAPI_PREAMBLE}
+$plain = [Convert]::FromBase64String($env:KAI_SECRET_B64)
+$enc = [Security.Cryptography.ProtectedData]::Protect($plain, $null, $scope)
+[IO.File]::WriteAllText($env:KAI_SECRET_FILE, '${DPAPI_V2}' + [Convert]::ToBase64String($enc))`;
+
+const DPAPI_GET = `${DPAPI_PREAMBLE}
+$raw = [IO.File]::ReadAllText($env:KAI_SECRET_FILE).Trim()
+$enc = [Convert]::FromBase64String($raw.Substring('${DPAPI_V2}'.Length))
+$plain = [Security.Cryptography.ProtectedData]::Unprotect($enc, $null, $scope)
+[Console]::Out.Write([Convert]::ToBase64String($plain))`;
+
+/** Blobs written by 0.2.1 (`ConvertFrom-SecureString`, hex text). Still readable; rewritten on the next sign-in. */
+const DPAPI_GET_LEGACY = `$ErrorActionPreference='Stop'
 $enc = [IO.File]::ReadAllText($env:KAI_SECRET_FILE)
 $sec = ConvertTo-SecureString -String $enc
 $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec)
@@ -138,6 +156,9 @@ const POWERSHELL = (() => {
   return full && fs.existsSync(full) ? full : "powershell.exe";
 })();
 
+/** Windows PowerShell can take a few seconds to start cold; a hung one must not stall a sign-in. */
+const DPAPI_TIMEOUT_MS = 15_000;
+
 /** Windows: the blob on disk is DPAPI-encrypted for this user and cannot be read by others. */
 export class DpapiSecretStore implements SecretStore {
   private readonly blobs = new FileSecretStore("dpapi");
@@ -145,19 +166,6 @@ export class DpapiSecretStore implements SecretStore {
 
   private blobPath(key: string): string {
     return path.join(credentialsDir(), `${fileNameFor(key)}.dpapi`);
-  }
-
-  /**
-   * Windows PowerShell 5.1 started from PowerShell 7 (the default shell on CI runners and in many
-   * terminals) inherits a PSModulePath that lists PS7's modules first. 5.1 then loads the wrong
-   * `Microsoft.PowerShell.Security` and cannot find `ConvertTo-SecureString`. Dropping the variable
-   * lets 5.1 rebuild its own default.
-   */
-  private psEnv(key: string): NodeJS.ProcessEnv {
-    const env: NodeJS.ProcessEnv = { ...process.env, KAI_SECRET_FILE: this.blobPath(key) };
-    for (const name of Object.keys(env))
-      if (name.toLowerCase() === "psmodulepath") delete env[name];
-    return env;
   }
 
   private psArgs(script: string): string[] {
@@ -172,8 +180,13 @@ export class DpapiSecretStore implements SecretStore {
   }
 
   async get(key: string): Promise<string | null> {
-    if (!(await this.has(key))) return null;
-    const r = await this.run(POWERSHELL, this.psArgs(DPAPI_GET), { env: this.psEnv(key) });
+    const blob = await this.blobs.get(key);
+    if (blob === null) return null;
+    const script = blob.startsWith(DPAPI_V2) ? DPAPI_GET : DPAPI_GET_LEGACY;
+    const r = await this.run(POWERSHELL, this.psArgs(script), {
+      env: { ...process.env, KAI_SECRET_FILE: this.blobPath(key) },
+      timeoutMs: DPAPI_TIMEOUT_MS,
+    });
     if (r.code !== 0 || !r.stdout.trim()) return null;
     return Buffer.from(r.stdout.trim(), "base64").toString("utf8");
   }
@@ -185,11 +198,15 @@ export class DpapiSecretStore implements SecretStore {
   async set(key: string, value: string): Promise<SecretLocation> {
     fs.mkdirSync(credentialsDir(), { recursive: true, mode: 0o700 });
     const r = await this.run(POWERSHELL, this.psArgs(DPAPI_SET), {
-      input: Buffer.from(value, "utf8").toString("base64"),
-      env: this.psEnv(key),
+      env: {
+        ...process.env,
+        KAI_SECRET_FILE: this.blobPath(key),
+        KAI_SECRET_B64: Buffer.from(value, "utf8").toString("base64"),
+      },
+      timeoutMs: DPAPI_TIMEOUT_MS,
     });
     if (r.code !== 0) {
-      // Our own script text only: the secret travels on stdin and never appears in its output.
+      // PowerShell's own message about our script; it never echoes the secret.
       const why = r.spawnError ?? (r.stderr.trim().split(/\r?\n/)[0] || `exit ${r.code}`);
       throw new Error(`DPAPI encryption failed: ${why}`);
     }
