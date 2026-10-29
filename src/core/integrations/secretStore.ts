@@ -131,6 +131,13 @@ try {
   [Console]::Out.Write([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($plain)))
 } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }`;
 
+/** The inbox Windows PowerShell, by full path so a `powershell.exe` earlier on PATH cannot shadow it. */
+const POWERSHELL = (() => {
+  const root = process.env.SystemRoot ?? process.env.windir;
+  const full = root && path.join(root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+  return full && fs.existsSync(full) ? full : "powershell.exe";
+})();
+
 /** Windows: the blob on disk is DPAPI-encrypted for this user and cannot be read by others. */
 export class DpapiSecretStore implements SecretStore {
   private readonly blobs = new FileSecretStore("dpapi");
@@ -138,6 +145,19 @@ export class DpapiSecretStore implements SecretStore {
 
   private blobPath(key: string): string {
     return path.join(credentialsDir(), `${fileNameFor(key)}.dpapi`);
+  }
+
+  /**
+   * Windows PowerShell 5.1 started from PowerShell 7 (the default shell on CI runners and in many
+   * terminals) inherits a PSModulePath that lists PS7's modules first. 5.1 then loads the wrong
+   * `Microsoft.PowerShell.Security` and cannot find `ConvertTo-SecureString`. Dropping the variable
+   * lets 5.1 rebuild its own default.
+   */
+  private psEnv(key: string): NodeJS.ProcessEnv {
+    const env: NodeJS.ProcessEnv = { ...process.env, KAI_SECRET_FILE: this.blobPath(key) };
+    for (const name of Object.keys(env))
+      if (name.toLowerCase() === "psmodulepath") delete env[name];
+    return env;
   }
 
   private psArgs(script: string): string[] {
@@ -153,9 +173,7 @@ export class DpapiSecretStore implements SecretStore {
 
   async get(key: string): Promise<string | null> {
     if (!(await this.has(key))) return null;
-    const r = await this.run("powershell.exe", this.psArgs(DPAPI_GET), {
-      env: { ...process.env, KAI_SECRET_FILE: this.blobPath(key) },
-    });
+    const r = await this.run(POWERSHELL, this.psArgs(DPAPI_GET), { env: this.psEnv(key) });
     if (r.code !== 0 || !r.stdout.trim()) return null;
     return Buffer.from(r.stdout.trim(), "base64").toString("utf8");
   }
@@ -166,11 +184,15 @@ export class DpapiSecretStore implements SecretStore {
 
   async set(key: string, value: string): Promise<SecretLocation> {
     fs.mkdirSync(credentialsDir(), { recursive: true, mode: 0o700 });
-    const r = await this.run("powershell.exe", this.psArgs(DPAPI_SET), {
+    const r = await this.run(POWERSHELL, this.psArgs(DPAPI_SET), {
       input: Buffer.from(value, "utf8").toString("base64"),
-      env: { ...process.env, KAI_SECRET_FILE: this.blobPath(key) },
+      env: this.psEnv(key),
     });
-    if (r.code !== 0) throw new Error(r.spawnError ?? "DPAPI encryption failed");
+    if (r.code !== 0) {
+      // Our own script text only: the secret travels on stdin and never appears in its output.
+      const why = r.spawnError ?? (r.stderr.trim().split(/\r?\n/)[0] || `exit ${r.code}`);
+      throw new Error(`DPAPI encryption failed: ${why}`);
+    }
     return "os";
   }
 
