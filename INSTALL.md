@@ -8,7 +8,7 @@ This guide explains how to install pre-built packages of Kai Terminal or build t
 
 | Operating System | Minimum Version | Package Formats | Build Status |
 | :--- | :--- | :--- | :--- |
-| **Linux (x86_64)** | Ubuntu 22.04 LTS (glibc >= 2.35) | `.deb`, `.AppImage`, `.rpm` | Verified native build (`.deb`, `.AppImage`); `.rpm` is built but was left out of the v0.2.0 upload list, now fixed, so it first ships with the next tag |
+| **Linux (x86_64)** | Ubuntu 22.04 LTS (glibc >= 2.35) | `.deb`, `.AppImage`, `.rpm` | Verified native build (`.deb`, `.AppImage`); `.rpm` was left out of the v0.2.0 upload list and first ships in v0.2.1 |
 | **Linux (ARM64)** | Ubuntu 24.04 LTS | `.deb`, `.AppImage`, `.rpm` | Verified native build (`.deb`, `.AppImage`); `.rpm` as above |
 | **Windows** | Windows 10 (build 17763 / 1809+) or Windows 11 | `.exe` (NSIS), `.msi` | Verified native build |
 | **Windows (ARM64)** | Windows 11 ARM64 | `.exe` (NSIS) | Verified native build (`windows-11-arm` runner; shipped in v0.2.0) |
