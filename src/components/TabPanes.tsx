@@ -27,7 +27,8 @@ interface TabPanesProps {
   /** Terminal handles keyed by pane id (toolbar actions, refit). */
   terminalRefs: MutableRefObject<Record<string, TerminalViewRef | null>>;
   onFocusPane: (tabId: string, paneId: string) => void;
-  onCommandSubmitted: () => void;
+  /** Code Mode of one pane (project path) or `null` when it ends. */
+  onCodeModeChange: (paneId: string, project: string | null) => void;
   onCwdResolved: (tabId: string, paneId: string, cwd: string) => void;
   onExit: (tabId: string, paneId: string, exitCode?: number) => void;
   onStatusChange: (tabId: string, paneId: string, status: SessionStatus, message?: string) => void;
@@ -58,7 +59,7 @@ export const TabPanes = memo(function TabPanes({
   fallbackCwd,
   terminalRefs,
   onFocusPane,
-  onCommandSubmitted,
+  onCodeModeChange,
   onCwdResolved,
   onExit,
   onStatusChange,
@@ -138,7 +139,7 @@ export const TabPanes = memo(function TabPanes({
           visible={isActive}
           resetKey={pane.resetKey ?? 0}
           onFocus={focusPane}
-          onCommandSubmitted={onCommandSubmitted}
+          onCodeModeChange={(project) => onCodeModeChange(pane.id, project)}
           onCwdResolved={(resolved) => onCwdResolved(tab.id, pane.id, resolved)}
           onExit={(exitCode) => onExit(tab.id, pane.id, exitCode)}
           onSessionStatusChange={(status, message) =>

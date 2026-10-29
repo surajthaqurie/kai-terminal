@@ -20,15 +20,12 @@ export const registry = {
   modals: {} as Record<string, AnyProps | undefined>,
   /** Handlers registered through the mocked tauri `listen`. */
   listeners: {} as Record<string, (event: unknown) => void>,
-  /** What the mocked `getActiveProjectState` resolves to. */
-  activeProject: { mode: "terminal", path: null as string | null },
   reset() {
     this.panes.clear();
     this.renders.clear();
     this.refCalls.length = 0;
     this.modals = {};
     this.listeners = {};
-    this.activeProject = { mode: "terminal", path: null };
   },
 };
 

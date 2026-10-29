@@ -30,12 +30,18 @@ export interface ParsedBinding {
   key: string;
 }
 
-/** Parse "Ctrl+Shift+T" / "Cmd+Alt+V" / "Ctrl+," into parts. Returns null when invalid. */
+const F_KEY = /^F([1-9]|1[0-2])$/;
+
+/**
+ * Parse "Ctrl+Shift+T" / "Cmd+Alt+V" / "Ctrl+," / "F5" / "Shift+F5" into parts.
+ * Returns null when invalid. A binding needs Ctrl/Cmd or Alt, except a function
+ * key, which may stand alone (or with Shift): bare letters and other typing
+ * keys must stay with the terminal.
+ */
 export function parseBinding(binding: string): ParsedBinding | null {
   const trimmed = binding.trim();
   if (!trimmed) return null;
   const parts = trimmed.split("+").map((p) => p.trim());
-  if (parts.length < 2) return null;
   const last = parts[parts.length - 1];
   if (!last) return null;
   let ctrlOrCmd = false;
@@ -53,11 +59,11 @@ export function parseBinding(binding: string): ParsedBinding | null {
       return null;
     }
   }
-  if (!ctrlOrCmd && !alt) return null;
   const upper = last.toUpperCase();
+  if (!ctrlOrCmd && !alt && !F_KEY.test(upper)) return null;
   let code: string;
   let key = last;
-  if (/^F([1-9]|1[0-2])$/.test(upper)) {
+  if (F_KEY.test(upper)) {
     code = upper;
   } else if (/^[A-Z0-9]$/.test(upper)) {
     code = upper.match(/^[0-9]$/) ? `Digit${upper}` : `Key${upper}`;
@@ -134,8 +140,10 @@ export function eventToBindingString(
     return null;
   }
 
-  // Must include a modifier
-  if (!ctrlOrCmd && !alt) return null;
+  const fKey = (/^F([1-9]|1[0-2])$/i.exec(k) ?? F_KEY.exec(e.code))?.[0].toUpperCase();
+
+  // Must include Ctrl/Cmd or Alt — except a function key, which may stand alone.
+  if (!ctrlOrCmd && !alt && !fKey) return null;
 
   const parts: string[] = [];
   if (ctrlOrCmd) parts.push(isMac ? "Cmd" : "Ctrl");
@@ -144,10 +152,8 @@ export function eventToBindingString(
 
   if (k.length === 1 && /^[a-zA-Z0-9]$/.test(k)) {
     parts.push(k.toUpperCase());
-  } else if (/^F([1-9]|1[0-2])$/i.test(k) || /^F([1-9]|1[0-2])$/.test(e.code)) {
-    const f = (/^F([1-9]|1[0-2])$/i.exec(k) ?? /^F([1-9]|1[0-2])$/.exec(e.code))?.[0].toUpperCase();
-    if (!f) return null;
-    parts.push(f);
+  } else if (fKey) {
+    parts.push(fKey);
   } else if (k === "," || k === "." || k === "/" || k === "[" || k === "]") {
     parts.push(k);
   } else if (e.code.startsWith("Key")) {
@@ -284,7 +290,7 @@ export function validateBinding(value: string): string | null {
   if (!value.trim()) return "Binding must not be empty.";
   const parsed = parseBinding(value);
   if (!parsed) {
-    return "Use Ctrl/Cmd and/or Alt plus a letter, digit, F1–F12, arrow, Home, End, Insert, PageUp, PageDown, Tab, Enter, Esc, or , . / [ ] - = (e.g. Ctrl+Shift+T).";
+    return "Use F1–F12 on its own, or Ctrl/Cmd and/or Alt plus a letter, digit, F1–F12, arrow, Home, End, Insert, PageUp, PageDown, Tab, Enter, Esc, or , . / [ ] - = (e.g. Ctrl+Shift+T).";
   }
   return null;
 }

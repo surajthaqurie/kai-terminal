@@ -9,8 +9,12 @@ import {
 import type { TerminalPane, TerminalTab } from "../types/terminal";
 import { useLatest } from "./useLatest";
 
-/** Pause before the first `git` probe in a directory the user just entered. */
-const GIT_DWELL_MS = 800;
+/**
+ * Pause before the first `git` probe in a directory the user just entered.
+ * The path pill is already settled by the time this starts (CWD_SETTLE_MS),
+ * so this only needs to skip pass-through directories.
+ */
+const GIT_DWELL_MS = 300;
 /** Debounce for per-pane probes after tabs / directories change. */
 const GIT_FETCH_DEBOUNCE_MS = 600;
 
@@ -43,7 +47,6 @@ interface GitStatusOptions {
   cwd: string;
   /** Active pane's project dir (pane -> tab -> toolbar). */
   effectiveProjectDir: string;
-  syncCodeModeState: () => void;
 }
 
 /**
@@ -62,7 +65,6 @@ export function useGitStatus({
   activePaneId,
   cwd,
   effectiveProjectDir,
-  syncCodeModeState,
 }: GitStatusOptions) {
   const cwdRef = useLatest(cwd);
   const [gitInfoByDir, setGitInfoByDir] = useState<Record<string, GitInfo | null>>({});
@@ -188,7 +190,7 @@ export function useGitStatus({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [effectiveProjectDir, activePaneId, activeTabId]);
 
-  /** Footer refresh button: re-probe git for the active pane + re-sync Code Mode. */
+  /** Footer refresh button: re-probe git for the active pane. */
   const refreshGit = useCallback(() => {
     // Read live refs (not state closures) so the refresh always targets the
     // currently active pane, even right after tab/split switches.
@@ -196,7 +198,6 @@ export function useGitStatus({
     const tab = liveTabs.find((t) => t.id === activeTabIdRef.current) || liveTabs[0];
     const pane = tab?.panes.find((p) => p.id === tab.activePaneId) || tab?.panes[0];
     const dir = resolveEffectiveProjectDir(pane?.cwd, tab?.cwd, cwdRef.current);
-    syncCodeModeState();
     if (!dir || isRefreshingGit) return;
     setIsRefreshingGit(true);
     invalidateGitCache(dir);
@@ -208,7 +209,7 @@ export function useGitStatus({
         }
       )
       .finally(() => setIsRefreshingGit(false));
-  }, [syncCodeModeState, isRefreshingGit, applyGitInfo, tabsRef, activeTabIdRef, cwdRef]);
+  }, [isRefreshingGit, applyGitInfo, tabsRef, activeTabIdRef, cwdRef]);
 
   // The status bar prefers the active directory's own entry; the shared
   // footer state only covers directories not probed yet.

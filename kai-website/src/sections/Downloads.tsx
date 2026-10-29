@@ -10,6 +10,7 @@ import type { OsId } from '../lib/os';
 import { LATEST_RELEASE_URL, REPO_URL } from '../data/site';
 import type { SerializableRelease } from '../lib/release';
 import { assetUrl } from '../lib/release';
+import { useResolvedRelease } from '../hooks/useRepo';
 
 type PlatformInstaller = {
   name: string;
@@ -33,7 +34,8 @@ type PlatformGroup = {
   note: string;
 };
 
-export function Downloads({ rel, showHead = true }: { rel: SerializableRelease; showHead?: boolean }) {
+export function Downloads({ rel: serverRel, showHead = true }: { rel: SerializableRelease; showHead?: boolean }) {
+  const rel = useResolvedRelease(serverRel);
   // Show everything by default — the user picks, we don't guess.
   const [platformFilter, setPlatformFilter] = useState<'all' | OsId>('all');
 
@@ -94,9 +96,10 @@ export function Downloads({ rel, showHead = true }: { rel: SerializableRelease; 
           desc: 'For ARM computers like Raspberry Pi.',
         },
         {
-          name: `kai_${rel.short}_arm64.AppImage`,
-          url: assetUrl(rel, (n) => n.toLowerCase().includes('arm64') && n.toLowerCase().endsWith('.appimage'), `kai_${rel.short}_arm64.AppImage`),
-          size: rel.assets.find((a) => a.name.toLowerCase().includes('arm64') && a.name.toLowerCase().endsWith('.appimage'))?.size ?? 0,
+          // Published as `kai_<v>_aarch64.AppImage` (the .deb is `_arm64`).
+          name: `kai_${rel.short}_aarch64.AppImage`,
+          url: assetUrl(rel, (n) => n.toLowerCase().includes('aarch64') && n.toLowerCase().endsWith('.appimage'), `kai_${rel.short}_aarch64.AppImage`),
+          size: rel.assets.find((a) => a.name.toLowerCase().includes('aarch64') && a.name.toLowerCase().endsWith('.appimage'))?.size ?? 0,
           label: 'Portable App (ARM)',
           format: '.AppImage',
           arch: 'ARM64',

@@ -1,6 +1,21 @@
 import path from "path";
 import fs from "fs";
 import { ensureKaiDirectories, getKaiHomeDir } from "../core/registry";
+import { buildCodeModeSignal } from "../core/codeModeSignal";
+
+/**
+ * Tell the terminal this process runs in that its Code Mode started
+ * (`projectPath`) or ended (`null`). The desktop app scopes the footer pill to
+ * that one pane; anywhere else (plain shells, pipes, CI) nothing is written.
+ */
+export function announceCodeMode(projectPath: string | null): void {
+  if (process.env.KAI_TERMINAL !== "1" || !process.stdout.isTTY) return;
+  try {
+    process.stdout.write(buildCodeModeSignal(projectPath));
+  } catch {
+    // Best-effort: a closed stdout must never fail the agent run.
+  }
+}
 
 /**
  * Persist active project info and sync SQLite localStorage for WebKitGTK/Tauri

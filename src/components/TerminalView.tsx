@@ -18,6 +18,7 @@ import {
   isCopyKeyEvent,
   isPasteKeyEvent,
   matchBuiltinShortcut,
+  matchShortcut,
   matchTerminalAction,
 } from "../services/shortcuts";
 import { ShellProfile, SessionStatus, UserSettings } from "../types/terminal";
@@ -25,12 +26,12 @@ import { SettingsService, DEFAULT_SETTINGS } from "../services/settingsService";
 import { loadCommandHistory, recordCommand, saveCommandHistory } from "../services/autocomplete";
 import { TerminalOutputBuffer } from "../services/terminalOutputBuffer";
 import { readClipboardText } from "../services/clipboardService";
+import { CODE_MODE_OSC, parseCodeModeSignal } from "../core/codeModeSignal";
 import {
   CD_PROBE_DELAYS_MS,
   CWD_SETTLE_MS,
   createCwdSettler,
   lineLikelyChangesCwd,
-  lineLikelyChangesCodeMode,
   type CwdSettler,
 } from "../services/cwdCommand";
 import { TERMINAL_MODE_RESET_SEQ, scanAgentFinishedTail } from "../services/terminalModes";
@@ -144,15 +145,12 @@ interface TerminalViewProps {
   onCwdResolved?: (cwd: string) => void;
   onFocus?: () => void;
   /**
-   * Fires whenever the user submits a command line (Enter) in this pane,
-   * BEFORE the shell runs it. Used by the app shell to re-sync cheap
-   * external state that can change out from under the UI — e.g. `kai code
-   * .` / `kai stop code` run inside Kai's own tab write the state file but
-   * produce no window-focus event, so focus-only polling never notices.
-   * Handlers must stay cheap (no spawns): the cwd/git probes keep their
-   * own stricter gating below.
+   * Code Mode of THIS terminal only: the project path when an agent started
+   * by `kai <agent>` announces itself on this pane's output (see
+   * `core/codeModeSignal`), `null` when it ends, the shell restarts, or the
+   * pane closes. Other panes and tabs are never affected.
    */
-  onCommandSubmitted?: () => void;
+  onCodeModeChange?: (project: string | null) => void;
 }
 
 export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
@@ -168,7 +166,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       onExit,
       onCwdResolved,
       onFocus,
-      onCommandSubmitted,
+      onCodeModeChange,
     },
     ref
   ) => {
@@ -182,6 +180,8 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
     // Settings change applies to open panes without re-creating them.
     const fixedKeysRef = useRef(settings.fixedKeybindings);
     fixedKeysRef.current = settings.fixedKeybindings;
+    const keybindingsRef = useRef(settings.keybindings);
+    keybindingsRef.current = settings.keybindings;
     // Backend PTY session id returned by create_pty (UUID). This is distinct
     // from the frontend tab id (`sessionId`): all IPC read/write/resize/close
     // calls and output filtering MUST use the backend id, otherwise writes
@@ -266,8 +266,8 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       });
     }
     const settleCwd = (p: string) => cwdSettlerRef.current?.push(p);
-    const onCommandSubmittedRef = useRef(onCommandSubmitted);
-    onCommandSubmittedRef.current = onCommandSubmitted;
+    const onCodeModeChangeRef = useRef(onCodeModeChange);
+    onCodeModeChangeRef.current = onCodeModeChange;
     const onFocusRef = useRef(onFocus);
     onFocusRef.current = onFocus;
     const shellRef = useRef(selectedShell);
@@ -396,6 +396,8 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       }
       if (mySeq !== initSeqRef.current) return;
 
+      // A fresh shell cannot still be running the previous shell's agent.
+      onCodeModeChangeRef.current?.(null);
       term.clear();
       onStatusRef.current?.("connecting");
       // Fresh PTY, fresh input modes: the xterm instance is REUSED across
@@ -636,6 +638,10 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
           }
           return false;
         }
+        // User-bound app shortcuts (Settings > Shortcuts) belong to App's
+        // window handler. Without this xterm ALSO forwards the key to the
+        // shell: a bare F-key as its escape code, Alt+<key> as ESC+<key>.
+        if (keybindingsRef.current && matchShortcut(event, keybindingsRef.current)) return false;
         return true;
       });
 
@@ -671,6 +677,14 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
           }
           return false;
         });
+
+        // Per-terminal Code Mode: the `kai <agent>` CLI announces start/end
+        // on its own stdout, i.e. on THIS pane's output stream.
+        term.parser.registerOscHandler(CODE_MODE_OSC, (data) => {
+          const signal = parseCodeModeSignal(data);
+          if (signal) onCodeModeChangeRef.current?.(signal.active ? signal.path : null);
+          return signal !== null;
+        });
       } catch {
         // parser handler registration not supported in some mock environments
       }
@@ -687,7 +701,9 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       };
 
       const inputDisposable = term.onData((data) => {
-        lastKeyAtRef.current = Date.now();
+        // Enter submits the line (the cwd may now really change), so it must
+        // not hold the footer path back as "still typing".
+        if (!/[\r\n]/.test(data)) lastKeyAtRef.current = Date.now();
         const backendId = backendPtyIdRef.current;
         if (backendId) {
           // Ghost-typing filter: when a fullscreen TUI dies without
@@ -761,24 +777,6 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
             // idles afterwards. Cheap (one IPC each, cd-gated).
             for (const delay of CD_PROBE_DELAYS_MS) {
               setTimeout(checkLiveCwd, delay);
-            }
-          }
-          // Notify the app shell about EVERY submitted line (cheap: the
-          // handler only re-reads the active-project state file). This is
-          // what picks up `kai code .` / `kai stop code` typed into Kai's
-          // own tab — no focus change happens then, so focus polling alone
-          // would leave the Code Mode badge stale.
-          if (submitted) {
-            onCommandSubmittedRef.current?.();
-            // POST-execution re-sync for state-changing `kai` lines: the
-            // pre-Enter sync above runs BEFORE the CLI writes/removes the
-            // state file (after its indexing pass), so without these the
-            // badge stays stale until the next focus event or command.
-            if (lineLikelyChangesCodeMode(submitted)) {
-              const resync = () => onCommandSubmittedRef.current?.();
-              setTimeout(resync, 800);
-              setTimeout(resync, 2500);
-              setTimeout(resync, 6000);
             }
           }
         }
@@ -916,6 +914,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
           if (payload.id === backendPtyIdRef.current) {
             flushOutput();
             backendPtyIdRef.current = null;
+            onCodeModeChangeRef.current?.(null);
             const exitCode = payload.exit_code ?? 0;
             onStatusRef.current?.("disconnected");
             // Immediately close the pane or tab cleanly like a native terminal
@@ -1007,6 +1006,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
           });
         }
         cwdSettlerRef.current?.dispose();
+        onCodeModeChangeRef.current?.(null);
         term.dispose();
       };
       // sessionId scopes the tab lifetime; shell/cwd changes apply on next launch.

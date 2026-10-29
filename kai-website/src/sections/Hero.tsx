@@ -9,8 +9,13 @@ import { detectOs, OS_LABEL, type OsId } from '../lib/os';
 import { Link } from '../router';
 import type { SerializableRelease } from '../lib/release';
 import { assetUrl } from '../lib/release';
+import { useResolvedRelease } from '../hooks/useRepo';
 
-export function Hero({ tag, short, version, rel }: { tag: string; short: string; version: string; rel?: SerializableRelease }) {
+export function Hero({ tag: serverTag, short: serverShort, version, rel: serverRel }: { tag: string; short: string; version: string; rel?: SerializableRelease }) {
+  // Links must point at a release GitHub really serves, not the version
+  // committed in release.json (see useResolvedRelease).
+  const rel = useResolvedRelease(serverRel ?? { tag: serverTag, short: serverShort, assets: [] });
+  const { tag, short } = rel;
   // SSR-safe default ('linux') so server HTML and first client render agree;
   // the visitor's real OS is adopted after mount with no hydration mismatch.
   const [os, setOs] = useState<OsId>('linux');

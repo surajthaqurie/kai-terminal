@@ -128,7 +128,8 @@ function App() {
   /** Effective project dir: active pane -> tab -> global toolbar input. */
   const effectiveProjectDir = resolveEffectiveProjectDir(activePane?.cwd, activeTab?.cwd, cwd);
 
-  const { syncCodeModeState, modeDisplay, exitCodeMode } = useCodeMode({
+  const { setPaneCodeMode, modeDisplay, exitCodeMode } = useCodeMode({
+    activePaneId,
     onOpenProject: tabsState.openOrFocusDir,
   });
   const git = useGitStatus({
@@ -141,7 +142,6 @@ function App() {
     activePaneId,
     cwd,
     effectiveProjectDir,
-    syncCodeModeState,
   });
   const project = useProjectActions({
     effectiveProjectDir,
@@ -356,7 +356,7 @@ function App() {
             fallbackCwd={cwd}
             terminalRefs={terminalRefs}
             onFocusPane={tabsState.focusPane}
-            onCommandSubmitted={syncCodeModeState}
+            onCodeModeChange={setPaneCodeMode}
             onCwdResolved={handleCwdResolved}
             onExit={handleSessionExit}
             onStatusChange={tabsState.setPaneStatus}

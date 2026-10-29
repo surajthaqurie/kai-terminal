@@ -416,6 +416,10 @@ export const TabBar: FC<TabBarProps> = ({
                     onChange={(e) => setEditTitle(e.target.value)}
                     onBlur={() => finishEditing(tab.id)}
                     onKeyDown={(e) => {
+                      // The tab's own handler treats Space/arrows/Home/End as
+                      // tab navigation and preventDefault()s them, which would
+                      // block typing spaces and moving the caret in this field.
+                      e.stopPropagation();
                       if (e.key === "Enter") {
                         finishEditing(tab.id);
                       } else if (e.key === "Escape") {

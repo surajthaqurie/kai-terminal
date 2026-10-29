@@ -25,30 +25,44 @@ function save(key: string, value: unknown) {
   try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* ignore */ }
 }
 
+type LiveRelease = { tag: string; assets: ReleaseAsset[] };
+
+/* One request per page load, shared by every component that asks (Hero and
+   Downloads both mount on the home page; unauthenticated GitHub API calls are
+   rate-limited per IP). */
+let latestInflight: Promise<LiveRelease | null> | null = null;
+
+function fetchLatestRelease(): Promise<LiveRelease | null> {
+  latestInflight ??= fetch(`https://api.github.com/repos/${REPO}/releases/latest`)
+    .then((r) => (r.ok ? r.json() : null))
+    .then((j): LiveRelease | null => {
+      if (!j?.tag_name || !Array.isArray(j.assets) || j.assets.length === 0) return null;
+      const next = {
+        tag: j.tag_name as string,
+        assets: j.assets
+          .filter((a: { name?: unknown; browser_download_url?: unknown }) => typeof a.name === 'string' && typeof a.browser_download_url === 'string')
+          .map((a: { name: string; browser_download_url: string; size?: unknown }) => ({
+            name: a.name,
+            url: a.browser_download_url,
+            size: typeof a.size === 'number' ? a.size : 0,
+          })),
+      };
+      return next.assets.length > 0 ? next : null;
+    })
+    .catch(() => null);
+  return latestInflight;
+}
+
 /* Proactive: fallback render (matches SSR), then upgrade to cached live data,
    then to fresh GitHub data. Cache is read in an effect so the first client
    render always agrees with the server HTML — no hydration mismatch. */
 export function useLatestRelease(): LatestRelease {
-  const [data, setData] = useState<{ tag: string; assets: ReleaseAsset[] } | null>(null);
+  const [data, setData] = useState<LiveRelease | null>(null);
   useEffect(() => {
     setData(load('kai-release'));
-    fetch(`https://api.github.com/repos/${REPO}/releases/latest`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((j) => {
-        if (!j?.tag_name || !Array.isArray(j.assets) || j.assets.length === 0) return;
-        const next = {
-          tag: j.tag_name as string,
-          assets: j.assets
-            .filter((a: { name?: unknown; browser_download_url?: unknown }) => typeof a.name === 'string' && typeof a.browser_download_url === 'string')
-            .map((a: { name: string; browser_download_url: string; size?: unknown }) => ({
-              name: a.name,
-              url: a.browser_download_url,
-              size: typeof a.size === 'number' ? a.size : 0,
-            })),
-        };
-        if (next.assets.length > 0) { setData(next); save('kai-release', next); }
-      })
-      .catch(() => {});
+    void fetchLatestRelease().then((next) => {
+      if (next) { setData(next); save('kai-release', next); }
+    });
   }, []);
   const tag = data?.tag ?? FALLBACK_TAG;
   const short = tag.replace(/^v/, '');
@@ -58,6 +72,18 @@ export function useLatestRelease(): LatestRelease {
     asset: (match, fallbackFile) =>
       assets.find((a) => match(a.name))?.url ?? `${REPO_URL}/releases/download/${tag}/${fallbackFile.includes(short) ? fallbackFile : fallbackFile.replace(/\d+\.\d+\.\d+/, short)}`,
   };
+}
+
+/* The server-rendered release comes from release.json, which is bumped as soon
+   as the version is committed — before CI has published that tag's installers.
+   Links built from it 404 in that window, so the client swaps in the latest
+   release GitHub actually serves (tag, assets and sizes). Until the live data
+   arrives (or if the API is unreachable) the server release is kept as-is. */
+export function useResolvedRelease(server: { tag: string; short: string; assets: ReleaseAsset[] }) {
+  const live = useLatestRelease();
+  return live.assets.length > 0
+    ? { tag: live.tag, short: live.short, assets: live.assets }
+    : server;
 }
 
 export type PublishedRelease = { tag: string; name: string; date: string; url: string; notes: string };

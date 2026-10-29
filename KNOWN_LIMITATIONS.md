@@ -96,6 +96,13 @@ The following items are implemented and tested at the unit and mock level, but a
 
 ---
 
+### 7. Per-Terminal Code Mode Signal
+- **Context:** Code Mode is scoped to one terminal: `kai <agent>` announces start and end on its own output as a private `OSC 1337` sequence (`src/core/codeModeSignal.ts`) and the pane that receives it shows the Code Mode pill. No shared state is read by the footer.
+- **Verified:** The real CLI's signal arrives intact and in order through Windows 11 ConPTY (build 26300), through a Linux PTY, and through the real xterm.js parser (including a signal split across output chunks).
+- **Boundary:** Older Windows builds whose ConPTY may drop escape sequences it does not recognise, and macOS, have not been tested; there the pill would simply stay on "Terminal". Shells that do not receive `KAI_TERMINAL=1` (for example WSL without `WSLENV`) cannot run `kai <agent>` at all, so they never reach this path. A `kai` CLI older than the app does not send the signal.
+
+---
+
 ## Verification Requirements
 
 To verify the outstanding items:

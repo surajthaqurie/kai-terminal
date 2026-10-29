@@ -2,7 +2,7 @@ import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
 import { KAI_VERSION } from "./constants";
-import { clearActiveProjectState } from "./activeProject";
+import { announceCodeMode, clearActiveProjectState } from "./activeProject";
 import { executeAgentWorkflow, resolveAgent } from "./agentWorkflow";
 import { printDoctorReport } from "./doctor";
 import { printHelp } from "./help";
@@ -174,6 +174,7 @@ async function dispatch(command: string, args: string[]): Promise<number> {
     // kai stop — clear Code Mode, back to plain terminal mode.
     case "stop":
       clearActiveProjectState();
+      announceCodeMode(null);
       console.log(`[kai] Code Mode cleared — back to plain terminal mode.`);
       return 0;
     case "health":

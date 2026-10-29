@@ -90,7 +90,7 @@ describe("createCwdSettler (footer path only updates once cd settles)", () => {
     const s = createCwdSettler((p) => seen.push(p));
     s.push("/a");
     s.push("/a/b");
-    vi.advanceTimersByTime(500);
+    vi.advanceTimersByTime(CWD_SETTLE_MS / 2);
     s.push("/a/b/c");
     vi.advanceTimersByTime(CWD_SETTLE_MS);
     expect(seen).toEqual(["/a", "/a/b/c"]);
@@ -101,9 +101,9 @@ describe("createCwdSettler (footer path only updates once cd settles)", () => {
     const s = createCwdSettler((p) => seen.push(p));
     s.push("/a");
     s.push("/b");
-    vi.advanceTimersByTime(1000);
+    vi.advanceTimersByTime(CWD_SETTLE_MS - 100);
     s.push("/b/"); // same dir, different source/textual form
-    vi.advanceTimersByTime(CWD_SETTLE_MS - 1000);
+    vi.advanceTimersByTime(100);
     expect(seen).toEqual(["/a", "/b"]);
   });
 

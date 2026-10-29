@@ -2,6 +2,7 @@
 import { describe, it, expect } from "vitest";
 import {
   parseBinding,
+  eventToBindingString,
   eventMatchesBinding,
   findConflicts,
   validateBinding,
@@ -51,6 +52,37 @@ describe("shortcut registry", () => {
     expect(parseBinding("Ctrl+Up")).not.toBeNull();
     expect(eventMatchesBinding(keyEvent("KeyT", { altKey: true }), "Alt+T")).toBe(true);
     expect(validateBinding("Ctrl+F5")).toBeNull();
+  });
+
+  it("lets a function key stand alone (one-key shortcut) but never a typing key", () => {
+    expect(validateBinding("F5")).toBeNull();
+    expect(validateBinding("f12")).toBeNull();
+    expect(validateBinding("Shift+F5")).toBeNull();
+    expect(validateBinding("F13")).not.toBeNull();
+    expect(validateBinding("Shift+T")).not.toBeNull();
+    expect(validateBinding("Home")).not.toBeNull();
+    expect(eventMatchesBinding(keyEvent("F5"), "F5")).toBe(true);
+    expect(eventMatchesBinding(keyEvent("F5", { shiftKey: true }), "F5")).toBe(false);
+    expect(eventMatchesBinding(keyEvent("F5", { ctrlKey: true }), "F5")).toBe(false);
+    expect(eventMatchesBinding(keyEvent("F5", { shiftKey: true }), "Shift+F5")).toBe(true);
+  });
+
+  it("records a bare F-key and still ignores a bare letter", () => {
+    const rec = (key: string, code: string, extra: Partial<KeyboardEvent> = {}) =>
+      eventToBindingString({
+        key,
+        code,
+        ctrlKey: false,
+        metaKey: false,
+        altKey: false,
+        shiftKey: false,
+        ...extra,
+      });
+    expect(rec("F5", "F5")).toBe("F5");
+    expect(rec("F9", "F9", { shiftKey: true })).toBe("Shift+F9");
+    expect(rec("F5", "F5", { ctrlKey: true })).toBe("Ctrl+F5");
+    expect(rec("a", "KeyA")).toBeNull();
+    expect(rec("a", "KeyA", { shiftKey: true })).toBeNull();
   });
 
   it("detects conflicting bindings", () => {

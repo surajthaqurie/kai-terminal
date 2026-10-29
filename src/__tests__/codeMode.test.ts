@@ -2,26 +2,25 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "fs";
 import path from "path";
 import os from "os";
-import { lineLikelyChangesCodeMode } from "../services/cwdCommand";
 import {
   isCodeModeActiveForDir,
   resolveModeDisplay,
   codeProjectName,
 } from "../services/projectService";
 
-describe("resolveModeDisplay (footer pill: sticky on the persisted project)", () => {
-  it("is terminal without a persisted project", () => {
+describe("resolveModeDisplay (footer pill follows the active terminal's project)", () => {
+  it("is terminal without a project", () => {
     expect(resolveModeDisplay(null)).toBe("terminal");
   });
 
-  it("is code while a persisted project exists, whatever the pane reports", () => {
+  it("is code while the terminal has a project, whatever the pane reports", () => {
     expect(resolveModeDisplay("/repo/demo")).toBe("code");
     expect(resolveModeDisplay("C:\\Repo\\Demo")).toBe("code");
   });
 
   it("never flips on transient or outside directory reports", () => {
     // The pane moved elsewhere / cwd still resolving: the badge must NOT
-    // auto-flip — only `kai stop code` / `kai stop` clears it.
+    // auto-flip — only the agent ending / `kai stop` clears it.
     expect(resolveModeDisplay("/repo/demo")).toBe("code");
   });
 });
@@ -32,53 +31,6 @@ describe("codeProjectName", () => {
     expect(codeProjectName("C:\\work\\app")).toBe("app");
     expect(codeProjectName("C:/work/app/")).toBe("app");
     expect(codeProjectName(null)).toBe("");
-  });
-});
-
-describe("lineLikelyChangesCodeMode", () => {
-  it("returns false for empty input and non-kai commands", () => {
-    expect(lineLikelyChangesCodeMode("")).toBe(false);
-    expect(lineLikelyChangesCodeMode("ls -la")).toBe(false);
-    expect(lineLikelyChangesCodeMode("git status")).toBe(false);
-    expect(lineLikelyChangesCodeMode("cd /tmp")).toBe(false);
-    expect(lineLikelyChangesCodeMode("my-kai-tool")).toBe(false);
-    expect(lineLikelyChangesCodeMode("kaiman")).toBe(false);
-  });
-
-  it("returns false for read-only kai subcommands", () => {
-    expect(lineLikelyChangesCodeMode("kai")).toBe(false);
-    expect(lineLikelyChangesCodeMode("kai --version")).toBe(false);
-    expect(lineLikelyChangesCodeMode("kai health")).toBe(false);
-    expect(lineLikelyChangesCodeMode('kai query "explain this"')).toBe(false);
-    expect(lineLikelyChangesCodeMode("kai config list")).toBe(false);
-    expect(lineLikelyChangesCodeMode("kai list")).toBe(false);
-    expect(lineLikelyChangesCodeMode("kai list -a")).toBe(false);
-  });
-
-  it("detects state-changing kai subcommands", () => {
-    expect(lineLikelyChangesCodeMode("kai code .")).toBe(true);
-    expect(lineLikelyChangesCodeMode("kai code /repo/demo")).toBe(true);
-    expect(lineLikelyChangesCodeMode("kai stop")).toBe(true);
-    expect(lineLikelyChangesCodeMode("kai stop code")).toBe(true);
-    expect(lineLikelyChangesCodeMode("kai clear")).toBe(true);
-    expect(lineLikelyChangesCodeMode("KAI CODE .")).toBe(true);
-    expect(lineLikelyChangesCodeMode("  kai   code   .  ")).toBe(true);
-  });
-
-  it("detects direct-path invocation (kai <path> also enters Code Mode)", () => {
-    expect(lineLikelyChangesCodeMode("kai .")).toBe(true);
-    expect(lineLikelyChangesCodeMode("kai ~/proj")).toBe(true);
-    expect(lineLikelyChangesCodeMode("kai ./sub")).toBe(true);
-    expect(lineLikelyChangesCodeMode("kai ../up")).toBe(true);
-    expect(lineLikelyChangesCodeMode("kai /tmp/x")).toBe(true);
-    expect(lineLikelyChangesCodeMode("kai C:\\work\\app")).toBe(true);
-  });
-
-  it("detects kai state changes inside compound lines and wrappers", () => {
-    expect(lineLikelyChangesCodeMode("cd /repo && kai code .")).toBe(true);
-    expect(lineLikelyChangesCodeMode("ls; kai stop code")).toBe(true);
-    expect(lineLikelyChangesCodeMode("sudo kai code .")).toBe(true);
-    expect(lineLikelyChangesCodeMode("npx kai stop code")).toBe(true);
   });
 });
 

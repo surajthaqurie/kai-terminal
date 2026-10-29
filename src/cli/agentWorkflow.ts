@@ -21,7 +21,7 @@ import {
   resetTerminalModesAfterAgent,
 } from "../core/codeModeWorkflow";
 import { installCommitMsgHook } from "../core/githooks";
-import { clearActiveProjectState, saveActiveProjectState } from "./activeProject";
+import { announceCodeMode, clearActiveProjectState, saveActiveProjectState } from "./activeProject";
 import type { AgentDefinition } from "../core/agents";
 
 /**
@@ -105,6 +105,7 @@ export async function executeAgentWorkflow(
 
   // 1. Enter Code Mode & ensure commit-msg hook
   saveActiveProjectState(meta.canonicalPath, meta.name, meta.id, "code");
+  announceCodeMode(meta.canonicalPath);
   try {
     installCommitMsgHook(meta.canonicalPath);
   } catch {
@@ -162,6 +163,7 @@ export async function executeAgentWorkflow(
       console.error(`[kai] ${resolved.agentDef.installGuidance}`);
     }
     clearActiveProjectState(meta.canonicalPath);
+    announceCodeMode(null);
     return 1;
   }
 
@@ -262,6 +264,7 @@ export async function executeAgentWorkflow(
     // Code Mode lasts as long as the agent run: without this the footer
     // stayed on "Code Mode" forever after the first `kai code`.
     clearActiveProjectState(meta.canonicalPath);
+    announceCodeMode(null);
   }
 }
 

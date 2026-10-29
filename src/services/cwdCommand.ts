@@ -63,59 +63,6 @@ export function lineLikelyChangesCwd(line: string): boolean {
 export const CD_PROBE_DELAYS_MS: readonly number[] = [300, 2500, 5000];
 
 /**
- * Detects whether a submitted shell line likely changes Code Mode state.
- *
- * Gates the POST-execution Code Mode re-sync: `kai code .` / `kai stop code`
- * write/remove the state file DURING execution (after indexing), so the
- * pre-Enter sync reads stale state and — inside Kai's own tab — no window
- * focus change ever follows to correct it. Only `kai` lines invoking a
- * state-changing subcommand (`code`, `stop`, `clear`, or a bare/direct path
- * like `kai .`, which also enters Code Mode) schedule delayed re-syncs;
- * every other line relies on the cheap pre-Enter sync + focus polling.
- * False positives cost a few file-read IPCs; false negatives only delay the
- * badge until the next focus event or command.
- */
-const CODE_MODE_SUBCOMMANDS = new Set(["code", "stop", "clear"]);
-
-function kaiBasename(token: string): string {
-  const base = token.toLowerCase().split(/[/\\]/).pop() ?? "";
-  return base.replace(/\.(js|cmd|bat|exe|ps1)$/, "");
-}
-
-export function lineLikelyChangesCodeMode(line: string): boolean {
-  if (!line) return false;
-  const segments = line.split(/;|&&|\|\||\r|\n/);
-  for (const seg of segments) {
-    const parts = seg.trim().split(/\s+/).filter(Boolean);
-    if (parts.length === 0) continue;
-    let idx = 0;
-    // Tolerate common wrappers: `sudo kai code .`, `npx kai stop code`.
-    const first = parts[0].toLowerCase();
-    if ((first === "sudo" || first === "npx") && parts.length > 1) idx = 1;
-    if (kaiBasename(parts[idx] ?? "") !== "kai") continue;
-    const sub = (parts[idx + 1] ?? "").toLowerCase();
-    // Bare `kai` (prints help) and flag-only invocations such as
-    // `kai --version` change no state.
-    if (!sub || sub.startsWith("-")) continue;
-    if (CODE_MODE_SUBCOMMANDS.has(sub)) return true;
-    // Direct-path invocation (`kai .`, `kai ~/proj`, `kai C:\work`, `kai /x`)
-    // also registers + enters Code Mode (see runCli isDirectPath).
-    if (
-      sub === "." ||
-      sub === "~" ||
-      sub.startsWith("./") ||
-      sub.startsWith("../") ||
-      sub.startsWith("~/") ||
-      sub.startsWith("/") ||
-      /^[a-zA-Z]:/.test(sub)
-    ) {
-      return true;
-    }
-  }
-  return false;
-}
-
-/**
  * Quiet period before a CHANGED directory reaches the footer path pill.
  *
  * Cwd reports arrive from many sources (OSC 7 / 9;9 prompt hooks, backend
@@ -123,11 +70,13 @@ export function lineLikelyChangesCodeMode(line: string): boolean {
  * applied the instant they arrived, so the path pill flapped and the footer
  * re-rendered while the user was still typing `cd /a/b/c`. A change is now
  * held until no keystroke has happened for this long AND the same candidate
- * has stood still, so only the final, settled directory is shown. 1.5 s is
- * long enough to ride out typing pauses and fast `cd` hopping, short enough
- * that the footer still follows a finished `cd` promptly. Same on all OSes.
+ * has stood still, so only the final, settled directory is shown. The shell's
+ * directory only changes once a line is submitted, so Enter does not count as
+ * a keystroke here (see TerminalView) — otherwise a finished `cd` would wait
+ * out the window twice. 600 ms still rides out fast `cd` hopping and typing
+ * pauses, and the footer follows a finished `cd` promptly. Same on all OSes.
  */
-export const CWD_SETTLE_MS = 1500;
+export const CWD_SETTLE_MS = 600;
 
 function normalizeForSettle(p: string): string {
   return p

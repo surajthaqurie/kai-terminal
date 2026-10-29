@@ -52,10 +52,8 @@ vi.mock("../components/MusicPlayer/MusicPanel", async () => {
 
 vi.mock("../services/projectService", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../services/projectService")>();
-  const s = await import("./helpers/appStubs");
   return {
     ...actual,
-    getActiveProjectState: vi.fn(async () => ({ ...s.registry.activeProject })),
     getGitInfoCached: vi.fn(async () => ({
       branch: "main",
       dirty: true,
@@ -689,29 +687,54 @@ describe("App shell: working directory, git and Code Mode footer", () => {
     );
   });
 
+  const codeMode = (id: string, project: string | null) =>
+    act(async () => {
+      registry.panes.get(id)!.onCodeModeChange(project);
+    });
+  const pill = (label: "Code Mode active" | "Terminal mode") =>
+    container.querySelector(`[aria-label="${label}"]`);
+
   it("Code Mode footer is sticky: pane directory reports never flip the pill", async () => {
-    registry.activeProject = { mode: "code", path: "/work/proj" };
     await mount();
+    await codeMode(paneId(0), "/work/proj");
     await resolveCwd(paneId(0), "/work/proj/src");
-    expect(container.querySelector('[aria-label="Code Mode active"]')).not.toBeNull();
+    expect(pill("Code Mode active")).not.toBeNull();
     // The pane moving outside the project (or reporting a transient dir)
-    // must NOT auto-flip the pill — only clearing the project does that.
+    // must NOT auto-flip the pill — only the agent ending does that.
     await resolveCwd(paneId(0), "/elsewhere");
-    expect(container.querySelector('[aria-label="Code Mode active"]')).not.toBeNull();
-    expect(container.querySelector('[aria-label="Terminal mode"]')).toBeNull();
+    expect(pill("Code Mode active")).not.toBeNull();
+    expect(pill("Terminal mode")).toBeNull();
   });
 
-  it("clearing the active project drops to Terminal mode on the next focus sync", async () => {
-    registry.activeProject = { mode: "code", path: "/work/proj" };
+  it("Code Mode belongs to the terminal that started it, not to every tab", async () => {
     await mount();
     await resolveCwd(paneId(0), "/work/proj");
-    expect(container.querySelector('[aria-label="Code Mode active"]')).not.toBeNull();
-    registry.activeProject = { mode: "terminal", path: null };
-    await act(async () => {
-      window.dispatchEvent(new Event("focus"));
-    });
+    await newTabKey(); // tab 2 (pane 1) is active
+    await resolveCwd(paneId(1), "/work/other");
+    await codeMode(paneId(0), "/work/proj"); // the agent runs in tab 1's shell
+    expect(pill("Terminal mode")).not.toBeNull();
+    await press("Digit1", "1");
     await flush();
-    expect(container.querySelector('[aria-label="Terminal mode"]')).not.toBeNull();
+    expect(pill("Code Mode active")).not.toBeNull();
+    await press("Digit2", "2");
+    await flush();
+    expect(pill("Terminal mode")).not.toBeNull();
+    expect(pill("Code Mode active")).toBeNull();
+  });
+
+  it("the agent ending drops only its own terminal back to Terminal mode", async () => {
+    await mount();
+    await resolveCwd(paneId(0), "/work/one");
+    await newTabKey();
+    await resolveCwd(paneId(1), "/work/two");
+    await codeMode(paneId(0), "/work/one");
+    await codeMode(paneId(1), "/work/two");
+    expect(pill("Code Mode active")).not.toBeNull(); // pane 1 is active
+    await codeMode(paneId(1), null);
+    expect(pill("Terminal mode")).not.toBeNull();
+    await press("Digit1", "1");
+    await flush();
+    expect(pill("Code Mode active")).not.toBeNull(); // pane 0 is untouched
   });
 
   it("a second launch (`kai-open-project`) opens a tab for a new path and focuses an existing one", async () => {
