@@ -472,6 +472,17 @@
   --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23908caa' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
 }
 
+/* Header, tab strip and footer wear the theme's own surface colour (the same
+   colour the terminal paints), so the whole window reads as one themed piece
+   instead of near-black bars around a tinted terminal. Declared after every
+   theme block so it wins on `.app-layout`, which carries `data-theme`. */
+.app-layout {
+  --bg-tab-bar: var(--bg-surface);
+  --bg-statusbar: var(--bg-surface);
+  --bg-tab-inactive: var(--bg-surface-sunken);
+  --bg-tab-hover: var(--bg-surface-elevated);
+}
+
 /* =========================================================================
    Base & Resets
    ========================================================================= */
@@ -541,7 +552,7 @@ html,
 }
 
 .app-header {
-  background-color: var(--bg-header);
+  background-color: var(--bg-surface);
   border-bottom: 1px solid var(--border-subtle);
   display: flex;
   flex-direction: column;
@@ -1152,6 +1163,26 @@ body.tab-dragging * {
 }
 
 /* For triggers at the bottom of the window (footer shell picker). */
+/* Settings > Font list: full-width, scrolls, items preview their own face. */
+.font-select {
+  display: block;
+  width: 100%;
+}
+
+.font-select-trigger {
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.font-select-menu {
+  width: 100%;
+  max-width: none;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
 .popup-menu-up {
   top: auto;
   bottom: calc(100% + 6px);
@@ -1397,6 +1428,14 @@ select option,
   background-color: var(--bg-surface);
   color: var(--text-primary);
   padding: 8px 10px;
+}
+
+select optgroup,
+.select-input optgroup {
+  background-color: var(--bg-surface);
+  color: var(--text-tertiary);
+  font-style: normal;
+  font-weight: 600;
 }
 
 select option:checked,

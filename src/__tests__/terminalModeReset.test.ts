@@ -3,6 +3,7 @@ import {
   AGENT_EXIT_CLEANUP_SEQ,
   AGENT_FINISHED_MARKER,
   TERMINAL_MODE_RESET_SEQ,
+  outputClearsScreen,
   scanAgentFinishedTail,
   shouldAutoResetModes,
   stripStaleTerminalReplies,
@@ -198,5 +199,21 @@ describe("stripStaleTerminalReplies (leftover query replies after agent exit)", 
 
   it("removes only the reply when mixed with typed text", () => {
     expect(stripStaleTerminalReplies("x[?1;2cy")).toBe("xy");
+  });
+});
+
+describe("outputClearsScreen (repaint after `clear`)", () => {
+  it("detects the erase-display sequences clear / cls / Clear-Host emit", () => {
+    expect(outputClearsScreen("\x1b[2J\x1b[H")).toBe(true);
+    expect(outputClearsScreen("\x1b[H\x1b[2J\x1b[3J")).toBe(true);
+    expect(outputClearsScreen("\x1b[3J")).toBe(true);
+    expect(outputClearsScreen("\x1bc")).toBe(true);
+  });
+
+  it("ignores ordinary output, line erases and partial-screen erases", () => {
+    expect(outputClearsScreen("PS C:\\Users> ")).toBe(false);
+    expect(outputClearsScreen("\x1b[0m\x1b[K")).toBe(false);
+    expect(outputClearsScreen("\x1b[J")).toBe(false);
+    expect(outputClearsScreen("\x1b[1J")).toBe(false);
   });
 });

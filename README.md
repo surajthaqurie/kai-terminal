@@ -189,7 +189,7 @@ One header row holds everything you use all the time:
 
 The status bar at the bottom only reports: mode, git branch (click to review changes), the working directory (click to copy), the music mini-player while one plays, and an update chip when there is one. The version number and a manual update check are in **Settings → Updates**.
 
-Kai ships its own fonts, Inter for the interface and JetBrains Mono for the terminal, so it looks the same on every OS. Pick another terminal font in **Settings → Terminal**; a font you chose is never replaced.
+Kai ships its own fonts, Inter for the interface and JetBrains Mono for the terminal, so it looks the same on every OS. Pick another terminal font in **Settings → Font & Display**: the list shows the bundled font, the clean monospace fonts installed on your PC and a custom field. A font you chose is never replaced.
 
 ### Keyboard shortcuts
 

@@ -1,4 +1,5 @@
 import {
+  CSSProperties,
   FC,
   KeyboardEvent as ReactKeyboardEvent,
   ReactNode,
@@ -19,6 +20,8 @@ export type MenuEntry =
       /** Right-aligned hint, usually a keyboard shortcut. */
       hint?: string;
       icon?: ReactNode;
+      /** Inline style for the label only (e.g. preview a font in its own face). */
+      labelStyle?: CSSProperties;
       /** Renders a check mark; use for the current choice in a single-select list. */
       checked?: boolean;
       tone?: "warn" | "danger";
@@ -51,6 +54,8 @@ interface PopupMenuProps {
   /** Called each time the menu opens (e.g. to refresh a lazily loaded list). */
   onOpen?: () => void;
   className?: string;
+  /** Extra class on the open menu itself (width / scrolling overrides). */
+  menuClassName?: string;
 }
 
 /**
@@ -67,6 +72,7 @@ export const PopupMenu: FC<PopupMenuProps> = ({
   side = "down",
   onOpen,
   className,
+  menuClassName,
 }) => {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -146,7 +152,9 @@ export const PopupMenu: FC<PopupMenuProps> = ({
         <div
           ref={menuRef}
           id={menuId}
-          className={`popup-menu popup-menu-${align}${side === "up" ? " popup-menu-up" : ""}`}
+          className={`popup-menu popup-menu-${align}${side === "up" ? " popup-menu-up" : ""}${
+            menuClassName ? ` ${menuClassName}` : ""
+          }`}
           role="menu"
           aria-label={label}
           onKeyDown={onMenuKeyDown}
@@ -187,7 +195,9 @@ export const PopupMenu: FC<PopupMenuProps> = ({
                   </span>
                 )}
                 <span className="popup-menu-text">
-                  <span className="popup-menu-label">{entry.label}</span>
+                  <span className="popup-menu-label" style={entry.labelStyle}>
+                    {entry.label}
+                  </span>
                   {entry.detail && <span className="popup-menu-detail">{entry.detail}</span>}
                 </span>
                 {entry.hint && <span className="popup-menu-hint">{entry.hint}</span>}

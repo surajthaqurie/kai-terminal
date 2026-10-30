@@ -37,6 +37,22 @@ export const TERMINAL_MODE_RESET_SEQ =
  */
 export const AGENT_EXIT_CLEANUP_SEQ = "\x1b[<u\x1b[>4;0m\x1b[?25h\x1b[?7h\x1b[?1l\x1b[0m\r\x1b[J";
 
+// Erase-display (ED 2 / ED 3, what `clear` / `cls` / Clear-Host emit) and full
+// reset (RIS).
+// eslint-disable-next-line no-control-regex
+const CLEAR_SCREEN_RE = /\x1b\[[23]J|\x1bc/;
+
+/**
+ * Whether a PTY output chunk wipes the screen. The pane forces a full repaint
+ * once such a chunk is parsed: the fresh prompt that follows `clear` is drawn
+ * onto a just-erased grid, and a renderer that skips the repaint (WebGL
+ * texture atlas, see-through background) left the prompt line missing until
+ * the next keystroke. Pure helper (exported for tests).
+ */
+export function outputClearsScreen(chunk: string): boolean {
+  return chunk.includes("\x1b") && CLEAR_SCREEN_RE.test(chunk);
+}
+
 /** Printed by `kai` Code Mode runs once the agent child settles. */
 export const AGENT_FINISHED_MARKER = "[kai] Agent finished";
 

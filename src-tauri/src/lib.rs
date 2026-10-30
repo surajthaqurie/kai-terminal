@@ -6,6 +6,7 @@ pub mod cli_guard;
 pub mod clipboard;
 pub mod diagnostics;
 pub mod error;
+pub mod fonts;
 pub mod git;
 pub mod integrations;
 pub mod intelligence;
@@ -268,6 +269,12 @@ fn read_clipboard_text_cmd() -> Result<String, error::TerminalError> {
 
 #[cfg(feature = "tauri")]
 #[tauri::command(async)]
+fn list_system_fonts_cmd() -> Vec<String> {
+    fonts::list_system_fonts()
+}
+
+#[cfg(feature = "tauri")]
+#[tauri::command(async)]
 fn is_call_active_cmd() -> bool {
     call_watch::is_call_active()
 }
@@ -458,6 +465,7 @@ pub fn run() {
             detect_installed_editors_cmd,
             is_call_active_cmd,
             read_clipboard_text_cmd,
+            list_system_fonts_cmd,
             open_external_url_cmd,
             search_youtube_video_cmd,
             search_youtube_videos_cmd,

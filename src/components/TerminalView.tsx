@@ -35,7 +35,11 @@ import {
   lineLikelyChangesCwd,
   type CwdSettler,
 } from "../services/cwdCommand";
-import { TERMINAL_MODE_RESET_SEQ, scanAgentFinishedTail } from "../services/terminalModes";
+import {
+  TERMINAL_MODE_RESET_SEQ,
+  outputClearsScreen,
+  scanAgentFinishedTail,
+} from "../services/terminalModes";
 import {
   STALE_REPLY_WINDOW_MS,
   preparePasteText,
@@ -831,9 +835,25 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         }
         if (!pendingOutput.isEmpty) {
           const chunk = pendingOutput.flush();
+          // `clear` / `cls` / Clear-Host: repaint every row and snap to the
+          // bottom once the last piece is parsed, so the prompt drawn right
+          // after the erase is never left unpainted.
+          const clearsScreen = outputClearsScreen(chunk);
+          const repaintAfterClear = () => {
+            try {
+              term.refresh(0, Math.max(0, term.rows - 1));
+              term.scrollToBottom();
+            } catch {
+              // Terminal disposed.
+            }
+          };
           try {
             for (let off = 0; off < chunk.length; off += MAX_TERM_WRITE_CHARS) {
-              term.write(chunk.slice(off, off + MAX_TERM_WRITE_CHARS));
+              const isLast = off + MAX_TERM_WRITE_CHARS >= chunk.length;
+              term.write(
+                chunk.slice(off, off + MAX_TERM_WRITE_CHARS),
+                clearsScreen && isLast ? repaintAfterClear : undefined
+              );
             }
           } catch {
             // Terminal disposed; drop remaining output.

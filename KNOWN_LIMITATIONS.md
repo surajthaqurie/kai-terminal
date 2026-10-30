@@ -47,6 +47,11 @@ The following items are implemented and tested at the unit and mock level, but a
 - **Behavior:** Music Time pauses when audio input is active and a known native conferencing application is running. Browser-based calls (e.g., Google Meet) cannot be reliably distinguished from other browser microphone usage on macOS.
 - **Status:** Operating system privacy boundary.
 
+### 6. Installed Font List on macOS
+- **Cause:** macOS has no cheap way to list font families, so Kai builds the Settings font list from font file names.
+- **Behavior:** A few names, such as SF Mono, may not match a real family and are left out of the list. **Custom Font Name / Stack...** accepts any installed font by name. Windows and Linux read real family names.
+- **Status:** Not verified on a Mac; compiled for macOS only.
+
 ---
 
 ## Terminal and Process Limitations

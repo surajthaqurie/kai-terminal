@@ -39,6 +39,12 @@ import {
 import { APP_VERSION_FALLBACK } from "../services/updateService";
 import type { UpdateCheckResult, UpdateDownloadState } from "../services/updateService";
 import { UpdateProgressBar, describeUpdateStep } from "./UpdateProgressBar";
+import { PopupMenu, type MenuEntry } from "./PopupMenu";
+import {
+  installedFontStack,
+  listInstalledMonospaceFonts,
+  primaryFamily,
+} from "../services/systemFonts";
 
 const BINDING_LABELS: Record<AnyShortcutId, string> = {
   ...SHORTCUT_ACTION_LABELS,
@@ -86,10 +92,6 @@ export const FONT_PRESETS = [
     value: '"JetBrains Mono", monospace',
   },
   {
-    label: "Fira Code",
-    value: '"Fira Code", monospace',
-  },
-  {
     label: "Cascadia Code",
     value: '"Cascadia Code", "Cascadia Mono", monospace',
   },
@@ -101,11 +103,11 @@ export const FONT_PRESETS = [
     label: "Inconsolata",
     value: "Inconsolata, monospace",
   },
-  {
-    label: "Courier New",
-    value: '"Courier New", Courier, monospace',
-  },
 ];
+
+/** Positions in FONT_PRESETS of the bundled default and the OS-default stack. */
+const BUNDLED_FONT_INDEX = 0;
+const SYSTEM_FONT_INDEX = 2;
 
 export const THEME_OPTIONS: Array<{
   id: ThemeName;
@@ -176,6 +178,8 @@ export const SettingsModal: FC<SettingsModalProps> = ({
   const [formData, setFormData] = useState<UserSettings>(settings);
   const [activeTab, setActiveTab] = useState<SettingsTab>("appearance");
   const [selectedFontPreset, setSelectedFontPreset] = useState<string>("custom");
+  // Monospace families installed on this PC (desktop app); loaded once.
+  const [installedFonts, setInstalledFonts] = useState<string[]>([]);
   const [selectedEditorPreset, setSelectedEditorPreset] = useState<string>("");
   const [recordingAction, setRecordingAction] = useState<string | null>(null);
   const [bindingErrors, setBindingErrors] = useState<Record<string, string>>({});
@@ -184,13 +188,32 @@ export const SettingsModal: FC<SettingsModalProps> = ({
   useEffect(() => {
     setFormData(settings);
     setBindingErrors({});
-    const matchedFont = FONT_PRESETS.find((p) => p.value === settings.fontFamily);
-    setSelectedFontPreset(matchedFont ? matchedFont.value : "custom");
-
     const currentEditor = (settings.editorPath || "").trim();
     const matchedEditor = EDITOR_PRESETS.find((e) => e.value === currentEditor);
     setSelectedEditorPreset(matchedEditor ? matchedEditor.value : currentEditor ? "custom" : "");
   }, [settings, isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let live = true;
+    void listInstalledMonospaceFonts().then((names) => {
+      if (live) setInstalledFonts(names);
+    });
+    return () => {
+      live = false;
+    };
+  }, [isOpen]);
+
+  // Which font-list entry the saved font family corresponds to (else "custom").
+  // An installed font matches by its first family, so `Consolas, monospace`
+  // and `"Consolas", monospace` both select "Consolas".
+  useEffect(() => {
+    const primary = primaryFamily(settings.fontFamily).toLowerCase();
+    const known =
+      FONT_PRESETS.some((p) => p.value === settings.fontFamily) ||
+      installedFonts.some((n) => n.toLowerCase() === primary);
+    setSelectedFontPreset(known ? settings.fontFamily : "custom");
+  }, [settings.fontFamily, installedFonts, isOpen]);
 
   // Live theme preview while choosing theme in Settings
   useEffect(() => {
@@ -286,6 +309,60 @@ export const SettingsModal: FC<SettingsModalProps> = ({
       setFormData((prev) => ({ ...prev, fontFamily: val }));
     }
   };
+
+  // Themed font list (a native <select> popup is drawn by the OS and ignores
+  // the theme). With the installed list available it is: bundled font, every
+  // monospace font on this PC, the OS default, Custom. Without it (browser,
+  // or the OS could not be asked) it falls back to the built-in presets.
+  const selectedFontIndex = FONT_PRESETS.findIndex((p) => p.value === selectedFontPreset);
+  const selectedPrimary = primaryFamily(selectedFontPreset).toLowerCase();
+  const isSelectedInstalled = (name: string) =>
+    selectedFontPreset !== "custom" && name.toLowerCase() === selectedPrimary;
+  const selectedInstalledFont = installedFonts.find(isSelectedInstalled);
+  const selectedFontLabel =
+    selectedFontIndex >= 0 && !selectedInstalledFont
+      ? FONT_PRESETS[selectedFontIndex].label
+      : (selectedInstalledFont ?? "Custom Font Name / Stack...");
+  const presetEntry = (i: number): MenuEntry => ({
+    id: `font-${i}`,
+    label: FONT_PRESETS[i].label,
+    labelStyle: { fontFamily: FONT_PRESETS[i].value },
+    checked: i === selectedFontIndex && !selectedInstalledFont,
+    onSelect: () => handleFontPresetChange(FONT_PRESETS[i].value),
+  });
+  const customEntry: MenuEntry = {
+    kind: "item",
+    id: "font-custom",
+    label: "Custom Font Name / Stack...",
+    checked: selectedFontIndex < 0 && !selectedInstalledFont,
+    onSelect: () => handleFontPresetChange("custom"),
+  };
+  const fontMenuEntries: MenuEntry[] =
+    installedFonts.length > 0
+      ? [
+          { kind: "heading", id: "fonts-bundled", label: "Bundled" },
+          presetEntry(BUNDLED_FONT_INDEX),
+          { kind: "heading", id: "fonts-installed", label: "Installed on this PC" },
+          ...installedFonts.map((name): MenuEntry => ({
+            id: `installed-${name}`,
+            label: name,
+            labelStyle: { fontFamily: installedFontStack(name) },
+            checked: isSelectedInstalled(name),
+            onSelect: () => handleFontPresetChange(installedFontStack(name)),
+          })),
+          { kind: "heading", id: "fonts-system", label: "System" },
+          presetEntry(SYSTEM_FONT_INDEX),
+          { kind: "separator", id: "fonts-sep" },
+          customEntry,
+        ]
+      : [
+          { kind: "heading", id: "fonts-system", label: "System Monospace Fonts" },
+          ...FONT_PRESETS.slice(0, 6).map((_, i) => presetEntry(i)),
+          { kind: "heading", id: "fonts-popular", label: "Popular Coding Fonts" },
+          ...FONT_PRESETS.slice(6).map((_, i) => presetEntry(i + 6)),
+          { kind: "separator", id: "fonts-sep" },
+          customEntry,
+        ];
 
   const handleEditorPresetChange = (val: string) => {
     setSelectedEditorPreset(val);
@@ -512,28 +589,26 @@ export const SettingsModal: FC<SettingsModalProps> = ({
             <div className="settings-tab-panel">
               <div className="setting-field">
                 <label htmlFor="font-preset-select">Font Family (System & Monospace)</label>
-                <select
-                  id="font-preset-select"
-                  className="select-input modal-input"
-                  value={selectedFontPreset}
-                  onChange={(e) => handleFontPresetChange(e.target.value)}
-                >
-                  <optgroup label="System Monospace Fonts">
-                    {FONT_PRESETS.slice(0, 6).map((font) => (
-                      <option key={font.value} value={font.value}>
-                        {font.label}
-                      </option>
-                    ))}
-                  </optgroup>
-                  <optgroup label="Popular Coding Fonts">
-                    {FONT_PRESETS.slice(6).map((font) => (
-                      <option key={font.value} value={font.value}>
-                        {font.label}
-                      </option>
-                    ))}
-                  </optgroup>
-                  <option value="custom">Custom Font Name / Stack...</option>
-                </select>
+                <PopupMenu
+                  label="Font family"
+                  className="font-select"
+                  menuClassName="font-select-menu"
+                  trigger={({ open, toggle, props }) => (
+                    <button
+                      id="font-preset-select"
+                      type="button"
+                      className="select-input modal-input font-select-trigger"
+                      aria-expanded={open}
+                      aria-haspopup={props["aria-haspopup"]}
+                      aria-controls={props["aria-controls"]}
+                      onKeyDown={props.onKeyDown}
+                      onClick={toggle}
+                    >
+                      {selectedFontLabel}
+                    </button>
+                  )}
+                  entries={fontMenuEntries}
+                />
               </div>
 
               {selectedFontPreset === "custom" && (
