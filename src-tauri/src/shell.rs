@@ -1549,7 +1549,7 @@ pub fn detect_system_terminal_config() -> SystemTerminalConfig {
     #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
     let (font_family, theme, cursor_blink, cursor_style, opacity) = {
         let mut font_family = "'Fira Code', 'FiraCode', 'DejaVu Sans Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace".to_string();
-        let mut theme = "kali".to_string();
+        let mut theme = "kai-dark".to_string();
         let mut cursor_blink = false;
         let mut cursor_style = "block".to_string();
         let mut opacity = 1.0f64;
@@ -1571,7 +1571,8 @@ pub fn detect_system_terminal_config() -> SystemTerminalConfig {
                         if trimmed.eq_ignore_ascii_case("Kali-Dark")
                             || trimmed.to_lowercase().contains("kali")
                         {
-                            theme = "kali".to_string();
+                            // Kali's own scheme maps to the app default (the old "kali" theme was folded into it).
+                            theme = "kai-dark".to_string();
                         } else if trimmed.to_lowercase().contains("solarized")
                             && trimmed.to_lowercase().contains("light")
                         {
@@ -1648,11 +1649,11 @@ pub fn detect_system_terminal_config() -> SystemTerminalConfig {
     #[cfg(target_os = "macos")]
     let (font_family, theme, cursor_blink, cursor_style, opacity) = (
         "Menlo, Monaco, 'Courier New', monospace".to_string(),
-        // Must match the frontend DEFAULT_SETTINGS.theme ("Kali (Default)"):
+        // Must match the frontend DEFAULT_SETTINGS.theme ("Kai Dark"):
         // the app applies host sync on top of an untouched default, so any
         // other value here silently unselects the default appearance on
         // fresh installs.
-        "kali".to_string(),
+        "kai-dark".to_string(),
         false,
         "block".to_string(),
         1.0f64,
@@ -1662,7 +1663,7 @@ pub fn detect_system_terminal_config() -> SystemTerminalConfig {
     let (font_family, theme, cursor_blink, cursor_style, opacity) = (
         "Consolas, 'Cascadia Code', 'Lucida Console', monospace".to_string(),
         // Same contract as macOS above: keep the frontend default selected.
-        "kali".to_string(),
+        "kai-dark".to_string(),
         false,
         "block".to_string(),
         1.0f64,
@@ -1972,14 +1973,18 @@ mod tests {
         // here would leave "no appearance selected" on fresh installs.
         // Must mirror `ThemeName` in src/types/terminal.ts.
         const KNOWN: &[&str] = &[
-            "kali",
-            "catppuccin-mocha",
+            "kai-dark",
+            "github-dark",
             "one-dark",
             "dracula",
-            "solarized-dark",
-            "solarized-light",
-            "nord",
             "tokyo-night",
+            "catppuccin-mocha",
+            "gruvbox-dark",
+            "nord",
+            "monokai",
+            "solarized-dark",
+            "github-light",
+            "solarized-light",
         ];
         let cfg = detect_system_terminal_config();
         assert!(
@@ -1990,7 +1995,7 @@ mod tests {
         assert!(!cfg.font_family.trim().is_empty());
         // Fresh-install contract: Windows/macOS keep the frontend default.
         #[cfg(any(target_os = "windows", target_os = "macos"))]
-        assert_eq!(cfg.theme, "kali");
+        assert_eq!(cfg.theme, "kai-dark");
     }
 
     #[test]

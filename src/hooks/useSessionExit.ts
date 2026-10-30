@@ -232,5 +232,15 @@ export function useSessionExit({
 
   const dismissFault = useCallback(() => setLoopFault(null), []);
 
-  return { loopFault, handleSessionExit, retryFaultedPane, dismissFault };
+  /**
+   * A terminal was restarted on purpose (shell switch): its birth clock and the
+   * crash window start over, so a shell that dies right away parks the tab with
+   * the Retry banner instead of silently closing it.
+   */
+  const markRestarted = useCallback((tabId: string) => {
+    tabBornRef.current[tabId] = Date.now();
+    exitTimesRef.current = [];
+  }, []);
+
+  return { loopFault, handleSessionExit, retryFaultedPane, dismissFault, markRestarted };
 }

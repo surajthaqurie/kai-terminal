@@ -1,4 +1,4 @@
-import { Suspense, useCallback, useRef, useState } from "react";
+import { Suspense, useCallback, useMemo, useRef, useState } from "react";
 import { HeaderActions } from "./components/HeaderActions";
 import { TabBar } from "./components/TabBar";
 import { StatusBar } from "./components/StatusBar";
@@ -34,6 +34,7 @@ import { useSessionPersistence } from "./hooks/useSessionPersistence";
 import { useTabs } from "./hooks/useTabs";
 import { useTerminalConfig } from "./hooks/useTerminalConfig";
 import { useWindowRefit } from "./hooks/useWindowRefit";
+import { resolvePaneShell } from "./services/paneShell";
 import { resolveEffectiveProjectDir } from "./services/projectService";
 import { isMacPlatform, platformLabel } from "./services/shortcuts";
 import { RELEASES_PAGE_URL } from "./services/updateService";
@@ -196,6 +197,35 @@ function App() {
   /** Session exited (Ctrl+C / `exit` / kill): close the pane, then hand
    * keyboard focus to whatever terminal is active now so typing continues
    * without a click. */
+  /** Shell of the focused terminal (footer picker); each pane keeps its own. */
+  const activePaneShell = useMemo(
+    () =>
+      resolvePaneShell(
+        activePane?.shellPath,
+        config.shells,
+        config.selectedShell,
+        userSettings.skipShellProfile === true
+      ),
+    [activePane?.shellPath, config.shells, config.selectedShell, userSettings.skipShellProfile]
+  );
+
+  /** Footer picker: restart the focused terminal in the chosen shell. */
+  const changeActiveShell = useCallback(
+    (shell: ShellProfile) => {
+      if (!activeTabId || !activePaneId) return;
+      sessionExit.markRestarted(activeTabId);
+      tabsState.setPaneShell(activeTabId, activePaneId, shell.path);
+      focusActiveTerminalSoon();
+    },
+    [
+      activeTabId,
+      activePaneId,
+      sessionExit.markRestarted,
+      tabsState.setPaneShell,
+      focusActiveTerminalSoon,
+    ]
+  );
+
   const handleSessionExit = useCallback(
     (tabId: string, paneId: string, exitCode?: number) => {
       sessionExit.handleSessionExit(tabId, paneId, exitCode);
@@ -359,6 +389,8 @@ function App() {
             tab={tab}
             isActive={tab.id === activeTabId}
             selectedShell={config.selectedShell}
+            shells={config.shells}
+            skipShellProfile={userSettings.skipShellProfile === true}
             settings={userSettings}
             fallbackCwd={cwd}
             terminalRefs={terminalRefs}
@@ -479,6 +511,9 @@ function App() {
         onRefreshGit={git.refreshGit}
         isRefreshingGit={git.isRefreshingGit}
         onOpenGitChanges={() => void project.showGit("changes")}
+        shells={config.shells}
+        currentShell={activePaneShell}
+        onChangeShell={changeActiveShell}
         mode={modeDisplay}
         onToggleMode={exitCodeMode}
         music={music.footerState}

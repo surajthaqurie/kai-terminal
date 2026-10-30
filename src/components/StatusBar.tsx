@@ -1,4 +1,6 @@
 import { FC, useRef, useState } from "react";
+import { ShellPicker } from "./ShellPicker";
+import type { ShellProfile } from "../types/terminal";
 import {
   GitBranch,
   ArrowUpCircle,
@@ -34,6 +36,11 @@ interface StatusBarProps {
   latestVersion?: string | null;
   onViewUpdate?: () => void;
   mode?: string;
+  /** Detected shells and the focused terminal's shell (the footer shell picker). */
+  shells?: ShellProfile[];
+  currentShell?: ShellProfile;
+  /** Restart the focused terminal in another shell. */
+  onChangeShell?: (shell: ShellProfile) => void;
   /** Re-probe git for the active pane + re-sync Code Mode (footer refresh button). */
   onRefreshGit?: () => void;
   isRefreshingGit?: boolean;
@@ -52,7 +59,8 @@ interface StatusBarProps {
 }
 
 /**
- * Always-visible bottom status bar. It only reports: mode, git branch (click
+ * Always-visible bottom status bar. It only reports: the focused terminal's shell
+ * (click to change it), mode, git branch (click
  * opens the Changes Review & Diff modal) and working directory on the left;
  * the music mini-player (while one is active) and an update chip (only when an
  * update exists) on the right. App version and "check for updates" live in
@@ -68,6 +76,9 @@ export const StatusBar: FC<StatusBarProps> = ({
   latestVersion,
   onViewUpdate,
   mode = "terminal",
+  shells = [],
+  currentShell,
+  onChangeShell,
   onToggleMode,
   onRefreshGit,
   isRefreshingGit = false,
@@ -199,6 +210,12 @@ export const StatusBar: FC<StatusBarProps> = ({
   return (
     <footer className="status-bar" role="status" aria-label="Application status bar">
       <div className="status-left">
+        {onChangeShell && (
+          <>
+            <ShellPicker shells={shells} current={currentShell} onChange={onChangeShell} />
+            <span className="status-sep" aria-hidden="true" />
+          </>
+        )}
         {mode === "code" ? (
           onToggleMode ? (
             <button

@@ -3,12 +3,12 @@ import {
   Activity,
   ArrowUpCircle,
   Bot,
+  ChevronDown,
   Code,
   Columns,
   FolderOpen,
   GitCompare,
   MoreHorizontal,
-  Music,
   Rows,
   Search,
   Settings,
@@ -36,12 +36,14 @@ interface HeaderActionsProps {
 
 /**
  * Right side of the tab row. Only what is used all the time is on screen: the
- * search box that opens the command palette, AI providers and Settings.
- * Everything occasional lives in the "more" menu, and the rest stays reachable
- * through the palette and keyboard shortcuts.
+ * search box that opens the command palette, "open project in editor" (an icon
+ * right after it), AI providers and Settings. Everything occasional lives in the
+ * "more" menu, and the rest stays reachable through the palette and keyboard
+ * shortcuts (Music Time, for one, via Settings and its shortcut).
  *
- * Not repeated here (single source of truth lives elsewhere): shell choice
- * (the "+ ▾" menu on the tab strip), git branch / cwd / Code Mode (status bar).
+ * Not repeated here (single source of truth lives elsewhere): new tab in a
+ * given shell (the "+ ▾" menu on the tab strip), the shell of the focused
+ * terminal, git branch / cwd / Code Mode (status bar).
  */
 export const HeaderActions: FC<HeaderActionsProps> = ({
   actions,
@@ -58,13 +60,7 @@ export const HeaderActions: FC<HeaderActionsProps> = ({
   latestVersion,
   onViewUpdate,
 }) => {
-  const entries = useMemo<MenuEntry[]>(() => {
-    const byId = new Map(actions.map((a) => [a.id, a]));
-    const act = (id: string, label: string, icon: ReactNode): MenuEntry[] => {
-      const a = byId.get(id);
-      return a ? [{ id, label, icon, hint: a.shortcut, onSelect: a.perform }] : [];
-    };
-
+  const editorEntries = useMemo<MenuEntry[]>(() => {
     const editorEntries: MenuEntry[] = [];
     if (onOpenEditor) {
       if (installedEditors.length > 1) {
@@ -96,11 +92,18 @@ export const HeaderActions: FC<HeaderActionsProps> = ({
       }
     }
 
+    return editorEntries;
+  }, [onOpenEditor, installedEditors, isLoadingEditors, editorPath]);
+
+  const entries = useMemo<MenuEntry[]>(() => {
+    const byId = new Map(actions.map((a) => [a.id, a]));
+    const act = (id: string, label: string, icon: ReactNode): MenuEntry[] => {
+      const a = byId.get(id);
+      return a ? [{ id, label, icon, hint: a.shortcut, onSelect: a.perform }] : [];
+    };
+
     const out: MenuEntry[] = [
       ...act("manage-workspaces", "Workspaces & sessions", <FolderOpen size={14} />),
-      ...act("toggle-music", "Music Time", <Music size={14} />),
-      { kind: "separator", id: "sep-project" },
-      ...editorEntries,
       ...act("review-changes", "Review git changes", <GitCompare size={14} />),
       { kind: "separator", id: "sep-panes" },
       ...act("split-vertical", "Split pane right", <Columns size={14} />),
@@ -120,16 +123,7 @@ export const HeaderActions: FC<HeaderActionsProps> = ({
       out.push(...act("check-updates", "Check for updates", <ArrowUpCircle size={14} />));
     }
     return out;
-  }, [
-    actions,
-    onOpenEditor,
-    installedEditors,
-    isLoadingEditors,
-    editorPath,
-    updateAvailable,
-    latestVersion,
-    onViewUpdate,
-  ]);
+  }, [actions, updateAvailable, latestVersion, onViewUpdate]);
 
   return (
     <div className="header-actions">
@@ -144,6 +138,37 @@ export const HeaderActions: FC<HeaderActionsProps> = ({
         <span className="header-palette-text">Search commands…</span>
         <kbd className="header-palette-kbd">{paletteShortcut}</kbd>
       </button>
+      {onOpenEditor && (
+        <div className="header-editor">
+          <button
+            type="button"
+            className="header-icon-btn"
+            onClick={() => onOpenEditor(undefined)}
+            title="Open project in editor"
+            aria-label="Open project in editor"
+          >
+            <Code size={15} aria-hidden="true" />
+          </button>
+          <PopupMenu
+            label="Choose editor"
+            align="end"
+            entries={editorEntries}
+            onOpen={onRefreshEditors}
+            trigger={({ open, toggle, props }) => (
+              <button
+                type="button"
+                className={`header-caret-btn${open ? " is-open" : ""}`}
+                onClick={toggle}
+                title="Choose which editor to open"
+                aria-label="Choose editor"
+                {...props}
+              >
+                <ChevronDown size={10} aria-hidden="true" />
+              </button>
+            )}
+          />
+        </div>
+      )}
       <button
         type="button"
         className="header-icon-btn"

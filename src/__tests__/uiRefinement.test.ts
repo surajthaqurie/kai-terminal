@@ -18,13 +18,17 @@ const ROOT = path.resolve(__dirname, "../..");
 const css = fs.readFileSync(path.join(ROOT, "src/App.css"), "utf8");
 
 const THEMES: ThemeName[] = [
-  "kali",
-  "catppuccin-mocha",
-  "tokyo-night",
-  "nord",
+  "kai-dark",
+  "github-dark",
   "one-dark",
   "dracula",
+  "tokyo-night",
+  "catppuccin-mocha",
+  "gruvbox-dark",
+  "nord",
+  "monokai",
   "solarized-dark",
+  "github-light",
   "solarized-light",
 ];
 

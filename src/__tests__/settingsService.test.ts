@@ -1,6 +1,27 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach } from "vitest";
-import { SettingsService, DEFAULT_SETTINGS, normalizeThemeId } from "../services/settingsService";
+import {
+  SettingsService,
+  DEFAULT_SETTINGS,
+  isLightTheme,
+  normalizeThemeId,
+} from "../services/settingsService";
+import type { ThemeName } from "../types/terminal";
+
+const ALL_THEMES: ThemeName[] = [
+  "kai-dark",
+  "github-dark",
+  "one-dark",
+  "dracula",
+  "tokyo-night",
+  "catppuccin-mocha",
+  "gruvbox-dark",
+  "nord",
+  "monokai",
+  "solarized-dark",
+  "github-light",
+  "solarized-light",
+];
 
 describe("SettingsService", () => {
   beforeEach(() => {
@@ -28,14 +49,18 @@ describe("SettingsService", () => {
 
   it("should return theme color objects for all supported theme names including nord and tokyo-night", () => {
     const themes = [
-      "kali",
-      "catppuccin-mocha",
+      "kai-dark",
+      "github-dark",
       "one-dark",
       "dracula",
-      "solarized-dark",
-      "solarized-light",
-      "nord",
       "tokyo-night",
+      "catppuccin-mocha",
+      "gruvbox-dark",
+      "nord",
+      "monokai",
+      "solarized-dark",
+      "github-light",
+      "solarized-light",
     ] as const;
     for (const themeName of themes) {
       const colors = SettingsService.getThemeColors(themeName);
@@ -49,17 +74,46 @@ describe("SettingsService", () => {
       expect(canvasColor.startsWith("#")).toBe(true);
     }
     expect(SettingsService.getThemeCanvasColor("solarized-light")).toBe("#eee8d5");
-    expect(SettingsService.getThemeCanvasColor("kali")).toBe("#070d18");
+    expect(SettingsService.getThemeCanvasColor("kai-dark")).toBe("#0b0d10");
   });
 
-  it("should default to the Kali theme", () => {
-    expect(DEFAULT_SETTINGS.theme).toBe("kali");
-    const kali = SettingsService.getThemeColors("kali");
-    expect(kali.background).toBe("#0a1428");
-    expect(kali.foreground).toBeDefined();
-    expect(kali.cursor).toBeDefined();
-    // Legacy stored settings without kali migrate safely.
-    expect(SettingsService.normalize({ theme: "kali" as never }).theme).toBe("kali");
+  it("should default to the Kai Dark theme", () => {
+    expect(DEFAULT_SETTINGS.theme).toBe("kai-dark");
+    const kai = SettingsService.getThemeColors("kai-dark");
+    expect(kai.background).toBe("#0f1115");
+    expect(kai.foreground).toBeDefined();
+    expect(kai.cursor).toBeDefined();
+  });
+
+  it("moves the removed Kali theme to Kai Dark when settings load", () => {
+    expect(SettingsService.normalize({ theme: "kali" as never }).theme).toBe("kai-dark");
+    localStorage.setItem("kai_user_settings", JSON.stringify({ theme: "kali", fontSize: 15 }));
+    const loaded = SettingsService.loadSettings();
+    expect(loaded.theme).toBe("kai-dark");
+    expect(loaded.fontSize).toBe(15);
+  });
+
+  it("flags only the light themes", () => {
+    for (const id of ALL_THEMES) {
+      expect(isLightTheme(id), id).toBe(id === "github-light" || id === "solarized-light");
+    }
+  });
+
+  it("keeps every theme's dim colour (bright black) readable against its background", () => {
+    // Autosuggestions and comments are drawn in bright black; the old
+    // Solarized Dark used the background colour itself and vanished.
+    const lum = (hex: string) => {
+      const [r, g, b] = [1, 3, 5].map((i) => {
+        const c = parseInt(hex.slice(i, i + 2), 16) / 255;
+        return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+      });
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    };
+    for (const id of ALL_THEMES) {
+      const c = SettingsService.getThemeColors(id);
+      const [hi, lo] = [lum(c.brightBlack!), lum(c.background!)].sort((a, b) => b - a);
+      expect((hi + 0.05) / (lo + 0.05), id).toBeGreaterThanOrEqual(2.5);
+    }
   });
   it("should apply opacity to theme background color correctly", () => {
     const defaultColors = SettingsService.getThemeColors("catppuccin-mocha", 1.0);
@@ -117,13 +171,14 @@ describe("SettingsService", () => {
     expect(defaults).toBeDefined();
   });
 
-  it("should recover unknown theme ids to the Kali default", () => {
+  it("should recover unknown theme ids to the Kai Dark default", () => {
     expect(normalizeThemeId("one-dark")).toBe("one-dark");
-    expect(normalizeThemeId("kali")).toBe("kali");
-    expect(normalizeThemeId("Kali-Dark")).toBe("kali");
-    expect(normalizeThemeId("")).toBe("kali");
-    expect(normalizeThemeId(undefined)).toBe("kali");
-    expect(normalizeThemeId(null)).toBe("kali");
-    expect(SettingsService.normalize({ theme: "no-such-theme" as never }).theme).toBe("kali");
+    expect(normalizeThemeId("github-light")).toBe("github-light");
+    expect(normalizeThemeId("kali")).toBe("kai-dark");
+    expect(normalizeThemeId("Kali-Dark")).toBe("kai-dark");
+    expect(normalizeThemeId("")).toBe("kai-dark");
+    expect(normalizeThemeId(undefined)).toBe("kai-dark");
+    expect(normalizeThemeId(null)).toBe("kai-dark");
+    expect(SettingsService.normalize({ theme: "no-such-theme" as never }).theme).toBe("kai-dark");
   });
 });

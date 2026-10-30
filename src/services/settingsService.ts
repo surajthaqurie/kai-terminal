@@ -32,7 +32,7 @@ export const PREVIOUS_DEFAULT_FONT_FAMILY =
   "'Fira Code', 'FiraCode', 'DejaVu Sans Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace";
 
 export const DEFAULT_SETTINGS: UserSettings = {
-  theme: "kali",
+  theme: "kai-dark",
   fontFamily:
     "'JetBrains Mono Variable', 'JetBrains Mono', 'Fira Code', 'DejaVu Sans Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace",
   fontSize: 12,
@@ -60,26 +60,326 @@ const SETTINGS_VERSION = 1;
 
 /** Theme ids the Appearance panel can mark selected. Single source of truth. */
 const KNOWN_THEME_IDS: ReadonlyArray<ThemeName> = [
-  "kali",
-  "catppuccin-mocha",
+  "kai-dark",
+  "github-dark",
   "one-dark",
   "dracula",
-  "solarized-dark",
-  "solarized-light",
-  "nord",
   "tokyo-night",
+  "catppuccin-mocha",
+  "gruvbox-dark",
+  "nord",
+  "monokai",
+  "solarized-dark",
+  "github-light",
+  "solarized-light",
 ];
 
+/** Themes with a light background: drives the native `color-scheme` and scrollbars. */
+const LIGHT_THEME_IDS: ReadonlyArray<ThemeName> = ["github-light", "solarized-light"];
+
+/** Theme ids removed in a later release, mapped to the theme that replaces them. */
+const LEGACY_THEME_IDS: Readonly<Record<string, ThemeName>> = {
+  kali: "kai-dark",
+};
+
+export function isLightTheme(theme: ThemeName): boolean {
+  return LIGHT_THEME_IDS.includes(theme);
+}
+
 /**
- * Coerce any input to a known theme id. Unknown/missing values recover to
- * the default ("Kali (Default)") so the Appearance panel never renders with
- * nothing selected.
+ * Coerce any input to a known theme id. A removed theme (`kali`) moves to its
+ * replacement; unknown/missing values recover to the default ("Kai Dark") so
+ * the Appearance panel never renders with nothing selected.
  */
 export function normalizeThemeId(input: unknown): ThemeName {
-  return typeof input === "string" && (KNOWN_THEME_IDS as ReadonlyArray<string>).includes(input)
-    ? (input as ThemeName)
-    : DEFAULT_SETTINGS.theme;
+  if (typeof input !== "string") return DEFAULT_SETTINGS.theme;
+  if ((KNOWN_THEME_IDS as ReadonlyArray<string>).includes(input)) return input as ThemeName;
+  return LEGACY_THEME_IDS[input] ?? DEFAULT_SETTINGS.theme;
 }
+
+/** xterm palettes. Window chrome colours live in App.css (`[data-theme]` blocks). */
+const TERMINAL_THEMES: Record<ThemeName, ITheme> = {
+  "kai-dark": {
+    background: "#0f1115",
+    foreground: "#d9dce3",
+    cursor: "#22d3ee",
+    selectionBackground: "#264f78",
+    black: "#1c1f26",
+    red: "#f87171",
+    green: "#4ade80",
+    yellow: "#facc15",
+    blue: "#60a5fa",
+    magenta: "#c084fc",
+    cyan: "#22d3ee",
+    white: "#d4d4d8",
+    brightBlack: "#6b7385",
+    brightRed: "#fca5a5",
+    brightGreen: "#86efac",
+    brightYellow: "#fde047",
+    brightBlue: "#93c5fd",
+    brightMagenta: "#d8b4fe",
+    brightCyan: "#67e8f9",
+    brightWhite: "#fafafa",
+  },
+  "github-dark": {
+    background: "#0d1117",
+    foreground: "#c9d1d9",
+    cursor: "#58a6ff",
+    selectionBackground: "#1f3b5c",
+    black: "#484f58",
+    red: "#ff7b72",
+    green: "#3fb950",
+    yellow: "#d29922",
+    blue: "#58a6ff",
+    magenta: "#bc8cff",
+    cyan: "#39c5cf",
+    white: "#b1bac4",
+    brightBlack: "#6e7681",
+    brightRed: "#ffa198",
+    brightGreen: "#56d364",
+    brightYellow: "#e3b341",
+    brightBlue: "#79c0ff",
+    brightMagenta: "#d2a8ff",
+    brightCyan: "#56d4dd",
+    brightWhite: "#f0f6fc",
+  },
+  "one-dark": {
+    background: "#282c34",
+    foreground: "#abb2bf",
+    cursor: "#528bff",
+    selectionBackground: "#3e4451",
+    black: "#3f4451",
+    red: "#e06c75",
+    green: "#98c379",
+    yellow: "#e5c07b",
+    blue: "#61afef",
+    magenta: "#c678dd",
+    cyan: "#56b6c2",
+    white: "#abb2bf",
+    brightBlack: "#667085",
+    brightRed: "#e06c75",
+    brightGreen: "#98c379",
+    brightYellow: "#e5c07b",
+    brightBlue: "#61afef",
+    brightMagenta: "#c678dd",
+    brightCyan: "#56b6c2",
+    brightWhite: "#ffffff",
+  },
+  dracula: {
+    background: "#282a36",
+    foreground: "#f8f8f2",
+    cursor: "#f8f8f2",
+    selectionBackground: "#44475a",
+    black: "#21222c",
+    red: "#ff5555",
+    green: "#50fa7b",
+    yellow: "#f1fa8c",
+    blue: "#bd93f9",
+    magenta: "#ff79c6",
+    cyan: "#8be9fd",
+    white: "#f8f8f2",
+    brightBlack: "#6272a4",
+    brightRed: "#ff6e6e",
+    brightGreen: "#69ff94",
+    brightYellow: "#ffffa5",
+    brightBlue: "#d6acff",
+    brightMagenta: "#ff92d0",
+    brightCyan: "#a4ffff",
+    brightWhite: "#ffffff",
+  },
+  "tokyo-night": {
+    background: "#1a1b26",
+    foreground: "#c0caf5",
+    cursor: "#c0caf5",
+    selectionBackground: "#283457",
+    black: "#15161e",
+    red: "#f7768e",
+    green: "#9ece6a",
+    yellow: "#e0af68",
+    blue: "#7aa2f7",
+    magenta: "#bb9af7",
+    cyan: "#7dcfff",
+    white: "#a9b1d6",
+    brightBlack: "#565f89",
+    brightRed: "#f7768e",
+    brightGreen: "#9ece6a",
+    brightYellow: "#e0af68",
+    brightBlue: "#7aa2f7",
+    brightMagenta: "#bb9af7",
+    brightCyan: "#7dcfff",
+    brightWhite: "#c0caf5",
+  },
+  "catppuccin-mocha": {
+    background: "#1e1e2e",
+    foreground: "#cdd6f4",
+    cursor: "#f5e0dc",
+    selectionBackground: "#585b7055",
+    black: "#45475a",
+    red: "#f38ba8",
+    green: "#a6e3a1",
+    yellow: "#f9e2af",
+    blue: "#89b4fa",
+    magenta: "#cba6f7",
+    cyan: "#94e2d5",
+    white: "#bac2de",
+    brightBlack: "#6c7086",
+    brightRed: "#f38ba8",
+    brightGreen: "#a6e3a1",
+    brightYellow: "#f9e2af",
+    brightBlue: "#89b4fa",
+    brightMagenta: "#cba6f7",
+    brightCyan: "#94e2d5",
+    brightWhite: "#a6adc8",
+  },
+  "gruvbox-dark": {
+    background: "#282828",
+    foreground: "#ebdbb2",
+    cursor: "#ebdbb2",
+    selectionBackground: "#504945",
+    black: "#3c3836",
+    red: "#cc241d",
+    green: "#98971a",
+    yellow: "#d79921",
+    blue: "#458588",
+    magenta: "#b16286",
+    cyan: "#689d6a",
+    white: "#a89984",
+    brightBlack: "#928374",
+    brightRed: "#fb4934",
+    brightGreen: "#b8bb26",
+    brightYellow: "#fabd2f",
+    brightBlue: "#83a598",
+    brightMagenta: "#d3869b",
+    brightCyan: "#8ec07c",
+    brightWhite: "#ebdbb2",
+  },
+  nord: {
+    background: "#2e3440",
+    foreground: "#d8dee9",
+    cursor: "#d8dee9",
+    selectionBackground: "#434c5e",
+    black: "#3b4252",
+    red: "#bf616a",
+    green: "#a3be8c",
+    yellow: "#ebcb8b",
+    blue: "#81a1c1",
+    magenta: "#b48ead",
+    cyan: "#88c0d0",
+    white: "#e5e9f0",
+    brightBlack: "#697589",
+    brightRed: "#d06f79",
+    brightGreen: "#b1d196",
+    brightYellow: "#f0d399",
+    brightBlue: "#8cafd2",
+    brightMagenta: "#c895bf",
+    brightCyan: "#93ccdc",
+    brightWhite: "#eceff4",
+  },
+  monokai: {
+    background: "#272822",
+    foreground: "#f8f8f2",
+    cursor: "#f8f8f0",
+    selectionBackground: "#49483e",
+    black: "#3e3d32",
+    red: "#f92672",
+    green: "#a6e22e",
+    yellow: "#f4bf75",
+    blue: "#66d9ef",
+    magenta: "#ae81ff",
+    cyan: "#a1efe4",
+    white: "#f8f8f2",
+    brightBlack: "#75715e",
+    brightRed: "#f92672",
+    brightGreen: "#a6e22e",
+    brightYellow: "#f4bf75",
+    brightBlue: "#66d9ef",
+    brightMagenta: "#ae81ff",
+    brightCyan: "#a1efe4",
+    brightWhite: "#f9f8f5",
+  },
+  "solarized-dark": {
+    background: "#002b36",
+    foreground: "#93a1a1",
+    cursor: "#93a1a1",
+    selectionBackground: "#073642",
+    black: "#073642",
+    red: "#dc322f",
+    green: "#859900",
+    yellow: "#b58900",
+    blue: "#268bd2",
+    magenta: "#d33682",
+    cyan: "#2aa198",
+    white: "#eee8d5",
+    brightBlack: "#586e75",
+    brightRed: "#cb4b16",
+    brightGreen: "#7a8f00",
+    brightYellow: "#c9a227",
+    brightBlue: "#4aa3e0",
+    brightMagenta: "#6c71c4",
+    brightCyan: "#93a1a1",
+    brightWhite: "#fdf6e3",
+  },
+  "github-light": {
+    background: "#ffffff",
+    foreground: "#24292f",
+    cursor: "#0969da",
+    selectionBackground: "#b6d6fb",
+    black: "#24292f",
+    red: "#cf222e",
+    green: "#116329",
+    yellow: "#7a5900",
+    blue: "#0969da",
+    magenta: "#8250df",
+    cyan: "#1b7c83",
+    white: "#6e7781",
+    brightBlack: "#57606a",
+    brightRed: "#a40e26",
+    brightGreen: "#1a7f37",
+    brightYellow: "#7a5900",
+    brightBlue: "#218bff",
+    brightMagenta: "#a475f9",
+    brightCyan: "#3192aa",
+    brightWhite: "#8c959f",
+  },
+  "solarized-light": {
+    background: "#fdf6e3",
+    foreground: "#586e75",
+    cursor: "#586e75",
+    selectionBackground: "#eee8d5",
+    black: "#073642",
+    red: "#dc322f",
+    green: "#859900",
+    yellow: "#b58900",
+    blue: "#268bd2",
+    magenta: "#d33682",
+    cyan: "#2aa198",
+    white: "#eee8d5",
+    brightBlack: "#657b83",
+    brightRed: "#cb4b16",
+    brightGreen: "#586e75",
+    brightYellow: "#657b83",
+    brightBlue: "#839496",
+    brightMagenta: "#6c71c4",
+    brightCyan: "#93a1a1",
+    brightWhite: "#fdf6e3",
+  },
+};
+
+/** Colour behind the panes and window chrome; mirrored in index.html's first paint. */
+export const THEME_CANVAS_COLORS: Record<ThemeName, string> = {
+  "kai-dark": "#0b0d10",
+  "github-dark": "#0a0d11",
+  "one-dark": "#1e2227",
+  dracula: "#1e1f29",
+  "tokyo-night": "#16161e",
+  "catppuccin-mocha": "#181825",
+  "gruvbox-dark": "#1e1e1e",
+  nord: "#242933",
+  monokai: "#1d1e1a",
+  "solarized-dark": "#00212b",
+  "github-light": "#ededed",
+  "solarized-light": "#eee8d5",
+};
 
 export class SettingsService {
   /** Validates and clamps settings; always recovers to safe defaults. */
@@ -238,205 +538,7 @@ export class SettingsService {
   }
 
   static getThemeColors(themeName: ThemeName, opacity: number = 1.0): ITheme {
-    let baseTheme: ITheme;
-    switch (themeName) {
-      case "kali":
-        // Kali Linux default terminal: near-black blue background,
-        // light foreground, signature Kali blue prompt + green/red accents.
-        baseTheme = {
-          background: "#0a1428",
-          foreground: "#e8eef7",
-          cursor: "#00a8e8",
-          selectionBackground: "#1e3a5f",
-          selectionForeground: "#ffffff",
-          black: "#0a1428",
-          red: "#ff5f56",
-          green: "#00d484",
-          yellow: "#e0af68",
-          blue: "#00a8e8",
-          magenta: "#bd93f9",
-          cyan: "#56b6c2",
-          white: "#e8eef7",
-          brightBlack: "#435267",
-          brightRed: "#ff7a72",
-          brightGreen: "#33e0a1",
-          brightYellow: "#f9e2af",
-          brightBlue: "#4fc3f7",
-          brightMagenta: "#d6acff",
-          brightCyan: "#7dcfff",
-          brightWhite: "#ffffff",
-        };
-        break;
-      case "nord":
-        baseTheme = {
-          background: "#2e3440",
-          foreground: "#d8dee9",
-          cursor: "#d8dee9",
-          selectionBackground: "#434c5e",
-          black: "#3b4252",
-          red: "#bf616a",
-          green: "#a3be8c",
-          yellow: "#ebcb8b",
-          blue: "#81a1c1",
-          magenta: "#b48ead",
-          cyan: "#88c0d0",
-          white: "#e5e9f0",
-          brightBlack: "#4c566a",
-          brightRed: "#bf616a",
-          brightGreen: "#a3be8c",
-          brightYellow: "#ebcb8b",
-          brightBlue: "#81a1c1",
-          brightMagenta: "#b48ead",
-          brightCyan: "#8fbcbb",
-          brightWhite: "#eceff4",
-        };
-        break;
-      case "tokyo-night":
-        baseTheme = {
-          background: "#1a1b26",
-          foreground: "#c0caf5",
-          cursor: "#c0caf5",
-          selectionBackground: "#283457",
-          black: "#15161e",
-          red: "#f7768e",
-          green: "#9ece6a",
-          yellow: "#e0af68",
-          blue: "#7aa2f7",
-          magenta: "#bb9af7",
-          cyan: "#7dcfff",
-          white: "#a9b1d6",
-          brightBlack: "#414868",
-          brightRed: "#f7768e",
-          brightGreen: "#9ece6a",
-          brightYellow: "#e0af68",
-          brightBlue: "#7aa2f7",
-          brightMagenta: "#bb9af7",
-          brightCyan: "#7dcfff",
-          brightWhite: "#c0caf5",
-        };
-        break;
-      case "one-dark":
-        baseTheme = {
-          background: "#282c34",
-          foreground: "#abb2bf",
-          cursor: "#528bff",
-          selectionBackground: "#3e4451",
-          black: "#1e222a",
-          red: "#e06c75",
-          green: "#98c379",
-          yellow: "#d19a66",
-          blue: "#61afef",
-          magenta: "#c678dd",
-          cyan: "#56b6c2",
-          white: "#abb2bf",
-          brightBlack: "#545862",
-          brightRed: "#e06c75",
-          brightGreen: "#98c379",
-          brightYellow: "#d19a66",
-          brightBlue: "#61afef",
-          brightMagenta: "#c678dd",
-          brightCyan: "#56b6c2",
-          brightWhite: "#c8ccd4",
-        };
-        break;
-      case "dracula":
-        baseTheme = {
-          background: "#282a36",
-          foreground: "#f8f8f2",
-          cursor: "#f8f8f2",
-          selectionBackground: "#44475a",
-          black: "#21222c",
-          red: "#ff5555",
-          green: "#50fa7b",
-          yellow: "#f1fa8c",
-          blue: "#bd93f9",
-          magenta: "#ff79c6",
-          cyan: "#8be9fd",
-          white: "#f8f8f2",
-          brightBlack: "#6272a4",
-          brightRed: "#ff6e6e",
-          brightGreen: "#69ff94",
-          brightYellow: "#ffffa5",
-          brightBlue: "#d6acff",
-          brightMagenta: "#ff92d0",
-          brightCyan: "#a4ffff",
-          brightWhite: "#ffffff",
-        };
-        break;
-      case "solarized-dark":
-        baseTheme = {
-          background: "#002b36",
-          foreground: "#839496",
-          cursor: "#93a1a1",
-          selectionBackground: "#073642",
-          black: "#073642",
-          red: "#dc322f",
-          green: "#859900",
-          yellow: "#b58900",
-          blue: "#268bd2",
-          magenta: "#d33682",
-          cyan: "#2aa198",
-          white: "#eee8d5",
-          brightBlack: "#002b36",
-          brightRed: "#cb4b16",
-          brightGreen: "#586e75",
-          brightYellow: "#657b83",
-          brightBlue: "#839496",
-          brightMagenta: "#6c71c4",
-          brightCyan: "#93a1a1",
-          brightWhite: "#fdf6e3",
-        };
-        break;
-      case "solarized-light":
-        baseTheme = {
-          background: "#fdf6e3",
-          foreground: "#657b83",
-          cursor: "#586e75",
-          selectionBackground: "#eee8d5",
-          black: "#073642",
-          red: "#dc322f",
-          green: "#859900",
-          yellow: "#b58900",
-          blue: "#268bd2",
-          magenta: "#d33682",
-          cyan: "#2aa198",
-          white: "#eee8d5",
-          brightBlack: "#002b36",
-          brightRed: "#cb4b16",
-          brightGreen: "#586e75",
-          brightYellow: "#657b83",
-          brightBlue: "#839496",
-          brightMagenta: "#6c71c4",
-          brightCyan: "#93a1a1",
-          brightWhite: "#fdf6e3",
-        };
-        break;
-      case "catppuccin-mocha":
-      default:
-        baseTheme = {
-          background: "#1e1e2e",
-          foreground: "#cdd6f4",
-          cursor: "#f5e0dc",
-          selectionBackground: "#585b7055",
-          black: "#45475a",
-          red: "#f38ba8",
-          green: "#a6e3a1",
-          yellow: "#f9e2af",
-          blue: "#89b4fa",
-          magenta: "#cba6f7",
-          cyan: "#94e2d5",
-          white: "#bac2de",
-          brightBlack: "#585b70",
-          brightRed: "#f38ba8",
-          brightGreen: "#a6e3a1",
-          brightYellow: "#f9e2af",
-          brightBlue: "#89b4fa",
-          brightMagenta: "#cba6f7",
-          brightCyan: "#94e2d5",
-          brightWhite: "#a6adc8",
-        };
-        break;
-    }
+    const baseTheme = TERMINAL_THEMES[themeName] ?? TERMINAL_THEMES[DEFAULT_SETTINGS.theme];
 
     if (opacity < 1.0 && baseTheme.background) {
       return {
@@ -468,20 +570,10 @@ export class SettingsService {
 
   static getThemeBackgroundColor(themeName: ThemeName, opacity: number = 1.0): string {
     const colors = SettingsService.getThemeColors(themeName, opacity);
-    return colors.background || "#0a1428";
+    return colors.background || THEME_CANVAS_COLORS[DEFAULT_SETTINGS.theme];
   }
 
   static getThemeCanvasColor(themeName: ThemeName): string {
-    const map: Record<ThemeName, string> = {
-      kali: "#070d18",
-      "catppuccin-mocha": "#181825",
-      "tokyo-night": "#16161e",
-      nord: "#242933",
-      "one-dark": "#1e2227",
-      dracula: "#1e1f29",
-      "solarized-dark": "#00212b",
-      "solarized-light": "#eee8d5",
-    };
-    return map[themeName] || "#070d18";
+    return THEME_CANVAS_COLORS[themeName] ?? THEME_CANVAS_COLORS[DEFAULT_SETTINGS.theme];
   }
 }

@@ -963,7 +963,7 @@ describe("App shell: settings, themes and terminal actions", () => {
     meta.setAttribute("content", "#000000");
     document.head.appendChild(meta);
     await mount();
-    expect(document.documentElement.getAttribute("data-theme")).toBe("kali");
+    expect(document.documentElement.getAttribute("data-theme")).toBe("kai-dark");
     await act(async () => {
       modal("settings").onSaveSettings({ ...modal("settings").settings, theme: "solarized-light" });
     });
@@ -1209,5 +1209,139 @@ describe("App shell: window refit", () => {
       await vi.advanceTimersByTimeAsync(350);
     });
     expect(count()).toBe(ids.length * 3);
+  });
+});
+
+describe("App shell: header and footer", () => {
+  it("shows the app icon and name at the far left of the header", async () => {
+    await mount();
+    const brand = container.querySelector(".tab-bar")!.firstElementChild!;
+    expect(brand.classList.contains("tab-brand")).toBe(true);
+    expect(brand.textContent).toBe("Kai");
+    expect(brand.querySelector("svg")).not.toBeNull();
+  });
+
+  it("puts the icon-only editor button right after the search box, before AI providers", async () => {
+    await mount();
+    const labels = [...container.querySelectorAll(".header-actions [aria-label]")].map((el) =>
+      el.getAttribute("aria-label")
+    );
+    expect(labels.slice(0, 3)).toEqual([
+      "Open command palette",
+      "Open project in editor",
+      "Choose editor",
+    ]);
+    expect(labels[3]).toBe("Open AI CLI providers");
+  });
+});
+
+describe("App shell: footer shell picker", () => {
+  const chip = () => container.querySelector<HTMLElement>(".shell-chip")!;
+  const dialog = () => container.querySelector<HTMLElement>('[role="alertdialog"]');
+  const menuItems = () => [
+    ...container.querySelectorAll<HTMLElement>(
+      '[role="menu"][aria-label="Shell for this terminal"] [role^="menuitem"]'
+    ),
+  ];
+  const pick = async (name: string) => {
+    await act(async () => chip().click());
+    const item = menuItems().find((i) => i.textContent?.includes(name))!;
+    await act(async () => item.click());
+  };
+  const answer = async (label: "Restart" | "Cancel") => {
+    const btn = [...dialog()!.querySelectorAll<HTMLElement>("button")].find(
+      (b) => b.textContent === label
+    )!;
+    await act(async () => btn.click());
+    await flush();
+  };
+  const focusPane = async (id: string) => {
+    await act(async () => registry.panes.get(id)!.onFocus());
+    await flush();
+  };
+
+  it("is the first footer item, ahead of the mode pill, and names the current shell", async () => {
+    await mount();
+    const left = container.querySelector(".status-left")!;
+    expect(left.firstElementChild!.classList.contains("shell-picker")).toBe(true);
+    expect(chip().textContent).toContain("Bash (Mock)");
+    await act(async () => chip().click());
+    expect(menuItems().map((i) => i.getAttribute("aria-checked"))).toEqual(["true", "false"]);
+  });
+
+  it("asks before restarting, and Cancel leaves the terminal untouched", async () => {
+    await mount();
+    const id = paneId(0);
+    await pick("Zsh");
+    expect(dialog()!.textContent).toContain("Restart this terminal in Zsh (Mock)?");
+    await answer("Cancel");
+    expect(dialog()).toBeNull();
+    expect(registry.panes.get(id)!.selectedShell.id).toBe("bash");
+    expect(registry.panes.get(id)!.resetKey ?? 0).toBe(0);
+  });
+
+  it("Escape dismisses the question", async () => {
+    await mount();
+    await pick("Zsh");
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(dialog()).toBeNull();
+  });
+
+  it("choosing the shell already running does not ask", async () => {
+    await mount();
+    await pick("Bash");
+    expect(dialog()).toBeNull();
+  });
+
+  it("Restart re-spawns that terminal in the chosen shell and keeps its folder", async () => {
+    await mount();
+    const id = paneId(0);
+    await resolveCwd(id, "/work/proj");
+    await pick("Zsh");
+    await answer("Restart");
+    const props = registry.panes.get(id)!;
+    expect(props.selectedShell.id).toBe("zsh");
+    expect(props.resetKey).toBe(1);
+    expect(props.cwd).toBe("/work/proj");
+    expect(chip().textContent).toContain("Zsh (Mock)");
+  });
+
+  it("each terminal keeps its own shell and the footer follows the focused one", async () => {
+    await mount();
+    await splitVerticalKey();
+    const [first, second] = terminalsIn(0);
+    await focusPane(second);
+    await pick("Zsh");
+    await answer("Restart");
+    expect(registry.panes.get(second)!.selectedShell.id).toBe("zsh");
+    expect(registry.panes.get(first)!.selectedShell.id).toBe("bash");
+    expect(registry.panes.get(first)!.resetKey ?? 0).toBe(0);
+    expect(chip().textContent).toContain("Zsh");
+    await focusPane(first);
+    expect(chip().textContent).toContain("Bash");
+  });
+
+  it("a split opens in the shell of the terminal it was split from", async () => {
+    await mount();
+    await pick("Zsh");
+    await answer("Restart");
+    await splitVerticalKey();
+    const ids = terminalsIn(0);
+    expect(ids).toHaveLength(2);
+    expect(registry.panes.get(ids[1])!.selectedShell.id).toBe("zsh");
+  });
+
+  it("the chosen shell is saved with the session", async () => {
+    await mount();
+    await pick("Zsh");
+    await answer("Restart");
+    const saved = JSON.parse(localStorage.getItem(LAYOUT_KEY) ?? "[]") as Array<{
+      shellPath?: string;
+      panes?: Array<{ shellPath?: string }>;
+    }>;
+    const paths = saved.flatMap((t) => [t.shellPath, ...(t.panes ?? []).map((p) => p.shellPath)]);
+    expect(paths).toContain("/bin/zsh");
   });
 });

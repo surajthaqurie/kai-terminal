@@ -46,6 +46,8 @@ interface PopupMenuProps {
   trigger: (state: TriggerState) => ReactNode;
   /** Which edge of the trigger the menu lines up with. */
   align?: "start" | "end";
+  /** Open below the trigger (default) or above it, for triggers at the bottom of the window. */
+  side?: "down" | "up";
   /** Called each time the menu opens (e.g. to refresh a lazily loaded list). */
   onOpen?: () => void;
   className?: string;
@@ -62,6 +64,7 @@ export const PopupMenu: FC<PopupMenuProps> = ({
   entries,
   trigger,
   align = "start",
+  side = "down",
   onOpen,
   className,
 }) => {
@@ -143,7 +146,7 @@ export const PopupMenu: FC<PopupMenuProps> = ({
         <div
           ref={menuRef}
           id={menuId}
-          className={`popup-menu popup-menu-${align}`}
+          className={`popup-menu popup-menu-${align}${side === "up" ? " popup-menu-up" : ""}`}
           role="menu"
           aria-label={label}
           onKeyDown={onMenuKeyDown}

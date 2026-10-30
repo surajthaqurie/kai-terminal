@@ -17,7 +17,7 @@ const conf = JSON.parse(
 describe("first paint", () => {
   it("the default page background is the default theme's canvas color", () => {
     const base = /html\s*\{\s*background:\s*(#[0-9a-f]{6})\s*;/i.exec(html)?.[1];
-    expect(base?.toLowerCase()).toBe(SettingsService.getThemeCanvasColor("kali"));
+    expect(base?.toLowerCase()).toBe(SettingsService.getThemeCanvasColor("kai-dark"));
   });
 
   it("every themed background matches getThemeCanvasColor", () => {
@@ -35,12 +35,14 @@ describe("first paint", () => {
   it("the boot script and the static styles name the same themes", () => {
     const styled = new Set([...html.matchAll(/html\[data-theme="([a-z-]+)"\]/g)].map((m) => m[1]));
     const scripted = [...html.matchAll(/"?([a-z-]+)"?:\s*"#[0-9a-f]{6}"/gi)].map((m) => m[1]);
-    for (const theme of scripted.filter((t) => t !== "kali"))
+    for (const theme of scripted.filter((t) => t !== "kai-dark"))
       expect(styled.has(theme), theme).toBe(true);
   });
 
   it("the native window starts in the default canvas color, not the webview's blank default", () => {
     const main = conf.app.windows.find((w) => w.label === "main");
-    expect(main?.backgroundColor?.toLowerCase()).toBe(SettingsService.getThemeCanvasColor("kali"));
+    expect(main?.backgroundColor?.toLowerCase()).toBe(
+      SettingsService.getThemeCanvasColor("kai-dark")
+    );
   });
 });

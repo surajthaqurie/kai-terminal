@@ -148,7 +148,7 @@ describe("settings + shortcuts preservation regressions", () => {
       opacity: 99,
       keybindings: { newTab: "T", bogusAction: "Ctrl+X" } as never,
     });
-    expect(normalized.theme).toBe("kali");
+    expect(normalized.theme).toBe("kai-dark");
     expect(normalized.fontSize).toBeLessThanOrEqual(36);
     expect(normalized.opacity).toBe(1.0);
     expect(

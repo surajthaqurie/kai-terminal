@@ -193,7 +193,8 @@ export function useTabs({ cwd, effectiveShellPath, setLastError }: TabsOptions) 
             undefined;
           const next = splitTab(tab, tab.id, direction, (id) => ({
             id,
-            shellPath: effectiveShellPath,
+            // A split opens in the shell of the terminal it was split from.
+            shellPath: fromPane?.shellPath ?? effectiveShellPath,
             cwd: inheritCwd,
             status: "connecting",
             parentId: fromPane?.id,
@@ -281,6 +282,37 @@ export function useTabs({ cwd, effectiveShellPath, setLastError }: TabsOptions) 
     [setLastError]
   );
 
+  /**
+   * Runs one terminal in another shell: records the binary on the pane (it is
+   * what a saved session restores) and bumps `resetKey`, which re-spawns that
+   * pane's PTY in place. The pane id, its split and its folder are unchanged.
+   */
+  const setPaneShell = useCallback((tabId: string, paneId: string, shellPath: string) => {
+    setTabs((prev) =>
+      prev.map((t) =>
+        t.id === tabId && t.panes.some((p) => p.id === paneId)
+          ? {
+              ...t,
+              status: "connecting" as const,
+              errorMessage: undefined,
+              shellPath: t.panes.length === 1 ? shellPath : t.shellPath,
+              panes: t.panes.map((p) =>
+                p.id === paneId
+                  ? {
+                      ...p,
+                      shellPath,
+                      status: "connecting" as const,
+                      errorMessage: undefined,
+                      resetKey: (p.resetKey ?? 0) + 1,
+                    }
+                  : p
+              ),
+            }
+          : t
+      )
+    );
+  }, []);
+
   /** Drag-to-resize: per-split ratio stored inside each tab's layout tree. */
   const resizeSplit = useCallback((tabId: string, splitId: string, ratio: number) => {
     setTabs((prev) =>
@@ -319,6 +351,7 @@ export function useTabs({ cwd, effectiveShellPath, setLastError }: TabsOptions) 
     gotoTab,
     focusPane,
     setPaneStatus,
+    setPaneShell,
     resizeSplit,
   };
 }

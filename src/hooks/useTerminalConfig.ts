@@ -4,7 +4,9 @@ import {
   DEFAULT_SETTINGS,
   PREVIOUS_DEFAULT_FONT_FAMILY,
   SettingsService,
+  isLightTheme,
 } from "../services/settingsService";
+import { applyWindowOpacity } from "../services/windowOpacity";
 import { withSkipProfileArgs } from "../services/shellArgs";
 import { zoomedFontSize } from "../services/shortcuts";
 import type { ShellProfile, UserSettings } from "../types/terminal";
@@ -56,7 +58,9 @@ export function useTerminalConfig({
               ? { fontFamily: sysDefaults.fontFamily }
               : {}),
             ...(isDefaultSize ? { fontSize: 12 } : {}),
-            ...(prev.theme === "kali" && sysDefaults.theme ? { theme: sysDefaults.theme } : {}),
+            ...(prev.theme === DEFAULT_SETTINGS.theme && sysDefaults.theme
+              ? { theme: sysDefaults.theme }
+              : {}),
           };
         });
       }
@@ -67,13 +71,20 @@ export function useTerminalConfig({
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", userSettings.theme);
     document.body.setAttribute("data-theme", userSettings.theme);
-    document.documentElement.style.colorScheme =
-      userSettings.theme === "solarized-light" ? "light" : "dark";
+    document.documentElement.style.colorScheme = isLightTheme(userSettings.theme)
+      ? "light"
+      : "dark";
     const meta = document.querySelector('meta[name="theme-color"]');
     if (meta) {
       meta.setAttribute("content", SettingsService.getThemeCanvasColor(userSettings.theme));
     }
   }, [userSettings.theme]);
+
+  // See-through window: the same opacity that tints the terminal background
+  // also fades the header, tabs and footer (Windows / Linux desktop app).
+  useEffect(() => {
+    applyWindowOpacity(userSettings.opacity);
+  }, [userSettings.opacity]);
 
   // Load available shell profiles on startup
   useEffect(() => {

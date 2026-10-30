@@ -14,13 +14,18 @@ import type {
   TerminalTab,
   UserSettings,
 } from "../types/terminal";
+import { resolvePaneShell } from "../services/paneShell";
 import { TerminalView, type TerminalViewRef } from "./TerminalView";
 
 interface TabPanesProps {
   tab: TerminalTab;
   /** Whether this tab is the visible one (hidden tabs stay mounted). */
   isActive: boolean;
+  /** App-wide shell: used by panes that have no (or an unknown) shell of their own. */
   selectedShell: ShellProfile | undefined;
+  /** Detected shells, to turn a pane's saved binary back into a full profile. */
+  shells: ShellProfile[];
+  skipShellProfile: boolean;
   settings: UserSettings;
   /** Global toolbar cwd: last fallback for a pane's working directory. */
   fallbackCwd: string;
@@ -55,6 +60,8 @@ export const TabPanes = memo(function TabPanes({
   tab,
   isActive,
   selectedShell,
+  shells,
+  skipShellProfile,
   settings,
   fallbackCwd,
   terminalRefs,
@@ -133,7 +140,7 @@ export const TabPanes = memo(function TabPanes({
             terminalRefs.current[pane.id] = el;
           }}
           sessionId={pane.id}
-          selectedShell={selectedShell}
+          selectedShell={resolvePaneShell(pane.shellPath, shells, selectedShell, skipShellProfile)}
           cwd={pane.cwd || tab.cwd || fallbackCwd}
           settings={settings}
           visible={isActive}

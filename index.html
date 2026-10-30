@@ -5,19 +5,23 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="Kai — Desktop terminal for Windows, Linux, and macOS with AI context intelligence, local MCP, and Git diff review." />
     <meta name="referrer" content="no-referrer-when-downgrade" />
-    <meta name="theme-color" content="#080e1a" />
+    <meta name="theme-color" content="#0b0d10" />
     <title>Kai — One Terminal. Every Platform.</title>
     <style>
       /* Painted before any script or stylesheet loads, so the window never shows a
          blank white frame while the app starts. The boot script below sets data-theme
          from the saved settings; the colors match getThemeCanvasColor. */
-      html { background: #070d18; }
-      html[data-theme="catppuccin-mocha"] { background: #181825; }
-      html[data-theme="tokyo-night"] { background: #16161e; }
-      html[data-theme="nord"] { background: #242933; }
+      html { background: #0b0d10; }
+      html[data-theme="github-dark"] { background: #0a0d11; }
       html[data-theme="one-dark"] { background: #1e2227; }
       html[data-theme="dracula"] { background: #1e1f29; }
+      html[data-theme="tokyo-night"] { background: #16161e; }
+      html[data-theme="catppuccin-mocha"] { background: #181825; }
+      html[data-theme="gruvbox-dark"] { background: #1e1e1e; }
+      html[data-theme="nord"] { background: #242933; }
+      html[data-theme="monokai"] { background: #1d1e1a; }
       html[data-theme="solarized-dark"] { background: #00212b; }
+      html[data-theme="github-light"] { background: #ededed; }
       html[data-theme="solarized-light"] { background: #eee8d5; }
     </style>
     <script>
@@ -29,24 +33,41 @@
           if (raw) {
             var s = JSON.parse(raw);
             if (s && s.theme) {
-              document.documentElement.setAttribute("data-theme", s.theme);
-              document.documentElement.style.colorScheme =
-                s.theme === "solarized-light" ? "light" : "dark";
+              // "kali" was folded into the new default.
+              var theme = s.theme === "kali" ? "kai-dark" : s.theme;
+              var light = theme === "solarized-light" || theme === "github-light";
+              document.documentElement.setAttribute("data-theme", theme);
+              document.documentElement.style.colorScheme = light ? "light" : "dark";
               var colors = {
-                kali: "#070d18",
-                "catppuccin-mocha": "#181825",
-                "tokyo-night": "#16161e",
-                nord: "#242933",
+                "kai-dark": "#0b0d10",
+                "github-dark": "#0a0d11",
                 "one-dark": "#1e2227",
                 dracula: "#1e1f29",
+                "tokyo-night": "#16161e",
+                "catppuccin-mocha": "#181825",
+                "gruvbox-dark": "#1e1e1e",
+                nord: "#242933",
+                monokai: "#1d1e1a",
                 "solarized-dark": "#00212b",
+                "github-light": "#ededed",
                 "solarized-light": "#eee8d5",
               };
-              var c = colors[s.theme];
+              var c = colors[theme];
               if (c) {
                 var m = document.querySelector('meta[name="theme-color"]');
                 if (m) m.setAttribute("content", c);
               }
+            }
+            // See-through window (Windows / Linux desktop app): apply the saved
+            // opacity before first paint so the chrome never flashes opaque.
+            var op = s && typeof s.opacity === "number" ? s.opacity : 1;
+            var desktop = "__TAURI_INTERNALS__" in window && !/mac/i.test(navigator.platform);
+            if (desktop && op < 1) {
+              document.documentElement.style.setProperty(
+                "--win-alpha",
+                String(Math.max(0.2, Math.min(1, op)))
+              );
+              document.documentElement.classList.add("win-translucent");
             }
           }
         } catch (_) {}

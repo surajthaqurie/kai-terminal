@@ -8,7 +8,7 @@ function parseThemes(css: string): Record<string, Record<string, string>> {
   const themes: Record<string, Record<string, string>> = {};
   let match: RegExpExecArray | null;
   while ((match = themeRegex.exec(css)) !== null) {
-    const themeName = match[2] || "kali";
+    const themeName = match[2] || "kai-dark";
     const body = match[3];
     const vars: Record<string, string> = {};
     const varRegex = /--([a-z0-9-]+)\s*:\s*([^;]+);/g;
@@ -84,17 +84,21 @@ describe("WCAG 2.1 AA Theme Contrast Suite", () => {
   const themes = parseThemes(css);
 
   const EXPECTED_THEMES = [
-    "kali",
-    "catppuccin-mocha",
-    "tokyo-night",
-    "nord",
+    "kai-dark",
+    "github-dark",
     "one-dark",
     "dracula",
+    "tokyo-night",
+    "catppuccin-mocha",
+    "gruvbox-dark",
+    "nord",
+    "monokai",
     "solarized-dark",
+    "github-light",
     "solarized-light",
   ];
 
-  it("validates all eight known theme definitions are parsed from App.css", () => {
+  it("validates all twelve known theme definitions are parsed from App.css", () => {
     for (const expected of EXPECTED_THEMES) {
       expect(themes[expected], `Theme ${expected} must be defined in App.css`).toBeDefined();
     }

@@ -1,3 +1,4 @@
+import { windowTransparencySupported } from "../services/windowOpacity";
 import { FC, useState, useEffect } from "react";
 import {
   UserSettings,
@@ -113,13 +114,11 @@ export const THEME_OPTIONS: Array<{
   fg: string;
   accent: string;
 }> = [
-  {
-    id: "kali",
-    name: "Kali (Default)",
-    bg: "#0a1428",
-    fg: "#e8eef7",
-    accent: "#00a8e8",
-  },
+  { id: "kai-dark", name: "Kai Dark (Default)", bg: "#0f1115", fg: "#d9dce3", accent: "#22d3ee" },
+  { id: "github-dark", name: "GitHub Dark", bg: "#0d1117", fg: "#c9d1d9", accent: "#58a6ff" },
+  { id: "one-dark", name: "One Dark", bg: "#282c34", fg: "#abb2bf", accent: "#61afef" },
+  { id: "dracula", name: "Dracula", bg: "#282a36", fg: "#f8f8f2", accent: "#bd93f9" },
+  { id: "tokyo-night", name: "Tokyo Night", bg: "#1a1b26", fg: "#c0caf5", accent: "#7aa2f7" },
   {
     id: "catppuccin-mocha",
     name: "Catppuccin Mocha",
@@ -127,16 +126,16 @@ export const THEME_OPTIONS: Array<{
     fg: "#cdd6f4",
     accent: "#89b4fa",
   },
-  { id: "tokyo-night", name: "Tokyo Night", bg: "#1a1b26", fg: "#c0caf5", accent: "#7aa2f7" },
+  { id: "gruvbox-dark", name: "Gruvbox Dark", bg: "#282828", fg: "#ebdbb2", accent: "#fabd2f" },
   { id: "nord", name: "Nord", bg: "#2e3440", fg: "#d8dee9", accent: "#88c0d0" },
-  { id: "one-dark", name: "One Dark", bg: "#282c34", fg: "#abb2bf", accent: "#61afef" },
-  { id: "dracula", name: "Dracula", bg: "#282a36", fg: "#f8f8f2", accent: "#bd93f9" },
-  { id: "solarized-dark", name: "Solarized Dark", bg: "#002b36", fg: "#839496", accent: "#268bd2" },
+  { id: "monokai", name: "Monokai", bg: "#272822", fg: "#f8f8f2", accent: "#a6e22e" },
+  { id: "solarized-dark", name: "Solarized Dark", bg: "#002b36", fg: "#93a1a1", accent: "#268bd2" },
+  { id: "github-light", name: "GitHub Light", bg: "#ffffff", fg: "#24292f", accent: "#0969da" },
   {
     id: "solarized-light",
     name: "Solarized Light",
     bg: "#fdf6e3",
-    fg: "#657b83",
+    fg: "#586e75",
     accent: "#268bd2",
   },
 ];
@@ -466,7 +465,9 @@ export const SettingsModal: FC<SettingsModalProps> = ({
                   />
                 </div>
                 <p className="muted-text">
-                  Controls the background transparency of the terminal canvas and panels.
+                  Fades the terminal background and the window chrome so the desktop shows through.
+                  {!windowTransparencySupported() &&
+                    " On macOS (and in a browser) only the terminal background fades."}
                 </p>
               </div>
 

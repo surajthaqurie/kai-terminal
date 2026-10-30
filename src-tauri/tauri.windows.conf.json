@@ -1,0 +1,17 @@
+{
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Kai Terminal",
+        "width": 1000,
+        "height": 650,
+        "minWidth": 400,
+        "minHeight": 300,
+        "resizable": true,
+        "decorations": false,
+        "transparent": true
+      }
+    ]
+  }
+}

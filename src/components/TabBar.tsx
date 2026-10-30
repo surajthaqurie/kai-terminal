@@ -2,6 +2,7 @@ import { CSSProperties, FC, ReactNode, useCallback, useEffect, useRef, useState 
 import { ShellProfile, TerminalTab } from "../types/terminal";
 import { X, Plus, ChevronDown, Terminal as TerminalIcon } from "lucide-react";
 import { PopupMenu, type MenuEntry } from "./PopupMenu";
+import { AppIcon } from "./AppIcon";
 import { WindowControls } from "./WindowControls";
 import { isTauriAvailable } from "../services/ptyService";
 import { isMacPlatform } from "../services/shortcuts";
@@ -393,6 +394,12 @@ export const TabBar: FC<TabBarProps> = ({
 
   return (
     <div className={`tab-bar${isTauriAvailable() && isMacPlatform() ? " has-traffic-lights" : ""}`}>
+      {/* App icon + name; also a drag handle for the frameless window. */}
+      <div className="tab-brand" data-tauri-drag-region title="Kai Terminal">
+        <AppIcon size={18} />
+        <span className="tab-brand-name">Kai</span>
+      </div>
+
       <div
         ref={containerRef}
         className={`tabs-container${dragId ? " dragging" : ""}`}

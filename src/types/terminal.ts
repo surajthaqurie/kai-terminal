@@ -166,14 +166,18 @@ export interface GitInfoLike {
  * Available color theme names.
  */
 export type ThemeName =
-  | "kali"
-  | "catppuccin-mocha"
+  | "kai-dark"
+  | "github-dark"
   | "one-dark"
   | "dracula"
-  | "solarized-dark"
-  | "solarized-light"
+  | "tokyo-night"
+  | "catppuccin-mocha"
+  | "gruvbox-dark"
   | "nord"
-  | "tokyo-night";
+  | "monokai"
+  | "solarized-dark"
+  | "github-light"
+  | "solarized-light";
 
 /**
  * Terminal cursor appearance styles.

@@ -4,7 +4,7 @@
    ========================================================================= */
 
 :root,
-[data-theme="kali"] {
+[data-theme="kai-dark"] {
   color-scheme: dark;
 
   /* ——— Typography Scale ——— */
@@ -45,51 +45,51 @@
   --transition-normal: 0.22s cubic-bezier(0.4, 0, 0.2, 1);
   --transition-slow: 0.32s cubic-bezier(0.4, 0, 0.2, 1);
 
-  /* ——— Default Theme: Kali Signature (Deep Navy + Electric Cyan) ——— */
-  --bg-canvas: #070d18;
-  --bg-header: #0a1322;
-  --bg-tab-bar: #060c15;
-  --bg-statusbar: #060c15;
-  --bg-tab-inactive: #11161f;
-  --bg-tab-active: #0a1428;
-  --bg-tab-hover: #1a2028;
-  --bg-toolbar: #0c172a;
-  --bg-surface: #0e1a2f;
-  --bg-surface-elevated: #14243f;
-  --bg-surface-sunken: #050a13;
-  --bg-overlay: rgba(4, 8, 16, 0.78);
-  --bg-card: #0f1c32;
+  /* ——— Default Theme: Kai Dark (neutral near-black + icon cyan) ——— */
+  --bg-canvas: #0b0d10;
+  --bg-header: #0c0e11;
+  --bg-tab-bar: #040405;
+  --bg-statusbar: #040405;
+  --bg-tab-inactive: #0d0f12;
+  --bg-tab-active: #0f1115;
+  --bg-tab-hover: #1c1d20;
+  --bg-toolbar: #0b0d10;
+  --bg-surface: #0f1115;
+  --bg-surface-elevated: #202225;
+  --bg-surface-sunken: #0c0e11;
+  --bg-overlay: rgba(12, 14, 17, 0.82);
+  --bg-card: #0f1115;
 
-  --border-subtle: rgba(240, 244, 249, 0.1);
-  --border-default: rgba(240, 244, 249, 0.18);
-  --border-strong: rgba(255, 255, 255, 0.22);
-  --border-accent: rgba(0, 168, 232, 0.45);
+  --border-subtle: rgba(217, 220, 227, 0.1);
+  --border-default: rgba(217, 220, 227, 0.18);
+  --border-strong: #44464b;
+  --border-accent: rgba(34, 211, 238, 0.45);
 
-  --text-primary: #f0f4f9;
-  --text-secondary: #adbed5;
-  --text-tertiary: #94a6bc;
-  --text-inverse: #050a13;
+  --text-primary: #d9dce3;
+  --text-secondary: #c1c4ca;
+  --text-tertiary: #888b90;
+  --text-inverse: #0b0d10;
 
-  --accent-primary: #00a8e8;
-  --accent-hover: #38c2ff;
-  --accent-subtle: rgba(0, 168, 232, 0.12);
-  --accent-glow: rgba(0, 168, 232, 0.32);
-  --accent-ring: rgba(0, 168, 232, 0.45);
+  --accent-primary: #22d3ee;
+  --accent-hover: #4adbf1;
+  --accent-subtle: rgba(34, 211, 238, 0.15);
+  --accent-glow: rgba(34, 211, 238, 0.35);
+  --accent-ring: rgba(34, 211, 238, 0.5);
 
-  --color-success: #00d484;
-  --color-success-bg: rgba(0, 212, 132, 0.12);
-  --color-warning: #f59e0b;
-  --color-warning-bg: rgba(245, 158, 11, 0.14);
-  --color-danger: #ff5f56;
-  --color-danger-bg: rgba(255, 95, 86, 0.14);
-  --color-purple: #bd93f9;
-  --color-purple-bg: rgba(189, 147, 249, 0.14);
+  --color-success: #86efac;
+  --color-success-bg: rgba(134, 239, 172, 0.12);
+  --color-warning: #fde047;
+  --color-warning-bg: rgba(253, 224, 71, 0.14);
+  --color-danger: #fca5a5;
+  --color-danger-bg: rgba(252, 165, 165, 0.14);
+  --color-purple: #d8b4fe;
+  --color-purple-bg: rgba(216, 180, 254, 0.14);
 
-  --scroll-track: #070d18;
-  --scroll-thumb: #1d2c44;
-  --scroll-thumb-hover: #2d4264;
+  --scroll-track: #0b0d10;
+  --scroll-thumb: #373a3e;
+  --scroll-thumb-hover: #56585d;
 
-  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239cb1cc' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23a7a9b0' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
 }
 
 /* =========================================================================
@@ -426,6 +426,195 @@
   --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23495e66' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
 }
 
+[data-theme="github-dark"] {
+  --bg-canvas: #0a0d11;
+  --bg-header: #0b0e13;
+  --bg-tab-bar: #030406;
+  --bg-statusbar: #030406;
+  --bg-tab-inactive: #0b0f14;
+  --bg-tab-active: #0d1117;
+  --bg-tab-hover: #1a1d22;
+  --bg-toolbar: #0a0d11;
+  --bg-surface: #0d1117;
+  --bg-surface-elevated: #1e2227;
+  --bg-surface-sunken: #0a0e12;
+  --bg-overlay: rgba(10, 14, 18, 0.82);
+  --bg-card: #0d1117;
+
+  --border-subtle: rgba(201, 209, 217, 0.1);
+  --border-default: rgba(201, 209, 217, 0.18);
+  --border-strong: #3e4349;
+  --border-accent: rgba(88, 166, 255, 0.45);
+
+  --text-primary: #c9d1d9;
+  --text-secondary: #b2bac2;
+  --text-tertiary: #848b92;
+  --text-inverse: #0a0d11;
+
+  --accent-primary: #58a6ff;
+  --accent-hover: #76b6ff;
+  --accent-subtle: rgba(88, 166, 255, 0.15);
+  --accent-glow: rgba(88, 166, 255, 0.35);
+  --accent-ring: rgba(88, 166, 255, 0.5);
+
+  --color-success: #56d364;
+  --color-success-bg: rgba(86, 211, 100, 0.12);
+  --color-warning: #e3b341;
+  --color-warning-bg: rgba(227, 179, 65, 0.14);
+  --color-danger: #ffa198;
+  --color-danger-bg: rgba(255, 161, 152, 0.14);
+  --color-purple: #d2a8ff;
+  --color-purple-bg: rgba(210, 168, 255, 0.14);
+
+  --scroll-track: #0a0d11;
+  --scroll-thumb: #33373e;
+  --scroll-thumb-hover: #4f545b;
+
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239aa1a9' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+}
+
+[data-theme="gruvbox-dark"] {
+  --bg-canvas: #1e1e1e;
+  --bg-header: #212121;
+  --bg-tab-bar: #1b1b1b;
+  --bg-statusbar: #1b1b1b;
+  --bg-tab-inactive: #222222;
+  --bg-tab-active: #282828;
+  --bg-tab-hover: #2f2f2f;
+  --bg-toolbar: #1e1e1e;
+  --bg-surface: #282828;
+  --bg-surface-elevated: #373737;
+  --bg-surface-sunken: #202020;
+  --bg-overlay: rgba(32, 32, 32, 0.82);
+  --bg-card: #282828;
+
+  --border-subtle: rgba(235, 219, 178, 0.1);
+  --border-default: rgba(235, 219, 178, 0.18);
+  --border-strong: #534f46;
+  --border-accent: rgba(250, 189, 47, 0.45);
+
+  --text-primary: #ebdbb2;
+  --text-secondary: #d4c6a1;
+  --text-tertiary: #a79d82;
+  --text-inverse: #1e1e1e;
+
+  --accent-primary: #fabd2f;
+  --accent-hover: #fbc954;
+  --accent-subtle: rgba(250, 189, 47, 0.15);
+  --accent-glow: rgba(250, 189, 47, 0.35);
+  --accent-ring: rgba(250, 189, 47, 0.5);
+
+  --color-success: #b8bb26;
+  --color-success-bg: rgba(184, 187, 38, 0.12);
+  --color-warning: #fabd2f;
+  --color-warning-bg: rgba(250, 189, 47, 0.14);
+  --color-danger: #fc8375;
+  --color-danger-bg: rgba(252, 131, 117, 0.14);
+  --color-purple: #d895a7;
+  --color-purple-bg: rgba(216, 149, 167, 0.14);
+
+  --scroll-track: #1e1e1e;
+  --scroll-thumb: #4f4c44;
+  --scroll-thumb-hover: #6c6758;
+
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23baae90' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+}
+
+[data-theme="monokai"] {
+  --bg-canvas: #1d1e1a;
+  --bg-header: #20211c;
+  --bg-tab-bar: #1b1b17;
+  --bg-statusbar: #1b1b17;
+  --bg-tab-inactive: #22221d;
+  --bg-tab-active: #272822;
+  --bg-tab-hover: #2f2f2b;
+  --bg-toolbar: #1d1e1a;
+  --bg-surface: #272822;
+  --bg-surface-elevated: #363731;
+  --bg-surface-sunken: #1f201b;
+  --bg-overlay: rgba(31, 32, 27, 0.82);
+  --bg-card: #272822;
+
+  --border-subtle: rgba(248, 248, 242, 0.1);
+  --border-default: rgba(248, 248, 242, 0.18);
+  --border-strong: #555650;
+  --border-accent: rgba(166, 226, 46, 0.45);
+
+  --text-primary: #f8f8f2;
+  --text-secondary: #dfdfd9;
+  --text-tertiary: #9d9d97;
+  --text-inverse: #1d1e1a;
+
+  --accent-primary: #a6e22e;
+  --accent-hover: #b6e754;
+  --accent-subtle: rgba(166, 226, 46, 0.15);
+  --accent-glow: rgba(166, 226, 46, 0.35);
+  --accent-ring: rgba(166, 226, 46, 0.5);
+
+  --color-success: #a6e22e;
+  --color-success-bg: rgba(166, 226, 46, 0.12);
+  --color-warning: #f4bf75;
+  --color-warning-bg: rgba(244, 191, 117, 0.14);
+  --color-danger: #fb7daa;
+  --color-danger-bg: rgba(251, 125, 170, 0.14);
+  --color-purple: #bb95ff;
+  --color-purple-bg: rgba(187, 149, 255, 0.14);
+
+  --scroll-track: #1d1e1a;
+  --scroll-thumb: #51524c;
+  --scroll-thumb-hover: #70716b;
+
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23c4c4be' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+}
+
+[data-theme="github-light"] {
+  color-scheme: light;
+  --bg-canvas: #ededed;
+  --bg-header: #f2f2f2;
+  --bg-tab-bar: #f2f2f2;
+  --bg-statusbar: #f2f2f2;
+  --bg-tab-inactive: #e8e8e8;
+  --bg-tab-active: #ffffff;
+  --bg-tab-hover: #dadada;
+  --bg-toolbar: #ededed;
+  --bg-surface: #ffffff;
+  --bg-surface-elevated: #ffffff;
+  --bg-surface-sunken: #ebebeb;
+  --bg-overlay: rgba(242, 242, 242, 0.85);
+  --bg-card: #ffffff;
+
+  --border-subtle: rgba(36, 41, 47, 0.14);
+  --border-default: rgba(36, 41, 47, 0.26);
+  --border-strong: #bdbfc1;
+  --border-accent: rgba(9, 105, 218, 0.45);
+
+  --text-primary: #24292f;
+  --text-secondary: #3e4348;
+  --text-tertiary: #5d6165;
+  --text-inverse: #ffffff;
+
+  --accent-primary: #0969da;
+  --accent-hover: #0756b3;
+  --accent-subtle: rgba(9, 105, 218, 0.15);
+  --accent-glow: rgba(9, 105, 218, 0.35);
+  --accent-ring: rgba(9, 105, 218, 0.5);
+
+  --color-success: #187533;
+  --color-success-bg: rgba(24, 117, 51, 0.12);
+  --color-warning: #7a5900;
+  --color-warning-bg: rgba(122, 89, 0, 0.14);
+  --color-danger: #a40e26;
+  --color-danger-bg: rgba(164, 14, 38, 0.14);
+  --color-purple: #7050a9;
+  --color-purple-bg: rgba(112, 80, 169, 0.14);
+
+  --scroll-track: #ededed;
+  --scroll-thumb: #d3d4d5;
+  --scroll-thumb-hover: #b2b4b6;
+
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%235b5f63' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+}
+
 /* =========================================================================
    Base & Resets
    ========================================================================= */
@@ -527,6 +716,31 @@ html,
   border-bottom: 1px solid var(--border-subtle);
   user-select: none;
   position: relative;
+}
+
+/* App icon + name at the far left of the header (a drag handle too). */
+.tab-brand {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 0 0 auto;
+  align-self: center;
+  margin: 0 8px 3px 2px;
+  color: var(--text-primary);
+  font-size: var(--text-base);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  user-select: none;
+}
+
+.tab-brand > * {
+  pointer-events: none;
+}
+
+@media (max-width: 720px) {
+  .tab-brand-name {
+    display: none;
+  }
 }
 
 .tabs-container {
@@ -1022,6 +1236,37 @@ body.tab-dragging * {
   color: var(--text-primary);
 }
 
+/* "Open project in editor": an icon right after the search box, with a small
+   caret that lists the installed editors. */
+.header-editor {
+  display: flex;
+  align-items: center;
+}
+
+.header-caret-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 26px;
+  margin-left: -4px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition:
+    background-color var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.header-caret-btn:hover,
+.header-caret-btn.is-open {
+  background-color: var(--bg-surface-elevated);
+  color: var(--text-primary);
+}
+
 .header-icon-badge {
   position: absolute;
   top: 4px;
@@ -1051,6 +1296,12 @@ body.tab-dragging * {
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-lg);
   animation: fadeInDown var(--transition-fast);
+}
+
+/* For triggers at the bottom of the window (footer shell picker). */
+.popup-menu-up {
+  top: auto;
+  bottom: calc(100% + 6px);
 }
 
 .popup-menu-start {
@@ -1504,7 +1755,7 @@ select.modal-input {
 
 /* Split Pane Divider: `--border-strong` (not `--border-subtle`) so the seam
  * between two same-background terminals stays visible in every theme. The old
- * 8%-white subtle token composited to ~1.3:1 on dark terminals (kali) — the
+ * 8%-white subtle token composited to ~1.3:1 on dark terminals (kai-dark) — the
  * "split border is invisible" report. `--border-strong` adapts per theme
  * (opaque grays on solarized, 22% white on darks); hover/active stay accent.
  * Locked by the pane-divider contrast test for all eight themes. */
@@ -5399,4 +5650,161 @@ button.status-git-btn-clickable:focus-visible {
   border: 1px solid var(--border-default);
   border-radius: var(--radius-sm);
   background-color: var(--bg-surface-sunken);
+}
+
+/* =========================================================================
+   See-through window (Windows / Linux desktop app)
+   `--win-alpha` is the "Terminal Background Opacity" setting. The native
+   window is transparent (src-tauri/tauri.windows.conf.json), so each layer
+   that paints chrome mixes its token with transparency; layers that only
+   wrapped another painted layer are cleared so alphas never stack. The
+   terminal background itself is repainted by xterm with the same alpha.
+   Menus, dialogs and the command palette stay opaque so they remain legible.
+   ========================================================================= */
+
+@supports (background-color: color-mix(in srgb, red 50%, transparent)) {
+  html.win-translucent {
+    --win-pct: calc(var(--win-alpha, 1) * 100%);
+  }
+
+  html.win-translucent,
+  html.win-translucent[data-theme],
+  html.win-translucent body,
+  html.win-translucent #root,
+  .win-translucent .app-layout,
+  .win-translucent .app-header,
+  .win-translucent .app-body,
+  .win-translucent .terminal-container {
+    background-color: transparent;
+  }
+
+  .win-translucent .tab-bar {
+    background-color: color-mix(in srgb, var(--bg-tab-bar) var(--win-pct), transparent);
+  }
+
+  .win-translucent .status-bar {
+    background-color: color-mix(in srgb, var(--bg-statusbar) var(--win-pct), transparent);
+  }
+
+  .win-translucent .tab-item {
+    background-color: color-mix(in srgb, var(--bg-tab-inactive) var(--win-pct), transparent);
+  }
+
+  .win-translucent .tab-item:hover {
+    background-color: color-mix(in srgb, var(--bg-tab-hover) var(--win-pct), transparent);
+  }
+
+  .win-translucent .tab-item.active {
+    background-color: color-mix(in srgb, var(--bg-tab-active) var(--win-pct), transparent);
+  }
+}
+
+/* =========================================================================
+   Footer shell picker (first item of the status bar)
+   ========================================================================= */
+
+.shell-picker {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.shell-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 180px;
+  padding: 2px 7px;
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xs);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  transition:
+    background-color var(--transition-fast),
+    border-color var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.shell-chip:hover,
+.shell-chip.is-open {
+  background-color: var(--bg-surface-elevated);
+  border-color: var(--border-default);
+  color: var(--text-primary);
+}
+
+.shell-chip-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status-sep {
+  flex: 0 0 auto;
+  width: 1px;
+  height: 14px;
+  background-color: var(--border-default);
+}
+
+.shell-confirm {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  z-index: 70;
+  width: 300px;
+  padding: 12px 14px;
+  background-color: var(--bg-surface-elevated);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  white-space: normal;
+}
+
+.shell-confirm-title {
+  color: var(--text-primary);
+  font-size: var(--text-base);
+  font-weight: 600;
+}
+
+.shell-confirm-body {
+  margin-top: 4px;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  line-height: 1.4;
+}
+
+.shell-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.shell-confirm-btn {
+  padding: 4px 12px;
+  background: transparent;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.shell-confirm-btn:hover {
+  background-color: var(--bg-surface);
+}
+
+.shell-confirm-btn.is-primary {
+  background-color: var(--accent-primary);
+  border-color: var(--accent-primary);
+  color: var(--text-inverse);
+  font-weight: 600;
+}
+
+.shell-confirm-btn.is-primary:hover {
+  background-color: var(--accent-hover);
 }
