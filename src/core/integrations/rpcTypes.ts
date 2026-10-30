@@ -87,10 +87,13 @@ export interface IntegrationErrorBody {
 
 export type IntegrationRpcRequest =
   | { op: "status"; projectDir: string }
+  /** Open the browser, sign in, and save an account for every organization reached. */
+  | { op: "login_browser" }
   | {
       op: "login";
       org: string;
-      authMethod: IntegrationAuthMethod;
+      /** The command-line fallbacks; browser sign-in is `login_browser`. */
+      authMethod: Exclude<IntegrationAuthMethod, "oauth">;
       /** Required for `pat`. Never logged, never echoed back. */
       pat?: string;
       /** Azure DevOps Server only; defaults to https://dev.azure.com/<org>. */
@@ -139,6 +142,7 @@ export type IntegrationRpcResponse =
   | { ok: true; projects: IntegrationProjectView[] }
   | { ok: true; repos: IntegrationRepoView[] }
   | { ok: true; account: IntegrationAccountView; user: IntegrationUser }
+  | { ok: true; accounts: IntegrationAccountView[]; user: IntegrationUser }
   | { ok: true; user: IntegrationUser }
   | { ok: true; binding: IntegrationBindingView }
   | { ok: true; done: true }

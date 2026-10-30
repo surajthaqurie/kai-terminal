@@ -235,6 +235,15 @@ export interface IntegrationProvider {
     baseUrl?: string;
     authMethod: IntegrationAuthMethod;
   }): Omit<IntegrationAccount, "createdAt" | "user">;
+  /**
+   * Sign in through the user's browser. Resolves with the credential to store, who
+   * signed in, and every organization they can reach (so none has to be typed).
+   */
+  browserLogin?(opts: { onUrl?: (url: string) => void }): Promise<{
+    secret: string;
+    user: IntegrationUser;
+    orgs: string[];
+  }>;
   /** A real call that proves the credential works. */
   verify(
     account: IntegrationAccount,

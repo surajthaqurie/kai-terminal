@@ -5,6 +5,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import {
   AGENT_REGISTRY,
   applyAgentSetup,
+  approveKaiForClaudeProject,
   autoSetupDetectedAgents,
   buildKaiMcpEntry,
   getAgentDefinition,
@@ -837,5 +838,47 @@ describe("All-Agent Integration Matrix & Unified Workflow", () => {
       "--dry-run",
     ]);
     expect(codeInvalidScope).toBe(2);
+  });
+});
+
+describe("approveKaiForClaudeProject", () => {
+  const settingsOf = (dir: string) => path.join(dir, ".claude", "settings.local.json");
+  const read = (dir: string) => JSON.parse(fs.readFileSync(settingsOf(dir), "utf-8"));
+
+  it("creates the local settings with only kai-terminal approved", () => {
+    const dir = makeTempHome();
+    expect(approveKaiForClaudeProject(dir).wrote).toBe(true);
+    expect(read(dir)).toEqual({ enabledMcpjsonServers: ["kai-terminal"] });
+  });
+
+  it("keeps unrelated keys and other approved servers, and is idempotent", () => {
+    const dir = makeTempHome();
+    fs.mkdirSync(path.join(dir, ".claude"));
+    fs.writeFileSync(
+      settingsOf(dir),
+      JSON.stringify({ permissions: { allow: ["Bash(ls)"] }, enabledMcpjsonServers: ["other"] })
+    );
+    expect(approveKaiForClaudeProject(dir).wrote).toBe(true);
+    expect(read(dir)).toEqual({
+      permissions: { allow: ["Bash(ls)"] },
+      enabledMcpjsonServers: ["other", "kai-terminal"],
+    });
+    expect(approveKaiForClaudeProject(dir).wrote).toBe(false);
+  });
+
+  it("never overrides a server the user disabled", () => {
+    const dir = makeTempHome();
+    fs.mkdirSync(path.join(dir, ".claude"));
+    fs.writeFileSync(settingsOf(dir), JSON.stringify({ disabledMcpjsonServers: ["kai-terminal"] }));
+    expect(approveKaiForClaudeProject(dir).wrote).toBe(false);
+    expect(read(dir)).toEqual({ disabledMcpjsonServers: ["kai-terminal"] });
+  });
+
+  it("leaves a settings file it cannot parse untouched", () => {
+    const dir = makeTempHome();
+    fs.mkdirSync(path.join(dir, ".claude"));
+    fs.writeFileSync(settingsOf(dir), "{ nope");
+    expect(approveKaiForClaudeProject(dir).wrote).toBe(false);
+    expect(fs.readFileSync(settingsOf(dir), "utf-8")).toBe("{ nope");
   });
 });

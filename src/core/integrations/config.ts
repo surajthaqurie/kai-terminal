@@ -66,7 +66,7 @@ function isAccount(v: unknown): v is IntegrationAccount {
     typeof a.provider === "string" &&
     typeof a.org === "string" &&
     typeof a.baseUrl === "string" &&
-    (a.authMethod === "az" || a.authMethod === "pat")
+    (a.authMethod === "oauth" || a.authMethod === "az" || a.authMethod === "pat")
   );
 }
 

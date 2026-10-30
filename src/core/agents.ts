@@ -1333,6 +1333,52 @@ export function applyAgentSetup(
   }
 }
 
+export interface ApprovalResult {
+  path: string;
+  /** True when this call changed the file. */
+  wrote: boolean;
+  message: string;
+}
+
+/**
+ * Claude Code asks before it starts a server named in a project's `.mcp.json`.
+ * Record that the user's own kai-terminal entry is approved, in the git-ignored
+ * `.claude/settings.local.json`, so `kai claude` starts without that prompt.
+ * Only kai-terminal is named (never "all servers"), other keys are kept, and a
+ * server the user listed under `disabledMcpjsonServers` stays disabled.
+ */
+export function approveKaiForClaudeProject(projectDir: string): ApprovalResult {
+  const filePath = path.join(projectDir, ".claude", "settings.local.json");
+  const { exists, data, parseError } = readJsonConfig(filePath);
+  if (parseError) {
+    return { path: filePath, wrote: false, message: `${filePath}: ${parseError}` };
+  }
+  const names = (key: string): string[] =>
+    Array.isArray(data[key])
+      ? (data[key] as unknown[]).filter((v): v is string => typeof v === "string")
+      : [];
+  if (names("disabledMcpjsonServers").includes(MCP_SERVER_NAME)) {
+    return { path: filePath, wrote: false, message: `${MCP_SERVER_NAME} is disabled by the user.` };
+  }
+  const enabled = names("enabledMcpjsonServers");
+  if (enabled.includes(MCP_SERVER_NAME)) {
+    return { path: filePath, wrote: false, message: `${MCP_SERVER_NAME} is already approved.` };
+  }
+  data.enabledMcpjsonServers = [...enabled, MCP_SERVER_NAME];
+  try {
+    ensureParentDir(filePath);
+    if (exists) backupFile(filePath);
+    atomicWriteFile(filePath, `${JSON.stringify(data, null, 2)}\n`);
+    return { path: filePath, wrote: true, message: `Approved ${MCP_SERVER_NAME} in ${filePath}.` };
+  } catch (err) {
+    return {
+      path: filePath,
+      wrote: false,
+      message: `Failed to write ${filePath}: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+}
+
 export interface AutoSetupOptions extends AgentSetupOptions {
   /** When false (default), agents without a detected binary are skipped. */
   includeMissing?: boolean;

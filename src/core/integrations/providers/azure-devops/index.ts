@@ -22,7 +22,8 @@ import {
 } from "../../types";
 import { findProvider } from "../../providerCatalog";
 import type { SecretStore } from "../../secretStore";
-import { authHeaderFor, LOGIN_HINT, type AuthDeps } from "./auth";
+import { authHeaderFor, loginHintFor, type AuthDeps } from "./auth";
+import { signInWithBrowser } from "./oauth";
 import {
   assertWiqlProjectScope,
   buildWiql,
@@ -122,7 +123,7 @@ class AzureCall {
         accept: opts.accept,
         headers: { authorization: auth.header },
         redact: [auth.secret],
-        authHint: LOGIN_HINT,
+        authHint: loginHintFor(this.account),
       },
       this.deps.http
     );
@@ -200,6 +201,8 @@ export function createAzureDevOpsProvider(deps: AzureDeps = {}): IntegrationProv
     info,
 
     detectFromRemote: parseAzureRemote,
+
+    browserLogin: (opts) => signInWithBrowser(opts, { env: deps.auth?.env, ...deps.auth?.oauth }),
 
     buildAccount({ org, baseUrl, authMethod }) {
       // A cloud address is the same account as `--org <name>`, however it was spelled.

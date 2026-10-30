@@ -212,6 +212,56 @@ export interface LoginResult {
   storedIn: SecretLocation | null;
 }
 
+export interface BrowserLoginResult {
+  /** One account per organization the signed-in user belongs to. */
+  accounts: IntegrationAccountView[];
+  user: IntegrationUser;
+}
+
+/**
+ * Sign in through the browser. The user types nothing: every organization they
+ * belong to gets an account (each keeps its own copy of the refresh token, so
+ * signing one out never breaks another).
+ */
+export async function loginWithBrowser(
+  providerId: string,
+  opts: { onUrl?: (url: string) => void } = {},
+  deps: ServiceDeps = {}
+): Promise<BrowserLoginResult> {
+  const provider = providerFor(providerId);
+  if (!provider.browserLogin) {
+    throw new IntegrationError("bad_request", `${provider.info.label} has no browser sign-in.`);
+  }
+  const secrets = secretsOf(deps);
+  const result = await provider.browserLogin({ onUrl: opts.onUrl });
+  const accounts: IntegrationAccountView[] = [];
+  for (const org of result.orgs) {
+    let draft;
+    try {
+      draft = provider.buildAccount({ org, authMethod: "oauth" });
+    } catch {
+      continue; // an organization name Kai cannot address; the rest still work
+    }
+    await secrets.set(secretKeyFor(draft.id), result.secret);
+    const previous = getAccount(draft.id);
+    const account: IntegrationAccount = {
+      ...draft,
+      user: result.user.email ?? result.user.name,
+      createdAt: previous?.createdAt ?? new Date().toISOString(),
+    };
+    saveAccount(account);
+    accounts.push(await accountView(account, secrets, null));
+  }
+  if (accounts.length === 0) {
+    throw new IntegrationError(
+      "not_found",
+      "No usable Azure DevOps organization was found for this account.",
+      "Sign in with the account you use at dev.azure.com."
+    );
+  }
+  return { accounts, user: result.user };
+}
+
 /** Verify first, store second: a rejected credential leaves nothing behind. */
 export async function login(
   providerId: string,
@@ -655,6 +705,10 @@ export async function handleRpc(
   switch (request.op) {
     case "status":
       return { ok: true, status: await getStatus(providerId, request.projectDir, deps) };
+    case "login_browser": {
+      const result = await loginWithBrowser(providerId, {}, deps);
+      return { ok: true, accounts: result.accounts, user: result.user };
+    }
     case "login": {
       if (typeof request.pat === "string" && request.pat.length > RPC_PAT_MAX) {
         throw new IntegrationError("bad_request", "The token is too long.");

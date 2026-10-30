@@ -2,9 +2,13 @@ import path from "path";
 import fs from "fs";
 import { registerProject, loadProjectIndex } from "../core/registry";
 import { indexProject } from "../core/indexer";
+import { PROVIDER_CATALOG } from "../core/integrations/providerCatalog";
+import { getStatus } from "../core/integrations/service";
 import {
   AGENT_REGISTRY,
+  MCP_SERVER_NAME,
   applyAgentSetup,
+  approveKaiForClaudeProject,
   autoSetupDetectedAgents,
   buildAgentSetup,
   detectInstalledAgentsSync,
@@ -60,6 +64,36 @@ const BUILTIN_COMMANDS = new Set([
   "query",
   "cost",
 ]);
+
+/**
+ * Say whether this folder's integration tools (Azure DevOps) will reach the agent.
+ * They are served by the kai-terminal MCP server itself, only for a connected folder,
+ * so a session started before `kai integration azure` finished has none of them.
+ * Silent for anyone who has not set an integration up.
+ */
+async function announceIntegrations(dir: string): Promise<void> {
+  for (const info of PROVIDER_CATALOG) {
+    try {
+      const s = await getStatus(info.id, dir);
+      const b = s.project.binding;
+      if (s.project.state === "ready" && b) {
+        console.log(
+          `[kai] ${info.label} tools ready: ${b.project}${b.repo ? ` / ${b.repo}` : ""}.`
+        );
+      } else if (s.project.state === "signed_out" || s.project.state === "account_missing") {
+        console.log(
+          `[kai] ${info.label}: sign-in needed. Run \`kai integration ${info.aliases[0] ?? info.id}\`.`
+        );
+      } else if (!s.project.otherProvider && s.accounts.length > 0) {
+        console.log(
+          `[kai] ${info.label}: signed in, but this folder is not connected, so agents get no ${info.label} tools. Run \`kai integration ${info.aliases[0] ?? info.id}\`.`
+        );
+      }
+    } catch {
+      // A status problem must never block launching the agent.
+    }
+  }
+}
 
 /** Resolve an agent name or alias against registered agents and dynamically detected PATH binaries. */
 export function resolveAgent(nameOrAlias: string): {
@@ -127,6 +161,16 @@ export async function executeAgentWorkflow(
         `[kai] MCP configuration auto-wired for ${setupResult.name || resolved.agentId}.`
       );
     }
+    // A project-level .mcp.json makes Claude Code ask before using the server.
+    if (
+      resolved.agentId === "claude" &&
+      setupResult.scope === "project" &&
+      (setupResult.wrote || setupResult.alreadyConfigured)
+    ) {
+      const approval = approveKaiForClaudeProject(meta.canonicalPath);
+      if (approval.wrote) console.log(`[kai] ${MCP_SERVER_NAME} approved for this project.`);
+    }
+    await announceIntegrations(meta.canonicalPath);
   }
 
   // 3. Ensure baseline index & project graph

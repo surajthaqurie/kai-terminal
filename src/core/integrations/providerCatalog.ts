@@ -3,7 +3,8 @@
  * UI and the CLI read the same list. Adding a provider means one entry here
  * plus a folder under `providers/`.
  */
-export type IntegrationAuthMethod = "az" | "pat";
+/** `oauth` is browser sign-in; `az` and `pat` are the command-line fallbacks. */
+export type IntegrationAuthMethod = "oauth" | "az" | "pat";
 
 export interface ProviderInfo {
   id: string;
@@ -20,7 +21,7 @@ export const PROVIDER_CATALOG: readonly ProviderInfo[] = [
     label: "Azure DevOps",
     aliases: ["azure", "ado"],
     description: "Work items, pull requests and builds, read through Kai's MCP server.",
-    authMethods: ["az", "pat"],
+    authMethods: ["oauth", "az", "pat"],
   },
 ];
 

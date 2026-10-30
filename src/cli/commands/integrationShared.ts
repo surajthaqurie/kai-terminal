@@ -79,7 +79,7 @@ export function projectDirFrom(flags: Flags): string {
 }
 
 export const authLabel = (method: string): string =>
-  method === "az" ? "Azure CLI" : "access token";
+  method === "oauth" ? "browser sign-in" : method === "az" ? "Azure CLI" : "access token";
 
 /** `Payments / api`, or just the project when there is no repository. */
 export const where = (b: Pick<ProjectBinding, "project" | "repo">): string =>

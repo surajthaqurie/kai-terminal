@@ -37,12 +37,7 @@ export function badgeFor(state: CardState): BadgeView {
 }
 
 export function authMethodLabel(method: IntegrationAuthMethod): string {
-  return method === "az" ? "Azure CLI" : "Access token";
-}
-
-/** Azure CLI when it is installed (nothing stored), otherwise a token. */
-export function initialAuthMethod(status: IntegrationStatusView | null): IntegrationAuthMethod {
-  return status?.azCli === false ? "pat" : "az";
+  return method === "oauth" ? "Browser sign-in" : method === "az" ? "Azure CLI" : "Access token";
 }
 
 /**
@@ -67,9 +62,9 @@ export function describeAccount(account: IntegrationAccountView): string {
   return parts.join(" · ");
 }
 
-/** True when the account is a token account whose secret is gone. */
+/** True when the account keeps a stored credential and it is gone. */
 export function needsRelogin(account: IntegrationAccountView): boolean {
-  return account.authMethod === "pat" && !account.hasCredential;
+  return account.authMethod !== "az" && !account.hasCredential;
 }
 
 /** Display name of a provider id, falling back to the id itself. */
@@ -80,13 +75,6 @@ export function providerLabel(id: string | null): string {
 
 export function formatError(error: IntegrationErrorBody): { message: string; hint?: string } {
   return error.hint ? { message: error.message, hint: error.hint } : { message: error.message };
-}
-
-/** Organization typed by the user: a bare name, or a pasted dev.azure.com URL. */
-export function normalizeOrgInput(raw: string): string {
-  const trimmed = raw.trim();
-  const fromUrl = /^https?:\/\/dev\.azure\.com\/([^/\s]+)/i.exec(trimmed);
-  return (fromUrl ? fromUrl[1] : trimmed).replace(/\/+$/, "");
 }
 
 /** The project a "Switch project" picker preselects: the active one, else the first. */
@@ -119,18 +107,4 @@ export function isSameSelection(
   repo: string | null
 ): boolean {
   return binding.project === project && (binding.repo ?? null) === (repo ?? null);
-}
-
-const ORG_SLUG = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
-
-/**
- * Where an Azure DevOps (cloud) user creates a personal access token: the
- * organization's token page, or the dev.azure.com start page when the typed
- * organization is not a plain name (a URL, a space, nothing yet).
- */
-export function patPageUrl(org: string): string {
-  const name = normalizeOrgInput(org);
-  return ORG_SLUG.test(name)
-    ? `https://dev.azure.com/${name}/_usersSettings/tokens`
-    : "https://dev.azure.com/";
 }

@@ -12,7 +12,7 @@ import {
   integrationRpc,
   listProjects,
   listRepos,
-  loginIntegration,
+  loginWithBrowser,
   logoutIntegration,
   unbindIntegration,
   verifyIntegration,
@@ -116,13 +116,22 @@ describe("integration helpers", () => {
     expect(res.ok).toBe(false);
   });
 
-  it("loginIntegration forwards the token and returns account and user", async () => {
-    const account = { id: "azure-devops:contoso" };
+  it("loginWithBrowser asks for a browser sign-in and returns every account and the user", async () => {
+    const accounts = [{ id: "azure-devops:contoso" }, { id: "azure-devops:fabrikam" }];
     const user = { name: "Suraj" };
-    reply({ ok: true, account, user });
-    const res = await loginIntegration({ org: "contoso", authMethod: "pat", pat: "abc" });
-    expect(sent()).toEqual({ op: "login", org: "contoso", authMethod: "pat", pat: "abc" });
-    expect(res).toEqual({ ok: true, value: { account, user } });
+    reply({ ok: true, accounts, user });
+    const res = await loginWithBrowser();
+    expect(sent()).toEqual({ op: "login_browser" });
+    expect(res).toEqual({ ok: true, value: { accounts, user } });
+  });
+
+  it("loginWithBrowser rejects a reply without accounts and keeps an in-band error", async () => {
+    reply({ ok: true, account: { id: "x" }, user: { name: "S" } });
+    expect((await loginWithBrowser()).ok).toBe(false);
+    invoke.mockReset();
+    const error = { code: "auth", message: "Sign-in was cancelled.", hint: "Connect again." };
+    reply({ ok: false, error });
+    await expect(loginWithBrowser()).resolves.toEqual({ ok: false, error });
   });
 
   it("verifyIntegration returns the signed-in user", async () => {

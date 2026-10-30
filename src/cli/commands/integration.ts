@@ -16,6 +16,7 @@ import {
   detectAllCoordinates,
   getStatus,
   login,
+  loginWithBrowser,
   resolveSwitch,
   verifyAccount,
   type AccessCheck,
@@ -58,16 +59,17 @@ Usage:
                                      project, select your agents, and verify it works
 
 Steps:
-  1. Sign-in     Authenticate with organization
+  1. Sign-in     Opens your browser; no organization or token to type
   2. Scope       Select organization, project, and repository
   3. Agents      Select agents to configure (default: all)
   4. Check       Verify tool access with live API checks
 
 Options for \`kai integration azure\`:
-  --org <name>          Organization (default: from the git remote)
+  --org <name>          Organization (default: from the git remote, or found at sign-in)
   --project <name>      Project (default: from the git remote, or you pick one)
   --repo <name|none>    Repository (default: from the git remote)
-  --pat-stdin           Pipe an access token on stdin
+  --pat-stdin           Scripts/CI: pipe an access token on stdin instead of the browser
+  --az                  Scripts/CI: use the Azure CLI's sign-in instead of the browser
   --server-url <url>    Azure DevOps Server (on-premises; signs in with --pat-stdin)
   --no-agents           Do not touch any agent's config
   -y, --yes             Do not ask for confirmation
@@ -168,7 +170,9 @@ interface SignInPlan {
 async function signIn(
   info: ProviderInfo,
   plan: SignInPlan,
-  flags: Flags
+  flags: Flags,
+  /** Forces the sign-in method (replacing a token that was accepted but is missing a scope). */
+  method?: "az" | "pat"
 ): Promise<IntegrationAccount> {
   // Azure DevOps Server does not accept the Entra tokens the Azure CLI issues, so it defaults to a token.
   const isServer = !isCloudBaseUrl(
@@ -177,6 +181,7 @@ async function signIn(
   let authMethod: "az" | "pat";
   if (flags.bool.has("--pat-stdin")) authMethod = "pat";
   else if (flags.bool.has("--az")) authMethod = "az";
+  else if (method) authMethod = method;
   else authMethod = azCliOnPath() && !isServer ? "az" : "pat";
 
   let pat: string | undefined;
@@ -231,6 +236,75 @@ async function signIn(
   return saved;
 }
 
+/**
+ * Browser sign-in: the default. Reuse a working sign-in for the folder's
+ * organization; otherwise open the browser, which finds every organization the
+ * user belongs to, and pick the one this folder needs.
+ */
+async function ensureBrowserAccount(
+  info: ProviderInfo,
+  flags: Flags,
+  detected: DetectedCoordinates | null
+): Promise<IntegrationAccount> {
+  const provider = getProvider(info.id)!;
+  const orgFlag = flagValue(flags, "--org");
+  const accounts = listAccounts(info.id);
+  const wantedId = orgFlag
+    ? provider.buildAccount({ org: orgFlag, authMethod: "oauth" }).id
+    : detected
+      ? accountIdFor(provider, detected)
+      : null;
+  const existing = wantedId ? getAccount(wantedId) : accounts.length === 1 ? accounts[0] : null;
+
+  if (existing) {
+    try {
+      const user = await verifyAccount(existing.id);
+      console.log(
+        `  ✔ Signed in to ${existing.org} as ${user.email ?? user.name} (${authLabel(existing.authMethod)})`
+      );
+      return existing;
+    } catch (err) {
+      if (!(err instanceof IntegrationError) || err.code !== "auth") throw err;
+      console.log(`  ! The saved sign-in no longer works: ${err.message}`);
+    }
+  } else {
+    console.log(`  Not signed in yet.`);
+  }
+
+  console.log(`  Opening your browser to sign in to ${info.label}...`);
+  const signedIn = await loginWithBrowser(info.id, {
+    onUrl: (url) => console.log(`  If it does not open, visit this address:\n    ${url}`),
+  });
+  const who = signedIn.user.email ?? signedIn.user.name;
+  const orgs = signedIn.accounts.map((a) => a.org);
+
+  let chosen = wantedId ? signedIn.accounts.find((a) => a.id === wantedId) : undefined;
+  if (wantedId && !chosen) {
+    throw new IntegrationError(
+      "no_account",
+      `${who} cannot reach the "${orgFlag ?? detected?.org}" organization.`,
+      `Organizations on this account: ${orgs.join(", ")}. Sign in with the account that owns it.`
+    );
+  }
+  if (!chosen && signedIn.accounts.length === 1) chosen = signedIn.accounts[0];
+  if (!chosen) {
+    if (!isInteractive()) {
+      throw new IntegrationError(
+        "bad_request",
+        "Which organization?",
+        `Signed in as ${who}. Pass --org <name>: ${orgs.join(", ")}.`
+      );
+    }
+    signedIn.accounts.forEach((a, i) => console.log(`    ${i + 1}. ${a.org}`));
+    const n = Number((await ask(`  Which organization? (number, Enter for 1): `)).trim() || "1");
+    chosen = signedIn.accounts[Number.isInteger(n) && n >= 1 && n <= orgs.length ? n - 1 : 0];
+  }
+  const saved = getAccount(chosen.id);
+  if (!saved) throw new IntegrationError("config", "The account was not saved.");
+  console.log(`  ✔ Signed in to ${saved.org} as ${who} (${authLabel(saved.authMethod)})`);
+  return saved;
+}
+
 /** The account for this setup: reuse a working sign-in, or sign in. */
 async function ensureAccount(
   info: ProviderInfo,
@@ -240,6 +314,9 @@ async function ensureAccount(
   const provider = getProvider(info.id)!;
   const serverUrl = flagValue(flags, "--server-url");
   const orgFlag = flagValue(flags, "--org");
+  // The token and Azure CLI paths (and on-premises Server) are for scripts and CI.
+  const legacy = serverUrl || flags.bool.has("--pat-stdin") || flags.bool.has("--az");
+  if (!legacy) return ensureBrowserAccount(info, flags, detected);
   const accounts = listAccounts(info.id);
 
   // Which account: what was typed, else what the git remote belongs to, else the only one.
@@ -260,7 +337,9 @@ async function ensureAccount(
   const id = provider.buildAccount({ ...plan, authMethod: "az" }).id;
   const existing = getAccount(id);
 
-  if (existing) {
+  // A token or method named on the command line means "use this one", so it replaces a working sign-in.
+  const replacing = flags.bool.has("--pat-stdin") || flags.bool.has("--az");
+  if (existing && !replacing) {
     try {
       const user = await verifyAccount(existing.id);
       console.log(
@@ -458,7 +537,7 @@ async function runSetup(info: ProviderInfo, args: string[]): Promise<number> {
     dir,
     interactive && !flagValue(flags, "--org", "--server-url", "--project", "--name")
   );
-  const account = await ensureAccount(info, flags, detected);
+  let account = await ensureAccount(info, flags, detected);
   // The remote's project and repository belong to the remote's own account only.
   const own = detected && accountIdFor(provider, detected) === account.id ? detected : null;
 
@@ -491,11 +570,29 @@ async function runSetup(info: ProviderInfo, args: string[]): Promise<number> {
   }
 
   let resolved;
+  let replacedToken = false;
   for (;;) {
     try {
       resolved = await resolveSwitch(info.id, dir, { account: account.id, project, repo });
       break;
     } catch (err) {
+      // The token verified at sign-in, so a refusal here means it lacks a scope: offer a new one.
+      const scopeShort =
+        err instanceof IntegrationError &&
+        err.code === "auth" &&
+        account.authMethod === "pat" &&
+        interactive &&
+        !replacedToken;
+      if (scopeShort) {
+        console.log(`  ! ${err.message}`);
+        console.log(
+          `    The token signed in but cannot read this project. Create one with Work Items, Code, Build and Project and Team (all Read).`
+        );
+        if (!(await confirm("  Enter a new token now?", true))) throw err;
+        account = await signIn(info, { org: account.org, baseUrl: account.baseUrl }, flags, "pat");
+        replacedToken = true;
+        continue;
+      }
       const notFound = err instanceof IntegrationError && err.code === "not_found";
       if (!(notFound && interactive && !flagValue(flags, "--project", "--name"))) throw err;
       console.log(`  ${err.message}${err.hint ? ` ${err.hint}` : ""}`);

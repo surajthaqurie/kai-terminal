@@ -313,10 +313,10 @@ describe("kai integration azure (setup)", () => {
     expect(res.err).toContain("Unknown option --yess");
   });
 
-  it("asks for a way to sign in when there is no Azure CLI and no token", async () => {
-    const dir = repo(); // git needs PATH, so create the repository first
-    const saved = process.env.PATH;
-    process.env.PATH = path.join(agents.home, "empty-path");
+  it("signs in through the browser by default, and says so when Kai's sign-in app is not set up", async () => {
+    const dir = repo();
+    const saved = process.env.KAI_AZURE_CLIENT_ID;
+    delete process.env.KAI_AZURE_CLIENT_ID;
     fs.rmSync(path.join(env.home, "config.json"));
     try {
       const res = await kai(
@@ -329,10 +329,13 @@ describe("kai integration azure (setup)", () => {
         "--no-agents"
       );
       expect(res.code).toBe(1);
-      expect(res.err).toContain("No Azure CLI was found and no token was provided");
-      expect(res.err).toContain("--pat-stdin");
+      // No organization prompt, no token prompt: it went straight to browser sign-in.
+      expect(res.out).toContain("Opening your browser to sign in to Azure DevOps");
+      expect(res.err).toContain("Browser sign-in is not set up");
+      expect(res.err).toContain("KAI_AZURE_CLIENT_ID");
+      expect(res.err).not.toContain("--pat-stdin");
     } finally {
-      process.env.PATH = saved;
+      if (saved !== undefined) process.env.KAI_AZURE_CLIENT_ID = saved;
     }
     expect(listAccounts()).toEqual([]);
   });

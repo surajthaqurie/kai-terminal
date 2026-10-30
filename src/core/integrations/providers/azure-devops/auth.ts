@@ -2,6 +2,13 @@ import fs from "fs";
 import path from "path";
 import { IntegrationError, type IntegrationAccount } from "../../types";
 import { runProcess, secretKeyFor, type Runner, type SecretStore } from "../../secretStore";
+import {
+  parseTokenSet,
+  refreshTokenSet,
+  serializeTokenSet,
+  TOKEN_EXPIRY_MARGIN_MS,
+  type OAuthDeps,
+} from "./oauth";
 
 /** The Azure DevOps resource id Entra tokens are requested for. */
 export const ADO_RESOURCE_ID = "499b84ac-1321-427f-aa17-267ca6975798";
@@ -14,6 +21,7 @@ export interface AuthDeps {
   run?: Runner;
   now?: () => number;
   env?: NodeJS.ProcessEnv;
+  oauth?: OAuthDeps;
 }
 
 export interface AuthHeader {
@@ -24,14 +32,27 @@ export interface AuthHeader {
 
 const azTokens = new Map<string, { token: string; expiresAt: number }>();
 const inFlightAzTokens = new Map<string, Promise<string>>();
+const inFlightOAuth = new Map<string, Promise<string>>();
 
 /** Test seam: drop cached Azure CLI tokens. */
 export function resetAzTokenCache(): void {
   azTokens.clear();
   inFlightAzTokens.clear();
+  inFlightOAuth.clear();
 }
 
 export const LOGIN_HINT = "Run `kai integration azure` to sign in again.";
+
+/**
+ * Azure DevOps rejects a token that lacks a scope exactly like a bad one, so a
+ * token account that signed in fine but is refused later most likely needs a scope.
+ */
+export const TOKEN_SCOPE_HINT =
+  "Run `kai integration azure` to sign in again. If sign-in works but this keeps failing, the token is missing a scope: create a new one with Work Items, Code, Build and Project and Team (all Read).";
+
+export function loginHintFor(account: IntegrationAccount): string {
+  return account.authMethod === "pat" ? TOKEN_SCOPE_HINT : LOGIN_HINT;
+}
 
 /** True for Azure DevOps Services (`dev.azure.com`, `<org>.visualstudio.com`); false for a Server install. */
 export function isCloudBaseUrl(baseUrl: string): boolean {
@@ -114,6 +135,39 @@ async function azAccessToken(account: IntegrationAccount, deps: AuthDeps): Promi
   return fetchPromise;
 }
 
+/** A browser sign-in's access token, refreshed (and the rotated refresh token saved) when it is about to expire. */
+async function oauthAccessToken(
+  account: IntegrationAccount,
+  secrets: SecretStore,
+  deps: AuthDeps
+): Promise<string> {
+  const key = secretKeyFor(account.id);
+  const tokens = parseTokenSet(await secrets.get(key));
+  if (!tokens) {
+    throw new IntegrationError(
+      "auth",
+      `Not signed in to ${account.org}.`,
+      "Connect again from Kai's Integrations tab, or run `kai integration azure`."
+    );
+  }
+  const now = (deps.oauth?.now ?? Date.now)();
+  if (tokens.expiresAt - TOKEN_EXPIRY_MARGIN_MS > now) return tokens.accessToken;
+
+  const pending = inFlightOAuth.get(account.id);
+  if (pending) return pending;
+  const refresh = (async () => {
+    try {
+      const next = await refreshTokenSet(tokens, { env: deps.env, ...deps.oauth });
+      await secrets.set(key, serializeTokenSet(next));
+      return next.accessToken;
+    } finally {
+      inFlightOAuth.delete(account.id);
+    }
+  })();
+  inFlightOAuth.set(account.id, refresh);
+  return refresh;
+}
+
 /**
  * The Authorization header for an account. `KAI_ADO_PAT` overrides the stored
  * token for PAT accounts, which keeps headless runs working without a store.
@@ -125,6 +179,10 @@ export async function authHeaderFor(
   deps: AuthDeps = {},
   patOverride?: string
 ): Promise<AuthHeader> {
+  if (account.authMethod === "oauth") {
+    const token = await oauthAccessToken(account, secrets, deps);
+    return { header: `Bearer ${token}`, secret: token };
+  }
   if (account.authMethod === "az") {
     const token = await azAccessToken(account, deps);
     return { header: `Bearer ${token}`, secret: token };

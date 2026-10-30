@@ -1,10 +1,6 @@
-import { FC, FormEvent, useCallback, useEffect, useRef, useState } from "react";
-import { CheckCircle, ExternalLink, Plug, RefreshCw } from "lucide-react";
-import {
-  PROVIDER_CATALOG,
-  type IntegrationAuthMethod,
-  type ProviderInfo,
-} from "../core/integrations/providerCatalog";
+import { FC, useCallback, useEffect, useRef, useState } from "react";
+import { CheckCircle, Plug, RefreshCw } from "lucide-react";
+import { PROVIDER_CATALOG, type ProviderInfo } from "../core/integrations/providerCatalog";
 import type {
   IntegrationAccountView,
   IntegrationErrorBody,
@@ -17,24 +13,19 @@ import {
   getIntegrationStatus,
   listProjects,
   listRepos,
-  loginIntegration,
+  loginWithBrowser,
   logoutIntegration,
   unbindIntegration,
   verifyIntegration,
 } from "../services/integrationService";
-import { openExternalUrl } from "../services/updateService";
 import {
-  authMethodLabel,
   badgeFor,
   deriveCardState,
   describeAccount,
   describeDetected,
   formatError,
-  initialAuthMethod,
   isSameSelection,
   needsRelogin,
-  normalizeOrgInput,
-  patPageUrl,
   pickRepoForProject,
   pickSwitchProject,
   preferredAccountId,
@@ -93,10 +84,6 @@ const ProviderCard: FC<ProviderCardProps> = ({ provider, projectDir }) => {
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<IntegrationErrorBody | null>(null);
 
-  const [showForm, setShowForm] = useState(false);
-  const [org, setOrg] = useState("");
-  const [authMethod, setAuthMethod] = useState<IntegrationAuthMethod>("az");
-  const [pat, setPat] = useState("");
   const [accountChoice, setAccountChoice] = useState<string | null>(null);
   const [confirmReplace, setConfirmReplace] = useState(false);
   const [confirmLogout, setConfirmLogout] = useState<string | null>(null);
@@ -131,13 +118,8 @@ const ProviderCard: FC<ProviderCardProps> = ({ provider, projectDir }) => {
     setBusy("load");
     setNotice(null);
     setError(null);
-    void refresh().then((next) => {
+    void refresh().then(() => {
       if (!mounted.current) return;
-      if (next) {
-        setAuthMethod(initialAuthMethod(next));
-        setOrg((current) => current || next.project.detected?.org || "");
-        setShowForm(next.accounts.length === 0);
-      }
       setBusy(null);
     });
   }, [refresh]);
@@ -161,41 +143,34 @@ const ProviderCard: FC<ProviderCardProps> = ({ provider, projectDir }) => {
   const binding = status?.project.binding ?? null;
   const otherProvider = status?.project.otherProvider ?? null;
   const selectedAccount = accountChoice ?? preferredAccountId(status);
-  const typedOrg = normalizeOrgInput(org).toLowerCase();
-  const existingAccount = typedOrg
-    ? accounts.find((a) => a.org.toLowerCase() === typedOrg)
-    : undefined;
   const disabled = busy !== null;
 
-  const handleConnect = (e: FormEvent) => {
-    e.preventDefault();
-    const orgName = normalizeOrgInput(org);
-    if (!orgName) {
-      setError({ code: "bad_request", message: "Enter your Azure DevOps organization." });
-      return;
-    }
-    if (authMethod === "pat" && !pat.trim()) {
-      setError({ code: "bad_request", message: "Paste an access token, or choose Azure CLI." });
-      return;
-    }
-    // The token leaves component state the moment it is submitted.
-    const token = authMethod === "pat" ? pat.trim() : undefined;
-    setPat("");
+  const handleConnect = () => {
     let chooseProjectFor: string | null = null;
     void run("connect", async () => {
-      const res = await loginIntegration({
-        org: orgName,
-        authMethod,
-        ...(token ? { pat: token } : {}),
-      });
+      const res = await loginWithBrowser();
       if (!res.ok) {
         setError(res.error);
         return;
       }
-      const account = res.value.account;
       const who = res.value.user.email ?? res.value.user.name;
+      const signedIn = res.value.accounts;
+      // The folder's own organization, else the only one: nothing to choose.
+      const account =
+        (detected
+          ? signedIn.find((a) => a.org.toLowerCase() === detected.org.toLowerCase())
+          : undefined) ?? (signedIn.length === 1 ? signedIn[0] : null);
+      if (!account) {
+        setAccountChoice(signedIn[0]?.id ?? null);
+        await refresh();
+        if (mounted.current) {
+          setNotice(
+            `Signed in as ${who}. ${signedIn.length} organizations found: choose one for this project below.`
+          );
+        }
+        return;
+      }
       setAccountChoice(account.id);
-      setShowForm(false);
       // Signing in for the folder's own organization is the whole job: make it
       // active right away instead of leaving a second "Use for this project" click.
       const ownRemote = detected && detected.org.toLowerCase() === account.org.toLowerCase();
@@ -410,10 +385,9 @@ const ProviderCard: FC<ProviderCardProps> = ({ provider, projectDir }) => {
         setError(res.error);
         return;
       }
-      const next = await refresh();
+      await refresh();
       if (!mounted.current) return;
       setAccountChoice(null);
-      if (next && next.accounts.length === 0) setShowForm(true);
       setNotice("Signed out.");
     });
   };
@@ -687,16 +661,19 @@ const ProviderCard: FC<ProviderCardProps> = ({ provider, projectDir }) => {
                 Remove from this project
               </button>
             )}
-            {!showForm && (
-              <button
-                type="button"
-                className="btn btn-secondary btn-small"
-                disabled={disabled}
-                onClick={() => setShowForm(true)}
-              >
-                {accounts.length > 0 ? "Connect another account" : "Connect"}
-              </button>
-            )}
+            <button
+              type="button"
+              className={`btn ${accounts.length > 0 ? "btn-secondary" : "btn-primary"} btn-small`}
+              disabled={disabled}
+              onClick={handleConnect}
+              title="Opens Azure DevOps sign-in in your browser"
+            >
+              {busy === "connect"
+                ? "Waiting for browser…"
+                : accounts.length > 0
+                  ? "Sign in with another account"
+                  : `Connect ${provider.label}`}
+            </button>
             <button
               type="button"
               className="btn btn-secondary btn-small"
@@ -738,127 +715,18 @@ const ProviderCard: FC<ProviderCardProps> = ({ provider, projectDir }) => {
             </div>
           )}
 
-          {showForm && (
-            <form
-              className="integration-form"
-              onSubmit={handleConnect}
-              aria-label="Connect account"
-            >
-              <div className="setting-field">
-                <label htmlFor={`${provider.id}-org`}>Organization</label>
-                <input
-                  id={`${provider.id}-org`}
-                  type="text"
-                  className="text-input modal-input"
-                  placeholder="contoso  (from dev.azure.com/contoso)"
-                  value={org}
-                  disabled={disabled}
-                  autoComplete="off"
-                  spellCheck={false}
-                  onChange={(e) => setOrg(e.target.value)}
-                />
-                {existingAccount && (
-                  <p className="integration-warn integration-detected">
-                    {existingAccount.org} is already connected with{" "}
-                    {authMethodLabel(existingAccount.authMethod)}. Connecting again replaces that
-                    sign-in: there is one sign-in per organization.
-                  </p>
-                )}
-                <p className="muted-text integration-detected">
-                  {detected ? (
-                    <>
-                      Taken from this folder&apos;s git remote ({detectedText}). Change it only to
-                      sign in to a different organization.
-                    </>
-                  ) : (
-                    <>No Azure DevOps git remote in this folder, so type the organization.</>
-                  )}
-                </p>
-              </div>
-              <fieldset className="integration-methods" disabled={disabled}>
-                <legend>Sign in with</legend>
-                <label>
-                  <input
-                    type="radio"
-                    name={`${provider.id}-auth`}
-                    checked={authMethod === "az"}
-                    onChange={() => setAuthMethod("az")}
-                  />
-                  <span>Azure CLI</span>
-                </label>
-                <label>
-                  <input
-                    type="radio"
-                    name={`${provider.id}-auth`}
-                    checked={authMethod === "pat"}
-                    onChange={() => setAuthMethod("pat")}
-                  />
-                  <span>Access token (PAT)</span>
-                </label>
-              </fieldset>
-              {authMethod === "az" ? (
-                <p className="muted-text" style={{ margin: 0, fontSize: "12px" }}>
-                  Run <code>az login</code> in a Kai Terminal tab first. Kai stores nothing: it asks
-                  the Azure CLI for a short-lived token when it needs one.
-                  {status.azCli === false && (
-                    <span className="integration-warn"> The Azure CLI was not found on PATH.</span>
-                  )}
-                </p>
-              ) : (
-                <div className="setting-field">
-                  <p className="muted-text integration-detected">
-                    A personal access token (PAT) is a password-like key you create in Azure DevOps
-                    so Kai can read your work items, pull requests and builds. Open the token page,
-                    choose <strong>New Token</strong>, give it read access to Work Items, Code and
-                    Build, then copy it and paste it below.
-                  </p>
-                  <div>
-                    <button
-                      type="button"
-                      className="btn btn-secondary btn-small"
-                      onClick={() => void openExternalUrl(patPageUrl(org))}
-                      title="Opens Azure DevOps in your browser"
-                    >
-                      <ExternalLink size={13} />
-                      <span>Open the token page in your browser</span>
-                    </button>
-                  </div>
-                  <label htmlFor={`${provider.id}-pat`}>Access token</label>
-                  <input
-                    id={`${provider.id}-pat`}
-                    type="password"
-                    className="text-input modal-input"
-                    placeholder="Paste a token with read access"
-                    value={pat}
-                    disabled={disabled}
-                    autoComplete="off"
-                    spellCheck={false}
-                    onChange={(e) => setPat(e.target.value)}
-                  />
-                  <span className="muted-text" style={{ fontSize: "12px" }}>
-                    Write-only. Stored in your OS secret store, never shown again.
-                  </span>
-                </div>
-              )}
-              <div className="ai-provider-actions">
-                <button type="submit" className="btn btn-primary btn-small" disabled={disabled}>
-                  {busy === "connect" ? "Connecting…" : "Connect"}
-                </button>
-                {accounts.length > 0 && (
-                  <button
-                    type="button"
-                    className="btn btn-secondary btn-small"
-                    disabled={disabled}
-                    onClick={() => {
-                      setShowForm(false);
-                      setPat("");
-                    }}
-                  >
-                    Cancel
-                  </button>
-                )}
-              </div>
-            </form>
+          {busy === "connect" ? (
+            <p className="muted-text" style={{ margin: 0, fontSize: "12px" }} role="status">
+              Finish signing in in your browser. Kai continues on its own once you are done, and
+              finds your organizations for you.
+            </p>
+          ) : (
+            accounts.length === 0 && (
+              <p className="muted-text" style={{ margin: 0, fontSize: "12px" }}>
+                Kai opens your browser to sign in to {provider.label} with your Microsoft account.
+                There is no organization or token to type.
+              </p>
+            )
           )}
         </>
       )}

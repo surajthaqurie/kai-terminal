@@ -16,6 +16,19 @@ const MAX_REQUEST_BYTES: usize = 64 * 1024;
 const MAX_RESPONSE_BYTES: u64 = 1024 * 1024;
 /// A login may call `az` and the Azure DevOps API, so allow a generous bound.
 const RPC_TIMEOUT: Duration = Duration::from_secs(60);
+/// A browser sign-in waits for the person to finish in their browser. The CLI
+/// gives up on its own after 5 minutes; this is only the backstop above that.
+const BROWSER_LOGIN_TIMEOUT: Duration = Duration::from_secs(6 * 60);
+
+/// How long the request may run: browser sign-in waits on a person, the rest do not.
+fn timeout_for(raw: &str) -> Duration {
+    match serde_json::from_str::<serde_json::Value>(raw) {
+        Ok(v) if v.get("op").and_then(|op| op.as_str()) == Some("login_browser") => {
+            BROWSER_LOGIN_TIMEOUT
+        }
+        _ => RPC_TIMEOUT,
+    }
+}
 
 /// Accepts only a JSON object of at most [`MAX_REQUEST_BYTES`].
 fn validate_request(raw: &str) -> Result<(), String> {
@@ -112,11 +125,12 @@ pub fn run_integration_rpc(request_json: &str) -> Result<String, String> {
     let stdout_reader = child.stdout.take().map(read_capped);
     let stderr_reader = child.stderr.take().map(read_capped);
 
+    let timeout = timeout_for(request_json);
     let started = Instant::now();
     let timed_out = loop {
         match child.try_wait() {
             Ok(Some(_)) => break false,
-            Ok(None) if started.elapsed() >= RPC_TIMEOUT => {
+            Ok(None) if started.elapsed() >= timeout => {
                 let _ = child.kill();
                 let _ = child.wait();
                 break true;
@@ -154,6 +168,20 @@ mod tests {
     #[test]
     fn accepts_a_small_json_object() {
         assert!(validate_request(r#"{"op":"status","projectDir":"C:\\x"}"#).is_ok());
+    }
+
+    #[test]
+    fn only_browser_sign_in_gets_the_long_timeout() {
+        assert_eq!(
+            timeout_for(r#"{"op":"login_browser"}"#),
+            BROWSER_LOGIN_TIMEOUT
+        );
+        assert_eq!(
+            timeout_for(r#"{"op":"status","projectDir":"/p"}"#),
+            RPC_TIMEOUT
+        );
+        assert_eq!(timeout_for("{not json"), RPC_TIMEOUT);
+        assert!(BROWSER_LOGIN_TIMEOUT > Duration::from_secs(5 * 60));
     }
 
     #[test]

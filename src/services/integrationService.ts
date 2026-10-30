@@ -11,7 +11,6 @@ import type {
   IntegrationStatusView,
   IntegrationUser,
 } from "../core/integrations/rpcTypes";
-import type { IntegrationAuthMethod } from "../core/integrations/providerCatalog";
 
 type Failure = { ok: false; error: IntegrationErrorBody };
 
@@ -96,18 +95,20 @@ export async function getIntegrationStatus(
   );
 }
 
-export async function loginIntegration(input: {
-  org: string;
-  authMethod: IntegrationAuthMethod;
-  pat?: string;
-  baseUrl?: string;
-}): Promise<RpcResult<{ account: IntegrationAccountView; user: IntegrationUser }>> {
-  const res = await integrationRpc({ op: "login", ...input });
+/**
+ * Sign in through the browser. The CLI opens the sign-in page, waits for the
+ * redirect and saves an account for every organization the user belongs to, so
+ * nothing is typed. This call returns once the user has finished (or gave up).
+ */
+export async function loginWithBrowser(): Promise<
+  RpcResult<{ accounts: IntegrationAccountView[]; user: IntegrationUser }>
+> {
+  const res = await integrationRpc({ op: "login_browser" });
   return pick(
     res,
-    (r) => typeof r.account === "object" && typeof r.user === "object",
+    (r) => Array.isArray(r.accounts) && typeof r.user === "object",
     (r) => ({
-      account: r.account as IntegrationAccountView,
+      accounts: r.accounts as IntegrationAccountView[],
       user: r.user as IntegrationUser,
     })
   );

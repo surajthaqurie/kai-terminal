@@ -8,7 +8,7 @@ const svc = vi.hoisted(() => ({
   getIntegrationStatus: vi.fn(),
   listProjects: vi.fn(),
   listRepos: vi.fn(),
-  loginIntegration: vi.fn(),
+  loginWithBrowser: vi.fn(),
   verifyIntegration: vi.fn(),
   logoutIntegration: vi.fn(),
   bindIntegration: vi.fn(),
@@ -23,11 +23,8 @@ import {
   deriveCardState,
   describeAccount,
   describeDetected,
-  initialAuthMethod,
   isSameSelection,
   needsRelogin,
-  normalizeOrgInput,
-  patPageUrl,
   pickRepoForProject,
   pickSwitchProject,
   preferredAccountId,
@@ -103,26 +100,11 @@ describe("integrations view model", () => {
     expect(describeAccount(account({ authMethod: "pat" }))).toBe("contoso · Access token");
     expect(needsRelogin(account({ authMethod: "pat", hasCredential: false }))).toBe(true);
     expect(needsRelogin(account({ authMethod: "az", hasCredential: false }))).toBe(false);
-    expect(initialAuthMethod(status({ azCli: false }))).toBe("pat");
-    expect(initialAuthMethod(status())).toBe("az");
+    expect(describeAccount(account({ authMethod: "oauth" }))).toBe("contoso · Browser sign-in");
+    expect(needsRelogin(account({ authMethod: "oauth", hasCredential: false }))).toBe(true);
     expect(providerLabel("azure-devops")).toBe("Azure DevOps");
     expect(providerLabel("jira")).toBe("jira");
     expect(providerLabel(null)).toBe("another integration");
-  });
-
-  it("accepts a bare organization or a pasted dev.azure.com URL", () => {
-    expect(normalizeOrgInput("  contoso ")).toBe("contoso");
-    expect(normalizeOrgInput("https://dev.azure.com/contoso/")).toBe("contoso");
-    expect(normalizeOrgInput("https://dev.azure.com/contoso/Payments/_git/api")).toBe("contoso");
-  });
-
-  it("points a PAT user at their organization's token page, or the start page", () => {
-    expect(patPageUrl("contoso")).toBe("https://dev.azure.com/contoso/_usersSettings/tokens");
-    expect(patPageUrl("https://dev.azure.com/contoso/Payments")).toBe(
-      "https://dev.azure.com/contoso/_usersSettings/tokens"
-    );
-    expect(patPageUrl("")).toBe("https://dev.azure.com/");
-    expect(patPageUrl("not an org&calc")).toBe("https://dev.azure.com/");
   });
 
   it("preselects the active project, falling back to the first", () => {
@@ -157,13 +139,6 @@ describe("IntegrationsPanel", () => {
   const button = (text: string) =>
     [...container.querySelectorAll("button")].find((b) => b.textContent?.trim() === text) as
       HTMLButtonElement | undefined;
-  const type = async (el: HTMLInputElement, value: string) => {
-    await act(async () => {
-      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
-      setter.call(el, value);
-      el.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-  };
   const click = async (el: Element | undefined | null) => {
     expect(el).toBeTruthy();
     await act(async () => {
@@ -191,24 +166,20 @@ describe("IntegrationsPanel", () => {
     container.remove();
   });
 
-  it("shows a not-connected card with the connect form and the detected remote", async () => {
+  it("shows a not-connected card with one Connect button and nothing to type", async () => {
     svc.getIntegrationStatus.mockResolvedValue({ ok: true, value: status() });
     await render();
     expect(container.textContent).toContain("Azure DevOps");
     expect(q("[data-state]")?.getAttribute("data-state")).toBe("not_connected");
     expect(container.textContent).toContain("contoso / Payments / api");
-    expect(q<HTMLInputElement>("#azure-devops-org")?.value).toBe("contoso");
-    // Azure CLI is the default when it exists, and shows the az login hint.
-    expect(container.textContent).toContain("az login");
-    expect(q("#azure-devops-pat")).toBeNull();
+    expect(button("Connect Azure DevOps")).toBeTruthy();
+    // No organization, token or sign-in method to choose.
+    expect(q("form")).toBeNull();
+    expect(q("input")).toBeNull();
+    expect(container.textContent).not.toContain("Access token");
+    expect(container.textContent).not.toContain("Azure CLI");
+    expect(container.textContent).not.toContain("az login");
     expect(button("Use for this project")).toBeUndefined();
-  });
-
-  it("defaults to the token method when the Azure CLI is missing", async () => {
-    svc.getIntegrationStatus.mockResolvedValue({ ok: true, value: status({ azCli: false }) });
-    await render();
-    const pat = q<HTMLInputElement>("#azure-devops-pat");
-    expect(pat?.type).toBe("password");
   });
 
   it("shows no-remote text when the folder has no Azure DevOps remote", async () => {
@@ -220,21 +191,24 @@ describe("IntegrationsPanel", () => {
     expect(container.textContent).toContain("No Azure DevOps remote found in this folder");
   });
 
-  it("connects with a token, clears the field on submit and never re-renders it", async () => {
+  it("connects through the browser, shows progress, and activates the folder's own organization", async () => {
     svc.getIntegrationStatus
-      .mockResolvedValueOnce({ ok: true, value: status({ azCli: false }) })
+      .mockResolvedValueOnce({ ok: true, value: status() })
       .mockResolvedValue({
         ok: true,
-        value: status({ accounts: [account({ authMethod: "pat" })] }),
+        value: status({ accounts: [account({ authMethod: "oauth" })] }),
       });
     let release!: () => void;
-    svc.loginIntegration.mockReturnValue(
+    svc.loginWithBrowser.mockReturnValue(
       new Promise((resolve) => {
         release = () =>
           resolve({
             ok: true,
             value: {
-              account: account({ authMethod: "pat" }),
+              accounts: [
+                account({ id: "azure-devops:fabrikam", org: "fabrikam", authMethod: "oauth" }),
+                account({ authMethod: "oauth" }),
+              ],
               user: { name: "Suraj", email: "s@contoso.com" },
             },
           });
@@ -245,33 +219,48 @@ describe("IntegrationsPanel", () => {
       value: { account: "azure-devops:contoso", project: "Payments", repo: "api" },
     });
     await render();
-    await type(q<HTMLInputElement>("#azure-devops-pat")!, "super-secret");
-    await act(async () => {
-      q<HTMLFormElement>("form")!.dispatchEvent(
-        new Event("submit", { bubbles: true, cancelable: true })
-      );
-    });
+    await click(button("Connect Azure DevOps"));
 
-    expect(svc.loginIntegration).toHaveBeenCalledWith({
-      org: "contoso",
-      authMethod: "pat",
-      pat: "super-secret",
-    });
-    // Cleared right away, while the request is still in flight.
-    expect(q<HTMLInputElement>("#azure-devops-pat")?.value).toBe("");
-    expect(button("Connecting…")?.disabled).toBe(true);
+    expect(svc.loginWithBrowser).toHaveBeenCalledTimes(1);
+    expect(button("Waiting for browser…")?.disabled).toBe(true);
+    expect(container.textContent).toContain("Finish signing in in your browser");
 
     await act(async () => release());
     await flush();
     expect(container.textContent).toContain("Connected to contoso as s@contoso.com.");
-    expect(container.innerHTML).not.toContain("super-secret");
-    expect(q("form")).toBeNull();
-    // The folder's own organization is activated by the same click.
+    // The account that owns the git remote is chosen without asking.
     expect(svc.bindIntegration).toHaveBeenCalledWith({
       projectDir: "/repo",
       account: "azure-devops:contoso",
     });
     expect(container.textContent).toContain("Active for this project (Payments / api).");
+  });
+
+  it("asks which organization when several are found and none is the folder's", async () => {
+    const fabrikam = account({ id: "azure-devops:fabrikam", org: "fabrikam", authMethod: "oauth" });
+    const northwind = account({
+      id: "azure-devops:northwind",
+      org: "northwind",
+      authMethod: "oauth",
+    });
+    const noRemote = { ...status().project, detected: null };
+    svc.getIntegrationStatus
+      .mockResolvedValueOnce({ ok: true, value: status({ project: noRemote }) })
+      .mockResolvedValue({
+        ok: true,
+        value: status({ accounts: [fabrikam, northwind], project: noRemote }),
+      });
+    svc.loginWithBrowser.mockResolvedValue({
+      ok: true,
+      value: { accounts: [fabrikam, northwind], user: { name: "Suraj" } },
+    });
+    await render();
+    await click(button("Connect Azure DevOps"));
+    await flush();
+    expect(container.textContent).toContain("2 organizations found");
+    expect(svc.bindIntegration).not.toHaveBeenCalled();
+    expect(svc.listProjects).not.toHaveBeenCalled();
+    expect(q("select[aria-label='Account for this project']")).toBeTruthy();
   });
 
   it("lets the user pick the project after connecting when the folder has no remote", async () => {
@@ -282,9 +271,9 @@ describe("IntegrationsPanel", () => {
         ok: true,
         value: status({ accounts: [account()], project: noRemote }),
       });
-    svc.loginIntegration.mockResolvedValue({
+    svc.loginWithBrowser.mockResolvedValue({
       ok: true,
-      value: { account: account(), user: { name: "Suraj", email: "s@contoso.com" } },
+      value: { accounts: [account()], user: { name: "Suraj", email: "s@contoso.com" } },
     });
     svc.listProjects.mockResolvedValue({
       ok: true,
@@ -296,12 +285,7 @@ describe("IntegrationsPanel", () => {
       value: { account: "azure-devops:contoso", project: "Payments", repo: null },
     });
     await render();
-    await type(q<HTMLInputElement>("#azure-devops-org")!, "contoso");
-    await act(async () => {
-      q<HTMLFormElement>("form")!.dispatchEvent(
-        new Event("submit", { bubbles: true, cancelable: true })
-      );
-    });
+    await click(button("Connect Azure DevOps"));
     await flush();
     // Nothing is bound without a project; the picker opens instead.
     expect(svc.bindIntegration).not.toHaveBeenCalled();
@@ -321,20 +305,16 @@ describe("IntegrationsPanel", () => {
     svc.getIntegrationStatus
       .mockResolvedValueOnce({ ok: true, value: status() })
       .mockResolvedValue({ ok: true, value: status({ accounts: [account()] }) });
-    svc.loginIntegration.mockResolvedValue({
+    svc.loginWithBrowser.mockResolvedValue({
       ok: true,
-      value: { account: account(), user: { name: "Suraj" } },
+      value: { accounts: [account()], user: { name: "Suraj" } },
     });
     svc.bindIntegration.mockResolvedValue({
       ok: false,
       error: { code: "needs_confirmation", message: "Already connected to Jira." },
     });
     await render();
-    await act(async () => {
-      q<HTMLFormElement>("form")!.dispatchEvent(
-        new Event("submit", { bubbles: true, cancelable: true })
-      );
-    });
+    await click(button("Connect Azure DevOps"));
     await flush();
     expect(container.textContent).toContain("Connected to contoso as Suraj.");
     expect(q("[role=group][aria-label='Confirm replace']")).toBeTruthy();
@@ -416,16 +396,6 @@ describe("IntegrationsPanel", () => {
     expect(container.textContent).toContain("contoso is now active for this project");
   });
 
-  it("warns that connecting an organization twice replaces its sign-in", async () => {
-    svc.getIntegrationStatus.mockResolvedValue({ ok: true, value: twoAccounts().base });
-    await render();
-    await click(button("Connect another account"));
-    await type(q<HTMLInputElement>("#azure-devops-org")!, "Contoso");
-    expect(container.textContent).toContain("one sign-in per organization");
-    await type(q<HTMLInputElement>("#azure-devops-org")!, "newco");
-    expect(container.textContent).not.toContain("one sign-in per organization");
-  });
-
   it("offers no server URL field", async () => {
     svc.getIntegrationStatus.mockResolvedValue({ ok: true, value: status() });
     await render();
@@ -433,34 +403,19 @@ describe("IntegrationsPanel", () => {
     expect(q("#azure-devops-url")).toBeNull();
   });
 
-  it("validates the form without calling the CLI", async () => {
-    svc.getIntegrationStatus.mockResolvedValue({ ok: true, value: status({ azCli: false }) });
-    await render();
-    await type(q<HTMLInputElement>("#azure-devops-org")!, "  ");
-    await act(async () => {
-      q<HTMLFormElement>("form")!.dispatchEvent(
-        new Event("submit", { bubbles: true, cancelable: true })
-      );
-    });
-    expect(svc.loginIntegration).not.toHaveBeenCalled();
-    expect(q("[role=alert]")?.textContent).toContain("Enter your Azure DevOps organization");
-  });
-
   it("shows the CLI's error message and hint in an alert", async () => {
     svc.getIntegrationStatus.mockResolvedValue({ ok: true, value: status() });
-    svc.loginIntegration.mockResolvedValue({
+    svc.loginWithBrowser.mockResolvedValue({
       ok: false,
-      error: { code: "auth", message: "Azure CLI is not signed in.", hint: "az login" },
+      error: { code: "auth", message: "Sign-in was cancelled.", hint: "Connect again." },
     });
     await render();
-    await act(async () => {
-      q<HTMLFormElement>("form")!.dispatchEvent(
-        new Event("submit", { bubbles: true, cancelable: true })
-      );
-    });
+    await click(button("Connect Azure DevOps"));
     const alert = q("[role=alert]");
-    expect(alert?.textContent).toContain("Azure CLI is not signed in.");
-    expect(alert?.textContent).toContain("az login");
+    expect(alert?.textContent).toContain("Sign-in was cancelled.");
+    expect(alert?.textContent).toContain("Connect again.");
+    // The button is usable again for another try.
+    expect(button("Connect Azure DevOps")?.disabled).toBe(false);
   });
 
   it("binds the project and then offers only removal, never a second activation", async () => {
@@ -602,7 +557,7 @@ describe("IntegrationsPanel", () => {
     await click(container.querySelector('[aria-label="Confirm sign out"] button'));
     expect(svc.logoutIntegration).toHaveBeenCalledWith("azure-devops:contoso");
     expect(q("[data-state]")?.getAttribute("data-state")).toBe("not_connected");
-    expect(q("form")).not.toBeNull();
+    expect(button("Connect Azure DevOps")).toBeTruthy();
   });
 
   it("flags a bound project whose account needs to sign in again", async () => {
