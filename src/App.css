@@ -1637,11 +1637,22 @@ select.modal-input {
   min-width: 0;
   min-height: 0;
   position: relative;
+}
+
+/* The active-pane ring is an overlay, not a border: a real (even transparent)
+ * border insets the terminal by 1px on every side, and the darker `--bg-canvas`
+ * behind it showed as a visible gap against the header and footer. */
+.pane-item::after {
+  content: "";
+  position: absolute;
+  inset: 0;
   border: 1px solid transparent;
+  pointer-events: none;
+  z-index: 5;
   transition: border-color var(--transition-fast);
 }
 
-.pane-item.active-pane {
+.pane-item.active-pane::after {
   border-color: var(--border-accent);
 }
 
