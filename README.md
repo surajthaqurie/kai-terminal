@@ -169,7 +169,7 @@ kai remove --name contoso  # remove the account everywhere: token and every fold
 
 - **Auto-detected:** organization, project and repository come from the folder's git remotes (Azure DevOps Services and Azure DevOps Server HTTPS remotes), from any sub-folder. Names are checked against what Azure really has.
 - **One active project per folder.** Sign-in is per user and shared by every folder. The connection is a private file under `~/.kai/projects/`, never in your repository.
-- **Tokens stay safe:** the Azure CLI is used when installed, so Kai stores nothing; otherwise an access token goes to the OS secret store (Windows DPAPI, macOS Keychain, Linux Secret Service), never to a repository or an agent config.
+- **Tokens stay safe:** the Azure CLI is used when installed, so Kai stores nothing; otherwise (and always for Azure DevOps Server) an access token goes to the OS secret store (Windows DPAPI, macOS Keychain, Linux Secret Service), never to a repository or an agent config.
 - **Read-only tools, added only where connected:** `kai_integration_status`, `kai_work_item_search`, `kai_work_item_get`, `kai_pr_list`, `kai_pr_get`, `kai_build_list`, `kai_build_log`. A folder that is not connected sees exactly the tools listed above. Text from Azure is returned as untrusted data. Restart a running agent session after setup so it re-reads its tools.
 - **Desktop app:** the **Integrations** tab of the AI CLI providers panel (robot icon) offers the same actions, including switching the project.
 

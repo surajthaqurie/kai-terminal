@@ -41,7 +41,8 @@ const info = findProvider("azure-devops")!;
 
 const CLOUD_API_VERSION = "7.1";
 const SERVER_API_VERSION = "7.0";
-const COMMENTS_API_SUFFIX = "-preview.4";
+/** The comments API is preview-only; its preview number differs between 7.1 (services) and 7.0 (server). */
+const COMMENTS_API_SUFFIX: Record<string, string> = { "7.1": "-preview.4", "7.0": "-preview.3" };
 const WORK_ITEM_FIELDS = [
   "System.Id",
   "System.WorkItemType",
@@ -325,7 +326,7 @@ export function createAzureDevOpsProvider(deps: AzureDeps = {}): IntegrationProv
           const comments = await c.get<Json>(
             `${enc(project)}/_apis/wit/workItems/${id}/comments`,
             { $top: 20, order: "desc" },
-            `${apiVersionOf(ctx.account)}${COMMENTS_API_SUFFIX}`
+            `${apiVersionOf(ctx.account)}${COMMENTS_API_SUFFIX[apiVersionOf(ctx.account)] ?? "-preview.4"}`
           );
           return { ...detail, comments: mapComments(comments) };
         } catch (err) {

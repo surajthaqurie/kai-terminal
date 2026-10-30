@@ -7,7 +7,7 @@ import {
   type ProviderInfo,
 } from "../../core/integrations/providerCatalog";
 import { getProvider } from "../../core/integrations/providers";
-import { azCliOnPath } from "../../core/integrations/providers/azure-devops/auth";
+import { azCliOnPath, isCloudBaseUrl } from "../../core/integrations/providers/azure-devops/auth";
 import type { DetectedCoordinates, IntegrationStatusView } from "../../core/integrations/rpcTypes";
 import {
   accountIdFor,
@@ -62,7 +62,7 @@ Options for \`kai integration azure\`:
   --project <name>      Project (default: from the git remote, or you pick one)
   --repo <name|none>    Repository (default: from the git remote)
   --az | --pat-stdin    Sign in with the Azure CLI, or pipe an access token on stdin
-  --server-url <url>    Azure DevOps Server (on-premises)
+  --server-url <url>    Azure DevOps Server (on-premises; signs in with --pat-stdin)
   --no-agents           Do not touch any agent's config
   -y, --yes             Do not ask for confirmation
 
@@ -164,10 +164,14 @@ async function signIn(
   plan: SignInPlan,
   flags: Flags
 ): Promise<IntegrationAccount> {
+  // Azure DevOps Server does not accept the Entra tokens the Azure CLI issues, so it defaults to a token.
+  const isServer = !isCloudBaseUrl(
+    getProvider(info.id)!.buildAccount({ ...plan, authMethod: "az" }).baseUrl
+  );
   let authMethod: "az" | "pat";
   if (flags.bool.has("--pat-stdin")) authMethod = "pat";
   else if (flags.bool.has("--az")) authMethod = "az";
-  else authMethod = azCliOnPath() ? "az" : "pat";
+  else authMethod = azCliOnPath() && !isServer ? "az" : "pat";
 
   let pat: string | undefined;
   if (authMethod === "pat") {
@@ -175,7 +179,7 @@ async function signIn(
       pat = (await readAllStdin()).trim();
     } else if (isInteractive()) {
       console.log(
-        `  The Azure CLI was not found. Use an access token instead (needs Work Items, Code and Build: read).`
+        `  ${isServer ? "Azure DevOps Server signs in with an access token" : "The Azure CLI was not found. Use an access token instead"} (needs Work Items, Code and Build: read).`
       );
       const entered = await askHidden(`  Access token (input hidden): `);
       if (entered === null) throw new IntegrationError("bad_request", "Cancelled.");
@@ -183,8 +187,10 @@ async function signIn(
     } else {
       throw new IntegrationError(
         "bad_request",
-        "No Azure CLI was found and no token was provided.",
-        `Pipe a token in: kai integration ${info.aliases[0]} --org <org> --pat-stdin`
+        isServer
+          ? "Azure DevOps Server needs an access token and none was provided."
+          : "No Azure CLI was found and no token was provided.",
+        `Pipe a token in: kai integration ${info.aliases[0]} ${isServer ? "--server-url <url>" : "--org <org>"} --pat-stdin`
       );
     }
   }

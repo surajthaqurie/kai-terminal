@@ -629,10 +629,13 @@ export async function resolveReady(
   }
   const account = getAccount(binding.account);
   if (!account) {
+    // A cloud id is `<provider>:<org>`; a server id carries a host, so it holds a `/` or a port `:`.
+    const key = binding.account.split(":").slice(1).join(":");
+    const target = /[/:]/.test(key) ? `--server-url https://${key}` : `--org ${key}`;
     throw new IntegrationError(
       "no_account",
       `The account "${binding.account}" is signed out.`,
-      `Run \`kai integration azure --org ${binding.account.split(":")[1] ?? ""}\` then retry.`
+      `Run \`kai integration azure ${target}\` then retry.`
     );
   }
   return { provider, ctx: { account, binding, secrets: secretsOf(deps) } };

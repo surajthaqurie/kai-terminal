@@ -145,7 +145,7 @@ kai integration azure --project Payments --repo api   # when there is no Azure D
 kai integration azure --no-agents           # do not touch any agent's config
 ```
 
-Other options: `--az` (use the Azure CLI), `--server-url <url>` (Azure DevOps Server). Restart a running agent session afterwards so it re-reads its tools.
+Other options: `--az` (use the Azure CLI), `--server-url <url>` (Azure DevOps Server, which signs in with an access token: pipe it with `--pat-stdin`, because on-premises servers do not accept the Azure CLI's tokens). Restart a running agent session afterwards so it re-reads its tools.
 
 ---
 

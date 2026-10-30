@@ -31,6 +31,16 @@ export function resetAzTokenCache(): void {
 
 export const LOGIN_HINT = "Run `kai integration azure` to sign in again.";
 
+/** True for Azure DevOps Services (`dev.azure.com`, `<org>.visualstudio.com`); false for a Server install. */
+export function isCloudBaseUrl(baseUrl: string): boolean {
+  try {
+    const host = new URL(baseUrl).hostname.toLowerCase();
+    return host === "dev.azure.com" || host.endsWith(".visualstudio.com");
+  } catch {
+    return false;
+  }
+}
+
 /** True when an `az` executable is on PATH. A file-stat walk: it never starts a process. */
 export function azCliOnPath(env: NodeJS.ProcessEnv = process.env): boolean {
   const names = process.platform === "win32" ? ["az.cmd", "az.exe", "az.bat"] : ["az"];
@@ -102,10 +112,13 @@ export async function authHeaderFor(
   const pat =
     patOverride ?? env.KAI_ADO_PAT?.trim() ?? (await secrets.get(secretKeyFor(account.id)));
   if (!pat) {
+    const target = isCloudBaseUrl(account.baseUrl)
+      ? `--org ${account.org}`
+      : `--server-url ${account.baseUrl}`;
     throw new IntegrationError(
       "auth",
       `No stored token for ${account.id}.`,
-      `Run \`kai integration azure --org ${account.org} --pat-stdin\`.`
+      `Run \`kai integration azure ${target} --pat-stdin\`.`
     );
   }
   return { header: `Basic ${Buffer.from(`:${pat}`).toString("base64")}`, secret: pat };

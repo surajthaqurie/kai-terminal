@@ -346,6 +346,28 @@ describe("resolveReady (what the MCP tools call)", () => {
     });
   });
 
+  it("names --org for a cloud account and --server-url for a server account that is signed out", async () => {
+    const dir = repo();
+    const bindTo = (account: string) =>
+      writeBinding(projectRootFor(dir), {
+        provider: "azure-devops",
+        account,
+        project: "Payments",
+        repo: null,
+        boundAt: "2026-10-29T00:00:00.000Z",
+      });
+    bindTo("azure-devops:contoso");
+    await expect(resolveReady(dir, { secrets })).rejects.toMatchObject({
+      hint: expect.stringContaining("--org contoso"),
+    });
+    bindTo("azure-devops:tfs.corp.local:8080/tfs/defaultcollection");
+    await expect(resolveReady(dir, { secrets })).rejects.toMatchObject({
+      hint: expect.stringContaining(
+        "--server-url https://tfs.corp.local:8080/tfs/defaultcollection"
+      ),
+    });
+  });
+
   it("returns the provider and context when ready", async () => {
     await login("azure-devops", { org: "Contoso", authMethod: "az" }, { secrets });
     const dir = repo(REMOTE);

@@ -266,6 +266,35 @@ describe("work items", () => {
       "api-version=7.1-preview.4"
     );
   });
+
+  it("asks an Azure DevOps Server (api 7.0) for the 7.0 comments preview", async () => {
+    const { provider, ctx, calls } = setup([
+      { match: "/wit/workitems/7", body: { id: 7, fields: { "System.Title": "T" } } },
+      { match: "/comments", body: { comments: [] } },
+    ]);
+    const server = { ...ctx.account, baseUrl: "https://tfs.corp.local/tfs/Col", apiVersion: "7.0" };
+    await provider.workItems!.get({ ...ctx, account: server }, 7);
+    expect(calls.find((c) => c.url.includes("/comments"))!.url).toContain(
+      "api-version=7.0-preview.3"
+    );
+  });
+});
+
+describe("sign-in hints", () => {
+  it("point a server account without a token at --server-url, not --org", async () => {
+    const { provider, ctx } = setup([]);
+    const server = {
+      ...ctx.account,
+      id: "azure-devops:tfs.corp.local/tfs/col",
+      org: "Col",
+      baseUrl: "https://tfs.corp.local/tfs/Col",
+      apiVersion: "7.0",
+    };
+    await expect(provider.workItems!.get({ ...ctx, account: server }, 7)).rejects.toMatchObject({
+      code: "auth",
+      hint: "Run `kai integration azure --server-url https://tfs.corp.local/tfs/Col --pat-stdin`.",
+    });
+  });
 });
 
 describe("pull requests", () => {

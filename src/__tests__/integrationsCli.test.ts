@@ -332,6 +332,33 @@ describe("kai integration azure (setup)", () => {
     }
     expect(listAccounts()).toEqual([]);
   });
+
+  it("asks an Azure DevOps Server for a token even when the Azure CLI is installed", async () => {
+    const dir = repo();
+    const bin = path.join(agents.home, "fake-bin");
+    fs.mkdirSync(bin, { recursive: true });
+    for (const name of ["az", "az.cmd"]) fs.writeFileSync(path.join(bin, name), "");
+    const saved = process.env.PATH;
+    process.env.PATH = bin;
+    fs.rmSync(path.join(env.home, "config.json"));
+    try {
+      const res = await kai(
+        "integration",
+        "azure",
+        dir,
+        "--yes",
+        "--server-url",
+        "https://tfs.corp.local/tfs/Col",
+        "--no-agents"
+      );
+      expect(res.code).toBe(1);
+      expect(res.err).toContain("Azure DevOps Server needs an access token");
+      expect(res.err).toContain("--server-url <url> --pat-stdin");
+    } finally {
+      process.env.PATH = saved;
+    }
+    expect(listAccounts()).toEqual([]);
+  });
 });
 
 describe("wireAgents", () => {
