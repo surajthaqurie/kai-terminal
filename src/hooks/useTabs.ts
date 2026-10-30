@@ -21,7 +21,7 @@ import { useLatest } from "./useLatest";
 const PANE_NOTICE_MS = 4000;
 
 interface TabsOptions {
-  /** Global toolbar working directory (fallback for new tabs / splits). */
+  /** Global toolbar working directory (fallback for pane splits). */
   cwd: string;
   /** Effective shell binary for new sessions (custom path wins over profile). */
   effectiveShellPath: string | undefined;
@@ -67,7 +67,11 @@ export function useTabs({ cwd, effectiveShellPath, setLastError }: TabsOptions) 
 
   const newTab = useCallback(
     (opts?: { cwd?: string; shellPath?: string }) => {
-      const dir = opts?.cwd ?? (cwd.trim() || undefined);
+      // A brand-new tab starts at the default (home) location, like the
+      // first tab at app launch: no cwd is passed and the backend resolves
+      // it to HOME/USERPROFILE at spawn. Only explicit callers (open-with
+      // a folder, single-instance open) can seed a different directory.
+      const dir = opts?.cwd;
       if (dir) recordRecentProject(dir);
       // Titles are always "Terminal N". Number from live tabs (not a stale
       // closure) plus a collision skip, so spam-clicking "+" and closing
@@ -79,7 +83,7 @@ export function useTabs({ cwd, effectiveShellPath, setLastError }: TabsOptions) 
       setTabs((prev) => [...prev, tab]);
       setActiveTabId(tab.id);
     },
-    [effectiveShellPath, cwd, tabsRef]
+    [effectiveShellPath, tabsRef]
   );
 
   /**

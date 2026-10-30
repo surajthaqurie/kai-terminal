@@ -397,7 +397,6 @@ export const TabBar: FC<TabBarProps> = ({
       {/* App icon + name; also a drag handle for the frameless window. */}
       <div className="tab-brand" data-tauri-drag-region title="Kai Terminal">
         <AppIcon size={18} />
-        <span className="tab-brand-name">Kai</span>
       </div>
 
       <div

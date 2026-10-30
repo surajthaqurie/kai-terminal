@@ -85,20 +85,17 @@ describe("WCAG 2.1 AA Theme Contrast Suite", () => {
 
   const EXPECTED_THEMES = [
     "kai-dark",
-    "github-dark",
-    "one-dark",
-    "dracula",
-    "tokyo-night",
-    "catppuccin-mocha",
     "gruvbox-dark",
+    "catppuccin-mocha",
+    "tokyo-night",
     "nord",
-    "monokai",
+    "dracula",
     "solarized-dark",
-    "github-light",
-    "solarized-light",
+    "one-dark",
+    "rose-pine",
   ];
 
-  it("validates all twelve known theme definitions are parsed from App.css", () => {
+  it("validates all nine known theme definitions are parsed from App.css", () => {
     for (const expected of EXPECTED_THEMES) {
       expect(themes[expected], `Theme ${expected} must be defined in App.css`).toBeDefined();
     }

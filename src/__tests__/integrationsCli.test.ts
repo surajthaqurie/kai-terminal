@@ -62,8 +62,8 @@ afterEach(() => {
   env.restore();
 });
 
-const claudeConfig = (dir?: string) =>
-  dir ? path.join(dir, ".mcp.json") : path.join(agents.home, ".claude.json");
+// Kai wires agents globally, so a repo never gets its own .mcp.json.
+const claudeConfig = (_dir?: string) => path.join(agents.home, ".claude.json");
 
 describe("kai integration list", () => {
   it("says nothing is set up and points at the command, with the folder's remote", async () => {
@@ -158,6 +158,7 @@ describe("kai integration azure (setup)", () => {
     expect(findBinding(dir)?.binding).toMatchObject({ project: "Payments", repo: "api" });
     const cfg = JSON.parse(fs.readFileSync(claudeConfig(dir), "utf8"));
     expect(cfg.mcpServers["kai-terminal"]).toBeDefined();
+    expect(fs.existsSync(path.join(dir, ".mcp.json"))).toBe(false);
   });
 
   it("is safe to run again: nothing is re-asked and nothing is wired twice", async () => {
@@ -176,8 +177,8 @@ describe("kai integration azure (setup)", () => {
     const res = await kai("integration", "azure", r, "--yes", "--no-agents");
     expect(res.code).toBe(0);
     expect(res.out).toContain("Skipped (--no-agents)");
-    expect(fs.existsSync(claudeConfig(r))).toBe(false);
     expect(fs.existsSync(claudeConfig())).toBe(false);
+    expect(fs.existsSync(path.join(r, ".mcp.json"))).toBe(false);
   });
 
   it("keeps unrelated keys when it wires an agent", async () => {

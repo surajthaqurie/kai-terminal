@@ -965,17 +965,13 @@ describe("App shell: settings, themes and terminal actions", () => {
     await mount();
     expect(document.documentElement.getAttribute("data-theme")).toBe("kai-dark");
     await act(async () => {
-      modal("settings").onSaveSettings({ ...modal("settings").settings, theme: "solarized-light" });
+      modal("settings").onSaveSettings({ ...modal("settings").settings, theme: "rose-pine" });
     });
-    expect(document.documentElement.getAttribute("data-theme")).toBe("solarized-light");
-    expect(document.body.getAttribute("data-theme")).toBe("solarized-light");
-    expect(document.documentElement.style.colorScheme).toBe("light");
-    expect(meta.getAttribute("content")).toBe(
-      SettingsService.getThemeCanvasColor("solarized-light")
-    );
-    expect(container.querySelector(".app-layout")!.getAttribute("data-theme")).toBe(
-      "solarized-light"
-    );
+    expect(document.documentElement.getAttribute("data-theme")).toBe("rose-pine");
+    expect(document.body.getAttribute("data-theme")).toBe("rose-pine");
+    expect(document.documentElement.style.colorScheme).toBe("dark");
+    expect(meta.getAttribute("content")).toBe(SettingsService.getThemeCanvasColor("rose-pine"));
+    expect(container.querySelector(".app-layout")!.getAttribute("data-theme")).toBe("rose-pine");
   });
 
   it("switching the default shell in settings selects it for new sessions", async () => {
@@ -1041,10 +1037,10 @@ describe("App shell: settings, themes and terminal actions", () => {
     expect(container.querySelector('[role="menu"]')).toBeNull();
   });
 
-  it("the status bar only reports: no version number or update-check button", async () => {
+  it("the status bar shows the app version and a check-for-updates button", async () => {
     await mount();
-    expect(container.querySelector(".status-version")).toBeNull();
-    expect(container.querySelector('.status-bar [aria-label="Check for updates"]')).toBeNull();
+    expect(container.querySelector(".status-version")!.textContent).toBe("v1.0.0");
+    expect(container.querySelector('.status-bar [aria-label="Check for updates"]')).not.toBeNull();
   });
 
   it("a custom shell path overrides the profile for all panes", async () => {
@@ -1213,11 +1209,11 @@ describe("App shell: window refit", () => {
 });
 
 describe("App shell: header and footer", () => {
-  it("shows the app icon and name at the far left of the header", async () => {
+  it("shows only the app icon (no name) at the far left of the header", async () => {
     await mount();
     const brand = container.querySelector(".tab-bar")!.firstElementChild!;
     expect(brand.classList.contains("tab-brand")).toBe(true);
-    expect(brand.textContent).toBe("Kai");
+    expect(brand.textContent).toBe("");
     expect(brand.querySelector("svg")).not.toBeNull();
   });
 

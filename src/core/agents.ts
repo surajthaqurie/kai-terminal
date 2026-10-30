@@ -869,14 +869,10 @@ export function resolveAgentConfigPath(
   const projectDir = opts.projectDir || process.cwd();
   const wanted = opts.scope || "auto";
   const candidates = def.targets.filter((t) => wanted === "auto" || t.scope === wanted);
-  const inGit = isGitRepository(projectDir);
-  // Auto scope prefers project targets first when inside a git repo,
-  // or global targets first when outside a git repo.
+  // Auto scope always prefers the global target so Kai never drops a config file
+  // (e.g. `.mcp.json`) into every project; project scope is opt-in via `--project`.
   const ordered = [...candidates].sort((a, b) => {
     if (wanted !== "auto" || a.scope === b.scope) return 0;
-    if (inGit) {
-      return a.scope === "project" ? -1 : 1;
-    }
     return a.scope === "global" ? -1 : 1;
   });
   for (const target of ordered) {

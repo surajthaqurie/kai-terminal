@@ -507,6 +507,8 @@ function App() {
         appVersion={updates.appVersion}
         updateAvailable={updates.updateInfo?.updateAvailable ?? false}
         latestVersion={updates.updateInfo?.latestVersion ?? null}
+        isCheckingUpdates={updates.isCheckingUpdates}
+        onCheckUpdates={() => void updates.checkUpdates(true)}
         onViewUpdate={updates.viewUpdate}
         onRefreshGit={git.refreshGit}
         isRefreshingGit={git.isRefreshingGit}

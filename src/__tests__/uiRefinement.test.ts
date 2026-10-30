@@ -19,17 +19,14 @@ const css = fs.readFileSync(path.join(ROOT, "src/App.css"), "utf8");
 
 const THEMES: ThemeName[] = [
   "kai-dark",
-  "github-dark",
-  "one-dark",
-  "dracula",
-  "tokyo-night",
-  "catppuccin-mocha",
   "gruvbox-dark",
+  "catppuccin-mocha",
+  "tokyo-night",
   "nord",
-  "monokai",
+  "dracula",
   "solarized-dark",
-  "github-light",
-  "solarized-light",
+  "one-dark",
+  "rose-pine",
 ];
 
 function themeVars(theme: ThemeName): Record<string, string> {

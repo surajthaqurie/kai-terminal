@@ -7,7 +7,7 @@ import {
   CursorStyle,
   KeybindingsConfig,
 } from "../types/terminal";
-import { DEFAULT_SETTINGS, SettingsService } from "../services/settingsService";
+import { DEFAULT_SETTINGS, SettingsService, isLightTheme } from "../services/settingsService";
 import {
   SHORTCUT_ACTION_LABELS,
   FIXED_ACTION_LABELS,
@@ -115,10 +115,7 @@ export const THEME_OPTIONS: Array<{
   accent: string;
 }> = [
   { id: "kai-dark", name: "Kai Dark (Default)", bg: "#0f1115", fg: "#d9dce3", accent: "#22d3ee" },
-  { id: "github-dark", name: "GitHub Dark", bg: "#0d1117", fg: "#c9d1d9", accent: "#58a6ff" },
-  { id: "one-dark", name: "One Dark", bg: "#282c34", fg: "#abb2bf", accent: "#61afef" },
-  { id: "dracula", name: "Dracula", bg: "#282a36", fg: "#f8f8f2", accent: "#bd93f9" },
-  { id: "tokyo-night", name: "Tokyo Night", bg: "#1a1b26", fg: "#c0caf5", accent: "#7aa2f7" },
+  { id: "gruvbox-dark", name: "Gruvbox Dark", bg: "#282828", fg: "#ebdbb2", accent: "#fabd2f" },
   {
     id: "catppuccin-mocha",
     name: "Catppuccin Mocha",
@@ -126,18 +123,12 @@ export const THEME_OPTIONS: Array<{
     fg: "#cdd6f4",
     accent: "#89b4fa",
   },
-  { id: "gruvbox-dark", name: "Gruvbox Dark", bg: "#282828", fg: "#ebdbb2", accent: "#fabd2f" },
+  { id: "tokyo-night", name: "Tokyo Night", bg: "#1a1b26", fg: "#c0caf5", accent: "#7aa2f7" },
   { id: "nord", name: "Nord", bg: "#2e3440", fg: "#d8dee9", accent: "#88c0d0" },
-  { id: "monokai", name: "Monokai", bg: "#272822", fg: "#f8f8f2", accent: "#a6e22e" },
+  { id: "dracula", name: "Dracula", bg: "#282a36", fg: "#f8f8f2", accent: "#bd93f9" },
   { id: "solarized-dark", name: "Solarized Dark", bg: "#002b36", fg: "#93a1a1", accent: "#268bd2" },
-  { id: "github-light", name: "GitHub Light", bg: "#ffffff", fg: "#24292f", accent: "#0969da" },
-  {
-    id: "solarized-light",
-    name: "Solarized Light",
-    bg: "#fdf6e3",
-    fg: "#586e75",
-    accent: "#268bd2",
-  },
+  { id: "one-dark", name: "One Dark", bg: "#282c34", fg: "#abb2bf", accent: "#61afef" },
+  { id: "rose-pine", name: "Rose Pine", bg: "#191724", fg: "#e0def4", accent: "#c4a7e7" },
 ];
 
 export const EDITOR_PRESETS = [
@@ -207,8 +198,7 @@ export const SettingsModal: FC<SettingsModalProps> = ({
     if (formData.theme) {
       document.documentElement.setAttribute("data-theme", formData.theme);
       document.body.setAttribute("data-theme", formData.theme);
-      document.documentElement.style.colorScheme =
-        formData.theme === "solarized-light" ? "light" : "dark";
+      document.documentElement.style.colorScheme = isLightTheme(formData.theme) ? "light" : "dark";
       const meta = document.querySelector('meta[name="theme-color"]');
       if (meta) {
         meta.setAttribute("content", SettingsService.getThemeCanvasColor(formData.theme));
@@ -219,8 +209,7 @@ export const SettingsModal: FC<SettingsModalProps> = ({
   const handleCancel = () => {
     document.documentElement.setAttribute("data-theme", settings.theme);
     document.body.setAttribute("data-theme", settings.theme);
-    document.documentElement.style.colorScheme =
-      settings.theme === "solarized-light" ? "light" : "dark";
+    document.documentElement.style.colorScheme = isLightTheme(settings.theme) ? "light" : "dark";
     const meta = document.querySelector('meta[name="theme-color"]');
     if (meta) {
       meta.setAttribute("content", SettingsService.getThemeCanvasColor(settings.theme));

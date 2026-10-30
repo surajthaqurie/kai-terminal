@@ -1573,10 +1573,6 @@ pub fn detect_system_terminal_config() -> SystemTerminalConfig {
                         {
                             // Kali's own scheme maps to the app default (the old "kali" theme was folded into it).
                             theme = "kai-dark".to_string();
-                        } else if trimmed.to_lowercase().contains("solarized")
-                            && trimmed.to_lowercase().contains("light")
-                        {
-                            theme = "solarized-light".to_string();
                         } else if trimmed.to_lowercase().contains("solarized") {
                             theme = "solarized-dark".to_string();
                         } else if trimmed.to_lowercase().contains("dracula") {
@@ -1974,17 +1970,14 @@ mod tests {
         // Must mirror `ThemeName` in src/types/terminal.ts.
         const KNOWN: &[&str] = &[
             "kai-dark",
-            "github-dark",
-            "one-dark",
-            "dracula",
-            "tokyo-night",
-            "catppuccin-mocha",
             "gruvbox-dark",
+            "catppuccin-mocha",
+            "tokyo-night",
             "nord",
-            "monokai",
+            "dracula",
             "solarized-dark",
-            "github-light",
-            "solarized-light",
+            "one-dark",
+            "rose-pine",
         ];
         let cfg = detect_system_terminal_config();
         assert!(

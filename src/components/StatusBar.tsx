@@ -34,6 +34,8 @@ interface StatusBarProps {
   appVersion: string;
   updateAvailable: boolean;
   latestVersion?: string | null;
+  isCheckingUpdates?: boolean;
+  onCheckUpdates?: () => void;
   onViewUpdate?: () => void;
   mode?: string;
   /** Detected shells and the focused terminal's shell (the footer shell picker). */
@@ -62,9 +64,8 @@ interface StatusBarProps {
  * Always-visible bottom status bar. It only reports: the focused terminal's shell
  * (click to change it), mode, git branch (click
  * opens the Changes Review & Diff modal) and working directory on the left;
- * the music mini-player (while one is active) and an update chip (only when an
- * update exists) on the right. App version and "check for updates" live in
- * Settings and the header's more-menu.
+ * the music mini-player (while one is active), the app version (or an update chip
+ * when an update exists) and the "check for updates" button on the right.
  */
 export const StatusBar: FC<StatusBarProps> = ({
   gitBranch,
@@ -74,6 +75,8 @@ export const StatusBar: FC<StatusBarProps> = ({
   appVersion,
   updateAvailable,
   latestVersion,
+  isCheckingUpdates = false,
+  onCheckUpdates,
   onViewUpdate,
   mode = "terminal",
   shells = [],
@@ -472,7 +475,21 @@ export const StatusBar: FC<StatusBarProps> = ({
               v{appVersion} → v{latestVersion}
             </span>
           </button>
-        ) : null}
+        ) : (
+          <span className="status-version" title={`Kai Terminal v${appVersion}`}>
+            v{appVersion}
+          </span>
+        )}
+        <button
+          type="button"
+          className="status-check-btn"
+          onClick={onCheckUpdates}
+          disabled={isCheckingUpdates || !onCheckUpdates}
+          title={isCheckingUpdates ? "Checking for updates…" : "Check for updates"}
+          aria-label={isCheckingUpdates ? "Checking for updates" : "Check for updates"}
+        >
+          <RefreshCw size={12} aria-hidden="true" className={isCheckingUpdates ? "spin" : ""} />
+        </button>
       </div>
     </footer>
   );

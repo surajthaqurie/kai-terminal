@@ -10,17 +10,14 @@ import type { ThemeName } from "../types/terminal";
 
 const ALL_THEMES: ThemeName[] = [
   "kai-dark",
-  "github-dark",
-  "one-dark",
-  "dracula",
-  "tokyo-night",
-  "catppuccin-mocha",
   "gruvbox-dark",
+  "catppuccin-mocha",
+  "tokyo-night",
   "nord",
-  "monokai",
+  "dracula",
   "solarized-dark",
-  "github-light",
-  "solarized-light",
+  "one-dark",
+  "rose-pine",
 ];
 
 describe("SettingsService", () => {
@@ -50,17 +47,14 @@ describe("SettingsService", () => {
   it("should return theme color objects for all supported theme names including nord and tokyo-night", () => {
     const themes = [
       "kai-dark",
-      "github-dark",
-      "one-dark",
-      "dracula",
-      "tokyo-night",
-      "catppuccin-mocha",
       "gruvbox-dark",
+      "catppuccin-mocha",
+      "tokyo-night",
       "nord",
-      "monokai",
+      "dracula",
       "solarized-dark",
-      "github-light",
-      "solarized-light",
+      "one-dark",
+      "rose-pine",
     ] as const;
     for (const themeName of themes) {
       const colors = SettingsService.getThemeColors(themeName);
@@ -73,7 +67,7 @@ describe("SettingsService", () => {
       expect(canvasColor).toBeDefined();
       expect(canvasColor.startsWith("#")).toBe(true);
     }
-    expect(SettingsService.getThemeCanvasColor("solarized-light")).toBe("#eee8d5");
+    expect(SettingsService.getThemeCanvasColor("rose-pine")).toBe("#16141f");
     expect(SettingsService.getThemeCanvasColor("kai-dark")).toBe("#0b0d10");
   });
 
@@ -93,10 +87,33 @@ describe("SettingsService", () => {
     expect(loaded.fontSize).toBe(15);
   });
 
-  it("flags only the light themes", () => {
-    for (const id of ALL_THEMES) {
-      expect(isLightTheme(id), id).toBe(id === "github-light" || id === "solarized-light");
+  it("has no light themes", () => {
+    for (const id of ALL_THEMES) expect(isLightTheme(id), id).toBe(false);
+  });
+
+  it("offers exactly the nine supported themes, Kai Dark first", () => {
+    expect(ALL_THEMES).toHaveLength(9);
+    expect(ALL_THEMES[0]).toBe("kai-dark");
+    expect(new Set(ALL_THEMES).size).toBe(9);
+  });
+
+  it("moves every removed theme to Kai Dark when settings load", () => {
+    for (const id of ["monokai", "github-dark", "github-light", "solarized-light"]) {
+      expect(normalizeThemeId(id), id).toBe("kai-dark");
+      expect(SettingsService.normalize({ theme: id as never }).theme, id).toBe("kai-dark");
     }
+  });
+
+  it("defines Rose Pine with its published palette", () => {
+    const c = SettingsService.getThemeColors("rose-pine");
+    expect(c.background).toBe("#191724");
+    expect(c.foreground).toBe("#e0def4");
+    expect(c.cursor).toBe("#e0def4");
+    expect(c.selectionBackground).toBe("#403d52");
+    expect(c.black).toBe("#26233a");
+    expect(c.green).toBe("#31748f");
+    expect(c.brightBlack).toBe("#6e6a86");
+    expect(c.cyan).toBe("#ebbcba");
   });
 
   it("keeps every theme's dim colour (bright black) readable against its background", () => {
@@ -173,7 +190,8 @@ describe("SettingsService", () => {
 
   it("should recover unknown theme ids to the Kai Dark default", () => {
     expect(normalizeThemeId("one-dark")).toBe("one-dark");
-    expect(normalizeThemeId("github-light")).toBe("github-light");
+    expect(normalizeThemeId("github-light")).toBe("kai-dark");
+    expect(normalizeThemeId("rose-pine")).toBe("rose-pine");
     expect(normalizeThemeId("kali")).toBe("kai-dark");
     expect(normalizeThemeId("Kali-Dark")).toBe("kai-dark");
     expect(normalizeThemeId("")).toBe("kai-dark");

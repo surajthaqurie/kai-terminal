@@ -167,17 +167,14 @@ export interface GitInfoLike {
  */
 export type ThemeName =
   | "kai-dark"
-  | "github-dark"
-  | "one-dark"
-  | "dracula"
-  | "tokyo-night"
-  | "catppuccin-mocha"
   | "gruvbox-dark"
+  | "catppuccin-mocha"
+  | "tokyo-night"
   | "nord"
-  | "monokai"
+  | "dracula"
   | "solarized-dark"
-  | "github-light"
-  | "solarized-light";
+  | "one-dark"
+  | "rose-pine";
 
 /**
  * Terminal cursor appearance styles.

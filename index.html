@@ -12,17 +12,14 @@
          blank white frame while the app starts. The boot script below sets data-theme
          from the saved settings; the colors match getThemeCanvasColor. */
       html { background: #0b0d10; }
-      html[data-theme="github-dark"] { background: #0a0d11; }
       html[data-theme="one-dark"] { background: #1e2227; }
       html[data-theme="dracula"] { background: #1e1f29; }
       html[data-theme="tokyo-night"] { background: #16161e; }
       html[data-theme="catppuccin-mocha"] { background: #181825; }
       html[data-theme="gruvbox-dark"] { background: #1e1e1e; }
       html[data-theme="nord"] { background: #242933; }
-      html[data-theme="monokai"] { background: #1d1e1a; }
       html[data-theme="solarized-dark"] { background: #00212b; }
-      html[data-theme="github-light"] { background: #ededed; }
-      html[data-theme="solarized-light"] { background: #eee8d5; }
+      html[data-theme="rose-pine"] { background: #16141f; }
     </style>
     <script>
       (function () {
@@ -33,30 +30,23 @@
           if (raw) {
             var s = JSON.parse(raw);
             if (s && s.theme) {
-              // "kali" was folded into the new default.
-              var theme = s.theme === "kali" ? "kai-dark" : s.theme;
-              var light = theme === "solarized-light" || theme === "github-light";
-              document.documentElement.setAttribute("data-theme", theme);
-              document.documentElement.style.colorScheme = light ? "light" : "dark";
+              // A removed theme (e.g. "kali", "monokai", the light themes) falls back to the default.
               var colors = {
                 "kai-dark": "#0b0d10",
-                "github-dark": "#0a0d11",
-                "one-dark": "#1e2227",
-                dracula: "#1e1f29",
-                "tokyo-night": "#16161e",
-                "catppuccin-mocha": "#181825",
                 "gruvbox-dark": "#1e1e1e",
+                "catppuccin-mocha": "#181825",
+                "tokyo-night": "#16161e",
                 nord: "#242933",
-                monokai: "#1d1e1a",
+                dracula: "#1e1f29",
                 "solarized-dark": "#00212b",
-                "github-light": "#ededed",
-                "solarized-light": "#eee8d5",
+                "one-dark": "#1e2227",
+                "rose-pine": "#16141f",
               };
-              var c = colors[theme];
-              if (c) {
-                var m = document.querySelector('meta[name="theme-color"]');
-                if (m) m.setAttribute("content", c);
-              }
+              var theme = colors.hasOwnProperty(s.theme) ? s.theme : "kai-dark";
+              document.documentElement.setAttribute("data-theme", theme);
+              document.documentElement.style.colorScheme = "dark";
+              var m = document.querySelector('meta[name="theme-color"]');
+              if (m) m.setAttribute("content", colors[theme]);
             }
             // See-through window (Windows / Linux desktop app): apply the saved
             // opacity before first paint so the chrome never flashes opaque.

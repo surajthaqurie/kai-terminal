@@ -418,7 +418,7 @@ describe("Harden Phase: Path escaping, spaces, Unicode, quotes & dynamic agent v
 });
 
 describe("Claude Code configuration predictability & scope enforcement", () => {
-  it("prefers project-level .mcp.json when auto setup runs inside a git repository", () => {
+  it("auto setup inside a git repository writes ~/.claude.json, never a project .mcp.json", () => {
     const home = makeTempHome();
     const repo = makeTempHome();
     fs.mkdirSync(path.join(repo, ".git"));
@@ -429,10 +429,10 @@ describe("Claude Code configuration predictability & scope enforcement", () => {
       scope: "auto",
     });
     expect(res.wrote).toBe(true);
-    expect(res.scope).toBe("project");
-    expect(res.path).toBe(path.join(repo, ".mcp.json"));
-    expect(fs.existsSync(path.join(repo, ".mcp.json"))).toBe(true);
-    expect(fs.existsSync(path.join(home, ".claude.json"))).toBe(false);
+    expect(res.scope).toBe("global");
+    expect(res.path).toBe(path.join(home, ".claude.json"));
+    expect(fs.existsSync(path.join(home, ".claude.json"))).toBe(true);
+    expect(fs.existsSync(path.join(repo, ".mcp.json"))).toBe(false);
 
     const content = JSON.parse(fs.readFileSync(res.path, "utf-8"));
     expect(content.mcpServers["kai-terminal"]).toEqual({
@@ -441,7 +441,7 @@ describe("Claude Code configuration predictability & scope enforcement", () => {
     });
   });
 
-  it("prefers global-level ~/.claude.json when auto setup runs outside a git repository", () => {
+  it("auto setup outside a git repository also writes ~/.claude.json", () => {
     const home = makeTempHome();
     const nonRepo = makeTempHome();
 
@@ -514,6 +514,7 @@ describe("Claude Code configuration predictability & scope enforcement", () => {
     const noForce = applyAgentSetup("claude", KAI_BIN, {
       homeDir: home,
       projectDir: repo,
+      scope: "project",
       force: false,
     });
     expect(noForce.alreadyConfigured).toBe(true);
@@ -523,6 +524,7 @@ describe("Claude Code configuration predictability & scope enforcement", () => {
     const withForce = applyAgentSetup("claude", KAI_BIN, {
       homeDir: home,
       projectDir: repo,
+      scope: "project",
       force: true,
     });
     expect(withForce.wrote).toBe(true);
@@ -553,6 +555,7 @@ describe("Claude Code configuration predictability & scope enforcement", () => {
     const res = applyAgentSetup("claude", KAI_BIN, {
       homeDir: home,
       projectDir: repo,
+      scope: "project",
       force: true,
     });
     expect(res.skipped).toBe(true);
@@ -569,7 +572,11 @@ describe("Claude Code configuration predictability & scope enforcement", () => {
     // Make .mcp.json a directory so atomic rename / write fails
     fs.mkdirSync(path.join(repo, ".mcp.json"));
 
-    const res = applyAgentSetup("claude", KAI_BIN, { homeDir: home, projectDir: repo });
+    const res = applyAgentSetup("claude", KAI_BIN, {
+      homeDir: home,
+      projectDir: repo,
+      scope: "project",
+    });
     expect(res.wrote).toBe(false);
     expect(res.skipped).toBe(true);
     expect(res.message).toContain("Failed to write config file");
@@ -760,25 +767,24 @@ describe("All-Agent Integration Matrix & Unified Workflow", () => {
     fs.mkdirSync(path.join(gitRepo, ".git"));
     const nonGit = makeTempHome();
 
-    // Auto-scope inside git repo selects project-level .cursor/mcp.json
+    // Auto-scope selects the global ~/.cursor/mcp.json, even inside a git repo
     const gitRes = applyAgentSetup("cursor", KAI_BIN, {
       homeDir: home,
       projectDir: gitRepo,
       scope: "auto",
     });
     expect(gitRes.wrote).toBe(true);
-    expect(gitRes.scope).toBe("project");
-    expect(gitRes.path).toBe(path.join(gitRepo, ".cursor/mcp.json"));
-    const gitCfg = JSON.parse(fs.readFileSync(gitRes.path, "utf-8"));
-    expect(gitCfg.mcpServers["kai-terminal"].args).toEqual([KAI_BIN, "mcp", "${workspaceFolder}"]);
+    expect(gitRes.scope).toBe("global");
+    expect(gitRes.path).toBe(path.join(home, ".cursor/mcp.json"));
+    expect(fs.existsSync(path.join(gitRepo, ".cursor/mcp.json"))).toBe(false);
 
-    // Auto-scope outside git repo selects global-level ~/.cursor/mcp.json
+    // Outside a git repo auto picks the same global file, already wired above
     const nonGitRes = applyAgentSetup("cursor", KAI_BIN, {
       homeDir: home,
       projectDir: nonGit,
       scope: "auto",
     });
-    expect(nonGitRes.wrote).toBe(true);
+    expect(nonGitRes.alreadyConfigured).toBe(true);
     expect(nonGitRes.scope).toBe("global");
     expect(nonGitRes.path).toBe(path.join(home, ".cursor/mcp.json"));
     const globalCfg = JSON.parse(fs.readFileSync(nonGitRes.path, "utf-8"));
@@ -788,15 +794,15 @@ describe("All-Agent Integration Matrix & Unified Workflow", () => {
       "${workspaceFolder}",
     ]);
 
-    // Explicit scope overrides
-    const explicitGlobal = applyAgentSetup("cursor", KAI_BIN, {
+    // An explicit project scope is the only way to get a project-level file
+    const explicitProject = applyAgentSetup("cursor", KAI_BIN, {
       homeDir: home,
       projectDir: gitRepo,
-      scope: "global",
-      force: true,
+      scope: "project",
     });
-    expect(explicitGlobal.scope).toBe("global");
-    expect(explicitGlobal.path).toBe(path.join(home, ".cursor/mcp.json"));
+    expect(explicitProject.wrote).toBe(true);
+    expect(explicitProject.scope).toBe("project");
+    expect(explicitProject.path).toBe(path.join(gitRepo, ".cursor/mcp.json"));
 
     // Scoped removal: removing project config leaves global config intact
     const remProj = removeAgentSetup("cursor", {
