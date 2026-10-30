@@ -24,6 +24,7 @@ import { findProvider } from "../../providerCatalog";
 import type { SecretStore } from "../../secretStore";
 import { authHeaderFor, LOGIN_HINT, type AuthDeps } from "./auth";
 import {
+  assertWiqlProjectScope,
   buildWiql,
   identityName,
   mapBuild,
@@ -50,6 +51,7 @@ const WORK_ITEM_FIELDS = [
   "System.State",
   "System.AssignedTo",
   "System.ChangedDate",
+  "System.TeamProject",
 ];
 const MAX_CHANGED_FILES = 200;
 const MAX_LOG_LINES = 400;
@@ -179,7 +181,15 @@ export function createAzureDevOpsProvider(deps: AzureDeps = {}): IntegrationProv
       fields: WORK_ITEM_FIELDS,
     });
     const byId = new Map<number, WorkItemSummary>();
+    const normalizedProject = project.trim().toLowerCase();
     for (const w of list(raw)) {
+      const item = w as Json | undefined;
+      const f = (item?.fields ?? {}) as Json;
+      const itemProj =
+        typeof f["System.TeamProject"] === "string" ? f["System.TeamProject"].trim() : "";
+      if (itemProj && itemProj.toLowerCase() !== normalizedProject) {
+        continue;
+      }
       const s = mapWorkItemSummary(w, c.base, project);
       byId.set(s.id, s);
     }
@@ -296,6 +306,7 @@ export function createAzureDevOpsProvider(deps: AzureDeps = {}): IntegrationProv
               "wiql must be a SELECT query of at most 2000 characters."
             );
           }
+          assertWiqlProjectScope(q.wiql, project);
           query = q.wiql;
         } else {
           query = buildWiql(q);
@@ -321,6 +332,26 @@ export function createAzureDevOpsProvider(deps: AzureDeps = {}): IntegrationProv
         const raw = await c.get<Json>(`${enc(project)}/_apis/wit/workitems/${id}`, {
           $expand: "relations",
         });
+
+        // Verify project boundary before mapping or returning any details
+        const fields =
+          raw && typeof raw === "object" && !Array.isArray(raw)
+            ? (raw.fields as Record<string, unknown> | undefined)
+            : undefined;
+        const itemProject =
+          fields && typeof fields === "object" && !Array.isArray(fields)
+            ? fields["System.TeamProject"]
+            : undefined;
+
+        // Fail closed if project identity is missing, malformed, or targets another project
+        if (typeof itemProject !== "string" || !itemProject.trim()) {
+          throw new IntegrationError("not_found", `Work item ${id} was not found.`);
+        }
+
+        if (itemProject.trim().toLowerCase() !== project.trim().toLowerCase()) {
+          throw new IntegrationError("not_found", `Work item ${id} was not found.`);
+        }
+
         const detail = mapWorkItemDetail(raw, c.base, project);
         try {
           const comments = await c.get<Json>(

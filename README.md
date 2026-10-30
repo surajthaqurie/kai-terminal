@@ -69,13 +69,15 @@ Kai ships a CLI that indexes projects into `~/.kai/` (outside your repo) and ser
 ### External Commands (Any Terminal)
 
 ```bash
-kai open [path]           # launch or focus Kai Terminal desktop app (defaults to current dir)
-kai health                # check system readiness and health
-kai doctor                # run environment, PATH, and desktop diagnostics
-kai list [-a|-m|-i|-s|-c] # look up tools (-a), MCP (-m), projects (-i), sessions (-s), config (-c)
-kai remove [-m|-a|-i|-s]  # un-wire tools (-m/-a <name>) or delete index (-i)/session (-s) data
-kai remove --name <id>    # remove an integration account everywhere (token + every folder)
-kai close                 # close active Kai Terminal instances
+kai open [path]              # launch or focus Kai Terminal desktop app (defaults to current dir)
+kai health                   # check system readiness and health
+kai doctor                   # run environment, PATH, and desktop diagnostics
+kai list [-a|-m|-i|-s|-c]    # look up tools (-a), MCP (-m), projects (-i), sessions (-s), config (-c)
+kai integration [list|azure] # inspect or connect service integrations (Azure DevOps)
+kai azure [list|active|remove] # list projects, switch active project, or disconnect folder
+kai remove [-m|-a|-i|-s]     # un-wire tools (-m/-a <name>) or delete index (-i)/session (-s) data
+kai remove --name <id>       # remove an integration account everywhere (token + every folder)
+kai close                    # close active Kai Terminal instances
 ```
 
 ### Inside Kai Terminal
@@ -101,7 +103,7 @@ Detailed guide and syntax: see [USER_MANUAL.md](USER_MANUAL.md).
 
 | Agent             | Config file                                                   | Notes                                            |
 | ----------------- | ------------------------------------------------------------- | ------------------------------------------------ |
-| Claude Code       | `~/.claude.json`                                              | `mcpServers["kai-terminal"]` stdio entry                     |
+| Claude Code       | `~/.claude.json` (global) or `.mcp.json` (project)            | `mcpServers["kai-terminal"]` stdio entry         |
 | Cursor            | `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` (project) | uses `${workspaceFolder}`                        |
 | Codex             | `~/.codex/config.toml`                                        | `[mcp_servers.kai-terminal]` section             |
 | Gemini CLI        | `~/.muse/settings.json`                                       | `mcpServers["kai-terminal"]` stdio entry                     |
@@ -158,7 +160,7 @@ The status bar in the app shows the indexed project, file/symbol counts and last
 Connect a folder to Azure DevOps and your AI tools can read its work items, pull requests and builds through the same `kai mcp` server. One command does the setup, and it is safe to run again:
 
 ```bash
-# Run these in a Kai Terminal tab. Organization, project and repository come from the folder's git remote.
+# Can run in any terminal (or inside Kai Terminal). Organization, project and repository are auto-detected.
 kai integration list       # every integration and its state for this folder
 kai integration azure      # sign in, connect this folder, wire your agents, verify with real calls
 kai azure list             # accounts and their projects; * marks this folder's active project
@@ -169,7 +171,7 @@ kai remove --name contoso  # remove the account everywhere: token and every fold
 
 - **Auto-detected:** organization, project and repository come from the folder's git remotes (Azure DevOps Services and Azure DevOps Server HTTPS remotes), from any sub-folder. Names are checked against what Azure really has.
 - **One active project per folder.** Sign-in is per user and shared by every folder. The connection is a private file under `~/.kai/projects/`, never in your repository.
-- **Tokens stay safe:** the Azure CLI is used when installed, so Kai stores nothing; otherwise (and always for Azure DevOps Server) an access token goes to the OS secret store (Windows DPAPI, macOS Keychain, Linux Secret Service), never to a repository or an agent config.
+- **Tokens stay safe:** the Azure CLI is used when installed (with in-flight request deduplication), so Kai stores nothing; otherwise (and always for Azure DevOps Server) an access token goes to the OS secret store (Windows DPAPI, macOS Keychain piped via stdin without argv exposure, Linux Secret Service), never to a repository or an agent config. Work item searches are strictly scoped to the active project boundary.
 - **Read-only tools, added only where connected:** `kai_integration_status`, `kai_work_item_search`, `kai_work_item_get`, `kai_pr_list`, `kai_pr_get`, `kai_build_list`, `kai_build_log`. A folder that is not connected sees exactly the tools listed above. Text from Azure is returned as untrusted data. Restart a running agent session after setup so it re-reads its tools.
 - **Desktop app:** the **Integrations** tab of the AI CLI providers panel (robot icon) offers the same actions, including switching the project.
 

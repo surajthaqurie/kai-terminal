@@ -23,6 +23,7 @@
     "doctor": "node ./bin/kai.js --version",
     "preview": "vite preview",
     "test": "vitest run",
+    "test:live": "vitest run -c vitest.live.config.ts",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit",
     "format": "prettier --write \"src/**/*.{ts,tsx,css,json}\"",

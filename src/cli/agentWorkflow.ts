@@ -293,8 +293,13 @@ function printBackupNote(backupPath: string | undefined | null): void {
 }
 
 /** Removes Kai's MCP wiring from one agent and reports the outcome as an exit code. */
-export function removeAgentWiring(agent: string, dryRun: boolean): number {
-  const result = removeAgentSetup(agent, { projectDir: process.cwd(), scope: "auto", dryRun });
+export function removeAgentWiring(
+  agent: string,
+  opts: boolean | { dryRun?: boolean; scope?: "auto" | "project" | "global" } = false
+): number {
+  const dryRun = typeof opts === "boolean" ? opts : opts.dryRun === true;
+  const scope = typeof opts === "object" && opts.scope ? opts.scope : "auto";
+  const result = removeAgentSetup(agent, { projectDir: process.cwd(), scope, dryRun });
   if (dryRun) {
     console.log(`[kai] Dry-run: ${result.message}`);
     return 0;

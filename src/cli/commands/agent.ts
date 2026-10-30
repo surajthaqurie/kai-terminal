@@ -24,5 +24,10 @@ export async function runAgentRemove(args: string[]): Promise<number> {
     console.error(`Example: kai agent remove claude`);
     return 1;
   }
-  return removeAgentWiring(target, args.includes("--dry-run"));
+  const scope = args.includes("--project")
+    ? ("project" as const)
+    : args.includes("--global")
+      ? ("global" as const)
+      : ("auto" as const);
+  return removeAgentWiring(target, { dryRun: args.includes("--dry-run"), scope });
 }

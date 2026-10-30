@@ -23,10 +23,12 @@ export interface AuthHeader {
 }
 
 const azTokens = new Map<string, { token: string; expiresAt: number }>();
+const inFlightAzTokens = new Map<string, Promise<string>>();
 
 /** Test seam: drop cached Azure CLI tokens. */
 export function resetAzTokenCache(): void {
   azTokens.clear();
+  inFlightAzTokens.clear();
 }
 
 export const LOGIN_HINT = "Run `kai integration azure` to sign in again.";
@@ -53,44 +55,63 @@ async function azAccessToken(account: IntegrationAccount, deps: AuthDeps): Promi
   const cached = azTokens.get(account.id);
   if (cached && cached.expiresAt - EXPIRY_MARGIN_MS > now) return cached.token;
 
-  const run = deps.run ?? runProcess;
-  const azArgs = ["account", "get-access-token", "--resource", ADO_RESOURCE_ID, "--output", "json"];
-  // `az` is a .cmd shim on Windows, which Node will not spawn directly.
-  const result =
-    process.platform === "win32"
-      ? await run("cmd.exe", ["/d", "/s", "/c", "az", ...azArgs], { timeoutMs: 30_000 })
-      : await run("az", azArgs, { timeoutMs: 30_000 });
+  const inFlight = inFlightAzTokens.get(account.id);
+  if (inFlight) return inFlight;
 
-  if (result.spawnError && result.code === null) {
-    throw new IntegrationError(
-      "auth",
-      "The Azure CLI (az) could not be started.",
-      "Install it from https://aka.ms/installazurecli, or sign in with an access token: `kai integration azure --pat-stdin`."
-    );
-  }
-  if (result.code !== 0) {
-    throw new IntegrationError(
-      "auth",
-      "The Azure CLI is not signed in.",
-      "Run `az login`, then retry."
-    );
-  }
-  let parsed: { accessToken?: unknown; expires_on?: unknown };
-  try {
-    parsed = JSON.parse(result.stdout);
-  } catch {
-    throw new IntegrationError("auth", "The Azure CLI returned an unreadable token response.");
-  }
-  if (typeof parsed.accessToken !== "string" || !parsed.accessToken) {
-    throw new IntegrationError("auth", "The Azure CLI returned no access token.");
-  }
-  const expiresOn = Number(parsed.expires_on);
-  const expiresAt =
-    Number.isFinite(expiresOn) && expiresOn > 0
-      ? expiresOn * 1000
-      : now + FALLBACK_TOKEN_LIFETIME_MS;
-  azTokens.set(account.id, { token: parsed.accessToken, expiresAt });
-  return parsed.accessToken;
+  const fetchPromise = (async () => {
+    try {
+      const run = deps.run ?? runProcess;
+      const azArgs = [
+        "account",
+        "get-access-token",
+        "--resource",
+        ADO_RESOURCE_ID,
+        "--output",
+        "json",
+      ];
+      // `az` is a .cmd shim on Windows, which Node will not spawn directly.
+      const result =
+        process.platform === "win32"
+          ? await run("cmd.exe", ["/d", "/s", "/c", "az", ...azArgs], { timeoutMs: 30_000 })
+          : await run("az", azArgs, { timeoutMs: 30_000 });
+
+      if (result.spawnError && result.code === null) {
+        throw new IntegrationError(
+          "auth",
+          "The Azure CLI (az) could not be started.",
+          "Install it from https://aka.ms/installazurecli, or sign in with an access token: `kai integration azure --pat-stdin`."
+        );
+      }
+      if (result.code !== 0) {
+        throw new IntegrationError(
+          "auth",
+          "The Azure CLI is not signed in.",
+          "Run `az login`, then retry."
+        );
+      }
+      let parsed: { accessToken?: unknown; expires_on?: unknown };
+      try {
+        parsed = JSON.parse(result.stdout);
+      } catch {
+        throw new IntegrationError("auth", "The Azure CLI returned an unreadable token response.");
+      }
+      if (typeof parsed.accessToken !== "string" || !parsed.accessToken) {
+        throw new IntegrationError("auth", "The Azure CLI returned no access token.");
+      }
+      const expiresOn = Number(parsed.expires_on);
+      const expiresAt =
+        Number.isFinite(expiresOn) && expiresOn > 0
+          ? expiresOn * 1000
+          : now + FALLBACK_TOKEN_LIFETIME_MS;
+      azTokens.set(account.id, { token: parsed.accessToken, expiresAt });
+      return parsed.accessToken;
+    } finally {
+      inFlightAzTokens.delete(account.id);
+    }
+  })();
+
+  inFlightAzTokens.set(account.id, fetchPromise);
+  return fetchPromise;
 }
 
 /**

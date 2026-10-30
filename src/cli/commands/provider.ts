@@ -21,7 +21,8 @@ import {
   type IntegrationAccount,
   type ProjectBinding,
 } from "../../core/integrations/types";
-import { confirm, isInteractive, readAllStdin } from "../prompt";
+import { confirm, isInteractive, readAllStdin, ask } from "../prompt";
+import { detectInstalledAgentsSync, removeAgentSetup } from "../../core/agents";
 import {
   assertKnownFlags,
   authLabel,
@@ -46,13 +47,13 @@ ${info.label}
 
 Usage:
   kai integration ${cmd}               Set up: sign in, connect this folder, wire agents, verify
-  kai ${cmd} list [--repos] [--json]   Signed-in accounts with their projects (the active one
+  kai ${cmd} list                      Signed-in accounts with their projects (the active one
                                       for this folder is marked *); --repos shows every
                                       project's repositories
   kai ${cmd} active --name <project>   Switch this folder's active project
                                       (--repo <name|none>, --org <name>)
                                       With no --name in a terminal: pick from a list
-  kai ${cmd} remove                    Disconnect THIS folder (keeps your sign-in)
+  kai ${cmd} remove                    Disconnect THIS folder, unwire agents, and manage account
   kai ${cmd} remove --name <id>        Remove an account everywhere: sign out, delete its
                                       stored token, disconnect every folder using it
   kai remove --name <id>              Same as above, for any integration
@@ -175,6 +176,15 @@ async function runList(info: ProviderInfo, args: string[]): Promise<number> {
   }
 
   console.log(info.label);
+  const detected = detectInstalledAgentsSync({ projectDir: dir });
+  const wired = detected.filter((d) => d.kaiWired);
+  if (mine) {
+    const boundAcc = getAccount(mine.account);
+    console.log(`Active project: ${where(mine)} (account: ${boundAcc?.org ?? mine.account})`);
+  }
+  if (wired.length > 0) {
+    console.log(`Configured agents: ${wired.map((w) => w.name).join(", ")}`);
+  }
   for (const row of rows) {
     console.log(`\n${row.org} · ${authLabel(row.authMethod)}${row.user ? ` · ${row.user}` : ""}`);
     if (row.error) {
@@ -331,6 +341,46 @@ export async function runProviderRemove(name: string, args: string[]): Promise<n
     );
     const result = await unbind(info.id, dir);
     console.log(`✔ ${info.label} disconnected from this folder.`);
+
+    if (isInteractive() && !flags.bool.has("--yes")) {
+      // Step 2: Agent unwiring step (default all)
+      const detected = detectInstalledAgentsSync({ projectDir: dir });
+      const wired = detected.filter((d) => d.kaiWired);
+      if (wired.length > 0) {
+        console.log(`\n▸ Agents`);
+        console.log(`  Wired agents for Kai: ${wired.map((w) => w.name).join(", ")}`);
+        if (await confirm(`  Remove Kai MCP wiring from agents?`, true)) {
+          const answer = (
+            await ask(`  Which agents to unwire? (Enter for all, or comma-separated names): `)
+          ).trim();
+          let toUnwire = wired;
+          if (
+            answer &&
+            answer.toLowerCase() !== "all" &&
+            answer.toLowerCase() !== "y" &&
+            answer.toLowerCase() !== "yes"
+          ) {
+            const parts = answer.split(",").map((s) => s.trim().toLowerCase());
+            toUnwire = wired.filter(
+              (d) => parts.includes(d.id.toLowerCase()) || parts.includes(d.name.toLowerCase())
+            );
+          }
+          for (const agent of toUnwire) {
+            removeAgentSetup(agent.id, { projectDir: dir, scope: "auto" });
+            console.log(`  ✔ Removed Kai MCP entry from ${agent.name}`);
+          }
+        }
+      }
+
+      // Step 3: Account selection for current project
+      console.log(`\n▸ Account`);
+      if (await confirm(`  Also remove account ${b.account} from this machine?`, false)) {
+        await removeAccountEverywhere(b.account);
+        console.log(`  ✔ Removed account ${b.account} and purged stored credentials.`);
+        return 0;
+      }
+    }
+
     const others = result.stillUsedBy.length;
     console.log(
       others > 0

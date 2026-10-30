@@ -173,7 +173,7 @@ describe("secret stores", () => {
     expect(await store.get("k")).toBe("new");
   });
 
-  it("macOS keychain and Linux secret-tool use fixed arguments", async () => {
+  it("macOS keychain and Linux secret-tool pass secrets on stdin, never in argv", async () => {
     const calls: Array<{ cmd: string; args: string[]; input?: string }> = [];
     const run: Runner = async (cmd, args, opts) => {
       calls.push({ cmd, args, input: opts?.input });
@@ -182,10 +182,11 @@ describe("secret stores", () => {
     const mac = new KeychainSecretStore(run);
     await mac.set("kai/x/y", "tok");
     expect(await mac.get("kai/x/y")).toBe("tok");
-    expect(calls[0]).toMatchObject({
-      cmd: "security",
-      args: ["add-generic-password", "-U", "-a", "kai", "-s", "kai/x/y", "-w", "tok"],
-    });
+    // macOS keychain uses security -i so the secret travels on stdin, not in argv
+    expect(calls[0].cmd).toBe("security");
+    expect(calls[0].args).toEqual(["-i"]);
+    expect(calls[0].input).toContain('-w "tok"');
+    expect(calls[0].args).not.toContain("tok");
 
     calls.length = 0;
     const linux = new SecretToolStore(run);

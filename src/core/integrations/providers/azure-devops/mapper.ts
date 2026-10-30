@@ -1,14 +1,15 @@
 import { htmlField, htmlToText, clipText } from "../../format";
-import type {
-  BuildFailure,
-  BuildSummary,
-  Comment,
-  PullRequestSummary,
-  PullRequestThread,
-  WorkItemDetail,
-  WorkItemRelation,
-  WorkItemSummary,
-  WorkItemQuery,
+import {
+  IntegrationError,
+  type BuildFailure,
+  type BuildSummary,
+  type Comment,
+  type PullRequestSummary,
+  type PullRequestThread,
+  type WorkItemDetail,
+  type WorkItemRelation,
+  type WorkItemSummary,
+  type WorkItemQuery,
 } from "../../types";
 
 type Json = Record<string, unknown>;
@@ -31,6 +32,76 @@ const COMMENT_MAX = 800;
 /** Escape a value for a WIQL string literal. */
 export function wiqlString(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
+}
+
+/**
+ * Validate that a custom WIQL query does not bypass the active project boundary.
+ * Rejects unscoped queries, queries targeting another project, negative conditions,
+ * and top-level OR disjunctions that could leak other projects' items.
+ */
+export function assertWiqlProjectScope(wiql: string, boundProject: string): void {
+  // Strip string literals to prevent field names inside literals (e.g. titles) from triggering matchers
+  const withoutStrings = wiql.replace(/'(?:''|[^'])*'/g, "''");
+
+  const projectField = /(?:\[?System\.TeamProject\]?|\bTeamProject\b)/i;
+  if (!projectField.test(withoutStrings)) {
+    throw new IntegrationError(
+      "bad_request",
+      `Custom wiql must be scoped to the bound project using [System.TeamProject] = @project or [System.TeamProject] = '${boundProject.replace(/'/g, "''")}'.`
+    );
+  }
+
+  // Reject negative operators or clauses on TeamProject (<>, !=, NOT IN, NOT (...TeamProject...))
+  if (
+    /(?:\[?System\.TeamProject\]?|\bTeamProject\b)\s*(?:<>|!=|\bnot\s+in\b)/i.test(
+      withoutStrings
+    ) ||
+    /\bNOT\s*\(*\s*(?:\[?System\.TeamProject\]?|\bTeamProject\b)/i.test(withoutStrings)
+  ) {
+    throw new IntegrationError("bad_request", "Custom wiql cannot negate the project boundary.");
+  }
+
+  // Reject top-level OR operations that could bypass project scope
+  const whereMatch = /\bWHERE\b([\s\S]*?)(?:\bORDER\s+BY\b|$)/i.exec(withoutStrings);
+  if (whereMatch) {
+    const whereClause = whereMatch[1];
+    let depth = 0;
+    for (let i = 0; i < whereClause.length; i++) {
+      const ch = whereClause[i];
+      if (ch === "(") depth++;
+      else if (ch === ")") depth = Math.max(0, depth - 1);
+      else if (depth === 0 && /\bOR\b/i.test(whereClause.slice(i, i + 3))) {
+        throw new IntegrationError(
+          "bad_request",
+          "Custom wiql cannot use top-level OR clauses that could bypass the project boundary."
+        );
+      }
+    }
+  }
+
+  // Extract all equality conditions on TeamProject
+  const equalsPattern =
+    /(?:\[?System\.TeamProject\]?|\bTeamProject\b)\s*=\s*(@project|'(?:''|[^'])*')/gi;
+  const matches = Array.from(wiql.matchAll(equalsPattern));
+  if (matches.length === 0) {
+    throw new IntegrationError(
+      "bad_request",
+      `Custom wiql must equate [System.TeamProject] to @project or '${boundProject.replace(/'/g, "''")}'.`
+    );
+  }
+
+  const normalizedBound = boundProject.trim().toLowerCase();
+  for (const match of matches) {
+    const target = match[1].trim();
+    if (target.toLowerCase() === "@project") continue;
+    const unquoted = target.slice(1, -1).replace(/''/g, "'").trim().toLowerCase();
+    if (unquoted !== normalizedBound) {
+      throw new IntegrationError(
+        "bad_request",
+        `Custom wiql targets project "${target.slice(1, -1)}", but this repository is bound to "${boundProject}".`
+      );
+    }
+  }
 }
 
 /** The structured filters as a WIQL query scoped to the project in the URL (`@project`). */
