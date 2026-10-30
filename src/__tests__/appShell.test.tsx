@@ -883,6 +883,8 @@ describe("App shell: settings, themes and terminal actions", () => {
       "check-updates",
       "close-tab",
       "search-terminal",
+      "copy-selection",
+      "paste-clipboard",
       "clear-terminal",
       "ai-cli",
       "diagnostics",
@@ -929,18 +931,17 @@ describe("App shell: settings, themes and terminal actions", () => {
     ]);
   });
 
-  it("toolbar paste writes the clipboard into the active terminal", async () => {
+  it("the palette's paste and copy actions reach the active terminal", async () => {
     Object.defineProperty(navigator, "clipboard", {
       value: { readText: vi.fn(async () => "echo hi") },
       configurable: true,
     });
     await mount();
-    const paste = container.querySelector<HTMLElement>('[aria-label="Paste"], [title^="Paste"]');
-    expect(paste).not.toBeNull();
     registry.refCalls.length = 0;
-    await act(async () => paste!.click());
-    await flush();
+    await runAction("paste-clipboard");
     expect(registry.refCalls).toContain(`${paneId(0)}:paste:echo hi`);
+    await runAction("copy-selection");
+    expect(registry.refCalls).toContain(`${paneId(0)}:copy`);
   });
 
   it("Ctrl+= / Ctrl+- / Ctrl+0 zoom the terminal font for the session", async () => {
@@ -985,6 +986,65 @@ describe("App shell: settings, themes and terminal actions", () => {
     });
     await newTabKey();
     expect(registry.panes.get(paneId(1))!.selectedShell.id).toBe("zsh");
+  });
+
+  it("the + ▾ menu opens a tab with the chosen shell and keeps it as the default", async () => {
+    await mount();
+    const chevron = container.querySelector<HTMLElement>(
+      '[aria-label="Choose shell for new tab"]'
+    )!;
+    await act(async () => chevron.click());
+    const menu = container.querySelector('[role="menu"][aria-label="New tab with shell"]')!;
+    const items = [...menu.querySelectorAll<HTMLElement>('[role="menuitemradio"]')];
+    expect(items).toHaveLength(2);
+    expect(items.map((i) => i.getAttribute("aria-checked"))).toEqual(["true", "false"]);
+    await act(async () => items[1].click());
+    await flush();
+    expect(tabTitles()).toHaveLength(2);
+    expect(registry.panes.get(paneId(1))!.selectedShell.id).toBe("zsh");
+    expect(container.querySelector('[role="menu"]')).toBeNull();
+  });
+
+  it("the old toolbar row is gone; the header offers search, AI, settings and more", async () => {
+    await mount();
+    expect(container.querySelector(".terminal-toolbar")).toBeNull();
+    expect(container.querySelector('select[aria-label="Select shell profile"]')).toBeNull();
+    for (const label of [
+      "Open command palette",
+      "Open AI CLI providers",
+      "Open settings",
+      "More actions",
+    ]) {
+      expect(container.querySelector(`.tab-bar [aria-label^="${label}"]`), label).not.toBeNull();
+    }
+  });
+
+  it("the header search box opens the palette and the more menu runs its actions", async () => {
+    await mount();
+    expect(modal("palette").isOpen).toBe(false);
+    await act(async () =>
+      container.querySelector<HTMLElement>('[aria-label="Open command palette"]')!.click()
+    );
+    expect(modal("palette").isOpen).toBe(true);
+
+    await act(async () =>
+      container.querySelector<HTMLElement>('[aria-label^="More actions"]')!.click()
+    );
+    const item = (name: string) =>
+      [...container.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((i) =>
+        i.textContent?.includes(name)
+      )!;
+    expect(item("Workspaces")).toBeDefined();
+    await act(async () => item("Diagnostics").click());
+    await flush();
+    expect(modal("diagnostics").isOpen).toBe(true);
+    expect(container.querySelector('[role="menu"]')).toBeNull();
+  });
+
+  it("the status bar only reports: no version number or update-check button", async () => {
+    await mount();
+    expect(container.querySelector(".status-version")).toBeNull();
+    expect(container.querySelector('.status-bar [aria-label="Check for updates"]')).toBeNull();
   });
 
   it("a custom shell path overrides the profile for all panes", async () => {

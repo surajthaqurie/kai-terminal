@@ -48,7 +48,7 @@ export type SettingsTab = "appearance" | "terminal" | "shell" | "shortcuts" | "u
 
 export const FONT_PRESETS = [
   {
-    label: "System Monospace / Kali (Default)",
+    label: "JetBrains Mono — bundled (Default)",
     value: DEFAULT_SETTINGS.fontFamily,
   },
   {
@@ -81,7 +81,7 @@ export const FONT_PRESETS = [
     value: 'Consolas, "Lucida Console", monospace',
   },
   {
-    label: "JetBrains Mono",
+    label: "JetBrains Mono (installed copy)",
     value: '"JetBrains Mono", monospace',
   },
   {

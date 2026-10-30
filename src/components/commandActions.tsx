@@ -3,8 +3,10 @@ import {
   ArrowLeft,
   ArrowRight,
   Bot,
+  ClipboardPaste,
   Code,
   Columns,
+  Copy,
   Edit3,
   FolderOpen,
   GitCompare,
@@ -37,11 +39,17 @@ export interface CommandActionContext {
   checkUpdates: () => void;
   closeActiveTab: () => void;
   toggleSearch: () => void;
+  copySelection: () => void;
+  pasteClipboard: () => void;
   clearTerminal: () => void;
   openAiCli: () => void;
   openDiagnostics: () => void;
   openSettings: () => void;
 }
+
+/** Fixed terminal clipboard chords (not remappable; see Settings → Shortcuts). */
+const COPY_BINDING = "Ctrl+Shift+C";
+const PASTE_BINDING = "Ctrl+Shift+V";
 
 export function buildCommandActions(ctx: CommandActionContext): CommandAction[] {
   const key = (binding: string) => platformLabel(binding, ctx.isMac);
@@ -169,6 +177,22 @@ export function buildCommandActions(ctx: CommandActionContext): CommandAction[] 
       shortcut: key(kb.search),
       icon: <Search size={16} />,
       perform: ctx.toggleSearch,
+    },
+    {
+      id: "copy-selection",
+      label: "Copy Selection",
+      category: "Edit",
+      shortcut: key(COPY_BINDING),
+      icon: <Copy size={16} />,
+      perform: ctx.copySelection,
+    },
+    {
+      id: "paste-clipboard",
+      label: "Paste from Clipboard",
+      category: "Edit",
+      shortcut: key(PASTE_BINDING),
+      icon: <ClipboardPaste size={16} />,
+      perform: ctx.pasteClipboard,
     },
     {
       id: "clear-terminal",

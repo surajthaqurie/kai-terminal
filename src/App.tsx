@@ -1,5 +1,5 @@
 import { Suspense, useCallback, useRef, useState } from "react";
-import { Toolbar } from "./components/Toolbar";
+import { HeaderActions } from "./components/HeaderActions";
 import { TabBar } from "./components/TabBar";
 import { StatusBar } from "./components/StatusBar";
 import { UpdateBanner } from "./components/UpdateBanner";
@@ -35,9 +35,9 @@ import { useTabs } from "./hooks/useTabs";
 import { useTerminalConfig } from "./hooks/useTerminalConfig";
 import { useWindowRefit } from "./hooks/useWindowRefit";
 import { resolveEffectiveProjectDir } from "./services/projectService";
-import { isMacPlatform } from "./services/shortcuts";
+import { isMacPlatform, platformLabel } from "./services/shortcuts";
 import { RELEASES_PAGE_URL } from "./services/updateService";
-import type { TerminalTab } from "./types/terminal";
+import type { ShellProfile, TerminalTab } from "./types/terminal";
 import "./App.css";
 
 /**
@@ -123,6 +123,16 @@ function App() {
       focusActiveTerminalSoon();
     },
     [tabsState.newTab, focusActiveTerminalSoon]
+  );
+
+  /** "+ ▾" menu: the chosen shell becomes the default for new tabs and opens one now. */
+  const newTabWithShell = useCallback(
+    (shell: ShellProfile) => {
+      config.setSelectedShellId(shell.id);
+      tabsState.newTab({ shellPath: shell.path });
+      focusActiveTerminalSoon();
+    },
+    [config.setSelectedShellId, tabsState.newTab, focusActiveTerminalSoon]
   );
 
   /** Effective project dir: active pane -> tab -> global toolbar input. */
@@ -229,6 +239,15 @@ function App() {
     reviewChanges: () => project.reviewChanges(),
   });
 
+  const pasteFromClipboard = useCallback(async () => {
+    try {
+      const text = await readClipboardText();
+      if (text) getActiveTerminal()?.pasteText(text);
+    } catch (err) {
+      console.error("Failed to read clipboard:", err);
+    }
+  }, [getActiveTerminal]);
+
   const commandActions = buildCommandActions({
     keybindings: userSettings.keybindings,
     isMac: isMacPlatform(),
@@ -246,20 +265,13 @@ function App() {
     checkUpdates: () => void updates.checkUpdates(true),
     closeActiveTab: () => tabsState.closeTab(activeTabId),
     toggleSearch,
+    copySelection: () => getActiveTerminal()?.copySelection(),
+    pasteClipboard: () => void pasteFromClipboard(),
     clearTerminal: () => getActiveTerminal()?.clear(),
     openAiCli,
     openDiagnostics: () => setIsDiagnosticsOpen(true),
     openSettings,
   });
-
-  const pasteFromClipboard = useCallback(async () => {
-    try {
-      const text = await readClipboardText();
-      if (text) getActiveTerminal()?.pasteText(text);
-    } catch (err) {
-      console.error("Failed to read clipboard:", err);
-    }
-  }, [getActiveTerminal]);
 
   return (
     <div className="app-layout" data-theme={userSettings.theme}>
@@ -275,29 +287,29 @@ function App() {
           onReorderTabs={tabsState.reorderTabs}
           onMoveTabToIndex={tabsState.moveTabToIndex}
           onSetTabColor={tabsState.setTabColor}
-        />
-        <Toolbar
           shells={config.shells}
           selectedShellId={config.selectedShellId}
-          onSelectShell={config.setSelectedShellId}
-          onSplitHorizontal={() => tabsState.splitPane("horizontal")}
-          onSplitVertical={() => tabsState.splitPane("vertical")}
-          canClosePane={(activeTab?.panes.length ?? 0) > 1}
-          onClosePane={tabsState.closeActivePane}
-          onOpenEditor={project.openEditor}
-          editorPath={userSettings.editorPath}
-          installedEditors={project.installedEditors}
-          isLoadingEditors={project.isLoadingEditors}
-          onRefreshEditors={project.refreshInstalledEditors}
-          onCopy={() => getActiveTerminal()?.copySelection()}
-          onPaste={pasteFromClipboard}
-          onSearch={toggleSearch}
-          onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
-          onOpenSettings={openSettings}
-          onOpenWorkspaces={() => setIsWorkspaceOpen(true)}
-          onOpenAiCli={openAiCli}
-          onOpenDiagnostics={() => setIsDiagnosticsOpen(true)}
-        />
+          onNewTabWithShell={newTabWithShell}
+        >
+          <HeaderActions
+            actions={commandActions}
+            paletteShortcut={platformLabel(
+              userSettings.keybindings.commandPalette,
+              isMacPlatform()
+            )}
+            onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
+            onOpenAiCli={openAiCli}
+            onOpenSettings={openSettings}
+            onOpenEditor={project.openEditor}
+            editorPath={userSettings.editorPath}
+            installedEditors={project.installedEditors}
+            isLoadingEditors={project.isLoadingEditors}
+            onRefreshEditors={project.refreshInstalledEditors}
+            updateAvailable={updates.updateInfo?.updateAvailable ?? false}
+            latestVersion={updates.updateInfo?.latestVersion ?? null}
+            onViewUpdate={updates.viewUpdate}
+          />
+        </TabBar>
       </div>
 
       {updates.updateOutcome && (
@@ -463,8 +475,6 @@ function App() {
         appVersion={updates.appVersion}
         updateAvailable={updates.updateInfo?.updateAvailable ?? false}
         latestVersion={updates.updateInfo?.latestVersion ?? null}
-        isCheckingUpdates={updates.isCheckingUpdates}
-        onCheckUpdates={() => updates.checkUpdates(true)}
         onViewUpdate={updates.viewUpdate}
         onRefreshGit={git.refreshGit}
         isRefreshingGit={git.isRefreshingGit}

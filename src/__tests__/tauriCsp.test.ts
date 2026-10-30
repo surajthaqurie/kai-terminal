@@ -51,3 +51,29 @@ describe("tauri.conf.json Content Security Policy", () => {
     expect(scriptSrc).not.toContain("unsafe-inline");
   });
 });
+
+describe("frameless window (custom title bar) config", () => {
+  const read = (name: string) =>
+    JSON.parse(readFileSync(resolve(process.cwd(), "src-tauri", name), "utf8"));
+
+  it("drops native decorations on Windows/Linux and grants the window permissions the tab bar uses", () => {
+    const conf = read("tauri.conf.json");
+    expect(conf.app.windows[0].decorations).toBe(false);
+    const caps = read("capabilities/default.json").permissions as string[];
+    for (const p of [
+      "core:window:allow-minimize",
+      "core:window:allow-toggle-maximize",
+      "core:window:allow-is-maximized",
+      "core:window:allow-start-dragging",
+    ]) {
+      expect(caps).toContain(p);
+    }
+  });
+
+  it("keeps native traffic lights on macOS via an overlay title bar", () => {
+    const win = read("tauri.macos.conf.json").app.windows[0];
+    expect(win.label).toBe("main");
+    expect(win.decorations).toBe(true);
+    expect(win.titleBarStyle).toBe("Overlay");
+  });
+});

@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { PtyService, isTauriAvailable } from "../services/ptyService";
-import { DEFAULT_SETTINGS, SettingsService } from "../services/settingsService";
+import {
+  DEFAULT_SETTINGS,
+  PREVIOUS_DEFAULT_FONT_FAMILY,
+  SettingsService,
+} from "../services/settingsService";
 import { withSkipProfileArgs } from "../services/shellArgs";
 import { zoomedFontSize } from "../services/shortcuts";
 import type { ShellProfile, UserSettings } from "../types/terminal";
@@ -43,6 +47,7 @@ export function useTerminalConfig({
         setUserSettings((prev) => {
           const isDefaultFont =
             prev.fontFamily === DEFAULT_SETTINGS.fontFamily ||
+            prev.fontFamily === PREVIOUS_DEFAULT_FONT_FAMILY ||
             prev.fontFamily === 'Menlo, Monaco, "Courier New", monospace';
           const isDefaultSize = prev.fontSize === 14 || prev.fontSize === 12;
           return {

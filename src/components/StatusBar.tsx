@@ -32,8 +32,6 @@ interface StatusBarProps {
   appVersion: string;
   updateAvailable: boolean;
   latestVersion?: string | null;
-  isCheckingUpdates?: boolean;
-  onCheckUpdates?: () => void;
   onViewUpdate?: () => void;
   mode?: string;
   /** Re-probe git for the active pane + re-sync Code Mode (footer refresh button). */
@@ -54,9 +52,11 @@ interface StatusBarProps {
 }
 
 /**
- * Always-visible bottom status bar: git branch badge (click opens the
- * Changes Review & Diff modal) on the left, app version + update check on
- * the right.
+ * Always-visible bottom status bar. It only reports: mode, git branch (click
+ * opens the Changes Review & Diff modal) and working directory on the left;
+ * the music mini-player (while one is active) and an update chip (only when an
+ * update exists) on the right. App version and "check for updates" live in
+ * Settings and the header's more-menu.
  */
 export const StatusBar: FC<StatusBarProps> = ({
   gitBranch,
@@ -66,8 +66,6 @@ export const StatusBar: FC<StatusBarProps> = ({
   appVersion,
   updateAvailable,
   latestVersion,
-  isCheckingUpdates = false,
-  onCheckUpdates,
   onViewUpdate,
   mode = "terminal",
   onToggleMode,
@@ -457,21 +455,7 @@ export const StatusBar: FC<StatusBarProps> = ({
               v{appVersion} → v{latestVersion}
             </span>
           </button>
-        ) : (
-          <span className="status-version" title={`Kai Terminal v${appVersion}`}>
-            v{appVersion}
-          </span>
-        )}
-        <button
-          type="button"
-          className="status-check-btn"
-          onClick={onCheckUpdates}
-          disabled={isCheckingUpdates || !onCheckUpdates}
-          title={isCheckingUpdates ? "Checking for updates…" : "Check for updates"}
-          aria-label={isCheckingUpdates ? "Checking for updates" : "Check for updates"}
-        >
-          <RefreshCw size={12} aria-hidden="true" className={isCheckingUpdates ? "spin" : ""} />
-        </button>
+        ) : null}
       </div>
     </footer>
   );

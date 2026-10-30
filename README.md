@@ -177,6 +177,20 @@ kai remove --name contoso  # remove the account everywhere: token and every fold
 
 Details: [MCP.md](MCP.md) · [USER_MANUAL.md](USER_MANUAL.md).
 
+### The window
+
+One header row holds everything you use all the time:
+
+- **Tabs**, with `+` for a new tab and `▾` beside it to open a tab with a specific shell (your choice becomes the default for new tabs).
+- **Search box** (`Ctrl+Shift+P`): the command palette. Every action is in it with its shortcut: split, close pane, find, copy, paste, clear, git review, workspaces and more.
+- **AI providers** and **Settings** icons.
+- **`⋯` menu**: workspaces, Music Time, open the project in your editor, review git changes, split right / down, diagnostics and updates. A dot on it means an update is available.
+- **Window buttons** (minimize, maximize, close) on Windows and Linux; on macOS the usual traffic lights stay at the left. Drag the empty part of the tab row to move the window; double-click it to maximize.
+
+The status bar at the bottom only reports: mode, git branch (click to review changes), the working directory (click to copy), the music mini-player while one plays, and an update chip when there is one. The version number and a manual update check are in **Settings → Updates**.
+
+Kai ships its own fonts, Inter for the interface and JetBrains Mono for the terminal, so it looks the same on every OS. Pick another terminal font in **Settings → Terminal**; a font you chose is never replaced.
+
 ### Keyboard shortcuts
 
 On macOS use `Cmd` where `Ctrl` is shown. Plain `Ctrl+C` always stays the shell interrupt, and plain `Ctrl+V` always reaches the shell.

@@ -27,10 +27,14 @@ export const DEFAULT_KEYBINDINGS: KeybindingsConfig = {
   musicMute: "Ctrl+Alt+U",
 };
 
+/** Default terminal font before the bundled JetBrains Mono; still migrated on load. */
+export const PREVIOUS_DEFAULT_FONT_FAMILY =
+  "'Fira Code', 'FiraCode', 'DejaVu Sans Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace";
+
 export const DEFAULT_SETTINGS: UserSettings = {
   theme: "kali",
   fontFamily:
-    "'Fira Code', 'FiraCode', 'DejaVu Sans Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace",
+    "'JetBrains Mono Variable', 'JetBrains Mono', 'Fira Code', 'DejaVu Sans Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace",
   fontSize: 12,
   scrollback: 10000,
   cursorBlink: false,
@@ -166,7 +170,8 @@ export class SettingsService {
         // Migrate legacy hardcoded font and 14px default if unmodified
         if (
           parsed.fontFamily === 'Menlo, Monaco, "Courier New", monospace' ||
-          parsed.fontFamily === "Menlo, Monaco, 'Courier New', monospace"
+          parsed.fontFamily === "Menlo, Monaco, 'Courier New', monospace" ||
+          parsed.fontFamily === PREVIOUS_DEFAULT_FONT_FAMILY
         ) {
           parsed.fontFamily = DEFAULT_SETTINGS.fontFamily;
         }

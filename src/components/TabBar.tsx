@@ -1,6 +1,10 @@
-import { CSSProperties, FC, useCallback, useEffect, useRef, useState } from "react";
-import { TerminalTab } from "../types/terminal";
-import { X, Plus, Terminal as TerminalIcon } from "lucide-react";
+import { CSSProperties, FC, ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { ShellProfile, TerminalTab } from "../types/terminal";
+import { X, Plus, ChevronDown, Terminal as TerminalIcon } from "lucide-react";
+import { PopupMenu, type MenuEntry } from "./PopupMenu";
+import { WindowControls } from "./WindowControls";
+import { isTauriAvailable } from "../services/ptyService";
+import { isMacPlatform } from "../services/shortcuts";
 
 interface TabBarProps {
   tabs: TerminalTab[];
@@ -14,6 +18,12 @@ interface TabBarProps {
   /** Preferred reorder path: move tab to an absolute index. Works on all OSes. */
   onMoveTabToIndex?: (id: string, toIndex: number) => void;
   onSetTabColor?: (id: string, color: string | undefined) => void;
+  /** Shell profiles for the "+ ▾" picker; the picker is hidden without them. */
+  shells?: ShellProfile[];
+  selectedShellId?: string;
+  onNewTabWithShell?: (shell: ShellProfile) => void;
+  /** Right-hand header content, placed between the drag strip and the window controls. */
+  children?: ReactNode;
 }
 
 export const TAB_COLOR_PRESETS = [
@@ -53,6 +63,10 @@ export const TabBar: FC<TabBarProps> = ({
   onReorderTabs,
   onMoveTabToIndex,
   onSetTabColor,
+  shells = [],
+  selectedShellId,
+  onNewTabWithShell,
+  children,
 }) => {
   const [editingTabId, setEditingTabId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
@@ -362,11 +376,23 @@ export const TabBar: FC<TabBarProps> = ({
     onSelectTab(tabId);
   };
 
+  const shellEntries: MenuEntry[] = [
+    { kind: "heading", id: "shell-heading", label: "New tab with…" },
+    ...shells.map((shell): MenuEntry => ({
+      id: shell.id,
+      label: shell.name + (shell.is_wsl ? " (WSL)" : ""),
+      detail: shell.path,
+      hint: shell.is_default ? "Default" : undefined,
+      checked: shell.id === selectedShellId,
+      onSelect: () => onNewTabWithShell?.(shell),
+    })),
+  ];
+
   const menuTab = menu ? tabs.find((t) => t.id === menu.tabId) : undefined;
   const menuIndex = menuTab ? tabs.findIndex((t) => t.id === menuTab.id) : -1;
 
   return (
-    <div className="tab-bar">
+    <div className={`tab-bar${isTauriAvailable() && isMacPlatform() ? " has-traffic-lights" : ""}`}>
       <div
         ref={containerRef}
         className={`tabs-container${dragId ? " dragging" : ""}`}
@@ -463,17 +489,43 @@ export const TabBar: FC<TabBarProps> = ({
         {dragId && dropIndex === tabs.length && (
           <div className="tab-drop-indicator" aria-hidden="true" />
         )}
+      </div>
+
+      {/* Outside the scrolling tab list so the shell menu is never clipped. */}
+      <div className="tab-add-group">
         <button
           type="button"
           className="tab-add-btn"
           onClick={onNewTab}
-          onPointerDown={(e) => e.stopPropagation()}
           title="New Tab (Ctrl+T / Cmd+T — works on Windows, Linux and macOS)"
           aria-label="New terminal tab"
         >
           <Plus size={16} />
         </button>
+        {onNewTabWithShell && shells.length > 0 && (
+          <PopupMenu
+            label="New tab with shell"
+            entries={shellEntries}
+            trigger={({ toggle, props }) => (
+              <button
+                type="button"
+                className="tab-add-btn tab-add-chevron"
+                onClick={toggle}
+                title="Choose a shell for the new tab"
+                aria-label="Choose shell for new tab"
+                {...props}
+              >
+                <ChevronDown size={12} />
+              </button>
+            )}
+          />
+        )}
       </div>
+
+      {/* Empty strip that moves the window (and maximizes on double-click). */}
+      <div className="tab-bar-drag" data-tauri-drag-region />
+      {children}
+      <WindowControls />
 
       {menu && menuTab && (
         <div

@@ -23,3 +23,37 @@ export async function closeAppWindow(): Promise<boolean> {
     return false;
   }
 }
+
+type WindowAction = "minimize" | "toggleMaximize";
+
+/** Minimizes or maximizes/restores the app window. No-op outside Tauri. */
+export async function controlAppWindow(action: WindowAction): Promise<void> {
+  if (!isTauriAvailable()) return;
+  try {
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    const win = getCurrentWindow();
+    if (action === "minimize") await win.minimize();
+    else await win.toggleMaximize();
+  } catch (err) {
+    console.warn(`Failed to ${action} app window:`, err);
+  }
+}
+
+/**
+ * Reports whether the window is maximized now and on every resize, so the
+ * maximize button can show its restore icon. Returns an unsubscribe function.
+ */
+export async function watchWindowMaximized(
+  onChange: (maximized: boolean) => void
+): Promise<() => void> {
+  if (!isTauriAvailable()) return () => {};
+  try {
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    const win = getCurrentWindow();
+    onChange(await win.isMaximized());
+    return await win.onResized(async () => onChange(await win.isMaximized()));
+  } catch (err) {
+    console.warn("Failed to watch window maximize state:", err);
+    return () => {};
+  }
+}

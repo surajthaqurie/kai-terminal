@@ -165,7 +165,7 @@ cargo test --no-default-features --manifest-path src-tauri/Cargo.toml --test pty
 ## 5. Frequently Asked Questions
 
 #### Q: Shell fails to launch on Linux or macOS
-Ensure your default shell executable exists in your system `$PATH` or `/bin/`. You can view detected shells in the toolbar dropdown or settings modal.
+Ensure your default shell executable exists in your system `$PATH` or `/bin/`. You can view detected shells in the `+ ▾` menu next to the new-tab button or in the settings modal.
 
 #### Q: `cargo` or `rustc` is not recognized
 Verify that Rust is installed on your system via `rustup` and that `~/.cargo/bin` is added to your environment `$PATH`.

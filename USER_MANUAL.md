@@ -182,7 +182,7 @@ kai remove --name contoso             # shows what it will remove (folders, toke
 kai remove --name contoso --yes       # remove it without asking
 ```
 
-In the desktop app, the same actions are in the **Integrations** tab of the AI CLI providers panel (toolbar robot icon).
+In the desktop app, the same actions are in the **Integrations** tab of the AI CLI providers panel (robot icon in the header).
 
 ## Project graph
 

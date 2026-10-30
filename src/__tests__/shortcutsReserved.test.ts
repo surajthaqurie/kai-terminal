@@ -81,6 +81,8 @@ describe("command palette", () => {
     checkUpdates: noop,
     closeActiveTab: noop,
     toggleSearch: noop,
+    copySelection: noop,
+    pasteClipboard: noop,
     clearTerminal: noop,
     openAiCli: noop,
     openDiagnostics: noop,

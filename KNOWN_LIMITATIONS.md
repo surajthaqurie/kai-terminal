@@ -37,7 +37,12 @@ The following items are implemented and tested at the unit and mock level, but a
 - **Behavior:** Directory symlinks use NTFS junctions (which require no special privileges). File symlinks gracefully skip in unit tests on Windows without Developer Mode, reporting explicit Vitest skip reasons (`symlinkOrSkip`).
 - **Workaround:** Enable Developer Mode in Windows Settings if file symlink creation is required.
 
-### 4. macOS Microphone Attribution
+### 4. Custom Window Frame
+- **Cause:** The native title bar is replaced by the tab row (`decorations: false` on Windows and Linux, an overlay title bar with the native traffic lights on macOS via `src-tauri/tauri.macos.conf.json`). Minimize, maximize and close are drawn by Kai on Windows and Linux.
+- **Behavior:** Windows 11's snap-layouts popup on hovering the maximize button is not available; dragging to a screen edge still snaps. The empty strip of the tab row moves the window and a double-click maximizes it.
+- **Verification:** The configuration and permissions are checked by tests, but dragging, edge resizing, snapping and the macOS traffic-light spacing have not been run on every OS yet. Please report a window that cannot be moved or resized.
+
+### 5. macOS Microphone Attribution
 - **Cause:** macOS CoreAudio permissions report whether audio input is active, but do not attribute microphone streams to specific application processes.
 - **Behavior:** Music Time pauses when audio input is active and a known native conferencing application is running. Browser-based calls (e.g., Google Meet) cannot be reliably distinguished from other browser microphone usage on macOS.
 - **Status:** Operating system privacy boundary.

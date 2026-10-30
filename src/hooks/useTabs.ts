@@ -66,7 +66,7 @@ export function useTabs({ cwd, effectiveShellPath, setLastError }: TabsOptions) 
   const activePane = activeTab?.panes.find((p) => p.id === activePaneId);
 
   const newTab = useCallback(
-    (opts?: { cwd?: string }) => {
+    (opts?: { cwd?: string; shellPath?: string }) => {
       const dir = opts?.cwd ?? (cwd.trim() || undefined);
       if (dir) recordRecentProject(dir);
       // Titles are always "Terminal N". Number from live tabs (not a stale
@@ -75,7 +75,7 @@ export function useTabs({ cwd, effectiveShellPath, setLastError }: TabsOptions) 
       const usedTitles = new Set(tabsRef.current.map((t) => t.title));
       let n = tabsRef.current.length + 1;
       while (usedTitles.has(`Terminal ${n}`)) n += 1;
-      const tab = createDefaultTab(`Terminal ${n}`, effectiveShellPath, dir);
+      const tab = createDefaultTab(`Terminal ${n}`, opts?.shellPath ?? effectiveShellPath, dir);
       setTabs((prev) => [...prev, tab]);
       setActiveTabId(tab.id);
     },
