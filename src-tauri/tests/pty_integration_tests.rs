@@ -1243,6 +1243,18 @@ fn test_16_wsl_shell_round_trip() {
             emitter.get_text()
         );
 
+        // KAI_TERMINAL must cross into the Linux shell (via WSLENV), or
+        // `kai <agent>` refuses to run there. As above, the typed line holds
+        // `${KAI_TERMINAL:-unset}`, never the `KAI_ENV_1` marker itself.
+        manager
+            .write_to_pty(&session.id, "echo KAI_ENV_${KAI_TERMINAL:-unset}\n")
+            .unwrap();
+        assert!(
+            emitter.wait_for_output("KAI_ENV_1", 30),
+            "KAI_TERMINAL must reach the WSL shell through WSLENV. Output: {}",
+            emitter.get_text()
+        );
+
         manager.close_pty(&session.id).unwrap();
     }
 }

@@ -17,6 +17,7 @@ import {
   skipRecordMatches,
 } from "../core/indexer";
 import { getGraphFreshness } from "../core/codeModeWorkflow";
+import { symlinkOrSkip } from "./helpers/symlink";
 
 let tmpHome = "";
 let tmpRoot = "";
@@ -308,13 +309,7 @@ describe("drift detection: cheaper scan, same guarantees", () => {
     const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "kai-fresh-outside-"));
     try {
       fs.writeFileSync(path.join(outsideDir, "leak.ts"), "export const LEAK = 1;\n");
-      try {
-        fs.symlinkSync(outsideDir, path.join(tmpRoot, "src", "escape"), "junction");
-      } catch (err) {
-        const code = (err as NodeJS.ErrnoException).code;
-        if (code === "EPERM" || code === "EACCES" || code === "ENOSYS") return ctx.skip();
-        throw err;
-      }
+      symlinkOrSkip(ctx, outsideDir, path.join(tmpRoot, "src", "escape"), "junction");
       const index = await indexProject(registerProject(tmpRoot));
       expect(Object.keys(index.files).some((p) => p.includes("leak.ts"))).toBe(false);
       const drift = detectStaleIndexEntries(index);
@@ -329,17 +324,12 @@ describe("drift detection: cheaper scan, same guarantees", () => {
 
   it("settles to fresh when a directory link points at another directory inside the project", async (ctx) => {
     write("src/real/inner.ts", "export const INNER = 1;\n");
-    try {
-      fs.symlinkSync(
-        path.join(tmpRoot, "src", "real"),
-        path.join(tmpRoot, "src", "zz-alias"),
-        "junction"
-      );
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code;
-      if (code === "EPERM" || code === "EACCES" || code === "ENOSYS") return ctx.skip();
-      throw err;
-    }
+    symlinkOrSkip(
+      ctx,
+      path.join(tmpRoot, "src", "real"),
+      path.join(tmpRoot, "src", "zz-alias"),
+      "junction"
+    );
     try {
       const meta = registerProject(tmpRoot);
       const first = await indexProject(meta);

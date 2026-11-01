@@ -656,7 +656,9 @@ async function runSetup(info: ProviderInfo, args: string[]): Promise<number> {
   if (failed > 0) {
     console.log(`  Fix the access above, then run \`kai integration ${alias}\` again to re-check.`);
   }
-  console.log(`  Restart a running agent session so it re-reads its tools.`);
+  console.log(
+    `  A running agent that honors MCP tool-list updates refreshes on its own; restart any that does not.`
+  );
   console.log(
     `  Next: \`kai azure list\` · \`kai azure active --name <project>\` · \`kai azure remove\`\n`
   );

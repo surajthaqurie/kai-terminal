@@ -511,6 +511,32 @@ pub fn is_wsl_shell_path(shell_path: &str) -> bool {
 pub fn wsl_failure_hint() -> &'static str {
     "WSL launch failed: ensure the Windows Subsystem for Linux optional feature and a Linux distribution are installed (`wsl --list --verbose` in an elevated prompt), the LxssManager service is running, and try `wsl --update`. This is distinct from a general PTY failure."
 }
+/// Merge `names` into a `WSLENV` value so `wsl.exe` hands those Windows
+/// environment variables to the Linux shell. Without this `KAI_TERMINAL` stops
+/// at the Windows/Linux boundary and `kai <agent>` refuses to run inside WSL.
+/// Existing entries (including their `/p`, `/l`, `/u`, `/w` flags) are kept as
+/// they are, and a name that is already listed (any flags, any case) is not
+/// added again.
+pub fn wsl_env_forward(existing: Option<&str>, names: &[&str]) -> String {
+    let mut entries: Vec<String> = existing
+        .unwrap_or("")
+        .split(':')
+        .filter(|e| !e.is_empty())
+        .map(str::to_string)
+        .collect();
+    for name in names {
+        let listed = entries.iter().any(|e| {
+            e.split('/')
+                .next()
+                .is_some_and(|n| n.eq_ignore_ascii_case(name))
+        });
+        if !listed {
+            entries.push((*name).to_string());
+        }
+    }
+    entries.join(":")
+}
+
 /// Validates requested shell executable path or resolves to default profile.
 /// Never spawns a shell for resolution; uses direct filesystem checks only.
 /// Rejects NUL bytes and over-long inputs (Phase E IPC hardening).
@@ -2187,6 +2213,37 @@ mod tests {
             assert!(msg.contains("17763"), "must name minimum build: {}", msg);
             assert!(msg.contains("ConPTY"), "must mention ConPTY: {}", msg);
         }
+    }
+
+    #[test]
+    fn test_wsl_env_forward_adds_names_and_preserves_existing() {
+        assert_eq!(wsl_env_forward(None, &["KAI_TERMINAL"]), "KAI_TERMINAL");
+        assert_eq!(wsl_env_forward(Some(""), &["KAI_TERMINAL"]), "KAI_TERMINAL");
+        // Existing entries, with their translation flags, stay in front untouched.
+        assert_eq!(
+            wsl_env_forward(Some("PATH/l:GOPATH/up"), &["KAI_TERMINAL"]),
+            "PATH/l:GOPATH/up:KAI_TERMINAL"
+        );
+        // Stray separators do not produce empty entries.
+        assert_eq!(wsl_env_forward(Some(":A::B:"), &["C"]), "A:B:C");
+    }
+
+    #[test]
+    fn test_wsl_env_forward_does_not_duplicate() {
+        assert_eq!(
+            wsl_env_forward(Some("KAI_TERMINAL"), &["KAI_TERMINAL"]),
+            "KAI_TERMINAL"
+        );
+        // Already listed with flags, or in another case: the user's entry wins.
+        assert_eq!(
+            wsl_env_forward(Some("kai_terminal/u:X"), &["KAI_TERMINAL"]),
+            "kai_terminal/u:X"
+        );
+        // A longer name that merely starts the same way is a different variable.
+        assert_eq!(
+            wsl_env_forward(Some("KAI_TERMINAL_EXTRA"), &["KAI_TERMINAL"]),
+            "KAI_TERMINAL_EXTRA:KAI_TERMINAL"
+        );
     }
 
     #[test]

@@ -8,7 +8,7 @@ use uuid::Uuid;
 use crate::error::TerminalError;
 use crate::shell::{
     check_host_pty_support, is_wsl_shell_path, validate_and_resolve_cwd,
-    validate_and_resolve_shell, wsl_failure_hint, LEAKED_CHROMIUM_ENV,
+    validate_and_resolve_shell, wsl_env_forward, wsl_failure_hint, LEAKED_CHROMIUM_ENV,
 };
 
 /// Abstract event emitter trait for PTY output streaming and process exit notification.
@@ -337,6 +337,22 @@ impl PtyManager {
             for (k, v) in env_vars {
                 cmd.env(k, v);
             }
+        }
+
+        if is_wsl_shell_path(&shell_path) {
+            // wsl.exe only hands the Linux side the variables WSLENV names, so
+            // KAI_TERMINAL (which `kai <agent>` requires) would stop at the
+            // boundary. Keep the caller's, then the process's, own WSLENV.
+            let user_wslenv = options.env.as_ref().and_then(|e| {
+                e.iter()
+                    .find(|(k, _)| k.eq_ignore_ascii_case("WSLENV"))
+                    .map(|(_, v)| v.clone())
+            });
+            let existing = user_wslenv.or_else(|| std::env::var("WSLENV").ok());
+            cmd.env(
+                "WSLENV",
+                wsl_env_forward(existing.as_deref(), &["KAI_TERMINAL"]),
+            );
         }
 
         if flatpak_id.is_some() {

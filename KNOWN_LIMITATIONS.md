@@ -1,22 +1,6 @@
 # Known Limitations
 
-This document lists the current outstanding verification tasks, operating system boundaries, terminal constraints, and intentional design limits of Kai Terminal. Resolved defects and completed features are removed to keep this document concise and actionable.
-
----
-
-## Outstanding Verification
-
-The following items are implemented and tested at the unit and mock level, but await confirmation in dedicated target environments or CI runners:
-
-### 1. Flatpak Host-Shell Execution
-- **Context:** When running inside a Flatpak container (`FLATPAK_ID` is set), shell sessions run on the host via `flatpak-spawn --host`. The login shell is discovered via `getent passwd` (cached with `/bin/sh` fallback), and working directory tracking relies on OSC 7 sequences emitted by the shell.
-- **Implemented Mitigations:** Bash is primed with an OSC 7 prompt hook via `bash_cwd_prompt_command`, which chains to existing user `PROMPT_COMMAND` values and prevents duplicate injection. OSC 7 and OSC 9;9 parsers enforce 4,096-byte bounds and reject NUL bytes or control characters. PTY spawn failures return actionable diagnostic guidance (`flatpak_failure_hint`).
-- **Required Verification:** A live run in a real Flatpak installation (confirming host shell job control and that `cd` updates the status bar directory badge in bash) or a green `linux-packages` CI job in `.github/workflows/ci.yml`.
-
-### 2. WSL ConPTY CI Integration
-- **Context:** Running Linux shells via `wsl.exe` under Windows ConPTY is fully supported and diagnosed in code (`is_wsl_shell_path`, `wsl_failure_hint`, `test_16b_wsl_output_decoding_and_diagnosis`).
-- **Implemented Mitigations:** The dedicated `wsl` CI job in `.github/workflows/ci.yml` automates `Vampire/setup-wsl@v7` on `windows-latest` with root as the default user, strips the interactive first-run configuration prompt, and runs `test_16_wsl_shell_round_trip`.
-- **Required Verification:** First green run of the hosted `wsl` CI job on GitHub Actions to verify WSL2 nested virtualization on the runner.
+This document lists the operating system boundaries, terminal constraints, and intentional design limits of Kai Terminal. Resolved defects, completed features and items that CI has since verified are removed to keep this document concise and actionable.
 
 ---
 
@@ -35,6 +19,7 @@ The following items are implemented and tested at the unit and mock level, but a
 ### 3. Windows File Symlink Privileges
 - **Cause:** Windows requires Developer Mode or elevated (Administrator) privileges to create file symlinks (`EPERM`).
 - **Behavior:** Directory symlinks use NTFS junctions (which require no special privileges). File symlinks gracefully skip in unit tests on Windows without Developer Mode, reporting explicit Vitest skip reasons (`symlinkOrSkip`).
+- **Untraversable junctions:** Some Windows builds (seen on 11 build 26300) create a junction but then refuse to follow it in every process (`The path cannot be traversed because it contains an untrusted mount point`, surfaced by Node as `UNKNOWN`). The link tests detect this and skip with a reason rather than fail; project indexing and `kai_read_range` already treat such a path as unreadable (fail closed). The same tests run on the Linux and macOS CI runners.
 - **Workaround:** Enable Developer Mode in Windows Settings if file symlink creation is required.
 
 ### 4. Custom Window Frame
@@ -104,31 +89,15 @@ The following items are implemented and tested at the unit and mock level, but a
 - **Context:** The status bar Git badge relies on machine-readable Git plumbing commands (`rev-parse`, `status --porcelain`) executed with strict 8-second timeouts.
 - **Boundary:** If `git` is absent from `PATH`, the status badge displays an informative error without affecting terminal functionality.
 
----
-
 ### 7. Per-Terminal Code Mode Signal
 - **Context:** Code Mode is scoped to one terminal: `kai <agent>` announces start and end on its own output as a private `OSC 1337` sequence (`src/core/codeModeSignal.ts`) and the pane that receives it shows the Code Mode pill. No shared state is read by the footer.
 - **Verified:** The real CLI's signal arrives intact and in order through Windows 11 ConPTY (build 26300), through a Linux PTY, and through the real xterm.js parser (including a signal split across output chunks).
-- **Boundary:** Older Windows builds whose ConPTY may drop escape sequences it does not recognise, and macOS, have not been tested; there the pill would simply stay on "Terminal". Shells that do not receive `KAI_TERMINAL=1` (for example WSL without `WSLENV`) cannot run `kai <agent>` at all, so they never reach this path. A `kai` CLI older than the app does not send the signal.
+- **Boundary:** Older Windows builds whose ConPTY may drop escape sequences it does not recognise, and macOS, have not been tested; there the pill would simply stay on "Terminal". A `kai` CLI older than the app does not send the signal.
 
 ### 8. External Service Integrations (Azure DevOps)
 - **Context:** `kai integration azure` connects a project to Azure DevOps; its tools are read-only and listed only for connected projects (see `MCP.md`).
-- **Boundary:** Azure DevOps Services and Azure DevOps Server projects are detected from git remotes; a Server remote must be an HTTPS address of the form `https://<host>/<collection>/<project>/_git/<repo>`. SSH remotes of a Server install are not recognized (the HTTPS address behind them cannot be derived), so use `kai integration azure --server-url ... --project ...` there. The desktop Integrations tab is for Azure DevOps Services (`dev.azure.com`) only; Server setup is command-line only. Server support has not been run against a real server (it uses REST API 7.0, including the 7.0 comments preview, chosen from Microsoft's API reference and tested against a fake server only). Azure DevOps Server signs in with an access token, never the Azure CLI, because on-premises servers do not accept the Microsoft Entra tokens `az` issues. There are no write tools yet. The tool list is read when an agent connects, so a running agent session must be restarted after `kai integration azure` or `kai azure remove`.
+- **Boundary:** Azure DevOps Services and Azure DevOps Server projects are detected from git remotes; a Server remote must be an HTTPS address of the form `https://<host>/<collection>/<project>/_git/<repo>`. SSH remotes of a Server install are not recognized (the HTTPS address behind them cannot be derived), so use `kai integration azure --server-url ... --project ...` there. The desktop Integrations tab is for Azure DevOps Services (`dev.azure.com`) only; Server setup is command-line only. Server support has not been run against a real server (it uses REST API 7.0, including the 7.0 comments preview, chosen from Microsoft's API reference and tested against a fake server only). Azure DevOps Server signs in with an access token, never the Azure CLI, because on-premises servers do not accept the Microsoft Entra tokens `az` issues. There are no write tools yet.
 - **Boundary:** The merge branch (the **More** link on the Azure DevOps card) is guidance for agents, returned by `kai_workflow_rules`. Kai installs no git hooks and never validates or blocks a commit, push or merge, and it creates no branch or pull request itself: the agent runs `git` (and, if it chooses, `az repos pr create`). The branch list comes from the repository over the network, so with no connection the list is empty and a branch typed earlier is kept as saved. It is set from the desktop app only (there is no command), per folder, and needs a current `kai` on PATH.
 - **Boundary:** Azure CLI sign-in needs `az` on the PATH of whatever starts it. A desktop app launched from a menu on macOS or Linux can have a shorter PATH than your shell; the Integrations tab then offers an access token instead. Access tokens go to the OS secret store; macOS `security` takes the token as an argument, briefly visible to the same user's `ps`.
 - **Boundary:** The macOS Keychain and Linux Secret Service paths are unit-tested with a fake runner, not run on those systems; Windows DPAPI is tested for real. Requests are built to the public Azure DevOps REST API and tested against a fake server, not yet against a live organization.
 - **Boundary:** The desktop tab runs the installed `kai` CLI. An older `kai` earlier on PATH does not know the command, and the tab says so.
-
----
-
-## Verification Requirements
-
-To verify the outstanding items:
-
-1. **WSL Integration Test:**
-   - Execute the `wsl` job in `.github/workflows/ci.yml` on a GitHub Actions `windows-latest` runner.
-   - Verify that `Vampire/setup-wsl@v7` provisions Ubuntu-22.04 and that `test_16_wsl_shell_round_trip` passes under ConPTY.
-
-2. **Flatpak Packaging & Host Shell Execution:**
-   - Execute the `linux-packages` job in `.github/workflows/ci.yml` on `ubuntu-22.04`.
-   - Verify that `flatpak-builder` packages `com.kai.terminal.yml` with the GNOME 48 SDK and that `flatpak run --command=flatpak-spawn com.kai.terminal --host sh -c 'echo "FLATPAK_HOST_SHELL_OK: $(uname -s)"'` (run with `dbus-run-session` in headless environments) successfully invokes the host shell.

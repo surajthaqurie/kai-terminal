@@ -7,6 +7,7 @@ import { indexProject } from "../core/indexer";
 import { readIndexedSource } from "../core/retrieval";
 import { toolReadRange, type ToolContext } from "../core/mcpTools";
 import { callTool } from "./helpers/mcpCall";
+import { symlinkOrSkip } from "./helpers/symlink";
 import type { ProjectIndex } from "../core/types";
 
 let home = "";
@@ -261,31 +262,19 @@ describe("kai_read_range: path and content protection", () => {
     expect((await denied("src/missing.ts"))?.message).toContain("File not found in index");
   });
 
-  it("does not follow a directory link out of the project root", async () => {
+  it("does not follow a directory link out of the project root", async (ctx) => {
     fs.writeFileSync(path.join(outside, "leak.ts"), "export const LEAK = 'outside';\n");
-    try {
-      fs.symlinkSync(outside, path.join(root, "src", "linked"), "junction");
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code;
-      if (code === "EPERM" || code === "EACCES" || code === "ENOSYS") return; // cannot create links here
-      throw err;
-    }
+    symlinkOrSkip(ctx, outside, path.join(root, "src", "linked"), "junction");
     const e = await denied("src/linked/leak.ts");
     expect(e?.code).toBe(-32602);
     const search = await callTool(root, "kai_search_code", { query: "LEAK outside" });
     expect(search.text).not.toContain("outside'");
   });
 
-  it("re-checks confinement at read time even for a path that is in the index", async () => {
+  it("re-checks confinement at read time even for a path that is in the index", async (ctx) => {
     // A crafted/stale index naming a file that now resolves outside the root.
     fs.writeFileSync(path.join(outside, "leak.ts"), "export const LEAK = 'outside';\n");
-    try {
-      fs.symlinkSync(outside, path.join(root, "src", "swapped"), "junction");
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code;
-      if (code === "EPERM" || code === "EACCES" || code === "ENOSYS") return;
-      throw err;
-    }
+    symlinkOrSkip(ctx, outside, path.join(root, "src", "swapped"), "junction");
     const index = await indexProject(registerProject(root));
     const crafted: ProjectIndex = JSON.parse(JSON.stringify(index));
     crafted.files["src/swapped/leak.ts"] = {

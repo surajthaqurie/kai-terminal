@@ -1,4 +1,6 @@
 import fs from "fs";
+import os from "os";
+import path from "path";
 
 /**
  * Create a symlink, or mark the running test as skipped (visible in the
@@ -12,7 +14,14 @@ import fs from "fs";
  * Settings > System > For developers > Developer Mode, or run elevated, to
  * execute those. Linux and macOS never skip.
  *
- * Only privilege failures skip; any other error still fails the test.
+ * A link can also be created yet be impossible to follow: some Windows builds
+ * refuse to traverse a junction a standard user made ("The path cannot be
+ * traversed because it contains an untrusted mount point", surfaced by Node as
+ * `UNKNOWN`) in every process, so `stat`, `realpath` and `readdir` through it all
+ * fail. That is a property of the machine, not of the code under test, so it
+ * skips too, with the reason.
+ *
+ * Only these environment failures skip; any other error still fails the test.
  */
 export function symlinkOrSkip(
   ctx: { skip: () => void },
@@ -31,6 +40,50 @@ export function symlinkOrSkip(
       ctx.skip();
     }
     throw err;
+  }
+  if (!isFollowable(linkPath)) {
+    try {
+      fs.unlinkSync(linkPath);
+    } catch {
+      /* best effort: the test's own temp-dir cleanup removes it */
+    }
+    console.warn(
+      "[symlink skip] this OS created the link but will not follow it (untrusted mount point policy)"
+    );
+    ctx.skip();
+  }
+}
+
+/**
+ * Whether directory links can be created and followed on this machine. Always
+ * true off Windows. Use it to `skipIf` a test that must otherwise never skip.
+ */
+export function directoryLinksFollowable(): boolean {
+  if (process.platform !== "win32") return true;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kai-linkprobe-"));
+  try {
+    const target = path.join(dir, "real");
+    fs.mkdirSync(target);
+    const link = path.join(dir, "link");
+    try {
+      fs.symlinkSync(target, link, "junction");
+    } catch {
+      return false;
+    }
+    return isFollowable(link);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// A dangling link is a legitimate state (ENOENT); any other failure to stat
+// the link means the OS will not traverse it.
+function isFollowable(linkPath: string): boolean {
+  try {
+    fs.statSync(linkPath);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === "ENOENT";
   }
 }
 

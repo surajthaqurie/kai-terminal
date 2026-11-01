@@ -4,6 +4,7 @@ import os from "os";
 import path from "path";
 import { detectStaleIndexEntries, indexProject } from "../core/indexer";
 import { registerProject } from "../core/registry";
+import { symlinkOrSkip } from "./helpers/symlink";
 
 describe("indexer directory walk (canonical paths without a realpath per entry)", () => {
   let home = "";
@@ -45,43 +46,31 @@ describe("indexer directory walk (canonical paths without a realpath per entry)"
     }
   });
 
-  it("still refuses a directory link that leads outside the project", async () => {
+  it("still refuses a directory link that leads outside the project", async (ctx) => {
     write(root, "inside.ts", "export const inside = 1;\n");
     write(outside, "secret.ts", "export const secret = 1;\n");
-    try {
-      // 'junction' works without elevation on Windows and is ignored on POSIX.
-      fs.symlinkSync(outside, path.join(root, "linked"), "junction");
-    } catch {
-      return; // links cannot be created on this machine
-    }
+    // 'junction' works without elevation on Windows and is ignored on POSIX.
+    symlinkOrSkip(ctx, outside, path.join(root, "linked"), "junction");
     const index = await indexProject(registerProject(root));
     expect(Object.keys(index.files)).toEqual(["inside.ts"]);
   });
 
-  it("follows a directory link that stays inside the project", async () => {
+  it("follows a directory link that stays inside the project", async (ctx) => {
     write(root, "real/mod.ts", "export const mod = 1;\n");
-    try {
-      fs.symlinkSync(path.join(root, "real"), path.join(root, "linked"), "junction");
-    } catch {
-      return;
-    }
+    symlinkOrSkip(ctx, path.join(root, "real"), path.join(root, "linked"), "junction");
     const index = await indexProject(registerProject(root));
     // The real directory and its in-project link are the same place: indexed once.
     const paths = Object.keys(index.files).filter((p) => p.endsWith("mod.ts"));
     expect(paths).toHaveLength(1);
   });
 
-  it("does not read as stale when a link reaches a directory the walk meets first", async () => {
+  it("does not read as stale when a link reaches a directory the walk meets first", async (ctx) => {
     // `a/x` links to `b`. The indexer walks `a` before `b` and indexes the files
     // through the link; the freshness walk used to meet the real `b` first and
     // report `b/f.ts` as a new file until the next rebuild.
     write(root, "b/f.ts", "export const f = 1;\n");
     fs.mkdirSync(path.join(root, "a"), { recursive: true });
-    try {
-      fs.symlinkSync(path.join(root, "b"), path.join(root, "a", "x"), "junction");
-    } catch {
-      return; // links cannot be created on this machine
-    }
+    symlinkOrSkip(ctx, path.join(root, "b"), path.join(root, "a", "x"), "junction");
     const index = await indexProject(registerProject(root));
     expect(Object.keys(index.files).filter((p) => p.endsWith("f.ts"))).toHaveLength(1);
     const drift = detectStaleIndexEntries(index);

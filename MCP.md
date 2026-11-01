@@ -85,7 +85,7 @@ These tools are read-only. Text from the service (work item bodies, comments, PR
 - **Header & error sanitization:** All authorization tokens are stripped from HTTP client logs, error messages, and network traces.
 - **Opt-in live verification:** A separate live test runner (`npm run test:live`, activated via `AZURE_DEVOPS_LIVE=1`) allows validating real Azure DevOps connectivity without requiring live credentials in the default automated test suite.
 
-The tool list is read when an agent connects, so restart a running agent session after `kai integration azure` to see the new tools.
+The server sends `notifications/tools/list_changed` within a couple of seconds of `kai integration azure` or `kai azure remove`, so an agent that honors it refreshes its tools without a restart; restart one that does not. (`KAI_MCP_TOOLS_POLL_MS` sets the check interval, `0` turns it off.)
 
 ## Response limits
 

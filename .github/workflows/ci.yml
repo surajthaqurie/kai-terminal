@@ -6,8 +6,8 @@ name: Cross-Platform Terminal CI
 # runner is the native proof (path handling, JSON escaping, CRLF, executable
 # discovery, permissions, process cleanup). WSL is exercised by the separate
 # `wsl` job (a hosted Windows runner with a WSL2 distribution installed by
-# Vampire/setup-wsl); that job has not run yet, so WSL stays manual-only until
-# it is green. Security regression is a mandatory
+# Vampire/setup-wsl), which runs a WSL shell round trip through ConPTY and has
+# been green on consecutive pushes. Security regression is a mandatory
 # PR gate (runs on pull_request, no skip). Full installers ship via release.yml.
 #
 # Check map: 1 rust fmt, 2 clippy, 3 rust unit, 4 PTY integration, 5 frontend
@@ -214,7 +214,7 @@ jobs:
           echo "- Unit tests prove logic only; interactive native behavior is proven by the PTY step above on this same runner."
           echo "- PTY AI-CLI subtest (test_13) reports NOTE + passes when no AI CLI binary is on PATH."
           echo "- Symlink-boundary subtests skip (reported as skipped by Vitest, with a reason) where the runner disallows symlinks."
-          echo "- WSL: not verified by this job. The separate 'wsl' job runs a WSL shell round trip through ConPTY; until it has been green, WSL2 verification is manual-only (scripts/docker-test.sh or cargo/vitest natively inside WSL2 + Windows Terminal)."
+          echo "- WSL: not verified by this job. The separate 'wsl' job runs a WSL shell round trip through ConPTY on a hosted Windows runner."
           echo "- Full Tauri installer bundles (.deb/.AppImage/.msi/.exe/.dmg) are built only by release.yml on native runners; this CI verifies the web bundle + release binary."
 
   # Snap and Flatpak repackage the .deb that Tauri builds (a --no-default-features

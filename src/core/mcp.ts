@@ -407,7 +407,8 @@ async function dispatchMcpMessage(
         result: {
           protocolVersion: "2024-11-05",
           capabilities: {
-            tools: {},
+            // The stdio server announces a change to the bound integration's tools.
+            tools: { listChanged: true },
           },
           serverInfo: {
             name: "kai-terminal-mcp-server",
@@ -839,6 +840,17 @@ function safeWrite(stream: NodeJS.WritableStream, data: string): boolean {
   }
 }
 
+/** How often the stdio server re-reads which integration tools the project is bound to. */
+const TOOL_LIST_POLL_MS = 2000;
+
+function toolListPollMs(): number {
+  const raw = process.env.KAI_MCP_TOOLS_POLL_MS;
+  if (raw === undefined) return TOOL_LIST_POLL_MS;
+  const n = Number(raw);
+  // 0 turns the poll off; anything unusable keeps the default.
+  return Number.isFinite(n) && n >= 0 ? n : TOOL_LIST_POLL_MS;
+}
+
 /**
  * Run the stdio JSON-RPC server loop
  */
@@ -878,6 +890,33 @@ export async function startMcpServer(
   if (graphWatcher) process.stderr.write("[kai-mcp] Graph watcher enabled (--watch).\n");
 
   let isTerminated = false;
+  let clientInitialized = false;
+
+  // `kai integration azure` / `kai azure remove` change which tools this project
+  // has while an agent is connected. tools/list is always read fresh, so a client
+  // that is told to ask again sees the change without a restart. A client that
+  // ignores the notification keeps its old list until it reconnects.
+  const toolSignature = () =>
+    integrationToolDefs(canonicalRoot)
+      .map((tool) => tool.name)
+      .join("\n");
+  let lastToolSignature = toolSignature();
+  const pollMs = toolListPollMs();
+  const toolListTimer =
+    pollMs > 0
+      ? setInterval(() => {
+          if (!clientInitialized || isTerminated) return;
+          const next = toolSignature();
+          if (next === lastToolSignature) return;
+          lastToolSignature = next;
+          safeWrite(
+            outputStream,
+            JSON.stringify({ jsonrpc: "2.0", method: "notifications/tools/list_changed" }) + "\n"
+          );
+        }, pollMs)
+      : null;
+  toolListTimer?.unref();
+
   // See handleMcpMessage: cancellations only take effect for requests not yet started.
   const sessionCancelledRequests = new Set<string | number>();
 
@@ -931,6 +970,12 @@ export async function startMcpServer(
         continue;
       }
 
+      if ((parsed as { method?: unknown }).method === "notifications/initialized") {
+        clientInitialized = true;
+        // Only changes made from here on are news to the client.
+        lastToolSignature = toolSignature();
+      }
+
       const response = await handleMcpMessage(parsed, canonicalRoot, sessionCancelledRequests);
       if (response && !isTerminated) {
         const wrote = safeWrite(outputStream, JSON.stringify(response) + "\n");
@@ -947,6 +992,7 @@ export async function startMcpServer(
       );
     }
   } finally {
+    if (toolListTimer) clearInterval(toolListTimer);
     graphWatcher?.close();
     rl.close();
     process.stderr.write("[kai-mcp] Server closed.\n");
