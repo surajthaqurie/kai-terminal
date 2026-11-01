@@ -150,7 +150,7 @@ function App() {
   /** Active project dir: the focused pane's folder, else its tab's. Empty until a new shell reports one. */
   const effectiveProjectDir = resolveEffectiveProjectDir(activePane?.cwd, activeTab?.cwd);
 
-  const { setPaneCodeMode, modeDisplay, exitCodeMode } = useCodeMode({
+  const { setPaneCodeMode, modeDisplay } = useCodeMode({
     activePaneId,
     onOpenProject: tabsState.openOrFocusDir,
   });
@@ -534,7 +534,6 @@ function App() {
         currentShell={activePaneShell}
         onChangeShell={changeActiveShell}
         mode={modeDisplay}
-        onToggleMode={exitCodeMode}
         music={music.footerState}
         onToggleMusicPanel={toggleMusicPanel}
         musicOpen={music.isOpen}

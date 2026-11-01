@@ -47,8 +47,6 @@ interface StatusBarProps {
   isRefreshingGit?: boolean;
   /** Opens the Git Changes Review & Diff modal (clicking the branch badge). */
   onOpenGitChanges?: () => void;
-  /** Toggle or exit Code Mode, returning to plain terminal mode. */
-  onToggleMode?: () => void;
   music?: MusicFooterState | null;
   onToggleMusicPanel?: () => void;
   /** True while the YouTube Music drawer is open (drives aria-expanded/title). */
@@ -81,7 +79,6 @@ export const StatusBar: FC<StatusBarProps> = ({
   shells = [],
   currentShell,
   onChangeShell,
-  onToggleMode,
   onRefreshGit,
   isRefreshingGit = false,
   onOpenGitChanges,
@@ -200,27 +197,16 @@ export const StatusBar: FC<StatusBarProps> = ({
           </>
         )}
         {mode === "code" ? (
-          onToggleMode ? (
-            <button
-              type="button"
-              className="status-mode-pill status-mode-btn"
-              onClick={onToggleMode}
-              title="Code Mode — project intelligence active. Click or run `kai stop` to return to Terminal mode."
-              aria-label="Code Mode active"
-            >
-              <Code size={12} aria-hidden="true" />
-              <span>Code Mode</span>
-            </button>
-          ) : (
-            <span
-              className="status-mode-pill"
-              title="Code Mode — project intelligence active for this folder. Run `kai stop` to clear."
-              aria-label="Code Mode active"
-            >
-              <Code size={12} aria-hidden="true" />
-              <span>Code Mode</span>
-            </span>
-          )
+          // Display only. The agent owns Code Mode (it ends when `kai <agent>` exits or
+          // `kai stop` runs), so a click here must not pretend to leave it.
+          <span
+            className="status-mode-pill"
+            title="Code Mode — project intelligence active for this terminal. It ends when the agent exits or you run `kai stop`."
+            aria-label="Code Mode active"
+          >
+            <Code size={12} aria-hidden="true" />
+            <span>Code Mode</span>
+          </span>
         ) : (
           projectDir && (
             <span

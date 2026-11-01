@@ -555,7 +555,7 @@ describe("StatusBar Footer with Active Split Directory, Mode and Git", () => {
     container.remove();
   });
 
-  it("allows clicking the Code Mode pill to exit Code Mode when onToggleMode is provided", async () => {
+  it("shows the Code Mode pill as display-only text, not a button", async () => {
     const React = await import("react");
     const { createRoot } = await import("react-dom/client");
     const { StatusBar } = await import("../components/StatusBar");
@@ -563,7 +563,6 @@ describe("StatusBar Footer with Active Split Directory, Mode and Git", () => {
     const container = document.createElement("div");
     document.body.appendChild(container);
     const root = createRoot(container);
-    let toggled = false;
 
     await React.act(async () => {
       root.render(
@@ -574,18 +573,17 @@ describe("StatusBar Footer with Active Split Directory, Mode and Git", () => {
           appVersion: "1.0.0",
           updateAvailable: false,
           mode: "code",
-          onToggleMode: () => {
-            toggled = true;
-          },
         })
       );
     });
 
-    const btn = container.querySelector("button.status-mode-pill") as HTMLButtonElement | null;
-    expect(btn).not.toBeNull();
-    expect(btn?.textContent).toContain("Code Mode");
-    btn?.click();
-    expect(toggled).toBe(true);
+    const pill = container.querySelector(".status-mode-pill") as HTMLElement | null;
+    expect(pill?.tagName).toBe("SPAN");
+    expect(pill?.textContent).toContain("Code Mode");
+    expect(container.querySelector("button.status-mode-pill")).toBeNull();
+    // A click leaves it in Code Mode: only the agent ending (or `kai stop`) clears it.
+    pill?.click();
+    expect(container.querySelector(".status-mode-pill")?.textContent).toContain("Code Mode");
 
     root.unmount();
     container.remove();

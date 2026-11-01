@@ -79,10 +79,5 @@ export function useCodeMode({ activePaneId, onOpenProject }: CodeModeOptions) {
   const codeModeProject = activePaneId ? (projectByPane[activePaneId] ?? null) : null;
   const modeDisplay: ModeDisplay = resolveModeDisplay(codeModeProject);
 
-  /** Footer pill click: leave Code Mode for the active terminal only. */
-  const exitCodeMode = useCallback(() => {
-    if (activePaneId) setPaneCodeMode(activePaneId, null);
-  }, [activePaneId, setPaneCodeMode]);
-
-  return { setPaneCodeMode, modeDisplay, exitCodeMode };
+  return { setPaneCodeMode, modeDisplay };
 }
