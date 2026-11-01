@@ -4261,7 +4261,7 @@ button.status-git-btn-clickable:focus-visible {
   bottom: 30px !important;
   pointer-events: auto;
   max-width: min(840px, calc(100vw - 20px));
-  min-height: 320px;
+  min-height: 360px;
   max-height: calc(100vh - 46px);
   box-shadow:
     -4px 0 24px rgba(0, 0, 0, 0.4),
@@ -4906,9 +4906,14 @@ button.status-git-btn-clickable:focus-visible {
   display: flex;
   justify-content: center;
   align-items: center;
-  gap: 8px;
+  /* Wrap instead of clipping: at the 300px minimum width the eight controls and
+     the volume slider need about 340px, and a centred single row cut off the
+     first and last of them. */
+  flex-wrap: wrap;
+  gap: 6px;
   margin-top: 8px;
   flex-shrink: 0;
+  min-width: 0;
 }
 .music-ctrl-btn {
   width: 28px;
@@ -4940,9 +4945,10 @@ button.status-git-btn-clickable:focus-visible {
   display: inline-flex;
   align-items: center;
   gap: 2px;
+  flex: 0 0 auto;
 }
 .music-volume-slider {
-  width: 54px;
+  width: 44px;
   height: 4px;
   -webkit-appearance: none;
   appearance: none;

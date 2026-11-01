@@ -794,7 +794,10 @@ export const MusicPanel: FC<MusicPanelProps> = ({
   const DEFAULT_PANEL_WIDTH = 360;
   const DEFAULT_PANEL_HEIGHT = 540;
   const MIN_PANEL_WIDTH = 300;
-  const MIN_PANEL_HEIGHT = 320;
+  // Tall enough for the wrapped controls row (transport, then volume) at the minimum width.
+  const MIN_PANEL_HEIGHT = 360;
+  // The smallest height earlier versions let you save; a saved one below the new minimum is raised, not discarded.
+  const LEGACY_MIN_PANEL_HEIGHT = 320;
 
   const [dimPercent, setDimPercent] = useState<number>(() => {
     try {
@@ -915,7 +918,9 @@ export const MusicPanel: FC<MusicPanelProps> = ({
       const saved = localStorage.getItem("kai_music_panel_height");
       if (saved) {
         const parsed = parseInt(saved, 10);
-        if (Number.isFinite(parsed) && parsed >= MIN_PANEL_HEIGHT) return parsed;
+        if (Number.isFinite(parsed) && parsed >= LEGACY_MIN_PANEL_HEIGHT) {
+          return Math.max(MIN_PANEL_HEIGHT, parsed);
+        }
       }
     } catch {}
     return DEFAULT_PANEL_HEIGHT;
@@ -1357,7 +1362,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Paste a YouTube link, or type a song to search"
+            placeholder="Paste a link or search a song"
             aria-label="Song name or YouTube link"
           />
           <button
