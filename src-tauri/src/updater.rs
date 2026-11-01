@@ -61,12 +61,16 @@ pub fn validate_update_asset_url(url: &str) -> Result<(), TerminalError> {
         .strip_prefix("https://")
         .and_then(|rest| rest.split('/').next())
         .unwrap_or("");
-    if host.is_empty() || !ALLOWED_UPDATE_HOSTS.contains(&host.to_lowercase().as_str()) {
+    // Compare the lowercased host in BOTH checks below: a mixed-case
+    // `GitHub.com` is the same host to the HTTP client, so it must not slip past
+    // the repo-prefix guard that only a literal `github.com` triggered.
+    let host_lc = host.to_lowercase();
+    if host.is_empty() || !ALLOWED_UPDATE_HOSTS.contains(&host_lc.as_str()) {
         return Err(TerminalError::IoError(
             "Refusing to download an update from an untrusted host.".to_string(),
         ));
     }
-    if host == "github.com" && !url.starts_with(UPDATE_RELEASE_PREFIX) {
+    if host_lc == "github.com" && !url.starts_with(UPDATE_RELEASE_PREFIX) {
         return Err(TerminalError::IoError(
             "Refusing to download an update outside the Kai Terminal releases page.".to_string(),
         ));
@@ -733,6 +737,15 @@ mod tests {
             "https://github.com/other/repo/releases/download/v1/x.exe"
         )
         .is_err());
+        // Host casing must not dodge the repo-prefix guard: `GitHub.com` is the
+        // same host to the HTTP client.
+        for host in ["GitHub.com", "GITHUB.COM", "github.COM"] {
+            let url = format!("https://{host}/other/repo/releases/download/v1/x.exe");
+            assert!(
+                validate_update_asset_url(&url).is_err(),
+                "should refuse {url}"
+            );
+        }
     }
 
     #[test]

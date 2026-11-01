@@ -1,15 +1,17 @@
 import path from "path";
 import fs from "fs";
 import {
+  computeProjectId,
   getProjectMeta,
   deleteProjectData,
   getProjectStorageDir,
   getKaiHomeDir,
+  normalizePathForIdentity,
   resolveCanonicalPath,
 } from "../../core/registry";
 import { clearActiveProjectState } from "../activeProject";
 import { removeAgentWiring } from "../agentWorkflow";
-import { listSessionCacheFiles, removeFiles } from "../sessionFiles";
+import { filesOfProject, listSessionCacheFiles, removeFiles } from "../sessionFiles";
 import { findProvider, PROVIDER_CATALOG } from "../../core/integrations/providerCatalog";
 import { runProviderRemove, runRemoveByName } from "./provider";
 
@@ -90,10 +92,17 @@ function removeProjectIndex(target: string, dryRun: boolean): number {
     return 1;
   }
 
+  const storageDir = getProjectStorageDir(meta.id);
+  const keepsConnection = fs.existsSync(path.join(storageDir, "integration.json"));
   console.log(`[kai] Remove Project Index Scope:`);
   console.log(`  Project:           "${meta.name}" (id: ${meta.id})`);
-  console.log(`  Index data:        ${getProjectStorageDir(meta.id)}`);
-  console.log(`  NOTE: Only Kai-owned data under ~/.kai/projects/ is removed.`);
+  console.log(`  Index data:        ${storageDir}`);
+  console.log(`  NOTE: Only the index files under ~/.kai/projects/ are removed.`);
+  if (keepsConnection) {
+    console.log(
+      `  NOTE: This folder's integration connection is kept (use 'kai remove azure' to disconnect it).`
+    );
+  }
   console.log(`  NOTE: The repository at ${meta.canonicalPath} is NOT touched.`);
 
   if (dryRun) {
@@ -126,6 +135,59 @@ function removeAgent(
   return removeAgentWiring(target, { dryRun, scope });
 }
 
+/** The project a `-s <target>` names: `id` selects its files, `canonicalPath` (when known) its active-state entry. */
+interface SessionProject {
+  id: string;
+  name: string;
+  canonicalPath: string | null;
+}
+
+/**
+ * Resolves `-s <target>` (`.`, a path, or a 16-hex project id) to a project, or
+ * null when it names nothing. A registered project, an existing folder (its id is
+ * derived from the path, so files left after the index was removed still match)
+ * and a bare id qualify; a typo does not.
+ */
+function resolveSessionProject(target: string): SessionProject | null {
+  const candidatePath = target === "." ? process.cwd() : target;
+  const canonicalPath = resolveCanonicalPath(candidatePath);
+  const meta =
+    getProjectMeta(candidatePath) ||
+    getProjectMeta(canonicalPath) ||
+    (/^[0-9a-f]{16}$/.test(target) ? getProjectMeta(target) : null);
+  if (meta) return { id: meta.id, name: meta.name, canonicalPath };
+  if (/^[0-9a-f]{16}$/.test(target)) return { id: target, name: target, canonicalPath: null };
+  try {
+    if (fs.statSync(canonicalPath).isDirectory()) {
+      return {
+        id: computeProjectId(canonicalPath),
+        name: path.basename(canonicalPath) || canonicalPath,
+        canonicalPath,
+      };
+    }
+  } catch {
+    // not a path that exists
+  }
+  return null;
+}
+
+/** True when `active_project.json` currently points at `project`. */
+function activeStateBelongsTo(project: SessionProject): boolean {
+  try {
+    const active = JSON.parse(
+      fs.readFileSync(path.join(getKaiHomeDir(), "active_project.json"), "utf-8")
+    ) as { id?: unknown; path?: unknown };
+    if (active.id === project.id) return true;
+    return (
+      project.canonicalPath !== null &&
+      typeof active.path === "string" &&
+      normalizePathForIdentity(active.path) === normalizePathForIdentity(project.canonicalPath)
+    );
+  } catch {
+    return false; // absent or unreadable: nothing of ours to clear
+  }
+}
+
 /** 3. Remove session and cache files, for every project or one project. */
 function removeSessions(sessionTarget: string | null, dryRun: boolean): number {
   const { sessionsDir, cacheDir, sessionFiles, cacheFiles } = listSessionCacheFiles();
@@ -136,37 +198,19 @@ function removeSessions(sessionTarget: string | null, dryRun: boolean): number {
   let activeMatched = false;
 
   if (sessionTarget && sessionTarget !== "all") {
-    const candidatePath = sessionTarget === "." ? process.cwd() : sessionTarget;
-    const canonicalPath = resolveCanonicalPath(candidatePath);
-    let meta = getProjectMeta(candidatePath) || getProjectMeta(canonicalPath);
-    if (!meta && /^[0-9a-f]{16}$/.test(sessionTarget)) {
-      meta = getProjectMeta(sessionTarget);
+    const project = resolveSessionProject(sessionTarget);
+    if (!project) {
+      console.error(`[kai] No registered project or existing folder matches "${sessionTarget}".`);
+      console.error(`  Nothing was removed. Use a project path, a project id, '.', or 'all'.`);
+      return 1;
     }
-
-    const projId =
-      meta?.id || (fs.existsSync(canonicalPath) ? path.basename(canonicalPath) : sessionTarget);
-    const projName = meta?.name || path.basename(canonicalPath);
-    targetScopeDesc = `project "${projName}" (${canonicalPath})`;
-
-    const belongsToProject = (f: string) =>
-      f.includes(projId) || (meta && (f.includes(meta.id) || f.includes(meta.name)));
-    targetSessionFiles = sessionFiles.filter(belongsToProject);
-    targetCacheFiles = cacheFiles.filter(belongsToProject);
-
-    // Check if active_project matches this project
-    const activeFile = path.join(getKaiHomeDir(), "active_project.json");
-    if (fs.existsSync(activeFile)) {
-      try {
-        const activeData = JSON.parse(fs.readFileSync(activeFile, "utf-8"));
-        if (
-          activeData.id === meta?.id ||
-          activeData.path === canonicalPath ||
-          sessionTarget === "."
-        ) {
-          activeMatched = true;
-        }
-      } catch {}
-    }
+    targetScopeDesc = project.canonicalPath
+      ? `project "${project.name}" (${project.canonicalPath})`
+      : `project id ${project.id}`;
+    targetSessionFiles = filesOfProject(sessionFiles, project.id);
+    targetCacheFiles = filesOfProject(cacheFiles, project.id);
+    // The active project is cleared only when it is the one being removed.
+    activeMatched = activeStateBelongsTo(project);
   }
 
   console.log(`[kai] Remove Session Scope:`);
@@ -185,8 +229,9 @@ function removeSessions(sessionTarget: string | null, dryRun: boolean): number {
 
   removeFiles(sessionsDir, targetSessionFiles);
   removeFiles(cacheDir, targetCacheFiles);
-  if (activeMatched) {
-    clearActiveProjectState();
+  if (activeMatched && !clearActiveProjectState()) {
+    console.error(`[kai] Warning: could not clear the active project state.`);
+    return 1;
   }
   console.log(`[kai] Session and cache data for ${targetScopeDesc} cleanly cleared.`);
   return 0;

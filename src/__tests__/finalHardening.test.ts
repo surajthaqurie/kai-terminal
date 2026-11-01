@@ -199,13 +199,13 @@ describe("runExternalAgentCommand lifecycle", () => {
     expect(r.timedOut).toBe(false);
   });
 
-  it("shell stays disabled by default (no shell evaluation)", async () => {
+  it("never evaluates arguments through a shell", async () => {
     const marker = path.join(tmpRoot, "shell-eval.txt");
     // If a shell evaluated this string, the redirect would create the file.
     const r = await runExternalAgentCommand(
       process.execPath,
       ["-e", `console.log("touch ${marker.replace(/\\/g, "/")}");`],
-      { cwd: tmpRoot, shell: false }
+      { cwd: tmpRoot }
     );
     expect(r.exitCode).toBe(0);
     expect(fs.existsSync(marker)).toBe(false);

@@ -23,7 +23,8 @@ import {
   ensureFreshIndex,
   runExternalAgentCommand,
   runCodeTaskWithAutoSync,
-  needsShellForCommand,
+  isWindowsBatchFile,
+  quoteCmdShimArg,
   resolveSpawnTarget,
 } from "../core/codeModeWorkflow";
 
@@ -358,20 +359,20 @@ describe("external-agent process lifecycle outcomes", () => {
     expect(Date.now() - start).toBeLessThan(15000);
   });
 
-  it("needsShellForCommand restricts shells to Windows batch files", () => {
-    expect(needsShellForCommand("build.cmd", "win32")).toBe(true);
-    expect(needsShellForCommand("build.BAT", "win32")).toBe(true);
-    expect(needsShellForCommand("build.cmd", "linux")).toBe(false);
-    expect(needsShellForCommand("build.cmd", "darwin")).toBe(false);
-    expect(needsShellForCommand("script.ps1", "win32")).toBe(false);
-    expect(needsShellForCommand("node", "win32")).toBe(false);
-    expect(needsShellForCommand("claude", "linux")).toBe(false);
+  it("isWindowsBatchFile only matches .cmd/.bat on Windows", () => {
+    expect(isWindowsBatchFile("build.cmd", "win32")).toBe(true);
+    expect(isWindowsBatchFile("build.BAT", "win32")).toBe(true);
+    expect(isWindowsBatchFile("build.cmd", "linux")).toBe(false);
+    expect(isWindowsBatchFile("build.cmd", "darwin")).toBe(false);
+    expect(isWindowsBatchFile("script.ps1", "win32")).toBe(false);
+    expect(isWindowsBatchFile("node", "win32")).toBe(false);
+    expect(isWindowsBatchFile("claude", "linux")).toBe(false);
   });
 
   it("resolveSpawnTarget runs Windows .ps1 via powershell -File, never a shell or policy bypass", () => {
     const ps = resolveSpawnTarget("C:\\tools\\run me.ps1", ["--flag", "a b; calc"], "win32");
     expect(ps.command).toBe("powershell.exe");
-    expect(ps.shell).toBe(false);
+    expect(ps.windowsVerbatimArguments).toBeUndefined();
     expect(ps.args).toEqual([
       "-NoProfile",
       "-File",
@@ -385,18 +386,27 @@ describe("external-agent process lifecycle outcomes", () => {
     expect(resolveSpawnTarget("script.ps1", ["x"], "linux")).toEqual({
       command: "script.ps1",
       args: ["x"],
-      shell: false,
     });
-    expect(resolveSpawnTarget("build.cmd", ["x"], "win32")).toEqual({
+    expect(resolveSpawnTarget("build.cmd", ["x"], "linux")).toEqual({
       command: "build.cmd",
       args: ["x"],
-      shell: true,
     });
     expect(resolveSpawnTarget("node", ["-v"], "win32")).toEqual({
       command: "node",
       args: ["-v"],
-      shell: false,
     });
+  });
+
+  it("resolveSpawnTarget runs Windows batch files through cmd.exe /d /s /c with verbatim arguments", () => {
+    const target = resolveSpawnTarget("C:\\Users\\Some User\\claude.cmd", ["hello world"], "win32");
+    expect(target.command.toLowerCase()).toMatch(/cmd\.exe$/);
+    expect(target.windowsVerbatimArguments).toBe(true);
+    expect(target.args).toEqual([
+      "/d",
+      "/s",
+      "/c",
+      `""C:\\Users\\Some User\\claude.cmd" ${quoteCmdShimArg("hello world")}"`,
+    ]);
   });
 });
 

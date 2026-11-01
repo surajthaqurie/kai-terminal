@@ -2,6 +2,7 @@ import readline from "readline";
 import { Transform } from "stream";
 import fs from "fs";
 import {
+  describeBroadRoot,
   registerProject,
   loadProjectIndexShared,
   resolveCanonicalPath,
@@ -262,6 +263,16 @@ const GATED_TOOLS = new Set([
  * Handle incoming MCP JSON-RPC messages and return the JSON-RPC response.
  * Every response, including errors, leaves through the size guard in
  * `finalizeResponse`, so no code path can exceed the response ceiling.
+ *
+ * A message without an `id` is a JSON-RPC notification: it is processed but
+ * never answered, not even with an error (an `id: null` reply would be a
+ * response to nothing, which a strict client rejects).
+ *
+ * `cancelledRequests` records ids named by `notifications/cancelled`. The
+ * server loop handles one message at a time, in arrival order, so a
+ * cancellation is read only after the request it names has finished: it can
+ * pre-empt a request that has not started yet, never one that is running
+ * (tools are synchronous scans and could not be interrupted anyway).
  */
 export async function handleMcpMessage(
   message: unknown,
@@ -269,7 +280,18 @@ export async function handleMcpMessage(
   cancelledRequests?: Set<string | number>
 ): Promise<McpResponse | null> {
   const response = await dispatchMcpMessage(message, defaultProjectRoot, cancelledRequests);
+  if (isNotification(message)) return null;
   return response ? finalizeResponse(response) : null;
+}
+
+/** True for a JSON-RPC object with no `id` member. */
+function isNotification(message: unknown): boolean {
+  return (
+    typeof message === "object" &&
+    message !== null &&
+    !Array.isArray(message) &&
+    (message as { id?: unknown }).id === undefined
+  );
 }
 
 async function dispatchMcpMessage(
@@ -539,6 +561,21 @@ async function dispatchMcpMessage(
               })
             : shapeTextResult(reqId, toolName, outcome.text, { maxBytes })
         ).response;
+      }
+
+      // An agent started in the home directory or a drive root would make the
+      // first call below register and index everything under it. Refuse before
+      // anything is written for that root.
+      const broad = describeBroadRoot(canonicalRoot);
+      if (broad) {
+        return {
+          jsonrpc: "2.0",
+          id: reqId,
+          error: {
+            code: -32602,
+            message: `Refusing to index ${broad}: that would scan everything beneath it. Start the agent inside a project folder, or set KAI_ALLOW_BROAD_ROOT=1 to allow it.`,
+          },
+        };
       }
 
       const meta = registerProject(canonicalRoot);
@@ -828,6 +865,12 @@ export async function startMcpServer(
 
   // Protocol on stdout ONLY. Diagnostic messages on stderr.
   process.stderr.write(`[kai-mcp] Starting MCP stdio server for root: ${canonicalRoot}\n`);
+  const broadRoot = describeBroadRoot(canonicalRoot);
+  if (broadRoot) {
+    process.stderr.write(
+      `[kai-mcp] Warning: the root is ${broadRoot}. Code-map tools will refuse to index it; start the agent inside a project folder, or set KAI_ALLOW_BROAD_ROOT=1 to allow it.\n`
+    );
+  }
 
   // Opt-in (default off): keep the graph fresh for pure-MCP clients that edit
   // files without calling a graph read or kai_sync_graph. See graphWatcher.ts.
@@ -835,6 +878,7 @@ export async function startMcpServer(
   if (graphWatcher) process.stderr.write("[kai-mcp] Graph watcher enabled (--watch).\n");
 
   let isTerminated = false;
+  // See handleMcpMessage: cancellations only take effect for requests not yet started.
   const sessionCancelledRequests = new Set<string | number>();
 
   const onStreamError = (err: NodeJS.ErrnoException) => {

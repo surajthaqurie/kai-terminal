@@ -12,7 +12,6 @@ import type { TerminalTab } from "../types/terminal";
 interface PaneCwdOptions {
   tabsRef: MutableRefObject<TerminalTab[]>;
   activeTabIdRef: MutableRefObject<string>;
-  cwdRef: MutableRefObject<string>;
   setTabs: Dispatch<SetStateAction<TerminalTab[]>>;
   setCwd: (cwd: string) => void;
   applyGitInfo: (dir: string, info: GitInfo, updatesFooter: boolean) => void;
@@ -25,7 +24,6 @@ interface PaneCwdOptions {
 export function usePaneCwd({
   tabsRef,
   activeTabIdRef,
-  cwdRef,
   setTabs,
   setCwd,
   applyGitInfo,
@@ -58,7 +56,11 @@ export function usePaneCwd({
       // expired), so `git commit` still updates the badge.
       const live = tabsRef.current.find((t) => t.id === tabId);
       const livePane = live?.panes.find((p) => p.id === paneId);
-      const current = livePane?.cwd || live?.cwd || cwdRef.current;
+      // Only the pane's OWN recorded directory counts. Falling back to the
+      // tab's or the footer's directory made a pane whose first report equalled
+      // the footer's (a new tab starting in the same folder) look "unchanged",
+      // so it was never recorded: later it followed whatever the footer showed.
+      const current = livePane?.cwd;
       const drivesFooter =
         activeTabIdRef.current === tabId &&
         (live?.activePaneId === paneId || (live?.panes.length ?? 0) <= 1);
@@ -85,6 +87,6 @@ export function usePaneCwd({
         refreshBadge();
       }
     },
-    [tabsRef, activeTabIdRef, cwdRef, setTabs, setCwd, applyGitInfo]
+    [tabsRef, activeTabIdRef, setTabs, setCwd, applyGitInfo]
   );
 }

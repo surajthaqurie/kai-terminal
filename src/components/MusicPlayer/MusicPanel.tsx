@@ -41,6 +41,7 @@ import {
   YOUTUBE_LISTENING_HANDSHAKE,
   YouTubeCommand,
   clearLegacyQueue,
+  describePlayerError,
   embedSrcForTrack,
   fetchPlaylistVideos,
   hasNextItem,
@@ -48,6 +49,7 @@ import {
   loadFavorites,
   parseYouTubePlayerMessage,
   progressPercent,
+  relatedSearchSeed,
   resolveInputToTrack,
   saveFavorites,
   searchYouTubeVideos,
@@ -65,6 +67,8 @@ interface MusicPanelProps {
   onMutedChange?: (muted: boolean) => void;
   /** Whole-number playback percentage (0-100), reported only when it changes. */
   onProgressChange?: (percent: number) => void;
+  /** Ask the host to open the drawer (e.g. so a playback error is visible). */
+  onRequestOpen?: () => void;
 }
 
 function isOnline(): boolean {
@@ -87,6 +91,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
   onTrackChange,
   onMutedChange,
   onProgressChange,
+  onRequestOpen,
 }) => {
   const [query, setQuery] = useState("");
   const [track, setTrack] = useState<MusicTrack | null>(null);
@@ -102,6 +107,9 @@ export const MusicPanel: FC<MusicPanelProps> = ({
   const [drawerOpen, setDrawerOpen] = useState<boolean>(false);
   const [drawerMode, setDrawerMode] = useState<"queue" | "search" | "favorites">("queue");
   const [playing, setPlaying] = useState(false);
+  // YouTube `onError` code for the CURRENT embed (cleared when it reloads):
+  // the video cannot play, so Play must explain why instead of toggling.
+  const [playbackError, setPlaybackError] = useState<number | null>(null);
   const [muted, setMuted] = useState(startMuted);
   const [isPinned, setIsPinned] = useState<boolean>(() => {
     try {
@@ -175,22 +183,6 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     return undefined;
   }, [open]);
 
-  // Global Escape key dismisses the modal dialog when NOT pinned.
-  // When pinned, the player stays pinned open while other modals/dialogs (Settings, Git, etc.)
-  // can consume Escape to close themselves without dismissing the music player.
-  useEffect(() => {
-    if (!open || isPinned) return;
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        e.stopPropagation();
-        onClose();
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [open, isPinned, onClose]);
-
   // Mute is applied at load through the URL and afterwards through commands,
   // so toggling it never reloads (restarts) the video. Native `loop=1` is
   // baked into the URL only at load time (the loop state the track starts
@@ -252,6 +244,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
       lastPercentRef.current = percent;
       onProgressChange?.(percent);
     };
+    setPlaybackError(null);
     if (!src) {
       report(0);
       return;
@@ -267,6 +260,15 @@ export const MusicPanel: FC<MusicPanelProps> = ({
       const t = parseYouTubePlayerMessage(e.data);
       if (!t) return;
       received = true;
+      if (t.error !== undefined) {
+        // The embed refused to play (e.g. embedding disabled by the owner).
+        // Never leave the UI claiming playback that cannot happen.
+        setPlaying(false);
+        setPlaybackError(t.error);
+        setNotice(describePlayerError(t.error));
+        report(0);
+        return;
+      }
       if (t.currentTime !== undefined) setCurrentTime(t.currentTime);
       if (t.duration !== undefined) setDuration(t.duration);
       if (t.playerState === 1) setPlaying(true);
@@ -329,6 +331,8 @@ export const MusicPanel: FC<MusicPanelProps> = ({
       setPlaying(false);
     },
     resume: () => {
+      // The player may have been reset (closed) during the call.
+      if (!trackRef.current) return;
       sendCommand("playVideo");
       setPlaying(true);
     },
@@ -336,6 +340,13 @@ export const MusicPanel: FC<MusicPanelProps> = ({
 
   const togglePlay = () => {
     if (!src) return;
+    if (playbackError !== null) {
+      // Nothing is playing and a command cannot change that: say why (and make
+      // sure the drawer showing the reason is open when this came from the footer).
+      setNotice(describePlayerError(playbackError));
+      if (!open) onRequestOpen?.();
+      return;
+    }
     sendCommand(playing ? "pauseVideo" : "playVideo");
     setPlaying((v) => !v);
   };
@@ -364,10 +375,12 @@ export const MusicPanel: FC<MusicPanelProps> = ({
       return;
     }
     // No more queued songs: search for next songs related to the current track
-    const searchSeed = track?.query || track?.title;
-    if (searchSeed && searchSeed !== "YouTube video") {
+    const searchSeed = relatedSearchSeed(track);
+    if (searchSeed) {
       try {
         const results = await searchYouTubeVideos(searchSeed, 6);
+        // The user may have picked another song while this search ran.
+        if (trackRef.current?.videoId !== track?.videoId) return;
         const filtered = results.filter((r) => r.videoId !== track?.videoId);
         if (filtered.length > 0) {
           pushHistory();
@@ -392,6 +405,44 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     sendCommand("playVideo");
     setPlaying(true);
   };
+
+  // Keep the suggestion queue filled for the current song. For a pasted link or
+  // a preset the seed only exists once YouTube reports the real title, so this
+  // runs when that arrives (and again when auto-advance empties the queue).
+  // `cancelled` and the videoId check drop the result of a search that was
+  // overtaken by another song.
+  const relatedSeed = relatedSearchSeed(track);
+  const currentVideoId = track?.videoId ?? null;
+  const hasPlaylist = Boolean(track?.playlistId);
+  const queueEmpty = queue.length === 0;
+  useEffect(() => {
+    if (!relatedSeed || hasPlaylist || !currentVideoId || !queueEmpty) return;
+    let cancelled = false;
+    searchYouTubeVideos(relatedSeed, 6)
+      .then((results) => {
+        if (cancelled || trackRef.current?.videoId !== currentVideoId) return;
+        if (queueRef.current.length > 0) return;
+        const fresh = results.filter((r) => r.videoId !== currentVideoId);
+        if (fresh.length === 0) return;
+        setQueue(
+          fresh.map((r) => ({
+            title: r.title,
+            videoId: r.videoId,
+            playlistId: null,
+            query: r.title,
+            thumbnail: `https://i.ytimg.com/vi/${encodeURIComponent(r.videoId)}/mqdefault.jpg`,
+          }))
+        );
+      })
+      .catch(() => {
+        // Suggestions are best-effort; Next falls back to its own search.
+      });
+    return () => {
+      cancelled = true;
+    };
+    // Depends on whether the queue is EMPTY, not on its contents: refetching on
+    // every edit would search again after each song the user skips or removes.
+  }, [relatedSeed, currentVideoId, hasPlaylist, queueEmpty]);
 
   /** Previous button: pops the last played song off the history stack. With
    *  an empty history it restarts the current song (standard player
@@ -477,11 +528,12 @@ export const MusicPanel: FC<MusicPanelProps> = ({
    * page for the current song and appends only the not-yet-queued ones. */
   const loadMoreSuggestions = async () => {
     if (suggestLoading) return;
-    const seed = track?.query || track?.title;
-    if (!seed || seed === "YouTube video") return;
+    const seed = relatedSearchSeed(track);
+    if (!seed) return;
     setSuggestLoading(true);
     try {
       const results = await searchYouTubeVideos(seed, 20);
+      if (trackRef.current?.videoId !== track?.videoId) return;
       const known = new Set<string>([track?.videoId ?? ""]);
       for (const item of queueRef.current) {
         if (item.videoId) known.add(item.videoId);
@@ -596,10 +648,11 @@ export const MusicPanel: FC<MusicPanelProps> = ({
         void loadPlaylistItems(track.playlistId);
       } else if (queue.length === 0 && track) {
         // Non-playlist: seed the suggestions queue from the song context.
-        const seed = track.query || track.title;
-        if (seed && seed !== "YouTube video") {
+        const seed = relatedSearchSeed(track);
+        if (seed) {
           try {
             const results = await searchYouTubeVideos(seed, 8);
+            if (trackRef.current?.videoId !== track.videoId) return;
             const filtered = results.filter((r) => r.videoId !== track.videoId);
             if (filtered.length > 0) {
               setQueue(
@@ -724,14 +777,6 @@ export const MusicPanel: FC<MusicPanelProps> = ({
       case "O":
         if (track) openExternalUrl(watchUrlForTrack(track));
         break;
-      case "Escape":
-        if (drawerOpen) {
-          setDrawerOpen(false);
-          setShowNextList(false);
-        } else {
-          onClose();
-        }
-        break;
       default:
         return;
     }
@@ -805,18 +850,36 @@ export const MusicPanel: FC<MusicPanelProps> = ({
         setShowDimPopover(false);
       }
     };
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        setShowDimPopover(false);
-      }
-    };
     window.addEventListener("mousedown", handleOutsideClick);
-    window.addEventListener("keydown", handleKeyDown);
-    return () => {
-      window.removeEventListener("mousedown", handleOutsideClick);
-      window.removeEventListener("keydown", handleKeyDown);
-    };
+    return () => window.removeEventListener("mousedown", handleOutsideClick);
   }, [showDimPopover]);
+
+  // Escape has ONE owner so a single press undoes exactly one layer, innermost
+  // first: the dim popover, then the queue/search drawer, then the player. It
+  // used to close the popover or drawer AND the whole player in the same press
+  // (three independent handlers). A pinned player stays open on Escape so other
+  // dialogs (Settings, Git...) can consume it; its X button closes it.
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      if (showDimPopover) {
+        setShowDimPopover(false);
+      } else if (drawerOpen) {
+        closeDrawer();
+      } else if (!isPinned) {
+        onClose();
+      } else {
+        return;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+    // closeDrawer only resets state through setters and refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, isPinned, onClose, showDimPopover, drawerOpen]);
 
   const drawerRef = useRef<HTMLDivElement | null>(null);
 
@@ -1015,31 +1078,8 @@ export const MusicPanel: FC<MusicPanelProps> = ({
       setPlaying(true);
       setSearchResults([]);
       setQuery("");
-      // In background, fetch related songs for queue and real title
-      void searchYouTubeVideos(resolved.videoId || raw, 6).then((results) => {
-        const matchingCurrent = results.find((r) => r.videoId === resolved.videoId);
-        if (matchingCurrent && matchingCurrent.title) {
-          setTrack((prev) =>
-            prev && prev.videoId === resolved.videoId
-              ? { ...prev, title: matchingCurrent.title }
-              : prev
-          );
-        }
-        const filtered = results.filter((r) => r.videoId !== resolved.videoId);
-        if (filtered.length > 0) {
-          setQueue(
-            filtered.map((r) => ({
-              title: r.title,
-              videoId: r.videoId,
-              playlistId: null,
-              query: r.title,
-              thumbnail: r.videoId
-                ? `https://i.ytimg.com/vi/${encodeURIComponent(r.videoId)}/mqdefault.jpg`
-                : null,
-            }))
-          );
-        }
-      });
+      // Related songs are fetched by the seeding effect once the real title is
+      // known: searching the link or id itself only finds this same video.
       return;
     }
 

@@ -1,8 +1,9 @@
 import path from "path";
 import fs from "fs";
 import os from "os";
-import { execSync, spawn } from "child_process";
+import { execSync, spawn, spawnSync, type SpawnOptions } from "child_process";
 import { fileURLToPath } from "url";
+import { dropCwdHits, noCwdLookupEnv } from "../core/spawnSafety";
 
 /**
  * Locate the installed Kai Terminal desktop executable.
@@ -113,19 +114,23 @@ export function findKaiAppBinary(): string | null {
     try {
       const cmd = process.platform === "win32" ? `where ${name}` : `which -a ${name}`;
       const out = execSync(cmd, { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] });
-      lines = out
-        .split(/\r?\n/)
-        .map((s) => s.trim())
-        .filter(Boolean);
+      lines = dropCwdHits(
+        out
+          .split(/\r?\n/)
+          .map((s) => s.trim())
+          .filter(Boolean)
+      );
     } catch {
       // Fallback for minimal `which` implementations without `-a`.
       try {
         const cmd = process.platform === "win32" ? `where ${name}` : `which ${name}`;
         const out = execSync(cmd, { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] });
-        lines = out
-          .split(/\r?\n/)
-          .map((s) => s.trim())
-          .filter(Boolean);
+        lines = dropCwdHits(
+          out
+            .split(/\r?\n/)
+            .map((s) => s.trim())
+            .filter(Boolean)
+        );
       } catch {
         continue; // ignore — name not on PATH
       }
@@ -214,36 +219,103 @@ function launchEnv(): NodeJS.ProcessEnv {
  *   Windows : detached spawn with `windowsHide: true` so no ghost conhost
  *             window flashes alongside the GUI.
  *
- * Returns true when a launch was attempted.
+ * Resolves true once the app process has started, false when it could not be
+ * started (missing binary, no execute permission): spawn failures arrive as an
+ * asynchronous `error` event, so the result cannot be known any sooner.
  */
-export function launchKaiApp(appBinary: string, projectPath: string): boolean {
-  try {
-    if (process.platform === "darwin" && appBinary.endsWith(".app/Contents/MacOS/kai")) {
-      // Prefer the bundle open path when the raw Mach-O binary cannot be
-      // spawned directly (quarantine / translocation edge cases).
-      try {
-        const child = spawn("open", ["-a", "Kai Terminal", projectPath], {
-          detached: true,
-          stdio: "ignore",
-          env: launchEnv(),
-        });
-        child.unref();
-        return true;
-      } catch {
-        // fall through to direct spawn
-      }
-    }
-    const child = spawn(appBinary, [projectPath], {
-      detached: true,
-      stdio: "ignore",
-      // Windows: never flash a ghost conhost window when
-      // launching the desktop app from the CLI.
-      windowsHide: true,
-      env: launchEnv(),
-    });
-    child.unref();
-    return true;
-  } catch {
+export async function launchKaiApp(appBinary: string, projectPath: string): Promise<boolean> {
+  if (process.platform === "darwin" && appBinary.endsWith(".app/Contents/MacOS/kai")) {
+    // Prefer the bundle open path when the raw Mach-O binary cannot be
+    // spawned directly (quarantine / translocation edge cases).
+    const opened = await startDetached("open", ["-a", "Kai Terminal", projectPath], {});
+    if (opened.ok) return true;
+    // fall through to direct spawn
+  }
+  const started = await startDetached(appBinary, [projectPath], {
+    // Windows: never flash a ghost conhost window when
+    // launching the desktop app from the CLI.
+    windowsHide: true,
+  });
+  if (!started.ok) {
+    console.error(`[kai] Could not start ${appBinary}: ${started.error.message}`);
     return false;
   }
+  return true;
+}
+
+/** Spawn a detached, silent child; settles once it has started or failed to. */
+function startDetached(
+  command: string,
+  args: string[],
+  options: SpawnOptions
+): Promise<{ ok: true } | { ok: false; error: Error }> {
+  return new Promise((resolve) => {
+    try {
+      const child = spawn(command, args, {
+        ...options,
+        detached: true,
+        stdio: "ignore",
+        env: launchEnv(),
+      });
+      // Without a listener a failed spawn (ENOENT, EACCES) is an unhandled
+      // 'error' event that crashes the CLI.
+      child.once("error", (error) => resolve({ ok: false, error }));
+      child.once("spawn", () => {
+        child.unref();
+        resolve({ ok: true });
+      });
+    } catch (err: unknown) {
+      resolve({ ok: false, error: err instanceof Error ? err : new Error(String(err)) });
+    }
+  });
+}
+
+/** Outcome of asking one of the desktop app's processes to exit. */
+export interface CloseResult {
+  name: string;
+  outcome: "closed" | "none" | "failed";
+  /** Processes terminated, when the platform tool reports it (taskkill does). */
+  count?: number;
+  detail?: string;
+}
+
+/**
+ * Stop running Kai Terminal desktop processes. Only the app's own process names
+ * are ever targeted, and the forced kill (`taskkill /F`) only for its two
+ * Windows image names; each tool's exit status is interpreted rather than
+ * assumed (taskkill 128 and pkill 1 both mean "no such process").
+ */
+export function closeKaiApp(
+  run: typeof spawnSync = spawnSync,
+  platform: NodeJS.Platform = process.platform
+): CloseResult[] {
+  const windows = platform === "win32";
+  const names = windows
+    ? ["kai.exe", "cross-platform-terminal-backend.exe"]
+    : ["kai", "cross-platform-terminal-backend", "kai-terminal"];
+  return names.map((name): CloseResult => {
+    const r = windows
+      ? run("taskkill", ["/F", "/IM", name], {
+          encoding: "utf8",
+          windowsHide: true,
+          env: noCwdLookupEnv(),
+        })
+      : run("pkill", ["-x", name], { encoding: "utf8" });
+    if (r.error) return { name, outcome: "failed", detail: r.error.message };
+    const noMatch = windows ? 128 : 1;
+    if (r.status === noMatch) return { name, outcome: "none" };
+    if (r.status === 0) {
+      const count = windows
+        ? Math.max(
+            1,
+            String(r.stdout ?? "")
+              .split(/\r?\n/)
+              .filter((l) => l.trim()).length
+          )
+        : undefined;
+      return { name, outcome: "closed", count };
+    }
+    const output = `${r.stderr ?? ""}${r.stdout ?? ""}`.trim().split(/\r?\n/)[0];
+    return { name, outcome: "failed", detail: output || `exit status ${r.status}` };
+  });
 }

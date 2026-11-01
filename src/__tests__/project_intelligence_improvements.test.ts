@@ -230,12 +230,21 @@ describe("Project Intelligence Comprehensive Improvements", () => {
       const projectId = "abcdef0123456789";
       const lockPath = getProjectLockPath(projectId);
       fs.mkdirSync(path.dirname(lockPath), { recursive: true });
-      fs.writeFileSync(lockPath, "corrupt partial lock data", "utf-8");
+      for (const partial of ["corrupt partial lock data", ""]) {
+        fs.writeFileSync(lockPath, partial, "utf-8");
 
-      const lock = new ProjectLock(projectId);
-      const acquired = lock.acquire(1000);
-      expect(acquired).toBe(true);
-      lock.release();
+        // Just written: a holder that created the file and has not finished
+        // writing it yet. It is waited for, not deleted from under its owner.
+        expect(new ProjectLock(projectId).acquire(300)).toBe(false);
+        expect(fs.readFileSync(lockPath, "utf-8")).toBe(partial);
+
+        // Left unreadable past the grace period: abandoned, so it is recovered.
+        const abandoned = new Date(Date.now() - 10_000);
+        fs.utimesSync(lockPath, abandoned, abandoned);
+        const lock = new ProjectLock(projectId);
+        expect(lock.acquire(1000)).toBe(true);
+        lock.release();
+      }
     });
 
     it("recovers from an interrupted indexing status", async () => {

@@ -3,7 +3,12 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import { handleMcpMessage } from "../core/mcp";
-import { registerProject, loadProjectIndex, ProjectLock } from "../core/registry";
+import {
+  registerProject,
+  loadProjectIndex,
+  markProjectGraphStatus,
+  ProjectLock,
+} from "../core/registry";
 import { indexProject } from "../core/indexer";
 import {
   isCodeMode,
@@ -369,8 +374,14 @@ describe("graph integrity and rollback (audit)", () => {
     } finally {
       lock.release();
     }
-    // Graph payload (files/symbols/rules) is preserved; only the status
-    // copies transition to stale — in both metadata copies consistently.
+    // While another live process held the lock, the failed sync must not have
+    // rewritten index.json (that would race the holder's publish): the stale
+    // mark is left to the holder, which republishes both copies itself.
+    expect(JSON.parse(fs.readFileSync(getProjectIndexPath(meta.id), "utf-8"))).toEqual(beforeIndex);
+    // Without contention the mark applies. Graph payload (files/symbols/rules)
+    // is preserved; only the status copies transition to stale, in both
+    // metadata copies consistently.
+    expect(markProjectGraphStatus(meta.id, "stale", "sync failed")).toBe(true);
     const afterRaw = fs.readFileSync(getProjectIndexPath(meta.id), "utf-8");
     const afterIndex = JSON.parse(afterRaw);
     expect(afterIndex.files).toEqual(beforeIndex.files);

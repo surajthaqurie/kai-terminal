@@ -13,9 +13,10 @@ import {
   splitRefusalMessage,
   splitTab,
 } from "../services/paneLayout";
-import { createDefaultTab } from "../services/tabFactory";
+import { createDefaultTab, deriveTabStatus } from "../services/tabFactory";
 import type { SessionStatus, SplitDirection, TerminalTab } from "../types/terminal";
 import { useLatest } from "./useLatest";
+import { applyTabsUpdate } from "./tabsSync";
 
 /** How long the "split refused" notice stays on screen. */
 const PANE_NOTICE_MS = 4000;
@@ -97,35 +98,45 @@ export function useTabs({ cwd, effectiveShellPath, setLastError }: TabsOptions) 
       const cleaned = cleanCwdForStore(dir);
       if (!cleaned) return;
       const norm = normalizeCwdForCompare(cleaned);
-      const found = tabsRef.current.find((t) =>
-        [t.cwd, ...t.panes.map((p) => p.cwd), cwdRef.current].some(
-          (c) => c && normalizeCwdForCompare(cleanCwdForStore(c)) === norm
-        )
-      );
+      const sameDir = (c: string | undefined) =>
+        Boolean(c) && normalizeCwdForCompare(cleanCwdForStore(c as string)) === norm;
+      // Match on each tab's OWN folders. The footer directory is not part of the
+      // per-tab test: when it equalled `dir`, every tab matched and the first
+      // one was focused instead of the tab actually in that folder. It only
+      // breaks the tie for the active tab, which the footer follows.
+      const found =
+        tabsRef.current.find((t) => [t.cwd, ...t.panes.map((p) => p.cwd)].some(sameDir)) ??
+        (sameDir(cwdRef.current)
+          ? tabsRef.current.find((t) => t.id === activeTabIdRef.current)
+          : undefined);
       if (found) {
         setActiveTabId(found.id);
         return;
       }
       newTab({ cwd: cleaned });
     },
-    [newTab, tabsRef, cwdRef]
+    [newTab, tabsRef, cwdRef, activeTabIdRef]
   );
 
   const closeTab = useCallback(
     (id: string) => {
       // Last tab: closing it quits the app on desktop (fallback: keep it
       // in browser/mock so the window never ends up empty).
-      if (tabs.length <= 1) {
+      const live = tabsRef.current;
+      if (live.length <= 1) {
         void closeAppWindow();
         return;
       }
-      const remaining = tabs.filter((t) => t.id !== id);
-      setTabs(remaining);
-      if (activeTabId === id) {
-        setActiveTabId(remaining[remaining.length - 1].id);
+      if (!live.some((t) => t.id === id)) return;
+      const remaining = live.filter((t) => t.id !== id);
+      applyTabsUpdate(tabsRef, setTabs, (prev) => prev.filter((t) => t.id !== id));
+      if (activeTabIdRef.current === id) {
+        const next = remaining[remaining.length - 1].id;
+        activeTabIdRef.current = next;
+        setActiveTabId(next);
       }
     },
-    [tabs, activeTabId]
+    [tabsRef, activeTabIdRef]
   );
 
   const renameTab = useCallback((id: string, title: string) => {
@@ -258,8 +269,13 @@ export function useTabs({ cwd, effectiveShellPath, setLastError }: TabsOptions) 
    * selecting text.
    */
   const focusPane = useCallback((tabId: string, paneId: string) => {
+    // Only a pane that still exists can become active: a pointer-down that
+    // lands just after its pane was closed must not leave `activePaneId`
+    // pointing at nothing.
     setTabs((prev) =>
-      prev.some((t) => t.id === tabId && t.activePaneId !== paneId)
+      prev.some(
+        (t) => t.id === tabId && t.activePaneId !== paneId && t.panes.some((p) => p.id === paneId)
+      )
         ? prev.map((t) => (t.id === tabId ? { ...t, activePaneId: paneId } : t))
         : prev
     );
@@ -269,18 +285,13 @@ export function useTabs({ cwd, effectiveShellPath, setLastError }: TabsOptions) 
     (tabId: string, paneId: string, status: SessionStatus, message?: string) => {
       if (status === "error" && message) setLastError(message);
       setTabs((prev) =>
-        prev.map((t) =>
-          t.id === tabId
-            ? {
-                ...t,
-                status,
-                errorMessage: message,
-                panes: t.panes.map((p) =>
-                  p.id === paneId ? { ...p, status, errorMessage: message } : p
-                ),
-              }
-            : t
-        )
+        prev.map((t) => {
+          if (t.id !== tabId) return t;
+          const panes = t.panes.map((p) =>
+            p.id === paneId ? { ...p, status, errorMessage: message } : p
+          );
+          return { ...t, panes, ...deriveTabStatus(panes) };
+        })
       );
     },
     [setLastError]
@@ -293,27 +304,26 @@ export function useTabs({ cwd, effectiveShellPath, setLastError }: TabsOptions) 
    */
   const setPaneShell = useCallback((tabId: string, paneId: string, shellPath: string) => {
     setTabs((prev) =>
-      prev.map((t) =>
-        t.id === tabId && t.panes.some((p) => p.id === paneId)
-          ? {
-              ...t,
-              status: "connecting" as const,
-              errorMessage: undefined,
-              shellPath: t.panes.length === 1 ? shellPath : t.shellPath,
-              panes: t.panes.map((p) =>
-                p.id === paneId
-                  ? {
-                      ...p,
-                      shellPath,
-                      status: "connecting" as const,
-                      errorMessage: undefined,
-                      resetKey: (p.resetKey ?? 0) + 1,
-                    }
-                  : p
-              ),
-            }
-          : t
-      )
+      prev.map((t) => {
+        if (t.id !== tabId || !t.panes.some((p) => p.id === paneId)) return t;
+        const panes = t.panes.map((p) =>
+          p.id === paneId
+            ? {
+                ...p,
+                shellPath,
+                status: "connecting" as const,
+                errorMessage: undefined,
+                resetKey: (p.resetKey ?? 0) + 1,
+              }
+            : p
+        );
+        return {
+          ...t,
+          shellPath: t.panes.length === 1 ? shellPath : t.shellPath,
+          panes,
+          ...deriveTabStatus(panes),
+        };
+      })
     );
   }, []);
 

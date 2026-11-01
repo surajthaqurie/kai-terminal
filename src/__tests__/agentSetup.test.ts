@@ -569,7 +569,8 @@ describe("Claude Code configuration predictability & scope enforcement", () => {
     const home = makeTempHome();
     const repo = makeTempHome();
     fs.mkdirSync(path.join(repo, ".git"));
-    // Make .mcp.json a directory so atomic rename / write fails
+    // Make .mcp.json a directory: the path is present but unusable, so the
+    // setup must report it and leave it alone rather than throw or clobber it.
     fs.mkdirSync(path.join(repo, ".mcp.json"));
 
     const res = applyAgentSetup("claude", KAI_BIN, {
@@ -579,7 +580,8 @@ describe("Claude Code configuration predictability & scope enforcement", () => {
     });
     expect(res.wrote).toBe(false);
     expect(res.skipped).toBe(true);
-    expect(res.message).toContain("Failed to write config file");
+    expect(res.message).toContain("could not be read");
+    expect(fs.statSync(path.join(repo, ".mcp.json")).isDirectory()).toBe(true);
   });
 
   it("removes MCP wiring with matching scope without affecting other scopes", () => {

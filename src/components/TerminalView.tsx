@@ -13,8 +13,16 @@ import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
-import { canFitPane } from "./terminalFit";
+import { canFitPane, createPtySizeSync, type PtySizeSync } from "./terminalFit";
 import { ptyService, PtyService } from "../services/ptyService";
+import { describeCwdFallback, isWorkingDirectoryError } from "../services/spawnRecovery";
+import {
+  claimPtyId,
+  createEarlyPtyEvents,
+  releasePtyId,
+  type EarlyPtyEvent,
+  type EarlyPtyEvents,
+} from "../services/ptyEarlyEvents";
 import {
   isCopyKeyEvent,
   isPasteKeyEvent,
@@ -139,7 +147,8 @@ interface TerminalViewProps {
    */
   resetKey?: number;
   onSessionStatusChange?: (status: SessionStatus, message?: string) => void;
-  onExit?: (exitCode: number) => void;
+  /** `undefined` when the shell's exit status could not be determined. */
+  onExit?: (exitCode?: number) => void;
   onCwdResolved?: (cwd: string) => void;
   onFocus?: () => void;
   /**
@@ -274,17 +283,22 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
     cwdRef.current = cwd;
     const visibleRef = useRef(visible);
     visibleRef.current = visible;
-    // `<backendId>:<cols>x<rows>` last pushed to the PTY; skips no-op resizes
-    // (a tab flip re-fits to the same grid, and a ConPTY resize forces a reflow).
-    const lastPtySizeRef = useRef<string>("");
-    const pushPtySize = (term: Terminal) => {
-      const backendId = backendPtyIdRef.current;
-      if (!term.cols || !term.rows || !backendId) return;
-      const key = `${backendId}:${term.cols}x${term.rows}`;
-      if (key === lastPtySizeRef.current) return;
-      lastPtySizeRef.current = key;
-      ptyService.resizePty(backendId, term.cols, term.rows).catch(() => {});
-    };
+    // Remembers the grid the PTY has, so no-op resizes are skipped (a tab flip
+    // re-fits to the same grid, and a ConPTY resize forces a reflow).
+    const ptySizeSyncRef = useRef<PtySizeSync | null>(null);
+    ptySizeSyncRef.current ??= createPtySizeSync((id, cols, rows) => {
+      ptyService.resizePty(id, cols, rows).catch(() => {});
+    });
+    const pushPtySize = (term: Terminal) =>
+      ptySizeSyncRef.current?.push(backendPtyIdRef.current, term.cols, term.rows);
+    // PTY events that arrive while `create_pty` is still in flight: the pane has
+    // no session id yet, so they are held and replayed once it does (see
+    // `ptyEarlyEvents`). `replayEarlyEventsRef` is owned by the mount effect,
+    // which holds the output buffer and exit handling they must flow through.
+    const spawningRef = useRef(false);
+    const earlyEventsRef = useRef<EarlyPtyEvents | null>(null);
+    earlyEventsRef.current ??= createEarlyPtyEvents();
+    const replayEarlyEventsRef = useRef<(events: EarlyPtyEvent[]) => void>(() => {});
     /**
      * Fits xterm to its container, but only while the pane is really on screen
      * (see `canFitPane`). Returns whether a fit ran, so callers only resize the
@@ -352,13 +366,9 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         const term = xtermRef.current;
         if (!term) return;
         try {
-          if (!fitWhenShown()) return;
+          if (fitWhenShown()) pushPtySize(term);
         } catch {
-          return;
-        }
-        const backendId = backendPtyIdRef.current;
-        if (term.cols && term.rows && backendId) {
-          ptyService.resizePty(backendId, term.cols, term.rows).catch(() => {});
+          // ignore hidden-tab layout errors
         }
       },
       copySelection: async () => {
@@ -388,6 +398,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       // before spawning a replacement (prevents orphan PTY processes).
       const previousId = backendPtyIdRef.current;
       backendPtyIdRef.current = null;
+      releasePtyId(previousId);
       if (previousId) {
         try {
           await PtyService.closePty(previousId);
@@ -425,21 +436,39 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       const cols = term.cols || 80;
       const rows = term.rows || 24;
 
+      earlyEventsRef.current?.clear();
+      spawningRef.current = true;
       try {
         const effShell = overrideShell ?? shellRef.current ?? selectedShell;
         if (overrideShell) {
           shellRef.current = overrideShell;
         }
-        const sessionInfo = await PtyService.createPty({
-          shell_path: effShell?.path ?? selectedShell?.path,
-          args: effShell?.args ?? selectedShell?.args,
-          cwd: (() => {
-            const c = cwdRef.current ?? cwd;
-            return c && c.trim() ? c.trim() : undefined;
-          })(),
-          cols,
-          rows,
-        });
+        const requestedCwd = (() => {
+          const c = cwdRef.current ?? cwd;
+          return c && c.trim() ? c.trim() : undefined;
+        })();
+        const spawn = (dir: string | undefined) =>
+          PtyService.createPty({
+            shell_path: effShell?.path ?? selectedShell?.path,
+            args: effShell?.args ?? selectedShell?.args,
+            cwd: dir,
+            cols,
+            rows,
+          });
+        let sessionInfo;
+        try {
+          sessionInfo = await spawn(requestedCwd);
+        } catch (spawnErr) {
+          // A saved folder that no longer exists must not lock the pane out:
+          // say so, and open in the default (home) folder. Any other failure,
+          // or a second failure in home, falls through to the normal error UI.
+          const reason = spawnErr instanceof Error ? spawnErr.message : String(spawnErr);
+          if (!requestedCwd || !isWorkingDirectoryError(reason) || mySeq !== initSeqRef.current) {
+            throw spawnErr;
+          }
+          term.writeln(`\x1b[33m${describeCwdFallback(requestedCwd)}\x1b[0m\r\n`);
+          sessionInfo = await spawn(undefined);
+        }
         if (mySeq !== initSeqRef.current) {
           // A newer init superseded this attempt; reap the orphan.
           try {
@@ -451,12 +480,29 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         }
 
         backendPtyIdRef.current = sessionInfo.id;
+        claimPtyId(sessionInfo.id);
+        // The shell was spawned at the grid measured BEFORE the async spawn. No
+        // backend id existed while it ran, so any resize in that window (window
+        // maximize/restore at startup, web fonts landing, a split) was dropped
+        // by `pushPtySize` and the shell would keep a stale, smaller grid until
+        // the next manual resize. Re-fit now and send the difference.
+        ptySizeSyncRef.current?.spawned(sessionInfo.id, cols, rows);
+        try {
+          if (fitWhenShown()) pushPtySize(term);
+        } catch {
+          // Ignore fit errors during hidden-tab layout.
+        }
         setLaunchError(null);
         onStatusRef.current?.("connected");
         if (sessionInfo.cwd) {
           cwdSettlerRef.current?.reset();
           settleCwd(sessionInfo.cwd);
         }
+        // The shell may already have printed its prompt, or died, before this
+        // reply arrived: feed those events through the normal handlers now
+        // (after "connected", so an instant exit still ends in "disconnected").
+        spawningRef.current = false;
+        replayEarlyEventsRef.current(earlyEventsRef.current?.take(sessionInfo.id) ?? []);
       } catch (err: unknown) {
         if (mySeq !== initSeqRef.current) return;
         const errorMsg = err instanceof Error ? err.message : String(err);
@@ -466,6 +512,12 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
           `\x1b[33m[Tip: if this persists, check your PowerShell profile or pick Command Prompt as the default shell in Settings.]\x1b[0m\r\n`
         );
         onStatusRef.current?.("error", errorMsg);
+      } finally {
+        // A newer spawn owns the flag (and the buffer) once it has started.
+        if (mySeq === initSeqRef.current) {
+          spawningRef.current = false;
+          earlyEventsRef.current?.clear();
+        }
       }
     };
 
@@ -501,7 +553,9 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       try {
         term.clearTextureAtlas?.();
         term.refresh(0, Math.max(0, term.rows - 1));
-        fitWhenShown();
+        // Font family/size change cell metrics, so the grid changes without the
+        // container resizing: the PTY must learn the new cols/rows too.
+        if (fitWhenShown()) pushPtySize(term);
       } catch {
         // ignore hidden-tab layout errors
       }
@@ -887,38 +941,68 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       // paint already contains it.
       flushPendingRef.current = flushOutput;
 
+      const handleOutput = (payload: { id: string; data: string }) => {
+        // Bounded FIFO (see TerminalOutputBuffer): a flood of output
+        // appends O(1) per chunk with memory capped at ~1 MB, instead of
+        // re-copying a megabyte string on every event. xterm scrollback
+        // bounds the rendered side as before.
+        pendingOutput.append(payload.data);
+        scheduleFlush();
+        // Ghost-typing auto-recovery: `kai` Code Mode runs print
+        // "[kai] Agent finished" once the agent child settles. The CLI
+        // already resets terminal modes on its stdout, but when that
+        // reset is lost (killed mid-flush, piped output, older CLI) the
+        // emulator-side mouse/focus/bracketed-paste modes stay stuck and
+        // every mouse move / window focus injects escape sequences the
+        // shell echoes as stray typed text. Re-feed the same DECSET
+        // resets via term.write (output path: parsed as mode changes,
+        // screen-safe) so the pane self-heals without user action.
+        try {
+          const scan = scanAgentFinishedTail(agentFinishedTailRef.current, payload.data);
+          agentFinishedTailRef.current = scan.tail;
+          if (scan.hit) {
+            // Latch proof the agent is gone: the next stray mouse /
+            // focus report (if the CLI-side reset was lost) resets the
+            // emulator immediately instead of waiting for a repeat.
+            agentFinishedSeenRef.current = true;
+            staleReplyUntilRef.current = Date.now() + STALE_REPLY_WINDOW_MS;
+            term.write(TERMINAL_MODE_RESET_SEQ);
+          }
+        } catch {
+          // Best-effort hardening; output rendering above already ran.
+        }
+      };
+
+      const handleExit = (payload: { id: string; exit_code?: number | null }) => {
+        flushOutput();
+        releasePtyId(backendPtyIdRef.current);
+        backendPtyIdRef.current = null;
+        onCodeModeChangeRef.current?.(null);
+        // The backend sends `null` when it could not read the exit status
+        // (child.wait() failed). That is NOT a clean exit: treating it as 0
+        // skipped the crash-loop / instant-death guards and could quit the app
+        // from its last tab. Pass it on as unknown.
+        const exitCode = payload.exit_code ?? undefined;
+        onStatusRef.current?.("disconnected");
+        // Immediately close the pane or tab cleanly like a native terminal
+        onExitRef.current?.(exitCode);
+      };
+
+      // Events for a session this pane has not been told about yet (see
+      // `ptyEarlyEvents`) are held while `create_pty` is in flight.
+      replayEarlyEventsRef.current = (events) => {
+        for (const e of events) {
+          if (e.id !== backendPtyIdRef.current) continue;
+          if (e.kind === "output") handleOutput(e);
+          else handleExit(e);
+        }
+      };
+
       trackUnlisten(
         ptyService.onPtyOutput((payload) => {
-          if (payload.id === backendPtyIdRef.current) {
-            // Bounded FIFO (see TerminalOutputBuffer): a flood of output
-            // appends O(1) per chunk with memory capped at ~1 MB, instead of
-            // re-copying a megabyte string on every event. xterm scrollback
-            // bounds the rendered side as before.
-            pendingOutput.append(payload.data);
-            scheduleFlush();
-            // Ghost-typing auto-recovery: `kai` Code Mode runs print
-            // "[kai] Agent finished" once the agent child settles. The CLI
-            // already resets terminal modes on its stdout, but when that
-            // reset is lost (killed mid-flush, piped output, older CLI) the
-            // emulator-side mouse/focus/bracketed-paste modes stay stuck and
-            // every mouse move / window focus injects escape sequences the
-            // shell echoes as stray typed text. Re-feed the same DECSET
-            // resets via term.write (output path: parsed as mode changes,
-            // screen-safe) so the pane self-heals without user action.
-            try {
-              const scan = scanAgentFinishedTail(agentFinishedTailRef.current, payload.data);
-              agentFinishedTailRef.current = scan.tail;
-              if (scan.hit) {
-                // Latch proof the agent is gone: the next stray mouse /
-                // focus report (if the CLI-side reset was lost) resets the
-                // emulator immediately instead of waiting for a repeat.
-                agentFinishedSeenRef.current = true;
-                staleReplyUntilRef.current = Date.now() + STALE_REPLY_WINDOW_MS;
-                term.write(TERMINAL_MODE_RESET_SEQ);
-              }
-            } catch {
-              // Best-effort hardening; output rendering above already ran.
-            }
+          if (payload.id === backendPtyIdRef.current) handleOutput(payload);
+          else if (spawningRef.current) {
+            earlyEventsRef.current?.hold({ kind: "output", id: payload.id, data: payload.data });
           }
         }),
         (unlisten) => {
@@ -928,14 +1012,13 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
 
       trackUnlisten(
         ptyService.onPtyExit((payload) => {
-          if (payload.id === backendPtyIdRef.current) {
-            flushOutput();
-            backendPtyIdRef.current = null;
-            onCodeModeChangeRef.current?.(null);
-            const exitCode = payload.exit_code ?? 0;
-            onStatusRef.current?.("disconnected");
-            // Immediately close the pane or tab cleanly like a native terminal
-            onExitRef.current?.(exitCode);
+          if (payload.id === backendPtyIdRef.current) handleExit(payload);
+          else if (spawningRef.current) {
+            earlyEventsRef.current?.hold({
+              kind: "exit",
+              id: payload.id,
+              exit_code: payload.exit_code,
+            });
           }
         }),
         (unlisten) => {
@@ -972,6 +1055,24 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       });
 
       resizeObserver.observe(containerRef.current);
+
+      // Web fonts (bundled / installed) can finish loading after the first
+      // fit(), which measured fallback-font cells. The container size does not
+      // change when that happens, so the ResizeObserver stays silent and the
+      // grid (and PTY) would keep the wrong rows/cols until the next resize.
+      let fontsDisposed = false;
+      const refitAfterFonts = () => {
+        if (fontsDisposed) return;
+        try {
+          term.clearTextureAtlas?.();
+          if (fitWhenShown()) pushPtySize(term);
+        } catch {
+          // Ignore layout errors during component unmount
+        }
+      };
+      const fontSet = typeof document !== "undefined" ? document.fonts : undefined;
+      void fontSet?.ready?.then(refitAfterFonts);
+      fontSet?.addEventListener?.("loadingdone", refitAfterFonts);
 
       // Launch initial PTY session (deferred):
       // - Hidden tabs skip the spawn entirely; the `visible` effect below
@@ -1012,12 +1113,17 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         detachGpuRenderer(webglAddonRef);
         inputDisposable.dispose();
         resizeObserver.disconnect();
+        fontsDisposed = true;
+        fontSet?.removeEventListener?.("loadingdone", refitAfterFonts);
         if (resizeTimer) clearTimeout(resizeTimer);
         if (unlistenOutput) unlistenOutput();
         if (unlistenExit) unlistenExit();
         if (unlistenCwd) unlistenCwd();
         const backendId = backendPtyIdRef.current;
         backendPtyIdRef.current = null;
+        releasePtyId(backendId);
+        spawningRef.current = false;
+        replayEarlyEventsRef.current = () => {};
         if (backendId) {
           ptyService.closePty(backendId).catch(() => {
             // Already reaped; safe to ignore.

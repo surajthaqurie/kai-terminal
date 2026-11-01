@@ -7,6 +7,7 @@ import {
   isLightTheme,
 } from "../services/settingsService";
 import { applyWindowOpacity } from "../services/windowOpacity";
+import { pickDefaultShell } from "../services/paneShell";
 import { withSkipProfileArgs } from "../services/shellArgs";
 import { zoomedFontSize } from "../services/shortcuts";
 import type { ShellProfile, UserSettings } from "../types/terminal";
@@ -51,13 +52,11 @@ export function useTerminalConfig({
             prev.fontFamily === DEFAULT_SETTINGS.fontFamily ||
             prev.fontFamily === PREVIOUS_DEFAULT_FONT_FAMILY ||
             prev.fontFamily === 'Menlo, Monaco, "Courier New", monospace';
-          const isDefaultSize = prev.fontSize === 14 || prev.fontSize === 12;
           return {
             ...prev,
             ...(isDefaultFont && sysDefaults.fontFamily
               ? { fontFamily: sysDefaults.fontFamily }
               : {}),
-            ...(isDefaultSize ? { fontSize: 12 } : {}),
             ...(prev.theme === DEFAULT_SETTINGS.theme && sysDefaults.theme
               ? { theme: sysDefaults.theme }
               : {}),
@@ -91,9 +90,7 @@ export function useTerminalConfig({
     PtyService.getAvailableShells()
       .then((loadedShells) => {
         setShells(loadedShells);
-        const configuredDefault = loadedShells.find((s) => s.id === userSettings.defaultShellId);
-        const defaultShell =
-          configuredDefault || loadedShells.find((s) => s.is_default) || loadedShells[0];
+        const defaultShell = pickDefaultShell(loadedShells, userSettings.defaultShellId);
         if (defaultShell) {
           setSelectedShellId(defaultShell.id);
         }
@@ -140,12 +137,12 @@ export function useTerminalConfig({
   // and syncs the launch-at-startup toggle with the OS (all platforms).
   const saveSettings = useCallback(
     (next: UserSettings) => {
-      if (
-        next.defaultShellId &&
-        next.defaultShellId !== userSettings.defaultShellId &&
-        shells.some((s) => s.id === next.defaultShellId)
-      ) {
-        setSelectedShellId(next.defaultShellId);
+      // Any change of the default applies to new sessions right away, including
+      // switching back to "System Default" (an empty id), which used to be
+      // saved but ignored until the next launch.
+      if (next.defaultShellId !== userSettings.defaultShellId) {
+        const target = pickDefaultShell(shells, next.defaultShellId);
+        if (target) setSelectedShellId(target.id);
       }
       if (Boolean(next.launchAtStartup) !== Boolean(userSettings.launchAtStartup)) {
         void import("../services/autostartService").then(({ setAutostartEnabled }) =>

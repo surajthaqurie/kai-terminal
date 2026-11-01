@@ -85,6 +85,28 @@ export function resolveCanonicalPath(targetPath: string): string {
   }
 }
 
+/**
+ * Why `canonicalRoot` is too broad to index as one project: the user's home
+ * directory, a filesystem or drive root, or a directory that contains the home
+ * directory. An agent started there would have its first tool call index
+ * everything beneath it. Returns null for an ordinary project folder, or when
+ * `KAI_ALLOW_BROAD_ROOT=1` says the user really wants this.
+ */
+export function describeBroadRoot(
+  canonicalRoot: string,
+  opts: { home?: string; env?: NodeJS.ProcessEnv } = {}
+): string | null {
+  if ((opts.env ?? process.env).KAI_ALLOW_BROAD_ROOT === "1") return null;
+  if (path.dirname(canonicalRoot) === canonicalRoot) return "a filesystem root";
+  const home = resolveCanonicalPath(opts.home ?? os.homedir());
+  if (normalizeCanonicalForIdentity(canonicalRoot) === normalizeCanonicalForIdentity(home)) {
+    return "your home directory";
+  }
+  if (isWithinProjectBoundary(home, canonicalRoot))
+    return "a folder that contains your home directory";
+  return null;
+}
+
 export function ensureKaiDirectories(): void {
   const dirs = [getKaiHomeDir(), getProjectsDir(), getSessionsDir(), getCacheDir()];
   for (const dir of dirs) {
@@ -175,11 +197,93 @@ export function atomicWriteJson(targetPath: string, data: unknown): void {
 }
 
 /**
- * File lock with PID and timeout to prevent concurrent indexing corruption
+ * A live holder that has not refreshed the lock for this long is presumed hung
+ * (or its PID was recycled by an unrelated process after a crash). A holder
+ * whose PID is gone is reclaimed immediately, whatever the lock's age.
+ */
+const LOCK_STALE_MS = 120_000;
+/** A lock file that is empty or unparseable this young is a holder mid-write, not a corpse. */
+const LOCK_PARTIAL_GRACE_MS = 3_000;
+/** Minimum spacing between mtime refreshes by a long-running holder. */
+const LOCK_HEARTBEAT_MS = 5_000;
+
+type LockState = { kind: "free" } | { kind: "held" } | { kind: "stale"; raw: string };
+
+function pidIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err: unknown) {
+    // EPERM means the process exists but belongs to someone else.
+    return (err as NodeJS.ErrnoException)?.code === "EPERM";
+  }
+}
+
+/** Classify the lock file without modifying it. */
+function inspectLock(lockPath: string): LockState {
+  let raw: string;
+  let mtimeMs: number;
+  try {
+    raw = fs.readFileSync(lockPath, "utf-8");
+    mtimeMs = fs.statSync(lockPath).mtimeMs;
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException)?.code === "ENOENT") return { kind: "free" };
+    // Present but unreadable right now (AV scan, sharing violation): treat as held.
+    return { kind: "held" };
+  }
+  const age = Date.now() - mtimeMs;
+  let pid: unknown;
+  try {
+    pid = (JSON.parse(raw) as { pid?: unknown } | null)?.pid;
+  } catch {
+    pid = undefined;
+  }
+  if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) {
+    return age < LOCK_PARTIAL_GRACE_MS ? { kind: "held" } : { kind: "stale", raw };
+  }
+  if (!pidIsAlive(pid)) return { kind: "stale", raw };
+  return age > LOCK_STALE_MS ? { kind: "stale", raw } : { kind: "held" };
+}
+
+/** True while another live process holds the project lock (it is building or publishing the index). */
+export function isProjectLockHeld(projectId: string): boolean {
+  return inspectLock(getProjectLockPath(projectId)).kind === "held";
+}
+
+/**
+ * Remove a lock judged stale. The content is re-read first so a lock another
+ * process has just taken over from the same corpse is never deleted by us.
+ * (Not airtight; the window is a single read-to-unlink gap on an advisory lock.)
+ */
+function removeStaleLock(lockPath: string, raw: string): boolean {
+  try {
+    if (fs.readFileSync(lockPath, "utf-8") !== raw) return false;
+    fs.unlinkSync(lockPath);
+    return true;
+  } catch {
+    // Vanished or locked: the next attempt re-inspects.
+    return false;
+  }
+}
+
+/**
+ * Advisory per-project lock (`.lock` in the storage dir) that serializes index
+ * builds and publishes across processes.
+ *
+ * - Created with `wx` and written + fsynced while the file is exclusively ours;
+ *   a reader that races the write sees an empty file, which counts as held
+ *   while young instead of being "cleaned up" under the new owner.
+ * - Each acquisition writes a unique token; `release` and `touch` act only on a
+ *   lock that still carries it, so a holder whose lock was reclaimed can never
+ *   delete or refresh its successor's.
+ * - Long holders call `touch` to refresh the mtime. The indexer's scan is
+ *   synchronous, so a timer could never fire during it; it calls `touch` from
+ *   inside the scan loop instead.
  */
 export class ProjectLock {
   private lockPath: string;
-  private isAcquired: boolean = false;
+  private token: string | null = null;
+  private lastBeatMs = 0;
 
   constructor(projectId: string) {
     this.lockPath = getProjectLockPath(projectId);
@@ -192,82 +296,99 @@ export class ProjectLock {
     }
 
     const start = Date.now();
-    const pid = process.pid;
+    const token = newProjectIncarnation();
+    const body = JSON.stringify({ pid: process.pid, token, time: Date.now() });
 
     while (Date.now() - start < timeoutMs) {
       try {
-        // Exclusive creation
-        fs.writeFileSync(this.lockPath, JSON.stringify({ pid, time: Date.now() }), {
-          flag: "wx",
-          mode: 0o600,
-        });
-        this.isAcquired = true;
+        const fd = fs.openSync(this.lockPath, "wx", 0o600);
+        try {
+          fs.writeSync(fd, body);
+          fs.fsyncSync(fd);
+        } catch (err: unknown) {
+          // Never leave an empty lock behind for the next process to wait out.
+          fs.closeSync(fd);
+          fs.rmSync(this.lockPath, { force: true });
+          throw err;
+        }
+        fs.closeSync(fd);
+        this.token = token;
+        this.lastBeatMs = Date.now();
         return true;
       } catch (err: unknown) {
-        // If file exists, check if stale (> 30s) or process dead or corrupted
-        try {
-          const content = fs.readFileSync(this.lockPath, "utf-8");
-          let data: { pid?: number; time?: number } | null = null;
-          try {
-            data = JSON.parse(content);
-          } catch {
-            // Corrupt or partial lock file; mark null to unlink
-            data = null;
-          }
-
-          const age = data && typeof data.time === "number" ? Date.now() - data.time : 999999;
-          let isDead = false;
-          if (data && typeof data.pid === "number") {
-            try {
-              process.kill(data.pid, 0); // Check if process exists
-            } catch {
-              isDead = true;
-            }
-          } else {
-            isDead = true;
-          }
-
-          if (age > 30000 || isDead || !data) {
-            fs.unlinkSync(this.lockPath);
-            continue;
-          }
-        } catch {
-          // If read/parse failed or file vanished, attempt retry or unlink
-          try {
-            if (fs.existsSync(this.lockPath)) {
-              fs.unlinkSync(this.lockPath);
-              continue;
-            }
-          } catch {
-            // ignore
-          }
+        // EEXIST is contention. EPERM/EACCES/EBUSY is what Windows reports
+        // while a just-unlinked lock is still open elsewhere (delete pending).
+        const code = (err as NodeJS.ErrnoException)?.code;
+        if (code !== "EEXIST" && code !== "EPERM" && code !== "EACCES" && code !== "EBUSY") {
+          throw err;
         }
+      }
 
-        // Sleep briefly without burning CPU (busy-spin blocked the event loop)
-        try {
-          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
-        } catch {
-          // Fallback if Atomics.wait is unavailable
-          const sleepUntil = Date.now() + 50;
-          while (Date.now() < sleepUntil) {
-            // spin
-          }
+      const state = inspectLock(this.lockPath);
+      // A reclaimed lock is retried at once; everything else waits a beat.
+      if (state.kind === "stale" && removeStaleLock(this.lockPath, state.raw)) continue;
+
+      // Sleep briefly without burning CPU (busy-spin blocked the event loop)
+      try {
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+      } catch {
+        // Fallback if Atomics.wait is unavailable
+        const sleepUntil = Date.now() + 50;
+        while (Date.now() < sleepUntil) {
+          // spin
         }
       }
     }
     return false;
   }
 
+  /** Whether the lock file still carries this acquisition's token (unreadable counts as ours). */
+  private ownsLockFile(): boolean {
+    if (!this.token) return false;
+    try {
+      const data = JSON.parse(fs.readFileSync(this.lockPath, "utf-8")) as {
+        token?: unknown;
+      } | null;
+      return data?.token === this.token;
+    } catch (err: unknown) {
+      // Gone: someone reclaimed it. Anything else (locked, mid-rewrite): do not guess.
+      return (err as NodeJS.ErrnoException)?.code !== "ENOENT";
+    }
+  }
+
+  /**
+   * Heartbeat for a long-running holder: refreshes the lock's mtime (at most
+   * every few seconds, so it is cheap to call in a hot loop). Returns false
+   * once the lock is no longer ours.
+   */
+  touch(): boolean {
+    if (!this.token) return false;
+    const now = Date.now();
+    if (now - this.lastBeatMs < LOCK_HEARTBEAT_MS) return true;
+    this.lastBeatMs = now;
+    if (!this.ownsLockFile()) return false;
+    try {
+      fs.utimesSync(this.lockPath, now / 1000, now / 1000);
+    } catch {
+      // A missed beat only shortens the grace period; never fail the build over it.
+    }
+    return true;
+  }
+
+  /** True while this instance holds the lock and no one has reclaimed it. */
+  isHeld(): boolean {
+    return this.ownsLockFile();
+  }
+
   release(): void {
-    if (this.isAcquired) {
-      try {
-        if (fs.existsSync(this.lockPath)) {
-          fs.unlinkSync(this.lockPath);
-        }
-      } catch {
-        // Ignore unlink error on release
-      }
-      this.isAcquired = false;
+    if (!this.token) return;
+    const owned = this.ownsLockFile();
+    this.token = null;
+    if (!owned) return;
+    try {
+      fs.unlinkSync(this.lockPath);
+    } catch {
+      // Ignore unlink error on release
     }
   }
 }
@@ -308,8 +429,11 @@ export function registerProject(projectPath: string): ProjectMeta {
         const before = JSON.stringify(existing);
         // Update rootPath if alias was used
         existing.rootPath = projectPath;
-        // If it was stuck in 'indexing' from an interrupted process, reset to ready or unindexed
-        if (existing.status === "indexing") {
+        // Stuck in 'indexing' from an interrupted process: reset to ready or
+        // unindexed. Not while a live process still holds the project lock,
+        // though: that build is real, and resetting its status here would let
+        // readers treat a half-written index as settled.
+        if (existing.status === "indexing" && !isProjectLockHeld(existing.id)) {
           const indexPath = getProjectIndexPath(existing.id);
           existing.status = fs.existsSync(indexPath) ? "ready" : "unindexed";
           existing.lastError = null;
@@ -630,6 +754,10 @@ export function loadProjectIndexShared(projectId: string): {
   return { index: frozen, cache: "miss" };
 }
 
+/**
+ * Publish an index (`index.json`, then `meta.json`). Callers hold the project
+ * lock: `indexProject` does, and so does the graph-sync publish step.
+ */
 export function saveProjectIndex(projectId: string, index: ProjectIndex): void {
   invalidateIndexCache(projectId);
   // Pair both persistence copies with one shared snapshot id before the
@@ -670,6 +798,9 @@ export function saveProjectIndex(projectId: string, index: ProjectIndex): void {
   invalidateIndexCache(projectId);
 }
 
+/** How long a status mark waits for the project lock before giving up. */
+const STATUS_MARK_LOCK_WAIT_MS = 1000;
+
 /**
  * Best-effort status transition applied to BOTH metadata copies: the
  * standalone `meta.json` and the `meta` embedded in `index.json`. Readers
@@ -677,43 +808,65 @@ export function saveProjectIndex(projectId: string, index: ProjectIndex): void {
  * one leaves freshness reporting inconsistent (e.g. meta.json says `stale`
  * while the loaded index still reports `fresh`). Both writes are atomic;
  * failures are swallowed so stale-marking never throws.
+ *
+ * Rewriting `index.json` is a read-modify-write of a multi-megabyte file, so
+ * it runs under the project lock: unlocked, it could overwrite an index a
+ * concurrent build had just published with the older copy it read. When
+ * another live process holds the lock (a build is running) nothing is written
+ * and `false` is returned; that build publishes both copies itself, and
+ * on-disk drift is detected independently of this flag. Pass `lockHeld` when
+ * the caller already holds the lock (the lock is not re-entrant).
  */
 export function markProjectGraphStatus(
   projectId: string,
   status: "stale" | "failed",
-  lastError?: string
-): void {
+  lastError?: string,
+  opts: { lockHeld?: boolean } = {}
+): boolean {
   invalidateIndexCache(projectId);
+  // A deleted project has nothing to mark; locking would recreate its directory.
+  if (!fs.existsSync(getProjectStorageDir(projectId))) return false;
+  const lock = opts.lockHeld ? null : new ProjectLock(projectId);
   try {
-    const metaPath = getProjectMetaPath(projectId);
-    const raw = fs.readFileSync(metaPath, "utf-8");
-    const meta = JSON.parse(raw);
-    if (typeof meta === "object" && meta !== null) {
-      meta.status = status;
-      if (lastError !== undefined) meta.lastError = lastError;
-      atomicWriteJson(metaPath, meta);
-    }
+    if (lock && !lock.acquire(STATUS_MARK_LOCK_WAIT_MS)) return false;
   } catch {
-    // best effort; never throw from status-marking
+    return false; // best effort; never throw from status-marking
   }
   try {
-    const indexPath = getProjectIndexPath(projectId);
-    if (!fs.existsSync(indexPath)) return;
-    const raw = fs.readFileSync(indexPath, "utf-8");
-    const index = JSON.parse(raw);
-    if (typeof index !== "object" || index === null) return;
-    if (typeof index.meta !== "object" || index.meta === null) return;
-    index.meta.status = status;
-    if (lastError !== undefined) index.meta.lastError = lastError;
     try {
-      atomicWriteJson(indexPath, index);
+      const metaPath = getProjectMetaPath(projectId);
+      const raw = fs.readFileSync(metaPath, "utf-8");
+      const meta = JSON.parse(raw);
+      if (typeof meta === "object" && meta !== null) {
+        meta.status = status;
+        if (lastError !== undefined) meta.lastError = lastError;
+        atomicWriteJson(metaPath, meta);
+      }
     } catch {
-      // Transient write failure (e.g. file-table pressure under parallel
-      // load): one immediate retry before giving up best-effort.
-      atomicWriteJson(indexPath, index);
+      // best effort; never throw from status-marking
     }
-  } catch {
-    // best effort; never throw from status-marking
+    try {
+      const indexPath = getProjectIndexPath(projectId);
+      if (!fs.existsSync(indexPath)) return true;
+      const raw = fs.readFileSync(indexPath, "utf-8");
+      const index = JSON.parse(raw);
+      if (typeof index !== "object" || index === null) return true;
+      if (typeof index.meta !== "object" || index.meta === null) return true;
+      index.meta.status = status;
+      if (lastError !== undefined) index.meta.lastError = lastError;
+      try {
+        atomicWriteJson(indexPath, index);
+      } catch {
+        // Transient write failure (e.g. file-table pressure under parallel
+        // load): one immediate retry before giving up best-effort.
+        atomicWriteJson(indexPath, index);
+      }
+    } catch {
+      // best effort; never throw from status-marking
+    }
+    return true;
+  } finally {
+    lock?.release();
   }
 }
 
@@ -885,6 +1038,19 @@ export function checkPersistenceConsistency(projectId: string): {
   }
 }
 
+/**
+ * Files Kai writes for the index itself. The rest of a project's storage dir
+ * (`integration.json`, the Azure DevOps binding) is the user's configuration,
+ * not index data, and must survive removing the index.
+ */
+const INDEX_OWNED_FILES = new Set(["meta.json", "index.json", ".lock"]);
+const INDEX_TEMP_FILE = /^(meta|index)\.json\..*\.tmp$/;
+
+/**
+ * Delete a project's index artifacts (`meta.json`, `index.json`, `.lock` and
+ * abandoned temp files) and the storage dir itself once nothing else lives in
+ * it. Other files, such as the project's integration binding, are left alone.
+ */
 export function deleteProjectData(projectId: string): { success: boolean; error?: string } {
   // Strict allow-list: ids are 16 lowercase hex chars from computeProjectId.
   // This guards the recursive rmSync below against caller confusion such as
@@ -906,7 +1072,12 @@ export function deleteProjectData(projectId: string): { success: boolean; error?
     return { success: false, error: "Project data not found" };
   }
   try {
-    fs.rmSync(storageDir, { recursive: true, force: true });
+    for (const name of fs.readdirSync(storageDir)) {
+      if (INDEX_OWNED_FILES.has(name) || INDEX_TEMP_FILE.test(name)) {
+        fs.rmSync(path.join(storageDir, name), { force: true });
+      }
+    }
+    if (fs.readdirSync(storageDir).length === 0) fs.rmdirSync(storageDir);
     return { success: true };
   } catch (err: unknown) {
     return { success: false, error: String(err) };

@@ -2,6 +2,7 @@ import { spawn, execSync } from "child_process";
 import fs from "fs";
 import path from "path";
 import { resolveCanonicalPath } from "./registry";
+import { noCwdLookupEnv } from "./spawnSafety";
 
 export interface LspServerCatalogEntry {
   language: string;
@@ -108,9 +109,12 @@ export function isCommandAvailable(command: string): boolean {
     }
   }
 
+  // The PATH walk above is complete on Windows (PATHEXT included). `where.exe`
+  // would also list a same-named file in the current (project) directory, so it
+  // is not used there as a fallback.
+  if (isWindows) return false;
   try {
-    const checkCmd = isWindows ? `where.exe "${command}"` : `which "${command}"`;
-    execSync(checkCmd, { stdio: "ignore", timeout: 2000 });
+    execSync(`which "${command}"`, { stdio: "ignore", timeout: 2000 });
     return true;
   } catch {
     return false;
@@ -133,6 +137,8 @@ export function detectInstalledLspServers(): DetectedLspServer[] {
           encoding: "utf-8",
           timeout: 2000,
           stdio: ["ignore", "pipe", "ignore"],
+          // Never run a same-named file from the project directory (Windows).
+          env: noCwdLookupEnv(),
         });
         version = out.trim().split("\n")[0];
       } catch {

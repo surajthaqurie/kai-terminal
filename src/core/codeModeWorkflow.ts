@@ -18,6 +18,7 @@ import {
   loadProjectIndex,
   markProjectGraphStatus,
   normalizePathForIdentity,
+  ProjectLock,
   resolveCanonicalPath,
   saveProjectIndex,
 } from "./registry";
@@ -801,25 +802,36 @@ export async function synchronizeGraphAfterChanges(
           warnings: warnings.length > 0 ? warnings : undefined,
         };
       }
-      const current = loadProjectIndex(meta.id);
-      const currentGen = current?.generatedAt ?? null;
-      if (baseGeneratedAt !== null && currentGen !== null && currentGen !== baseGeneratedAt) {
-        // A concurrent sync published a newer graph while we were building.
-        // Retry once from the new base; if it races again, report without
-        // overwriting the newer valid graph.
-        if (attempt === 0) continue;
-        return {
-          codeValidation,
-          graphScope: scope,
-          graphResult: "failed",
-          freshnessAfter: failureFreshness(meta.id),
-          message:
-            "Graph synchronization skipped: a concurrent sync published a newer valid graph; not overwritten.",
-          rejectedFiles: rejectedFiles.length > 0 ? rejectedFiles : undefined,
-          warnings: warnings.length > 0 ? warnings : undefined,
-        };
+      // The generation check and the publish are one step under the project
+      // lock: checked outside it, another process could publish between the
+      // two and be overwritten by this older candidate.
+      const publishLock = new ProjectLock(meta.id);
+      if (!publishLock.acquire(6000)) {
+        throw new Error(`Could not acquire index lock for project ${meta.name} (id: ${meta.id})`);
       }
-      saveProjectIndex(meta.id, candidate);
+      try {
+        const current = loadProjectIndex(meta.id);
+        const currentGen = current?.generatedAt ?? null;
+        if (baseGeneratedAt !== null && currentGen !== null && currentGen !== baseGeneratedAt) {
+          // A concurrent sync published a newer graph while we were building.
+          // Retry once from the new base; if it races again, report without
+          // overwriting the newer valid graph.
+          if (attempt === 0) continue;
+          return {
+            codeValidation,
+            graphScope: scope,
+            graphResult: "failed",
+            freshnessAfter: failureFreshness(meta.id),
+            message:
+              "Graph synchronization skipped: a concurrent sync published a newer valid graph; not overwritten.",
+            rejectedFiles: rejectedFiles.length > 0 ? rejectedFiles : undefined,
+            warnings: warnings.length > 0 ? warnings : undefined,
+          };
+        }
+        saveProjectIndex(meta.id, candidate);
+      } finally {
+        publishLock.release();
+      }
       const after = loadProjectIndex(meta.id);
       // The candidate was built from disk over a non-atomic window: files
       // may have changed during the build or between drift detection and
@@ -1551,17 +1563,14 @@ export interface ExternalCommandResult {
 }
 
 /**
- * Whether `command` needs shell evaluation for the target platform.
- * Restricted to Windows `.cmd`/`.bat` batch files only: POSIX never uses
- * a shell (direct argv, no string evaluation). `.ps1` scripts never use a
- * shell either; see {@link resolveSpawnTarget} for how they are launched.
- * Pure function of (command, platform) so the Windows branch is
- * unit-testable on any OS.
+ * Whether `command` is a Windows batch file (`.cmd`/`.bat`), which cannot be
+ * spawned directly: it must be run by `cmd.exe` (see {@link resolveSpawnTarget}).
+ * npm installs agent CLIs such as `claude` and `codex` as `.cmd` shims. POSIX
+ * never involves a shell (direct argv, no string evaluation), and `.ps1`
+ * scripts are launched through `powershell.exe -File`. Pure function of
+ * (command, platform) so the Windows branch is unit-testable on any OS.
  */
-export function needsShellForCommand(
-  command: string,
-  platform: string = process.platform
-): boolean {
+export function isWindowsBatchFile(command: string, platform: string = process.platform): boolean {
   if (platform !== "win32") return false;
   return /\.(cmd|bat)$/i.test((command ?? "").trim());
 }
@@ -1569,17 +1578,68 @@ export function needsShellForCommand(
 export interface SpawnTarget {
   command: string;
   args: string[];
-  shell: boolean;
+  /** Pass `args` to the OS untouched: they already carry the quoting `cmd.exe` expects. */
+  windowsVerbatimArguments?: boolean;
+}
+
+/** What `cmd.exe` parses specially, plus the space that would split an argument. Each is `^`-escaped. */
+const CMD_METACHARACTERS = /([()%!^"`<>&|;, *?[\]])/g;
+
+/**
+ * Quote one argument so a `.cmd` shim receives it exactly as given.
+ *
+ * Three parsers see the text in turn. (1) The C runtime of the program the shim
+ * finally runs splits it, so it is wrapped in quotes with backslashes before a
+ * quote doubled. (2) `cmd.exe` runs the `/c` line, and (3) the batch file
+ * expands `%*` into a line it parses again, so every metacharacter, the quotes
+ * included, is `^`-escaped twice: each pass consumes one caret and nothing in
+ * the argument can end the command or start another one. `%` is neutralised
+ * the same way, because a caret inside `%NAME%` stops cmd from seeing a
+ * variable reference.
+ *
+ * Line breaks cannot be expressed to cmd.exe at all (it ends the command at
+ * one), so they are refused instead of silently truncating a prompt.
+ */
+export function quoteCmdShimArg(arg: string): string {
+  if (/[\r\n\0]/.test(arg)) {
+    throw new Error(
+      "Argument contains a line break or NUL, which cmd.exe cannot pass to a .cmd/.bat launcher; " +
+        "put the text in a file or use the agent's real executable."
+    );
+  }
+  const quoted = `"${arg.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, "$1$1")}"`;
+  return quoted.replace(CMD_METACHARACTERS, "^$1").replace(CMD_METACHARACTERS, "^$1");
 }
 
 /**
- * Resolves the (command, args, shell) triple `runExternalAgentCommand` should
- * spawn. Windows `.ps1` scripts cannot be executed directly, so they run via
- * `powershell.exe -NoProfile -File <script> ...args` — still no shell (argv
- * stays an array) and WITHOUT `-ExecutionPolicy Bypass`, so the user's
- * execution policy is respected rather than silently overridden. Everything
- * else is unchanged: `.cmd`/`.bat` opt into a shell, all else spawns directly.
- * Pure function of (command, args, platform) so it is unit-testable anywhere.
+ * The `cmd.exe` invocation that runs batch file `command` with `args`:
+ * `cmd.exe /d /s /c ""<command>" <quoted args>"`. `/s` strips exactly the outer
+ * quotes, so a path with spaces keeps its own; `/d` skips AutoRun hooks. Spawned
+ * with verbatim arguments and WITHOUT `shell: true`, which would hand the
+ * unquoted path and arguments to the shell as one string.
+ */
+function cmdShimInvocation(command: string, args: string[]): SpawnTarget {
+  const file = command.trim();
+  if (/["\r\n\0]/.test(file)) {
+    throw new Error("Refusing to run a launcher whose path contains quotes or line breaks.");
+  }
+  const line = [`"${file}"`, ...args.map(quoteCmdShimArg)].join(" ");
+  return {
+    command: process.env.ComSpec || "cmd.exe",
+    args: ["/d", "/s", "/c", `"${line}"`],
+    windowsVerbatimArguments: true,
+  };
+}
+
+/**
+ * Resolves the (command, args) pair `runExternalAgentCommand` should spawn.
+ * Windows `.ps1` scripts cannot be executed directly, so they run via
+ * `powershell.exe -NoProfile -File <script> ...args` (argv stays an array) and
+ * WITHOUT `-ExecutionPolicy Bypass`, so the user's execution policy is respected
+ * rather than silently overridden. Windows `.cmd`/`.bat` files run through
+ * `cmd.exe` with quoted, escaped arguments (see {@link cmdShimInvocation}).
+ * Everything else spawns directly. Pure function of (command, args, platform)
+ * so it is unit-testable anywhere.
  */
 export function resolveSpawnTarget(
   command: string,
@@ -1590,16 +1650,16 @@ export function resolveSpawnTarget(
     return {
       command: "powershell.exe",
       args: ["-NoProfile", "-File", command.trim(), ...args],
-      shell: false,
     };
   }
-  return { command, args, shell: needsShellForCommand(command, platform) };
+  if (isWindowsBatchFile(command, platform)) return cmdShimInvocation(command, args);
+  return { command, args };
 }
 
 /**
- * Portable subprocess runner for the `kai run` lifecycle wrapper. No shell
- * by default (direct argv, no string evaluation); callers targeting Windows
- * batch files may opt into `shell: true` (see `needsShellForCommand`).
+ * Portable subprocess runner for the `kai run` lifecycle wrapper. Never uses a
+ * shell (direct argv, no string evaluation); Windows batch files are run by
+ * `cmd.exe` with pre-quoted arguments (see `resolveSpawnTarget`).
  *
  * Termination: on timeout or abort the whole process tree is signalled —
  * the child's process group on POSIX (`detached: true` + negative-pid
@@ -1647,7 +1707,8 @@ export function runExternalAgentCommand(
     timeoutMs?: number;
     signal?: AbortSignal;
     env?: NodeJS.ProcessEnv;
-    shell?: boolean;
+    /** The args are already quoted for the OS (a `cmd.exe /c` line from `resolveSpawnTarget`). */
+    windowsVerbatimArguments?: boolean;
   } = {}
 ): Promise<ExternalCommandResult> {
   const started = Date.now();
@@ -1686,7 +1747,7 @@ export function runExternalAgentCommand(
       child = spawn(command, args, {
         cwd: opts.cwd,
         env: opts.env ?? process.env,
-        shell: opts.shell ?? false,
+        windowsVerbatimArguments: opts.windowsVerbatimArguments,
         stdio: "inherit",
         windowsHide: true,
         // POSIX: lead a fresh process group so tree termination can

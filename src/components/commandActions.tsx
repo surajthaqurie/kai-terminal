@@ -17,13 +17,19 @@ import {
   Trash2,
   XCircle,
 } from "lucide-react";
-import { REVIEW_CHANGES_BINDING, platformLabel } from "../services/shortcuts";
-import type { KeybindingsConfig, SplitDirection } from "../types/terminal";
+import {
+  DEFAULT_FIXED_SHORTCUTS,
+  REVIEW_CHANGES_BINDING,
+  platformLabel,
+} from "../services/shortcuts";
+import type { FixedShortcutsConfig, KeybindingsConfig, SplitDirection } from "../types/terminal";
 import type { CommandAction } from "./CommandPalette";
 
 /** Everything the command palette can trigger, supplied by the App shell. */
 export interface CommandActionContext {
   keybindings: KeybindingsConfig;
+  /** The user's remapped terminal keys (copy, paste, clear...); defaults when omitted. */
+  fixedKeybindings?: Partial<FixedShortcutsConfig>;
   isMac: boolean;
   newTab: () => void;
   cycleTab: (step: 1 | -1) => void;
@@ -47,13 +53,12 @@ export interface CommandActionContext {
   openSettings: () => void;
 }
 
-/** Fixed terminal clipboard chords (not remappable; see Settings → Shortcuts). */
-const COPY_BINDING = "Ctrl+Shift+C";
-const PASTE_BINDING = "Ctrl+Shift+V";
-
 export function buildCommandActions(ctx: CommandActionContext): CommandAction[] {
   const key = (binding: string) => platformLabel(binding, ctx.isMac);
   const kb = ctx.keybindings;
+  // Copy / paste / clear are remappable in Settings, so show the CURRENT chord:
+  // hard-coded hints went stale as soon as the user changed them.
+  const fixed = { ...DEFAULT_FIXED_SHORTCUTS, ...ctx.fixedKeybindings };
   return [
     {
       id: "new-tab",
@@ -182,7 +187,7 @@ export function buildCommandActions(ctx: CommandActionContext): CommandAction[] 
       id: "copy-selection",
       label: "Copy Selection",
       category: "Edit",
-      shortcut: key(COPY_BINDING),
+      shortcut: key(fixed.copy),
       icon: <Copy size={16} />,
       perform: ctx.copySelection,
     },
@@ -190,7 +195,7 @@ export function buildCommandActions(ctx: CommandActionContext): CommandAction[] 
       id: "paste-clipboard",
       label: "Paste from Clipboard",
       category: "Edit",
-      shortcut: key(PASTE_BINDING),
+      shortcut: key(fixed.paste),
       icon: <ClipboardPaste size={16} />,
       perform: ctx.pasteClipboard,
     },
@@ -198,6 +203,7 @@ export function buildCommandActions(ctx: CommandActionContext): CommandAction[] 
       id: "clear-terminal",
       label: "Clear Active Terminal Screen",
       category: "Terminal",
+      shortcut: key(fixed.clearTerminal),
       icon: <Trash2 size={16} />,
       perform: ctx.clearTerminal,
     },

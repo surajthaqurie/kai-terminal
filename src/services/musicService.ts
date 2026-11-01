@@ -112,6 +112,30 @@ export function resolveInputToTrack(input: string): MusicTrack | null {
   return { title: raw.slice(0, 80), videoId: null, playlistId: null, query: raw };
 }
 
+/** Placeholder titles a track carries until YouTube reports the real one. */
+const PLACEHOLDER_TITLES = new Set(["youtube video", "youtube playlist"]);
+
+/**
+ * The words to search with for songs related to `track`, or null when there is
+ * nothing meaningful yet.
+ *
+ * `searchYouTubeVideos` answers any input that contains a video id or link with
+ * that same single video, so seeding a "related songs" search with a pasted
+ * link (query = the URL) or a preset (query = the bare id) can only ever find
+ * the song that is already playing: Next replayed it, auto-advance behaved like
+ * loop, and the suggestion queue stayed empty. Plain-words queries (search
+ * results) are used as they are; otherwise the real title, once YouTube has
+ * reported it, is the seed.
+ */
+export function relatedSearchSeed(track: MusicTrack | null): string | null {
+  if (!track) return null;
+  const query = track.query?.trim() ?? "";
+  if (query && extractVideoId(query) === null && !isYouTubeUrl(query)) return query;
+  const title = track.title.trim();
+  if (title && !PLACEHOLDER_TITLES.has(title.toLowerCase())) return title;
+  return null;
+}
+
 /** True when YouTube can move to a next item (playlists only). */
 export function hasNextItem(track: MusicTrack | null): boolean {
   return Boolean(track?.playlistId);
@@ -330,6 +354,31 @@ export interface YouTubePlayerTelemetry {
   playerState?: number;
   /** Title YouTube reports for the current video. */
   title?: string;
+  /** YouTube `onError` code: the embed cannot play this video at all. */
+  error?: number;
+}
+
+/**
+ * Plain-language reason for a YouTube embed `onError` code. Without this the
+ * player kept claiming it was playing (and the footer showed "Pause") for a
+ * video that could never start.
+ */
+export function describePlayerError(code: number): string {
+  switch (code) {
+    case 2:
+      return "YouTube rejected that video link. Try another song.";
+    case 5:
+      return "The video player hit an error. Try again or pick another song.";
+    case 100:
+      return "That video was removed or is private. Try another song.";
+    case 101:
+    case 150:
+      return "The owner of that video doesn't allow it to play in an embedded player. Try another song, or open it on YouTube.";
+    case 153:
+      return "YouTube blocked the embedded player for this video. Try another song, or open it on YouTube.";
+    default:
+      return `That video can't be played here (YouTube error ${code}). Try another song.`;
+  }
 }
 
 function finiteNumber(v: unknown): number | undefined {
@@ -351,6 +400,10 @@ export function parseYouTubePlayerMessage(data: unknown): YouTubePlayerTelemetry
   }
   if (!msg || typeof msg !== "object") return null;
   const { event, info } = msg as { event?: unknown; info?: unknown };
+  if (event === "onError") {
+    const error = finiteNumber(info);
+    return error !== undefined ? { error } : null;
+  }
   if (event === "onStateChange") {
     const playerState = finiteNumber(info);
     return playerState !== undefined ? { playerState } : null;

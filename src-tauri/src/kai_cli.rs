@@ -197,21 +197,33 @@ pub fn build_cmd_shim(node_exe: &str, cli_js: &Path) -> String {
     )
 }
 
-/// `kai.ps1` shim body (PowerShell callers).
+/// PowerShell single-quoted literal (`'` is doubled; nothing is expanded).
+fn ps_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "''"))
+}
+
+/// POSIX single-quoted literal (`'` becomes `'\''`; nothing is expanded).
+fn sh_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// `kai.ps1` shim body (PowerShell callers). Paths are quoted: the standard
+/// Node location is `C:\Program Files\nodejs\node.exe`, which an unquoted
+/// `& C:\Program Files\...` would split at the space.
 pub fn build_ps1_shim(node_exe: &str, cli_js: &Path) -> String {
     format!(
-        "& {} \"{}\" @args\r\nexit $LASTEXITCODE\r\n",
-        node_exe,
-        cli_js.to_string_lossy()
+        "& {} {} @args\r\nexit $LASTEXITCODE\r\n",
+        ps_quote(node_exe),
+        ps_quote(&cli_js.to_string_lossy())
     )
 }
 
-/// POSIX `kai` shim body.
+/// POSIX `kai` shim body (paths quoted for homes like `/Users/John Smith/...`).
 pub fn build_sh_shim(node_exe: &str, cli_js: &Path) -> String {
     format!(
-        "#!/bin/sh\nexec {} \"{}\" \"$@\"\n",
-        node_exe,
-        cli_js.to_string_lossy()
+        "#!/bin/sh\nexec {} {} \"$@\"\n",
+        sh_quote(node_exe),
+        sh_quote(&cli_js.to_string_lossy())
     )
 }
 
@@ -674,6 +686,27 @@ mod tests {
             Path::new("C:\\app\\index.js"),
         );
         assert!(s.contains("\"C:\\Program Files\\nodejs\\node.exe\""));
+    }
+
+    #[test]
+    fn test_ps1_shim_quotes_a_node_path_with_spaces() {
+        let s = build_ps1_shim(
+            "C:\\Program Files\\nodejs\\node.exe",
+            Path::new("C:\\Users\\O'Brien\\kai\\index.js"),
+        );
+        assert!(s.starts_with("& 'C:\\Program Files\\nodejs\\node.exe' "));
+        // An apostrophe in the script path is doubled, not left to end the literal.
+        assert!(s.contains("'C:\\Users\\O''Brien\\kai\\index.js'"));
+    }
+
+    #[test]
+    fn test_sh_shim_quotes_paths_with_spaces_and_apostrophes() {
+        let s = build_sh_shim(
+            "/Users/John Smith/.nvm/bin/node",
+            Path::new("/Users/John Smith/it's/cli/index.js"),
+        );
+        assert!(s.contains("exec '/Users/John Smith/.nvm/bin/node' "));
+        assert!(s.contains("'/Users/John Smith/it'\\''s/cli/index.js'"));
     }
 
     #[test]

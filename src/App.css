@@ -1563,6 +1563,110 @@ select.modal-input {
 }
 
 /* =========================================================================
+   Toasts (failures of silent actions, short confirmations)
+   Sits above the footer; the host ignores the pointer so only the toasts
+   themselves take clicks. Stacks above the pinned music player (2100).
+   ========================================================================= */
+
+.toast-host {
+  position: fixed;
+  right: 16px;
+  bottom: 38px;
+  z-index: 2200;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(440px, calc(100vw - 32px));
+  pointer-events: none;
+}
+
+.toast {
+  --toast-accent: var(--accent-primary);
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 8px 10px 12px;
+  background-color: var(--bg-surface-elevated);
+  color: var(--text-primary);
+  border: 1px solid var(--border-default);
+  border-left: 3px solid var(--toast-accent);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  font-size: var(--text-sm);
+  line-height: 1.4;
+  pointer-events: auto;
+  animation: toast-in 160ms ease-out;
+}
+
+.toast-error {
+  --toast-accent: var(--color-danger);
+}
+
+.toast-success {
+  --toast-accent: var(--color-success);
+}
+
+.toast-icon {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: var(--toast-accent);
+}
+
+.toast-message {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.toast-action,
+.toast-close {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.toast-action {
+  padding: 2px 8px;
+  font-size: var(--text-xs);
+  color: var(--accent-primary);
+}
+
+.toast-close {
+  width: 22px;
+  height: 22px;
+}
+
+.toast-action:hover,
+.toast-close:hover {
+  background-color: var(--bg-tab-hover, var(--bg-surface));
+  color: var(--text-primary);
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast {
+    animation: none;
+  }
+}
+
+/* =========================================================================
    Split Pane Layout
    ========================================================================= */
 

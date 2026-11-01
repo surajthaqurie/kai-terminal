@@ -170,7 +170,7 @@ export interface ScanSummary {
   fileLimit: number;
   /** Directories deeper than the traversal limit were not scanned. */
   depthLimitReached: boolean;
-  /** Directories that could not be read. */
+  /** Directories that could not be read, plus symlinks/junctions that could not be resolved (dangling links are not counted). */
   unreadableDirs: number;
   skippedByReason: Partial<Record<SkipReason, number>>;
 }

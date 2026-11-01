@@ -1,4 +1,5 @@
 import { FC, useEffect, useState } from "react";
+import { useModalBehavior } from "../hooks/useModalBehavior";
 import { X, Copy } from "lucide-react";
 import { getDiagnostics, DiagnosticsReport } from "../services/diagnosticsService";
 
@@ -9,6 +10,7 @@ interface DiagnosticsModalProps {
 }
 
 export const DiagnosticsModal: FC<DiagnosticsModalProps> = ({ isOpen, onClose, lastError }) => {
+  const dialogRef = useModalBehavior(isOpen, onClose);
   const [report, setReport] = useState<DiagnosticsReport | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -52,7 +54,9 @@ export const DiagnosticsModal: FC<DiagnosticsModalProps> = ({ isOpen, onClose, l
     a.href = url;
     a.download = `terminal-diagnostics-${Date.now()}.json`;
     a.click();
-    URL.revokeObjectURL(url);
+    // Not synchronously: some WebViews start the download after click() returns,
+    // and a revoked URL would then save an empty or failed file.
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
   };
 
   return (
@@ -62,7 +66,12 @@ export const DiagnosticsModal: FC<DiagnosticsModalProps> = ({ isOpen, onClose, l
       role="dialog"
       aria-label="Diagnostics and recovery"
     >
-      <div className="settings-modal" onClick={(e) => e.stopPropagation()} role="document">
+      <div
+        className="settings-modal"
+        ref={dialogRef}
+        onClick={(e) => e.stopPropagation()}
+        role="document"
+      >
         <div className="modal-header">
           <h3>Diagnostics &amp; Recovery</h3>
           <button

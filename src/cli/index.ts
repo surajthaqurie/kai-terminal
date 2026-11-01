@@ -199,8 +199,11 @@ async function dispatch(command: string, args: string[]): Promise<number> {
   switch (command) {
     // kai stop — clear Code Mode, back to plain terminal mode.
     case "stop":
-      clearActiveProjectState();
       announceCodeMode(null);
+      if (!clearActiveProjectState()) {
+        console.error(`[kai] Error: could not clear the saved Code Mode state.`);
+        return 1;
+      }
       console.log(`[kai] Code Mode cleared — back to plain terminal mode.`);
       return 0;
     case "health":

@@ -726,6 +726,9 @@ export const GitChangesModal: FC<GitChangesModalProps> = ({ dir, onClose }) => {
                               className="file-action-btn danger"
                               onClick={(e) => {
                                 e.stopPropagation();
+                                // The confirm box renders beside the selected file's
+                                // diff, so select the row it is asking about.
+                                setSelectedFile(f);
                                 setConfirmDiscardFile(f);
                               }}
                               title="Discard changes"
@@ -790,6 +793,9 @@ export const GitChangesModal: FC<GitChangesModalProps> = ({ dir, onClose }) => {
                               className="file-action-btn danger"
                               onClick={(e) => {
                                 e.stopPropagation();
+                                // The confirm box renders beside the selected file's
+                                // diff, so select the row it is asking about.
+                                setSelectedFile(f);
                                 setConfirmDiscardFile(f);
                               }}
                               title="Delete untracked file"

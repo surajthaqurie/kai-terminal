@@ -205,9 +205,11 @@ const MAX_OUTPUT_BATCH_BYTES: usize = 16_384;
 const READ_BUFFER_CHUNK_BYTES: usize = 32_768;
 // Dimension bounds limits
 const MIN_COLS: u16 = 10;
-const MAX_COLS: u16 = 500;
+// Generous enough for a maximized 4K pane at a small font (~530 columns): a cap
+// below what xterm fits leaves the shell wrapping narrower than the screen.
+const MAX_COLS: u16 = 1000;
 const MIN_ROWS: u16 = 2;
-const MAX_ROWS: u16 = 300;
+const MAX_ROWS: u16 = 500;
 // Maximum bytes per single `write()` syscall when streaming input to the
 // PTY master. Large pastes are sent as a sequence of chunks with the exact
 // same byte order — this is flow pacing, NOT line splitting: newlines and

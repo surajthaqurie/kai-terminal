@@ -635,17 +635,7 @@ In chat: "Use kai_project_info to inspect the codebase."
   }
   try {
     fs.mkdirSync(configDir, { recursive: true, mode: 0o700 });
-    const backupPath = exists
-      ? (() => {
-          try {
-            const bp = `${filePath}.kai.bak`;
-            fs.copyFileSync(filePath, bp);
-            return bp;
-          } catch {
-            return null;
-          }
-        })()
-      : null;
+    const backupPath = exists ? backupFile(filePath) : null;
     const tmpPath = `${filePath}.kai.tmp.${process.pid}`;
     fs.writeFileSync(tmpPath, `${JSON.stringify(data, null, 2)}\n`, {
       mode: 0o600,
@@ -896,6 +886,12 @@ export function resolveAgentConfigPath(
   };
 }
 
+function unreadableConfigMessage(err: unknown): string {
+  const code = (err as NodeJS.ErrnoException)?.code;
+  const reason = err instanceof Error ? err.message : String(err);
+  return `Config file exists but could not be read (${code ?? reason}); left untouched. Fix its permissions or close the program using it, then retry.`;
+}
+
 function readJsonConfig(filePath: string): {
   exists: boolean;
   data: Record<string, unknown>;
@@ -904,8 +900,14 @@ function readJsonConfig(filePath: string): {
   let raw: string;
   try {
     raw = fs.readFileSync(filePath, "utf-8");
-  } catch {
-    return { exists: false, data: {}, parseError: null };
+  } catch (err: unknown) {
+    // Only a missing file is "absent". A config that exists but cannot be read
+    // (permissions, an AV or editor lock) must not be mistaken for an empty one
+    // and then overwritten.
+    if ((err as NodeJS.ErrnoException)?.code === "ENOENT") {
+      return { exists: false, data: {}, parseError: null };
+    }
+    return { exists: true, data: {}, parseError: unreadableConfigMessage(err) };
   }
   if (Buffer.byteLength(raw, "utf-8") > MAX_CONFIG_BYTES) {
     return {
@@ -992,20 +994,52 @@ function hasKaiJsonEntry(data: Record<string, unknown>): boolean {
 const CODEX_TOML_SECTION = `mcp_servers.${MCP_SERVER_NAME}`;
 const LEGACY_TOML_SECTIONS = [`mcp_servers.${LEGACY_MCP_SERVER_NAME}`];
 
-/** Match one full `[section]` TOML block up to the next section or EOF. */
-function tomlSectionRegex(section: string): RegExp {
-  return new RegExp(`\\n?\\[${section.replace(/\./g, "\\.")}\\][\\s\\S]*?(?=\\n\\[|$)`, "g");
+/** A `[table]` or `[[array of tables]]` header line; group 1 is the dotted key. */
+const TOML_HEADER = /^\s*\[{1,2}\s*([^\]]+?)\s*\]{1,2}\s*(?:#.*)?$/;
+const TOML_COMMENT = /^\s*#/;
+
+/** `mcp_servers . "kai-terminal"` and `mcp_servers.kai-terminal` name the same table. */
+function normalizeTomlKey(key: string): string {
+  return key.replace(/\s*\.\s*/g, ".").replace(/["']/g, "");
 }
 
-/** Remove any previously written kai server table block(s) — the new
- *  `kai-terminal` section and any legacy `[mcp_servers.kai]` block left by
- *  older releases — so setup never appends a duplicate table. */
+/**
+ * Remove any previously written kai server table(s): the `kai-terminal` section
+ * with its subtables (e.g. `[mcp_servers.kai-terminal.env]`, which would
+ * otherwise be left behind as an orphan) and any legacy `[mcp_servers.kai]`
+ * block left by older releases, so setup never appends a duplicate table.
+ *
+ * Works line by line: a table runs from its header to the next header. Comment
+ * lines after the removed table's last key (blank lines aside) describe the NEXT
+ * table, so they are kept; comments above a key inside the removed table go with it.
+ */
 function stripKaiTomlSections(raw: string): string {
-  let out = raw.replace(tomlSectionRegex(CODEX_TOML_SECTION), "");
-  for (const section of LEGACY_TOML_SECTIONS) {
-    out = out.replace(tomlSectionRegex(section), "");
+  const targets = [CODEX_TOML_SECTION, ...LEGACY_TOML_SECTIONS];
+  const isKaiTable = (key: string): boolean => {
+    const name = normalizeTomlKey(key);
+    return targets.some((t) => name === t || name.startsWith(`${t}.`));
+  };
+  const out: string[] = [];
+  let removing = false;
+  let pendingComments: string[] = [];
+  for (const line of raw.split("\n")) {
+    const header = TOML_HEADER.exec(line);
+    if (header) {
+      const next = isKaiTable(header[1]);
+      // Comments right above a surviving table belong to it; above a removed one, they go too.
+      if (removing && !next) out.push(...pendingComments);
+      pendingComments = [];
+      removing = next;
+      if (!next) out.push(line);
+    } else if (!removing) {
+      out.push(line);
+    } else if (TOML_COMMENT.test(line)) {
+      pendingComments.push(line);
+    } else if (line.trim() !== "") {
+      pendingComments = []; // a key line: any comments above it were inside the removed table
+    }
   }
-  return out;
+  return out.join("\n");
 }
 
 function hasCodexTomlEntry(raw: string): boolean {
@@ -1036,8 +1070,18 @@ function applyCodexTomlSetup(
   try {
     existing = fs.readFileSync(filePath, "utf-8");
     fileExists = true;
-  } catch {
-    fileExists = false;
+  } catch (err: unknown) {
+    // Only a missing file may be created fresh; an unreadable one would be overwritten.
+    if ((err as NodeJS.ErrnoException)?.code !== "ENOENT") {
+      return {
+        wrote: false,
+        created: false,
+        alreadyConfigured: false,
+        skipped: true,
+        backupPath: null,
+        message: `${filePath}: ${unreadableConfigMessage(err)}`,
+      };
+    }
   }
   const hasNew =
     existing.includes(`[${CODEX_TOML_SECTION}]`) || existing.includes(`${CODEX_TOML_SECTION}.`);
@@ -1098,14 +1142,19 @@ function ensureParentDir(filePath: string): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
 }
 
-/** Copy the previous file next to itself before overwriting; never throws. */
+/**
+ * Copy the file next to itself before Kai first changes it; never throws.
+ * Write-once: an existing `.kai.bak` is the user's config from before Kai
+ * touched it, and every later run (which sees a file Kai already edited) would
+ * otherwise replace it with Kai's own output. The path is returned in both cases.
+ */
 function backupFile(filePath: string): string | null {
+  const backupPath = `${filePath}.kai.bak`;
   try {
-    const backupPath = `${filePath}.kai.bak`;
-    fs.copyFileSync(filePath, backupPath);
+    fs.copyFileSync(filePath, backupPath, fs.constants.COPYFILE_EXCL);
     return backupPath;
-  } catch {
-    return null;
+  } catch (err: unknown) {
+    return (err as NodeJS.ErrnoException)?.code === "EEXIST" ? backupPath : null;
   }
 }
 
@@ -1459,7 +1508,18 @@ export function removeAgentSetup(agent: string, opts: AgentSetupOptions = {}): A
   const dryRun = opts.dryRun === true;
 
   if (target.keyStyle === "toml-codex") {
-    const raw = fs.readFileSync(filePath, "utf-8");
+    let raw: string;
+    try {
+      raw = fs.readFileSync(filePath, "utf-8");
+    } catch (err: unknown) {
+      return {
+        id: def.id,
+        name: def.name,
+        path: filePath,
+        removed: false,
+        message: `${filePath}: ${unreadableConfigMessage(err)}`,
+      };
+    }
     if (!hasCodexTomlEntry(raw)) {
       return {
         id: def.id,
@@ -1507,7 +1567,7 @@ export function removeAgentSetup(agent: string, opts: AgentSetupOptions = {}): A
       name: def.name,
       path: filePath,
       removed: false,
-      message: parsed.parseError,
+      message: `${filePath}: ${parsed.parseError}`,
     };
   }
 

@@ -1,4 +1,5 @@
 import { FC, useCallback, useEffect, useState } from "react";
+import { useModalBehavior } from "../hooks/useModalBehavior";
 import {
   X,
   Plus,
@@ -10,12 +11,15 @@ import {
   BookOpen,
   Bot,
   Plug,
+  Trash2,
 } from "lucide-react";
 import { IntegrationsPanel } from "./IntegrationsPanel";
 import {
   getAiCliDetails,
   checkCustomAiCliPath,
   registerUserCustomAiCli,
+  removeUserCustomAiCli,
+  saveAiCliPathOverride,
   getKaiCliLaunch,
   getAgentSetupSnippet,
   setupAgentMcp,
@@ -36,6 +40,7 @@ interface AiCliPanelProps {
  * and kai MCP configuration with one-click Configure / Reconfigure.
  */
 export const AiCliPanel: FC<AiCliPanelProps> = ({ isOpen, onClose, projectDir }) => {
+  const dialogRef = useModalBehavior(isOpen, onClose);
   const [activeTab, setActiveTab] = useState<"providers" | "integrations">("providers");
   const [details, setDetails] = useState<AiCliDetails[]>([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -81,9 +86,23 @@ export const AiCliPanel: FC<AiCliPanelProps> = ({ isOpen, onClose, projectDir })
     try {
       const checked = await checkCustomAiCliPath(id, p);
       setDetails((prev) => prev.map((d) => (d.id === id ? checked : d)));
+      if (!checked.available) {
+        setCustomError(checked.diagnostic || `"${p}" is not a working ${checked.name} binary.`);
+      } else if (!saveAiCliPathOverride(id, p)) {
+        setCustomError("Found it, but could not remember the path: browser storage is full.");
+      }
     } catch (e) {
       setCustomError(e instanceof Error ? e.message : String(e));
     }
+  };
+
+  const handleRemoveCustom = (cli: AiCliDetails) => {
+    if (!removeUserCustomAiCli(cli.id.replace(/^custom:/, ""))) {
+      setCustomError(`Could not remove "${cli.name}".`);
+      return;
+    }
+    setCustomError(null);
+    setDetails((prev) => prev.filter((d) => d.id !== cli.id));
   };
 
   const handleConfigureMcp = async (cli: AiCliDetails) => {
@@ -169,6 +188,7 @@ export const AiCliPanel: FC<AiCliPanelProps> = ({ isOpen, onClose, projectDir })
     <div className="modal-backdrop" onClick={onClose} role="dialog" aria-label="AI CLI providers">
       <div
         className="settings-modal settings-tabs-modal"
+        ref={dialogRef}
         onClick={(e) => e.stopPropagation()}
         role="document"
       >
@@ -429,6 +449,18 @@ export const AiCliPanel: FC<AiCliPanelProps> = ({ isOpen, onClose, projectDir })
                         Registered custom binary — launch it from a terminal tab. Kai MCP wiring
                         applies to the built-in providers above.
                       </p>
+                    )}
+                    {d.id.startsWith("custom:") && (
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-small"
+                        onClick={() => handleRemoveCustom(d)}
+                        title={`Remove ${d.name} from this list`}
+                        aria-label={`Remove ${d.name}`}
+                      >
+                        <Trash2 size={13} />
+                        <span>Remove</span>
+                      </button>
                     )}
 
                     {/* Manual setup fallback: verified snippet + terminal

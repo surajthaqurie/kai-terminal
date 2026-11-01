@@ -7,7 +7,7 @@ import {
 } from "../types/terminal";
 import { ITheme } from "@xterm/xterm";
 import { PtyService } from "./ptyService";
-import { DEFAULT_FIXED_SHORTCUTS, resolveFixedBindings } from "./shortcuts";
+import { DEFAULT_FIXED_SHORTCUTS, parseBinding, resolveFixedBindings } from "./shortcuts";
 
 export const DEFAULT_KEYBINDINGS: KeybindingsConfig = {
   newTab: "Ctrl+Shift+T",
@@ -57,6 +57,8 @@ const LEGACY_STORAGE_KEY = "terminal_user_settings";
 const PROJECT_SETTINGS_PREFIX = "kai_project_settings_";
 const LEGACY_PROJECT_SETTINGS_PREFIX = "terminal_project_settings_";
 const SETTINGS_VERSION = 1;
+/** Stored beside the settings once they were saved after the 14 -> 12 font default change. */
+const FONT_DEFAULT_MIGRATED = "_fontDefaultMigrated";
 
 /** Theme ids the Appearance panel can mark selected. Single source of truth. */
 const KNOWN_THEME_IDS: ReadonlyArray<ThemeName> = [
@@ -330,7 +332,9 @@ export class SettingsService {
     }
     for (const key of Object.keys(DEFAULT_KEYBINDINGS) as Array<keyof KeybindingsConfig>) {
       const v = kb[key];
-      if (typeof v !== "string" || !v.includes("+") || v.length > 32 || /[\0\n\r]/.test(v)) {
+      // Same parser the shortcut registry uses, so every binding the recorder
+      // accepts (including a bare "F5") survives a save and a reload.
+      if (typeof v !== "string" || v.length > 32 || /[\0\n\r]/.test(v) || !parseBinding(v)) {
         kb[key] = DEFAULT_KEYBINDINGS[key];
       } else {
         kb[key] = v.trim().slice(0, 32);
@@ -403,7 +407,9 @@ export class SettingsService {
         ) {
           parsed.fontFamily = DEFAULT_SETTINGS.fontFamily;
         }
-        if (parsed.fontSize === 14 && !parsed._customFontSize) {
+        // One-time: the default moved from 14 to 12. Every save writes
+        // FONT_DEFAULT_MIGRATED, so a 14 the user chose afterwards is kept.
+        if (parsed.fontSize === 14 && !parsed[FONT_DEFAULT_MIGRATED]) {
           parsed.fontSize = 12;
         }
         return SettingsService.normalize(parsed);
@@ -434,7 +440,10 @@ export class SettingsService {
   static saveSettings(settings: UserSettings): void {
     try {
       const safe = SettingsService.normalize(settings);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...safe, version: SETTINGS_VERSION }));
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({ ...safe, version: SETTINGS_VERSION, [FONT_DEFAULT_MIGRATED]: true })
+      );
     } catch {
       // Fail silently if localStorage disabled
     }

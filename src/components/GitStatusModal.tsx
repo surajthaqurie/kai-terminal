@@ -1,5 +1,6 @@
 import { FC, useState } from "react";
 import { X, Copy, Check, GitBranch } from "lucide-react";
+import { useModalBehavior } from "../hooks/useModalBehavior";
 
 interface GitStatusModalProps {
   dir: string;
@@ -13,6 +14,7 @@ interface GitStatusModalProps {
  * always appears in the middle of the window with copy/close actions.
  */
 export const GitStatusModal: FC<GitStatusModalProps> = ({ dir, output, onClose }) => {
+  const dialogRef = useModalBehavior(true, onClose);
   const [copied, setCopied] = useState(false);
 
   const handleCopy = async () => {
@@ -33,7 +35,12 @@ export const GitStatusModal: FC<GitStatusModalProps> = ({ dir, output, onClose }
       aria-modal="true"
       aria-label={`Git status for ${dir}`}
     >
-      <div className="git-status-modal" onClick={(e) => e.stopPropagation()} role="document">
+      <div
+        className="git-status-modal"
+        ref={dialogRef}
+        onClick={(e) => e.stopPropagation()}
+        role="document"
+      >
         <div className="modal-header">
           <h3>
             <GitBranch

@@ -26,6 +26,12 @@ export function useCallPause({
   actionsRef.current = { pause, resume };
   const pausedByCallRef = useRef(false);
 
+  // The user took over during the call (pressed Play): the call no longer owns
+  // the player's state, so its end must not "resume" over what they chose.
+  useEffect(() => {
+    if (playing) pausedByCallRef.current = false;
+  }, [playing]);
+
   useEffect(() => {
     if (!isTauriAvailable()) return;
     let cancelled = false;

@@ -132,12 +132,91 @@ export function loadUserCustomClis(): CustomAiCliConfig[] {
   }
 }
 
-function saveUserCustomClis(clis: CustomAiCliConfig[]): void {
+function saveUserCustomClis(clis: CustomAiCliConfig[]): boolean {
   try {
     localStorage.setItem(CUSTOM_CLI_STORAGE_KEY, JSON.stringify(clis));
+    return true;
   } catch {
-    // ignore
+    return false;
   }
+}
+
+/** Removes a user-registered custom CLI (`id` without the `custom:` prefix). */
+export function removeUserCustomAiCli(id: string): boolean {
+  const before = loadUserCustomClis();
+  const after = before.filter((c) => c.id !== id);
+  if (after.length === before.length) return false;
+  const saved = saveUserCustomClis(after);
+  if (saved) clearAiCliDetailsCache();
+  return saved;
+}
+
+/**
+ * Binary paths the user validated for BUILT-IN providers that auto-detection
+ * did not find. Without persisting them, "Validate" flipped the card to Found
+ * once and the next Re-detect (or panel open) reverted it to Not found.
+ */
+const PATH_OVERRIDE_STORAGE_KEY = "kai_ai_cli_path_overrides";
+
+function loadPathOverrides(): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(PATH_OVERRIDE_STORAGE_KEY);
+    const parsed: unknown = raw ? JSON.parse(raw) : {};
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return Object.fromEntries(
+      Object.entries(parsed as Record<string, unknown>).filter(
+        (e): e is [string, string] => typeof e[1] === "string" && e[1].length > 0
+      )
+    );
+  } catch {
+    return {};
+  }
+}
+
+/** Remembers a validated path for a built-in provider. Returns false if it could not be stored. */
+export function saveAiCliPathOverride(id: string, path: string): boolean {
+  const clean = path.trim().slice(0, 4096);
+  if (!clean || clean.includes("\0")) return false;
+  try {
+    localStorage.setItem(
+      PATH_OVERRIDE_STORAGE_KEY,
+      JSON.stringify({ ...loadPathOverrides(), [id]: clean })
+    );
+    clearAiCliDetailsCache();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Fills in providers that detection missed with the path the user validated for them. */
+async function applyPathOverrides(base: AiCliDetails[]): Promise<AiCliDetails[]> {
+  if (!isTauriAvailable()) return base;
+  const overrides = loadPathOverrides();
+  return Promise.all(
+    base.map(async (d) => {
+      const path = overrides[d.id];
+      if (d.available || !path) return d;
+      try {
+        const checked = await checkCustomAiCliPath(d.id, path);
+        return checked.available ? checked : d;
+      } catch {
+        return d;
+      }
+    })
+  );
+}
+
+/** Built-in details (with user-validated paths applied) followed by validated custom CLIs. */
+async function composeDetails(
+  base: AiCliDetails[],
+  customClis: CustomAiCliConfig[]
+): Promise<AiCliDetails[]> {
+  const [withOverrides, validatedCustom] = await Promise.all([
+    applyPathOverrides(base),
+    validateCustomClis(customClis),
+  ]);
+  return [...withOverrides, ...validatedCustom];
 }
 
 /** Frontend mirror of the backend 60 s probe cache: repeat panel opens
@@ -181,13 +260,10 @@ export async function getAiCliDetails(opts?: { force?: boolean }): Promise<AiCli
           detailsInflight = null;
         });
     }
-    const validatedCustom = await validateCustomClis(customClis);
-    return [...detailsCache.data, ...validatedCustom];
+    return composeDetails(detailsCache.data, customClis);
   }
   if (detailsInflight) {
-    const baseDetails = await detailsInflight;
-    const validatedCustom = await validateCustomClis(customClis);
-    return [...baseDetails, ...validatedCustom];
+    return composeDetails(await detailsInflight, customClis);
   }
   detailsInflight = fetchAiCliDetailsBase();
   let baseDetails: AiCliDetails[] = [];
@@ -198,10 +274,9 @@ export async function getAiCliDetails(opts?: { force?: boolean }): Promise<AiCli
     detailsInflight = null;
   }
 
-  // Append user-configured custom AI CLIs verified via IPC if Tauri is available
-  const validatedCustom = await validateCustomClis(customClis);
-
-  return [...baseDetails, ...validatedCustom];
+  // Apply the user's validated paths and append their custom AI CLIs (verified
+  // via IPC when the desktop backend is available).
+  return composeDetails(baseDetails, customClis);
 }
 
 async function validateCustomClis(customClis: CustomAiCliConfig[]): Promise<AiCliDetails[]> {
@@ -328,12 +403,26 @@ export async function registerUserCustomAiCli(config: CustomAiCliConfig): Promis
     name: config.name.trim().slice(0, 80) || id,
     path: cleanPath,
   };
-  const existing = loadUserCustomClis().filter((c) => c.id !== clean.id);
-  const updated = [...existing, clean];
-  saveUserCustomClis(updated);
+  const persist = () => {
+    const updated = [...loadUserCustomClis().filter((c) => c.id !== clean.id), clean];
+    if (!saveUserCustomClis(updated)) {
+      throw new Error("Could not save the custom CLI: browser storage is full or unavailable.");
+    }
+    clearAiCliDetailsCache();
+  };
   if (isTauriAvailable()) {
-    return await checkCustomAiCliPath(`custom:${clean.id}`, clean.path);
+    // Check first, save only a binary that works: a typo used to be saved anyway
+    // and then reappeared as a "missing" card on every open.
+    const checked = await checkCustomAiCliPath(`custom:${clean.id}`, clean.path);
+    if (!checked.available) {
+      throw new Error(
+        checked.diagnostic || `"${clean.path}" is not an executable Kai can run. Nothing was saved.`
+      );
+    }
+    persist();
+    return checked;
   }
+  persist();
   return {
     id: `custom:${clean.id}`,
     name: clean.name,

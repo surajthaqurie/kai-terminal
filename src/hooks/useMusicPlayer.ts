@@ -3,6 +3,13 @@ import { SettingsService } from "../services/settingsService";
 
 const PINNED_KEY = "kai_music_pinned";
 
+/** Transport events that do nothing until a song is loaded. */
+const NEEDS_A_SONG: ReadonlySet<string> = new Set([
+  "kai-music-toggle-play",
+  "kai-music-next",
+  "kai-music-previous",
+]);
+
 interface MusicTrackInfo {
   title?: string | null;
   videoId?: string | null;
@@ -44,6 +51,24 @@ export function useMusicPlayer({ showMusicPlayer }: { showMusicPlayer: boolean |
 
   const closePanel = useCallback(() => setIsOpen(false), []);
 
+  const openPanel = useCallback(() => setIsOpen(true), []);
+
+  /**
+   * Transport command from the footer buttons or a global shortcut. Play, next
+   * and previous need a song: with nothing loaded the panel ignores them, so
+   * (when the player is enabled) open the drawer to let the user pick one
+   * instead of leaving a button or shortcut that silently does nothing.
+   */
+  const transport = useCallback(
+    (name: string) => {
+      if (showMusicPlayer && !title && NEEDS_A_SONG.has(name)) setIsOpen(true);
+      dispatchEvent(name);
+    },
+    [showMusicPlayer, title, dispatchEvent]
+  );
+
+  const playPause = useCallback(() => transport("kai-music-toggle-play"), [transport]);
+
   const handleTrackChange = useCallback((track: MusicTrackInfo | null, isPlaying: boolean) => {
     setTitle(track?.title ?? null);
     setVideoId(track?.videoId ?? null);
@@ -69,6 +94,9 @@ export function useMusicPlayer({ showMusicPlayer }: { showMusicPlayer: boolean |
     dispatchEvent,
     togglePanel,
     closePanel,
+    openPanel,
+    transport,
+    playPause,
     handleTrackChange,
     setProgress,
   };

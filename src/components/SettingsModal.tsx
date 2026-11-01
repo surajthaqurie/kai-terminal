@@ -1,5 +1,6 @@
 import { windowTransparencySupported } from "../services/windowOpacity";
 import { FC, useState, useEffect } from "react";
+import { ESCAPE_OWNER_ATTR, useModalBehavior } from "../hooks/useModalBehavior";
 import {
   UserSettings,
   ShellProfile,
@@ -161,6 +162,15 @@ interface SettingsModalProps {
   onDownloadAndInstall?: () => void;
 }
 
+/** Applies a theme to the document (colors, color-scheme, browser chrome). */
+function applyDocumentTheme(theme: UserSettings["theme"]) {
+  document.documentElement.setAttribute("data-theme", theme);
+  document.body.setAttribute("data-theme", theme);
+  document.documentElement.style.colorScheme = isLightTheme(theme) ? "light" : "dark";
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute("content", SettingsService.getThemeCanvasColor(theme));
+}
+
 export const SettingsModal: FC<SettingsModalProps> = ({
   isOpen,
   onClose,
@@ -175,6 +185,7 @@ export const SettingsModal: FC<SettingsModalProps> = ({
   onViewUpdate,
   onDownloadAndInstall,
 }) => {
+  const dialogRef = useModalBehavior(isOpen, () => handleCancel());
   const [formData, setFormData] = useState<UserSettings>(settings);
   const [activeTab, setActiveTab] = useState<SettingsTab>("appearance");
   const [selectedFontPreset, setSelectedFontPreset] = useState<string>("custom");
@@ -215,30 +226,19 @@ export const SettingsModal: FC<SettingsModalProps> = ({
     setSelectedFontPreset(known ? settings.fontFamily : "custom");
   }, [settings.fontFamily, installedFonts, isOpen]);
 
-  // Live theme preview while choosing theme in Settings
+  // Live theme preview while choosing a theme in Settings. The cleanup puts the
+  // SAVED theme back whenever the preview ends, however the dialog closes
+  // (Cancel, X, backdrop, Escape, or the Settings shortcut, which used to skip
+  // the old cancel handler and leave a previewed theme applied). On Save the
+  // new theme is applied by the config hook in the same commit.
   useEffect(() => {
     if (!isOpen) return;
-    if (formData.theme) {
-      document.documentElement.setAttribute("data-theme", formData.theme);
-      document.body.setAttribute("data-theme", formData.theme);
-      document.documentElement.style.colorScheme = isLightTheme(formData.theme) ? "light" : "dark";
-      const meta = document.querySelector('meta[name="theme-color"]');
-      if (meta) {
-        meta.setAttribute("content", SettingsService.getThemeCanvasColor(formData.theme));
-      }
-    }
-  }, [formData.theme, isOpen]);
+    const saved = settings.theme;
+    if (formData.theme) applyDocumentTheme(formData.theme);
+    return () => applyDocumentTheme(saved);
+  }, [formData.theme, isOpen, settings.theme]);
 
-  const handleCancel = () => {
-    document.documentElement.setAttribute("data-theme", settings.theme);
-    document.body.setAttribute("data-theme", settings.theme);
-    document.documentElement.style.colorScheme = isLightTheme(settings.theme) ? "light" : "dark";
-    const meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) {
-      meta.setAttribute("content", SettingsService.getThemeCanvasColor(settings.theme));
-    }
-    onClose();
-  };
+  const handleCancel = () => onClose();
 
   if (!isOpen) return null;
 
@@ -416,7 +416,14 @@ export const SettingsModal: FC<SettingsModalProps> = ({
 
   return (
     <div className="modal-backdrop" onClick={handleCancel}>
-      <div className="settings-modal settings-tabs-modal" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="settings-modal settings-tabs-modal"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Settings"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="modal-header">
           <h3>Settings</h3>
           <button className="btn-close" onClick={handleCancel} title="Close">
@@ -860,6 +867,7 @@ export const SettingsModal: FC<SettingsModalProps> = ({
                                 // A recorder, not a text box: typing here used to write
                                 // "Press shortcut...x" into the binding.
                                 readOnly
+                                {...{ [ESCAPE_OWNER_ATTR]: isRecording ? "true" : undefined }}
                                 onKeyDown={(e) => handleShortcutKeyDown(action, e)}
                                 onFocus={() => setRecordingAction(action)}
                                 onBlur={() => {

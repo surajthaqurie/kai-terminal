@@ -21,6 +21,19 @@ export function listSessionCacheFiles(): SessionCacheListing {
   };
 }
 
+/**
+ * The names that belong to project `projectId`: the id itself, or the id
+ * followed by `.` or `-` (`<id>.json`, `<id>-layout`). A name that merely
+ * contains the id, or a project name such as `app`, never matches: removing one
+ * project's files must not take another's (or an unrelated file's) with them.
+ */
+export function filesOfProject(names: string[], projectId: string): string[] {
+  return names.filter(
+    (name) =>
+      name === projectId || name.startsWith(`${projectId}.`) || name.startsWith(`${projectId}-`)
+  );
+}
+
 /** Deletes the named regular files in `dir`; symlinks, directories and unreadable entries are skipped. */
 export function removeFiles(dir: string, names: string[]): void {
   for (const name of names) {

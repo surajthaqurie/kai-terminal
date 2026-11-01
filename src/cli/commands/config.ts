@@ -1,5 +1,4 @@
-import fs from "fs";
-import { ensureKaiDirectories } from "../../core/registry";
+import { atomicWriteJson, ensureKaiDirectories } from "../../core/registry";
 import { kaiConfigPath, loadKaiConfig } from "../kaiConfig";
 
 /** Hidden compat: `kai config [list|get|set]` (prefer `kai list -c`). */
@@ -69,7 +68,7 @@ export async function runConfig(args: string[]): Promise<number> {
     // First-run safety: KAI_HOME may not exist yet (no project has been
     // registered). Previously this threw ENOENT on a fresh machine.
     ensureKaiDirectories();
-    fs.writeFileSync(kaiConfigPath(), JSON.stringify(currentConfig, null, 2), { mode: 0o600 });
+    atomicWriteJson(kaiConfigPath(), currentConfig);
     console.log(`[kai] Configuration updated: ${key} = ${val}`);
     return 0;
   }

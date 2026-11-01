@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { runCacheJanitor } from "../services/cacheJanitor";
+import { useLatest } from "./useLatest";
+import type { NoticeKind } from "./useNotices";
 import {
   APP_VERSION_FALLBACK,
   INITIAL_UPDATE_DOWNLOAD_STATE,
@@ -29,13 +31,15 @@ const MAX_HIDDEN_RETRIES = 3;
 interface AppUpdatesOptions {
   autoCheckUpdates: boolean | undefined;
   setLastError: (message: string | null) => void;
+  /** Short confirmations (e.g. "up to date") that are not errors. */
+  notify?: (kind: NoticeKind, message: string) => void;
 }
 
 const errorMessage = (err: unknown) =>
   err instanceof Error ? err.message : typeof err === "string" ? err : String(err);
 
 /** App version, update checks (auto + manual) and the download/install flow. */
-export function useAppUpdates({ autoCheckUpdates, setLastError }: AppUpdatesOptions) {
+export function useAppUpdates({ autoCheckUpdates, setLastError, notify }: AppUpdatesOptions) {
   const [appVersion, setAppVersion] = useState<string>(APP_VERSION_FALLBACK);
   const [updateInfo, setUpdateInfo] = useState<UpdateCheckResult | null>(null);
   const [isCheckingUpdates, setIsCheckingUpdates] = useState<boolean>(false);
@@ -54,7 +58,11 @@ export function useAppUpdates({ autoCheckUpdates, setLastError }: AppUpdatesOpti
         const current = await getAppVersion();
         setAppVersion(current);
         const result = await checkForUpdates(current);
-        setUpdateInfo(result);
+        // A failed background check (offline, rate limit, GitHub 5xx) says
+        // nothing about an update we already found: keep showing it instead of
+        // replacing it with an error. A manual check always shows its result.
+        const keepKnownUpdate = Boolean(result.error) && !manual;
+        setUpdateInfo((prev) => (keepKnownUpdate && prev?.updateAvailable ? prev : result));
         // Fresh version → fresh download state (never reuse a stale path),
         // but never wipe an install that is running right now.
         setUpdateDownload((prev) =>
@@ -62,7 +70,9 @@ export function useAppUpdates({ autoCheckUpdates, setLastError }: AppUpdatesOpti
             ? prev
             : INITIAL_UPDATE_DOWNLOAD_STATE
         );
-        recordCheckTime();
+        // Only a check that actually reached GitHub counts as done, so a
+        // failed one is retried at the next launch instead of 24 h later.
+        if (!result.error) recordCheckTime();
         if (result.updateAvailable && result.latestVersion) {
           // Respect a previous dismiss unless this is a manual re-check.
           if (manual || !isDismissed(result.latestVersion)) {
@@ -74,6 +84,8 @@ export function useAppUpdates({ autoCheckUpdates, setLastError }: AppUpdatesOpti
           // on every manual check was the reported annoyance.
         } else if (manual && !result.updateAvailable && !result.error) {
           setLastError(null);
+          // A manual check that finds nothing must still answer the question.
+          notify?.("info", `You're up to date: Kai ${current} is the latest version.`);
         } else if (manual && result.error) {
           setLastError(`Update check: ${result.error}`);
         }
@@ -83,12 +95,18 @@ export function useAppUpdates({ autoCheckUpdates, setLastError }: AppUpdatesOpti
         setIsCheckingUpdates(false);
       }
     },
-    [isCheckingUpdates, setLastError]
+    [isCheckingUpdates, setLastError, notify]
   );
 
-  // App version for the status bar + automatic update check on startup and
-  // every few hours while the window stays open. Failures are silent unless
-  // the user triggered the check manually.
+  // The schedule below outlives many renders, so it calls the LATEST
+  // `checkUpdates` (a captured first-render copy would keep a permanently
+  // stale "already checking" guard).
+  const checkUpdatesRef = useLatest(checkUpdates);
+
+  // Once per launch: app version for the footer, the outcome of the update that
+  // restarted Kai, and the cache sweep. Kept apart from the schedule so that
+  // toggling "automatically check for updates" cannot re-run it (the outcome is
+  // consumed on read, so a second read would hide an undismissed notice).
   useEffect(() => {
     void getAppVersion().then((v) => {
       setAppVersion(v);
@@ -103,6 +121,11 @@ export function useAppUpdates({ autoCheckUpdates, setLastError }: AppUpdatesOpti
         // Storage failures must never block startup.
       }
     });
+  }, []);
+
+  // Automatic update check on startup and every few hours while the window
+  // stays open. Failures are silent unless the user triggered the check manually.
+  useEffect(() => {
     // Defer network auto-check well past terminal startup so a slow DNS /
     // offline hang never contends with the first PTY spawn on Windows
     // (a classic "Not Responding on launch" trigger). Honors the user's
@@ -119,13 +142,13 @@ export function useAppUpdates({ autoCheckUpdates, setLastError }: AppUpdatesOpti
         return;
       }
       if (autoCheck && shouldAutoCheck()) {
-        void checkUpdates(false);
+        void checkUpdatesRef.current(false);
       }
     }, FIRST_CHECK_DELAY_MS);
     const interval = setInterval(() => {
       if (typeof document !== "undefined" && document.hidden) return;
       if (autoCheckUpdates !== false) {
-        void checkUpdates(false);
+        void checkUpdatesRef.current(false);
       }
     }, UPDATE_PERIODIC_MS);
     return () => {
@@ -133,8 +156,7 @@ export function useAppUpdates({ autoCheckUpdates, setLastError }: AppUpdatesOpti
       for (const t of retryTimers) clearTimeout(t);
       clearInterval(interval);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoCheckUpdates]);
+  }, [autoCheckUpdates, checkUpdatesRef]);
 
   const viewUpdate = useCallback(() => {
     void openReleasePage(updateInfo?.releaseUrl ?? RELEASES_PAGE_URL);

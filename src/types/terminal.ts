@@ -70,7 +70,8 @@ export interface PtyOutputPayload {
  */
 export interface PtyExitPayload {
   id: string;
-  exit_code?: number;
+  /** `null`/absent when the backend could not read the exit status. */
+  exit_code?: number | null;
 }
 
 /**

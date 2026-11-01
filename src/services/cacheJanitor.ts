@@ -36,14 +36,21 @@ const PRESERVED_EXACT: ReadonlySet<string> = new Set([
   // aiCliService.ts
   "kai_custom_ai_clis",
   "terminal_custom_ai_clis",
+  "kai_ai_cli_path_overrides",
   // autostartService.ts (browser/mock mode)
   "kai_autostart_enabled_mock",
+  // TerminalView.tsx: user-set renderer override (the GPU-problem escape hatch)
+  "kai_renderer",
 ]);
 
 /** Key prefixes whose entries must survive an update (per-project settings). */
 const PRESERVED_PREFIXES: readonly string[] = [
   "kai_project_settings_",
   "terminal_project_settings_",
+  // Music player: favorites, volume, pinned/expanded/dim state, panel size and
+  // the footer pill position (MusicPanel.tsx, musicService.ts, StatusBar.tsx).
+  // The legacy queue key shares the prefix; the player removes it itself.
+  "kai_music_",
 ];
 
 export interface CacheJanitorReport {

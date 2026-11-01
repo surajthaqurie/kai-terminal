@@ -9,6 +9,7 @@ import { TabPanes } from "./components/TabPanes";
 import { SessionBanners } from "./components/SessionBanners";
 import { RenameTabDialog } from "./components/RenameTabDialog";
 import { MusicHost } from "./components/MusicHost";
+import { ToastHost } from "./components/ToastHost";
 import { buildCommandActions } from "./components/commandActions";
 import {
   AiCliPanel,
@@ -26,6 +27,7 @@ import { useGitStatus } from "./hooks/useGitStatus";
 import { useLatest } from "./hooks/useLatest";
 import { readClipboardText } from "./services/clipboardService";
 import { useMusicPlayer } from "./hooks/useMusicPlayer";
+import { useNotices } from "./hooks/useNotices";
 import { usePaneCwd } from "./hooks/usePaneCwd";
 import { usePrefetchPanels } from "./hooks/usePrefetchPanels";
 import { useProjectActions } from "./hooks/useProjectActions";
@@ -35,6 +37,7 @@ import { useTabs } from "./hooks/useTabs";
 import { useTerminalConfig } from "./hooks/useTerminalConfig";
 import { useWindowRefit } from "./hooks/useWindowRefit";
 import { resolvePaneShell } from "./services/paneShell";
+import { SettingsService } from "./services/settingsService";
 import { resolveEffectiveProjectDir } from "./services/projectService";
 import { isMacPlatform, platformLabel } from "./services/shortcuts";
 import { RELEASES_PAGE_URL } from "./services/updateService";
@@ -49,6 +52,20 @@ import "./App.css";
  */
 function App() {
   const [lastError, setLastError] = useState<string | null>(null);
+  const { notices, notify, dismiss: dismissNotice } = useNotices();
+  /**
+   * Records an error for Diagnostics AND shows it as a toast. Use it for actions
+   * that give no visible feedback of their own (editor launch, git, updates,
+   * autostart). Failures that already have in-pane UI (shell spawn, crash-loop
+   * banner) keep using `setLastError` so they are not announced twice.
+   */
+  const reportError = useCallback(
+    (message: string | null) => {
+      setLastError(message);
+      if (message) notify("error", message);
+    },
+    [notify]
+  );
   // Global toolbar working directory (follows the active pane).
   const [cwd, setCwd] = useState<string>("");
   const cwdRef = useLatest(cwd);
@@ -64,9 +81,8 @@ function App() {
   const [renameTarget, setRenameTarget] = useState<TerminalTab | null>(null);
 
   const config = useTerminalConfig({
-    setLastError,
+    setLastError: reportError,
     isSettingsOpen,
-    onSettingsSaved: (next) => music.setMuted(Boolean(next.musicStartMuted)),
   });
   const { userSettings } = config;
   const music = useMusicPlayer({ showMusicPlayer: userSettings.showMusicPlayer });
@@ -158,13 +174,12 @@ function App() {
     effectiveProjectDir,
     cwd,
     editorPath: userSettings.editorPath,
-    setLastError,
+    setLastError: reportError,
     applyGitInfo: git.applyGitInfo,
   });
   const handleCwdResolved = usePaneCwd({
     tabsRef,
     activeTabIdRef,
-    cwdRef,
     setTabs,
     setCwd,
     applyGitInfo: git.applyGitInfo,
@@ -189,7 +204,8 @@ function App() {
   });
   const updates = useAppUpdates({
     autoCheckUpdates: userSettings.autoCheckUpdates,
-    setLastError,
+    setLastError: reportError,
+    notify,
   });
   useWindowRefit({ tabsRef, activeTabIdRef, terminalRefs });
   usePrefetchPanels();
@@ -246,7 +262,11 @@ function App() {
     const opening = !music.isOpen;
     music.togglePanel();
     if (opening && !userSettings.showMusicPlayer) {
-      config.saveSettings({ ...userSettings, showMusicPlayer: true });
+      // Persist too: `config.saveSettings` only applies settings to this session,
+      // so without this the footer player vanishes again after a restart.
+      const next = { ...userSettings, showMusicPlayer: true };
+      SettingsService.saveSettings(next);
+      config.saveSettings(next);
     }
   };
 
@@ -265,7 +285,7 @@ function App() {
     gotoTab: tabsState.gotoTab,
     zoomFont: config.zoomFont,
     toggleMusic: toggleMusicPanel,
-    musicEvent: music.dispatchEvent,
+    musicEvent: music.transport,
     reviewChanges: () => project.reviewChanges(),
   });
 
@@ -280,6 +300,7 @@ function App() {
 
   const commandActions = buildCommandActions({
     keybindings: userSettings.keybindings,
+    fixedKeybindings: userSettings.fixedKeybindings,
     isMac: isMacPlatform(),
     newTab: newTabAndFocus,
     cycleTab: tabsState.cycleTab,
@@ -392,7 +413,6 @@ function App() {
             shells={config.shells}
             skipShellProfile={userSettings.skipShellProfile === true}
             settings={userSettings}
-            fallbackCwd={cwd}
             terminalRefs={terminalRefs}
             onFocusPane={tabsState.focusPane}
             onCodeModeChange={setPaneCodeMode}
@@ -484,6 +504,7 @@ function App() {
           startMuted={music.muted}
           open={music.isOpen}
           onClose={music.closePanel}
+          onRequestOpen={music.openPanel}
           onTrackChange={music.handleTrackChange}
           onMutedChange={music.setMuted}
           onProgressChange={music.setProgress}
@@ -498,6 +519,12 @@ function App() {
           onClose={() => setRenameTarget(null)}
         />
       )}
+
+      <ToastHost
+        notices={notices}
+        onDismiss={dismissNotice}
+        onDetails={() => setIsDiagnosticsOpen(true)}
+      />
 
       <StatusBar
         gitBranch={git.statusGit.branch}
@@ -521,9 +548,9 @@ function App() {
         music={music.footerState}
         onToggleMusicPanel={toggleMusicPanel}
         musicOpen={music.isOpen}
-        onMusicPlayPause={() => music.dispatchEvent("kai-music-toggle-play")}
-        onMusicPrevious={() => music.dispatchEvent("kai-music-previous")}
-        onMusicNext={() => music.dispatchEvent("kai-music-next")}
+        onMusicPlayPause={music.playPause}
+        onMusicPrevious={() => music.transport("kai-music-previous")}
+        onMusicNext={() => music.transport("kai-music-next")}
         onMusicMute={() => music.dispatchEvent("kai-music-mute")}
       />
     </div>

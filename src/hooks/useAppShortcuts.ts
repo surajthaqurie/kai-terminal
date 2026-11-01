@@ -50,6 +50,11 @@ export function useAppShortcuts(handlers: AppShortcutHandlers) {
     const handleKeyDown = (e: KeyboardEvent) => {
       const h = latest.current;
       if (!(e.ctrlKey || e.metaKey || e.altKey)) return;
+      // AltGr (reported as Ctrl+Alt on Windows) types characters on many layouts
+      // (`~` on German, `ś` on Polish...). Bindings match the PHYSICAL key, so
+      // those characters fired shortcuts such as "next pane" and the user could
+      // not type them. AltGr input is text, never a shortcut.
+      if (e.getModifierState?.("AltGraph")) return;
       // Never steal plain typing: every registered binding includes
       // Ctrl/Cmd or Alt, so typing in inputs is safe. Only skip when the
       // event target is a text field AND no modifier combo matches — handled

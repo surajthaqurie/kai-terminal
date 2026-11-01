@@ -8,6 +8,7 @@ import {
 import type {
   PaneLayoutNode,
   PaneSplitDirection,
+  SessionStatus,
   TerminalPane,
   TerminalTab,
 } from "../types/terminal";
@@ -32,6 +33,27 @@ export function newTabId(): string {
     rand = Math.floor(Math.random() * 0xffffffff).toString(16);
   }
   return `session-${Date.now()}-${tabSeq}-${rand}`;
+}
+
+/**
+ * A tab's status is derived from ALL its panes, never from whichever pane
+ * reported last: one errored or still-connecting split must not read as
+ * "connected" because its sibling reconnected a moment later.
+ * Worst state wins: error > connecting > connected > disconnected.
+ */
+export function deriveTabStatus(panes: TerminalPane[]): {
+  status: SessionStatus;
+  errorMessage: string | undefined;
+} {
+  const failed = panes.find((p) => p.status === "error");
+  if (failed) return { status: "error", errorMessage: failed.errorMessage };
+  if (panes.some((p) => p.status === "connecting")) {
+    return { status: "connecting", errorMessage: undefined };
+  }
+  if (panes.some((p) => p.status === "connected")) {
+    return { status: "connected", errorMessage: undefined };
+  }
+  return { status: "disconnected", errorMessage: undefined };
 }
 
 export interface PersistedTab {
@@ -76,11 +98,16 @@ export function savePersistedLayout(tabs: TerminalTab[]): void {
   try {
     const safe: PersistedTab[] = tabs.slice(0, MAX_PERSISTED_TABS).map((t) => {
       const paneIds = t.panes.map((p) => p.id);
+      // A single-pane tab is restored from the tab-level fields, which are only
+      // updated while that pane is the sole or active one. After a split
+      // collapses (the active pane closed, or the survivor switched shell) they
+      // describe a pane that no longer exists, so prefer the survivor's own.
+      const only = t.panes.length === 1 ? t.panes[0] : undefined;
       return {
         title: t.title,
         color: t.color,
-        shellPath: t.shellPath,
-        cwd: t.cwd,
+        shellPath: only?.shellPath ?? t.shellPath,
+        cwd: only?.cwd ?? t.cwd,
         splitDirection: t.splitDirection,
         panes:
           t.panes.length > 1

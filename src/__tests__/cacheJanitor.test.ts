@@ -76,3 +76,28 @@ describe("install/update cache janitor", () => {
     expect(localStorage.getItem("my_other_key")).toBe("v");
   });
 });
+
+describe("cache janitor keeps every key a feature persists", () => {
+  it("preserves the music player's saved state and the renderer override across an update", () => {
+    const kept = [
+      "kai_music_favorites",
+      "kai_music_volume",
+      "kai_music_pinned",
+      "kai_music_expanded",
+      "kai_music_dimmed",
+      "kai_music_dim_percent",
+      "kai_music_panel_width",
+      "kai_music_panel_height",
+      "kai_music_footer_drag_x",
+      "kai_renderer",
+      "kai_ai_cli_path_overrides",
+    ];
+    for (const key of kept) localStorage.setItem(key, "v");
+    localStorage.setItem("kai_stale_experiment_flag", "1");
+
+    const report = runCacheJanitor("9.9.9");
+
+    expect(report.removed).toEqual(["kai_stale_experiment_flag"]);
+    for (const key of kept) expect(localStorage.getItem(key), key).toBe("v");
+  });
+});

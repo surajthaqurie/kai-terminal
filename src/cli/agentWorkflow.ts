@@ -237,7 +237,7 @@ export async function executeAgentWorkflow(
           cwd: meta.canonicalPath,
           timeoutMs: opts.timeoutMs,
           signal: controller.signal,
-          shell: target.shell,
+          windowsVerbatimArguments: target.windowsVerbatimArguments,
         });
         // The agent is a fullscreen TUI: restore mouse/focus/paste input
         // modes NOW (before any further logging) so a killed/crashed agent
@@ -330,7 +330,7 @@ export function resolveKaiBin(): string {
 
 function printBackupNote(backupPath: string | undefined | null): void {
   if (!backupPath) return;
-  console.log(`[kai] Previous config backed up to: ${backupPath}`);
+  console.log(`[kai] Original config kept at: ${backupPath}`);
   console.log(
     `[kai] The backup is kept intentionally — delete it after verifying the new config works.`
   );

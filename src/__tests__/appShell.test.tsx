@@ -894,6 +894,27 @@ describe("App shell: settings, themes and terminal actions", () => {
     expect(actions.find((a) => a.id === "review-changes")!.shortcut).toBe("Ctrl+Shift+G");
   });
 
+  it("palette hints for copy, paste and clear show the defaults, and follow the user's remapped keys", async () => {
+    await mount();
+    const defaults = modal("palette").actions as Array<{ id: string; shortcut?: string }>;
+    const hint = (id: string) => defaults.find((a) => a.id === id)!.shortcut;
+    expect(hint("copy-selection")).toBe("Ctrl+Shift+C");
+    expect(hint("paste-clipboard")).toBe("Ctrl+Shift+V");
+    expect(hint("clear-terminal")).toBe("Ctrl+Shift+K");
+  });
+
+  it("palette copy/paste hints reflect a remapped terminal key", async () => {
+    localStorage.setItem(
+      "kai_user_settings",
+      JSON.stringify({ fixedKeybindings: { copy: "Ctrl+Alt+Y", paste: "Ctrl+Alt+P" }, version: 1 })
+    );
+    await mount();
+    const actions = modal("palette").actions as Array<{ id: string; shortcut?: string }>;
+    const hint = (id: string) => actions.find((a) => a.id === id)!.shortcut;
+    expect(hint("copy-selection")).toBe("Ctrl+Alt+Y");
+    expect(hint("paste-clipboard")).toBe("Ctrl+Alt+P");
+  });
+
   it("palette actions drive tabs, panes and modals", async () => {
     await mount();
     await runAction("new-tab");
@@ -1076,6 +1097,10 @@ describe("App shell: AI CLI, music and updates", () => {
     await press("KeyM", "m", { ctrl: true, alt: true });
     expect(modal("music").open).toBe(true);
     expect(modal("settings").settings.showMusicPlayer).toBe(true);
+    // Enabling the player must survive a restart, not just this session.
+    expect(JSON.parse(localStorage.getItem("kai_user_settings") ?? "{}").showMusicPlayer).toBe(
+      true
+    );
 
     await act(async () => {
       modal("music").onTrackChange({ title: "Lo-fi", videoId: "abc123" }, true);
@@ -1101,6 +1126,65 @@ describe("App shell: AI CLI, music and updates", () => {
     await press("KeyN", "n", { ctrl: true, alt: true });
     await press("KeyU", "u", { ctrl: true, alt: true });
     expect(seen).toEqual(["kai-music-toggle-play", "kai-music-next", "kai-music-mute"]);
+  });
+
+  it("footer play opens the player when nothing is loaded, and only toggles once a track exists", async () => {
+    await mount();
+    await press("KeyM", "m", { ctrl: true, alt: true });
+    await act(async () => modal("music").onClose());
+    expect(modal("music").open).toBe(false);
+    const seen: string[] = [];
+    window.addEventListener("kai-music-toggle-play", () => seen.push("toggle"));
+    const footerPlay = () =>
+      container.querySelector<HTMLButtonElement>(
+        '[aria-label="Play music"], [aria-label="Pause music"]'
+      )!;
+
+    // Nothing loaded: the click must open the drawer, not silently do nothing.
+    await act(async () => footerPlay().click());
+    expect(modal("music").open).toBe(true);
+
+    // A track exists: the drawer stays as the user left it and playback toggles.
+    await act(async () => {
+      modal("music").onTrackChange({ title: "Lo-fi", videoId: "abc123" }, true);
+      modal("music").onClose();
+    });
+    seen.length = 0;
+    await act(async () => footerPlay().click());
+    expect(modal("music").open).toBe(false);
+    expect(seen).toEqual(["toggle"]);
+  });
+
+  it("music shortcuts and footer Next/Previous open the player when nothing is loaded, not when it is disabled", async () => {
+    await mount();
+    // Player disabled: the shortcut stays a no-op (nothing mounted, nothing opened).
+    await press("Space", " ", { ctrl: true, alt: true });
+    expect(registry.modals.music).toBeUndefined();
+
+    // Enabled, then closed, with no song loaded.
+    await press("KeyM", "m", { ctrl: true, alt: true });
+    await act(async () => modal("music").onClose());
+    expect(modal("music").open).toBe(false);
+
+    await press("Space", " ", { ctrl: true, alt: true });
+    expect(modal("music").open).toBe(true);
+
+    await act(async () => modal("music").onClose());
+    await press("KeyN", "n", { ctrl: true, alt: true });
+    expect(modal("music").open).toBe(true);
+
+    await act(async () => modal("music").onClose());
+    const nextBtn = container.querySelector<HTMLButtonElement>('[aria-label="Next song"]')!;
+    await act(async () => nextBtn.click());
+    expect(modal("music").open).toBe(true);
+
+    // With a song loaded the same controls only dispatch, leaving the drawer as it is.
+    await act(async () => {
+      modal("music").onTrackChange({ title: "Lo-fi", videoId: "abc123" }, true);
+      modal("music").onClose();
+    });
+    await press("KeyN", "n", { ctrl: true, alt: true });
+    expect(modal("music").open).toBe(false);
   });
 
   it("reports the app version and runs the version-gated cache sweep on startup", async () => {
@@ -1131,12 +1215,66 @@ describe("App shell: AI CLI, music and updates", () => {
     expect(container.querySelector(".update-banner")).toBeNull();
   });
 
-  it("opening the editor outside the desktop app surfaces the error in diagnostics", async () => {
+  it("opening the editor outside the desktop app surfaces the error in diagnostics and as a toast", async () => {
     await mount();
     await runAction("open-editor");
     expect(modal("diagnostics").lastError).toBe(
       "Editor launch is only available inside the desktop app."
     );
+    const toast = container.querySelector('.toast-error[role="alert"]');
+    expect(toast?.textContent).toContain("Editor launch is only available inside the desktop app.");
+  });
+
+  it("a toast's Details button opens diagnostics and its close button dismisses it", async () => {
+    await mount();
+    await runAction("open-editor");
+    const details = [...container.querySelectorAll<HTMLButtonElement>(".toast button")].find(
+      (b) => b.textContent === "Details"
+    )!;
+    await act(async () => details.click());
+    expect(modal("diagnostics").isOpen).toBe(true);
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>('.toast [aria-label="Dismiss notification"]')!
+        .click()
+    );
+    expect(container.querySelector(".toast")).toBeNull();
+  });
+
+  it("a manual update check that finds nothing says so instead of staying silent", async () => {
+    vi.mocked(checkForUpdates).mockResolvedValueOnce({
+      updateAvailable: false,
+      currentVersion: "1.0.0",
+      latestVersion: "1.0.0",
+      releaseUrl: null,
+      releaseName: null,
+      releaseAuthor: null,
+      selectedAsset: null,
+      selectedAssetLabel: null,
+      error: null,
+    } as never);
+    await mount();
+    await runAction("check-updates");
+    const toast = container.querySelector('.toast-info[role="status"]');
+    expect(toast?.textContent).toContain("up to date");
+    expect(container.querySelector(".update-banner")).toBeNull();
+  });
+
+  it("a failed manual update check reports the failure", async () => {
+    vi.mocked(checkForUpdates).mockResolvedValueOnce({
+      updateAvailable: false,
+      currentVersion: "1.0.0",
+      latestVersion: null,
+      releaseUrl: null,
+      releaseName: null,
+      releaseAuthor: null,
+      selectedAsset: null,
+      selectedAssetLabel: null,
+      error: "Update check failed (HTTP 503)",
+    } as never);
+    await mount();
+    await runAction("check-updates");
+    expect(container.querySelector(".toast-error")?.textContent).toContain("HTTP 503");
   });
 });
 

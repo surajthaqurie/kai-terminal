@@ -1,14 +1,33 @@
 import { registerProject, getProjectMeta } from "../../core/registry";
 import { indexProject } from "../../core/indexer";
 import { installCommitMsgHook } from "../../core/githooks";
+import type { ProjectIndex } from "../../core/types";
 import { saveActiveProjectState } from "../activeProject";
+
+/**
+ * Say so when the scan left part of the project out (file cap, depth limit,
+ * unreadable directories or unresolvable links): the index is real but partial,
+ * and "Index ready!" alone would hide that.
+ */
+function printScanWarning(index: ProjectIndex): void {
+  const scan = index.scan;
+  if (!scan || scan.complete) return;
+  const causes: string[] = [];
+  if (scan.fileLimitReached) causes.push(`file limit of ${scan.fileLimit} reached`);
+  if (scan.depthLimitReached) causes.push("directories nested too deeply were not scanned");
+  if (scan.unreadableDirs > 0) {
+    causes.push(`${scan.unreadableDirs} unreadable folder(s) or link(s) skipped`);
+  }
+  console.warn(`[kai] Warning: the scan was incomplete (${causes.join("; ")}).`);
+  console.warn(`  Files in the skipped areas are not in the index.`);
+}
 
 export async function runGraph(args: string[]): Promise<number> {
   const sub = args[1];
   if (sub === "init") {
     const targetPath = args[2] || process.cwd();
     const meta = registerProject(targetPath);
-    saveActiveProjectState(meta.canonicalPath, meta.name, meta.id, "code");
+    const stateSaved = saveActiveProjectState(meta.canonicalPath, meta.name, meta.id, "code");
     try {
       installCommitMsgHook(meta.canonicalPath);
     } catch {
@@ -20,6 +39,7 @@ export async function runGraph(args: string[]): Promise<number> {
     console.log(`- Files indexed: ${Object.keys(index.files).length}`);
     console.log(`- Symbols indexed: ${Object.keys(index.symbolIndex).length}`);
     console.log(`- Project rules loaded: ${index.rules.length}`);
+    printScanWarning(index);
     if (index.changes) {
       const { added, modified, renamed, deleted } = index.changes;
       if (added.length || modified.length || renamed.length || deleted.length) {
@@ -28,7 +48,8 @@ export async function runGraph(args: string[]): Promise<number> {
         );
       }
     }
-    saveActiveProjectState(meta.canonicalPath, meta.name, meta.id, "code");
+    // Refresh the timestamp the desktop app watches; a failed first save would only warn twice.
+    if (stateSaved) saveActiveProjectState(meta.canonicalPath, meta.name, meta.id, "code");
     return 0;
   }
   if (sub === "update" || sub === "rebuild") {
@@ -39,6 +60,7 @@ export async function runGraph(args: string[]): Promise<number> {
     console.log(
       `[kai] Update complete! Indexed ${Object.keys(index.files).length} files and ${Object.keys(index.symbolIndex).length} symbols.`
     );
+    printScanWarning(index);
     if (index.changes) {
       const { added, modified, renamed, deleted } = index.changes;
       if (added.length || modified.length || renamed.length || deleted.length) {

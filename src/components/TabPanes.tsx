@@ -27,8 +27,6 @@ interface TabPanesProps {
   shells: ShellProfile[];
   skipShellProfile: boolean;
   settings: UserSettings;
-  /** Global toolbar cwd: last fallback for a pane's working directory. */
-  fallbackCwd: string;
   /** Terminal handles keyed by pane id (toolbar actions, refit). */
   terminalRefs: MutableRefObject<Record<string, TerminalViewRef | null>>;
   onFocusPane: (tabId: string, paneId: string) => void;
@@ -63,7 +61,6 @@ export const TabPanes = memo(function TabPanes({
   shells,
   skipShellProfile,
   settings,
-  fallbackCwd,
   terminalRefs,
   onFocusPane,
   onCodeModeChange,
@@ -141,7 +138,7 @@ export const TabPanes = memo(function TabPanes({
           }}
           sessionId={pane.id}
           selectedShell={resolvePaneShell(pane.shellPath, shells, selectedShell, skipShellProfile)}
-          cwd={pane.cwd || tab.cwd || fallbackCwd}
+          cwd={pane.cwd || tab.cwd}
           settings={settings}
           visible={isActive}
           resetKey={pane.resetKey ?? 0}

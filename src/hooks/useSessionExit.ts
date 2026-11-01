@@ -9,7 +9,9 @@ import {
 } from "react";
 import { closeAppWindow } from "../services/appWindow";
 import { removePaneById } from "../services/paneLayout";
-import { createDefaultTab } from "../services/tabFactory";
+import { sameShellPath } from "../services/paneShell";
+import { createDefaultTab, deriveTabStatus } from "../services/tabFactory";
+import { applyTabsUpdate } from "./tabsSync";
 import type { ShellProfile, TerminalTab } from "../types/terminal";
 
 /** Deaths inside this window count toward a crash loop. */
@@ -126,7 +128,8 @@ export function useSessionExit({
         if (recent.length >= CRASH_LOOP_THRESHOLD) {
           parkAsFault(
             "Shell keeps exiting immediately (3 times in 10 s). The configured shell binary is " +
-              "likely missing or not runnable. Pick another shell in Settings, then press Retry."
+              "likely missing or not runnable. Switch this terminal's shell with the shell picker " +
+              "in the footer, or press Retry to try it again."
           );
           return;
         }
@@ -137,19 +140,24 @@ export function useSessionExit({
         // their ids/objects and the tree prunes to exactly the survivors, so
         // the remaining splits stay mounted on every OS — exiting one pane
         // must never refresh (respawn) its neighbors.
-        setTabs((prev) =>
+        applyTabsUpdate(tabsRef, setTabs, (prev) =>
           prev.map((t) => (t.id === tabId ? { ...t, ...removePaneById(t, paneId) } : t))
         );
         return;
       }
 
       if (liveTabs.length > 1) {
+        // Decide from the live ref and update it in the same step: two shells
+        // dying together (`wsl --shutdown`, a mass kill) arrive before React
+        // re-renders, and each used to overwrite the other's removal.
         const remainingTabs = liveTabs.filter((t) => t.id !== tabId);
-        setTabs(remainingTabs);
+        applyTabsUpdate(tabsRef, setTabs, (prev) => prev.filter((t) => t.id !== tabId));
         if (activeTabIdRef.current === tabId) {
           const targetIdx = liveTabs.findIndex((t) => t.id === tabId);
           const nextIdx = Math.max(0, targetIdx - 1);
-          setActiveTabId(remainingTabs[nextIdx]?.id || remainingTabs[0].id);
+          const nextId = remainingTabs[nextIdx]?.id || remainingTabs[0].id;
+          activeTabIdRef.current = nextId;
+          setActiveTabId(nextId);
         }
         return;
       }
@@ -166,8 +174,8 @@ export function useSessionExit({
       if (!isCleanExit && bornAt > 0 && now - bornAt < INSTANT_DEATH_MS) {
         parkAsFault(
           "Shell exited right after opening — it likely failed to start (bad shell binary or " +
-            "working directory). The window was kept open so you can fix it: pick another shell " +
-            "in Settings, then press Retry."
+            "working directory). The window was kept open so you can fix it: switch this " +
+            "terminal's shell with the shell picker in the footer, or press Retry to try again."
         );
         return;
       }
@@ -206,31 +214,50 @@ export function useSessionExit({
     exitTimesRef.current = [];
     setLastError(null);
     setLoopFault(null);
+    // A pane keeps its own recorded shell, so re-spawning "in place" retried the
+    // same missing binary forever. When that binary is no longer a detected
+    // shell, retry with the current default instead.
+    const shells = shellsRef.current;
+    const fallbackPath = shells.find((s) => s.id === selectedShellIdRef.current)?.path;
     setTabs((prev) =>
-      prev.map((t) =>
-        t.id === tabId
-          ? {
-              ...t,
-              status: "connecting" as const,
-              errorMessage: undefined,
-              activePaneId: paneId,
-              panes: t.panes.map((p) =>
-                p.id === paneId
-                  ? {
-                      ...p,
-                      status: "connecting" as const,
-                      errorMessage: undefined,
-                      resetKey: (p.resetKey ?? 0) + 1,
-                    }
-                  : p
-              ),
-            }
-          : t
-      )
+      prev.map((t) => {
+        if (t.id !== tabId) return t;
+        const panes = t.panes.map((p) => {
+          if (p.id !== paneId) return p;
+          const missing =
+            p.shellPath !== undefined && !shells.some((s) => sameShellPath(s.path, p.shellPath));
+          return {
+            ...p,
+            shellPath: missing && fallbackPath ? fallbackPath : p.shellPath,
+            status: "connecting" as const,
+            errorMessage: undefined,
+            resetKey: (p.resetKey ?? 0) + 1,
+          };
+        });
+        return {
+          ...t,
+          shellPath: t.panes.length === 1 ? (panes[0].shellPath ?? t.shellPath) : t.shellPath,
+          activePaneId: paneId,
+          panes,
+          ...deriveTabStatus(panes),
+        };
+      })
     );
-  }, [loopFault, setLastError, setTabs]);
+  }, [loopFault, setLastError, setTabs, shellsRef, selectedShellIdRef]);
 
   const dismissFault = useCallback(() => setLoopFault(null), []);
+
+  // The banner describes ONE pane's failure. Drop it once that pane is gone
+  // (tab closed, layout replaced by a restore/workspace) or healthy again
+  // (shell switched from the footer): otherwise it lingers, and a later Retry
+  // press would kill the healthy replacement shell.
+  useEffect(() => {
+    if (!loopFault) return;
+    const pane = tabs
+      .find((t) => t.id === loopFault.tabId)
+      ?.panes.find((p) => p.id === loopFault.paneId);
+    if (!pane || pane.status === "connected") setLoopFault(null);
+  }, [tabs, loopFault]);
 
   /**
    * A terminal was restarted on purpose (shell switch): its birth clock and the

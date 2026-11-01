@@ -116,10 +116,14 @@ const PS_TIMEOUT_MS = 15000;
  * Run a PowerShell snippet with a hard timeout. Prefers `pwsh`
  * (PowerShell 7, faster cold start) and falls back to Windows
  * PowerShell 5.1. Returns stdout, or null when PowerShell is
- * missing, blocked, or hung — callers must degrade to manual
- * instructions instead of hanging the install forever.
+ * missing, blocked, hung, or the script failed — callers must degrade to
+ * manual instructions instead of hanging the install forever.
+ *
+ * `extraEnv` is how values reach the script: a path interpolated into the
+ * script text breaks on an apostrophe (C:\Users\O'Brien) and is re-parsed by
+ * cmd.exe on the way in, whereas `$env:NAME` is data, whatever it contains.
  */
-function runPowerShell(script, timeoutMs = PS_TIMEOUT_MS) {
+function runPowerShell(script, timeoutMs = PS_TIMEOUT_MS, extraEnv = {}) {
   const candidates = [];
   try {
     const where = execSync("where pwsh", {
@@ -143,6 +147,7 @@ function runPowerShell(script, timeoutMs = PS_TIMEOUT_MS) {
         encoding: "utf8",
         stdio: ["ignore", "pipe", "ignore"],
         timeout: timeoutMs,
+        env: { ...process.env, ...extraEnv },
       });
     } catch (err) {
       if (!last) continue; // timed-out pwsh: try Windows PowerShell next.
@@ -161,6 +166,28 @@ function persistedPathContainsWindows(dir) {
   return out.split(";").some((s) => s.trim().toLowerCase() === dir.toLowerCase());
 }
 
+const PATH_DIR_ENV = "KAI_SETUP_BIN_DIR";
+
+/** A PowerShell single-quoted string literal for `value` (a quote inside is doubled). */
+function psQuote(value) {
+  return "'" + String(value).replace(/'/g, "''") + "'";
+}
+
+/**
+ * PowerShell that appends the directory in `$env:KAI_SETUP_BIN_DIR` to the
+ * PATH of `scope` unless it is already there, and prints CHANGED or PRESENT.
+ * The scope is always 'User' outside tests.
+ */
+function buildPathUpdateScript(scope = "User") {
+  return (
+    `$d=$env:${PATH_DIR_ENV};` +
+    `$p=[Environment]::GetEnvironmentVariable('Path','${scope}');if(-not $p){$p=''};` +
+    `if(($p -split ';') -notcontains $d){` +
+    `[Environment]::SetEnvironmentVariable('Path',($p.TrimEnd(';')+';'+$d),'${scope}');'CHANGED'}` +
+    `else{'PRESENT'}`
+  );
+}
+
 /** Ensure `dir` is on the user's PATH automatically (no manual step).
  * Returns true when a terminal restart is needed to pick it up. */
 function ensurePathWindows(dir) {
@@ -170,20 +197,17 @@ function ensurePathWindows(dir) {
     // future terminals. Idempotent: appends only when missing.
     // Bounded by a timeout: a hung shell (slow .NET JIT, AV hook,
     // constrained-language policy) must not freeze the whole install.
-    const ps =
-      `$p=[Environment]::GetEnvironmentVariable('Path','User');` +
-      `if(($p -split ';') -notcontains '${dir}'){` +
-      `[Environment]::SetEnvironmentVariable('Path',($p.TrimEnd(';')+';${dir}'),'User');'CHANGED'}` +
-      `else{'PRESENT'}`;
-    const out = runPowerShell(ps, 20000);
+    const out = runPowerShell(buildPathUpdateScript(), 20000, { [PATH_DIR_ENV]: dir });
     if (out == null) {
-      console.log("[kai setup] PowerShell did not respond (timed out).");
+      console.log(
+        "[kai setup] PowerShell could not update PATH (it timed out or reported an error)."
+      );
       console.log("[kai setup] Add to PATH manually (one-time), then open a NEW terminal.");
       console.log('[kai setup] NOTE: do NOT use `setx PATH "%PATH%;..."` — setx silently');
       console.log("[kai setup] truncates values over 1024 chars and can corrupt your PATH.");
       console.log("[kai setup] Run this in PowerShell instead:");
       console.log(
-        `[kai setup]   powershell -NoProfile -Command "[Environment]::SetEnvironmentVariable('Path', ([Environment]::GetEnvironmentVariable('Path','User').TrimEnd(';') + ';${dir}'), 'User')"`
+        `[kai setup]   powershell -NoProfile -Command "[Environment]::SetEnvironmentVariable('Path', ([Environment]::GetEnvironmentVariable('Path','User').TrimEnd(';') + ';' + ${psQuote(dir)}), 'User')"`
       );
       return true;
     }
@@ -197,7 +221,7 @@ function ensurePathWindows(dir) {
   } catch {
     console.log("[kai setup] Could not update PATH automatically. Run once in PowerShell:");
     console.log(
-      `  powershell -NoProfile -Command "[Environment]::SetEnvironmentVariable('Path', ([Environment]::GetEnvironmentVariable('Path','User').TrimEnd(';') + ';${dir}'), 'User')"`
+      `  powershell -NoProfile -Command "[Environment]::SetEnvironmentVariable('Path', ([Environment]::GetEnvironmentVariable('Path','User').TrimEnd(';') + ';' + ${psQuote(dir)}), 'User')"`
     );
     console.log('[kai setup] (Avoid `setx PATH "%PATH%;..."` — setx truncates over 1024 chars.)');
     return true;
@@ -359,6 +383,11 @@ function setupUnix() {
   console.log("[kai setup] Verify: kai --version  (should print `kai v...`, not open a window)");
 }
 
-ensureBuild();
-if (process.platform === "win32") setupWindows();
-else setupUnix();
+if (require.main === module) {
+  ensureBuild();
+  if (process.platform === "win32") setupWindows();
+  else setupUnix();
+} else {
+  // Required by tests: expose the pieces that handle untrusted path text.
+  module.exports = { psQuote, buildPathUpdateScript, runPowerShell, PATH_DIR_ENV };
+}

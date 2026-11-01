@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useModalBehavior } from "../hooks/useModalBehavior";
 import type { TerminalTab } from "../types/terminal";
 
 interface RenameTabDialogProps {
@@ -9,12 +10,14 @@ interface RenameTabDialogProps {
 
 /** Small modal that renames one tab; mount it only while renaming. */
 export function RenameTabDialog({ tab, onRename, onClose }: RenameTabDialogProps) {
+  const dialogRef = useModalBehavior(true, onClose);
   const [value, setValue] = useState(tab.title);
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div
         className="command-palette-modal"
+        ref={dialogRef}
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-label="Rename session"

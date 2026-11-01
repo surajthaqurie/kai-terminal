@@ -200,3 +200,45 @@ describe("SettingsService", () => {
     expect(SettingsService.normalize({ theme: "no-such-theme" as never }).theme).toBe("kai-dark");
   });
 });
+
+describe("SettingsService keybinding and font persistence", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it("keeps every default keybinding unchanged through normalize", () => {
+    const normalized = SettingsService.normalize({ ...DEFAULT_SETTINGS });
+    expect(normalized.keybindings).toEqual(DEFAULT_SETTINGS.keybindings);
+  });
+
+  it("keeps a bare function-key binding (valid in the recorder) across save and reload", () => {
+    SettingsService.saveSettings({
+      ...DEFAULT_SETTINGS,
+      keybindings: { ...DEFAULT_SETTINGS.keybindings, search: "F5" },
+    });
+    expect(SettingsService.loadSettings().keybindings.search).toBe("F5");
+  });
+
+  it("still resets a corrupt or unparsable binding to its default", () => {
+    for (const bad of ["nonsense", "Ctrl+", "x", 42, ""]) {
+      const out = SettingsService.normalize({
+        ...DEFAULT_SETTINGS,
+        keybindings: { ...DEFAULT_SETTINGS.keybindings, search: bad as string },
+      });
+      expect(out.keybindings.search, String(bad)).toBe(DEFAULT_SETTINGS.keybindings.search);
+    }
+  });
+
+  it("keeps a font size of 14 that the user saved", () => {
+    SettingsService.saveSettings({ ...DEFAULT_SETTINGS, fontSize: 14 });
+    expect(SettingsService.loadSettings().fontSize).toBe(14);
+  });
+
+  it("still migrates the old unmodified 14 default (settings saved before the marker existed)", () => {
+    localStorage.setItem(
+      "kai_user_settings",
+      JSON.stringify({ ...DEFAULT_SETTINGS, fontSize: 14, version: 1 })
+    );
+    expect(SettingsService.loadSettings().fontSize).toBe(12);
+  });
+});

@@ -1,6 +1,9 @@
 import { FC, useState, useEffect } from "react";
+import { ESCAPE_OWNER_ATTR, useModalBehavior } from "../hooks/useModalBehavior";
 import { X, Plus, Trash2, Edit3, Play, Bookmark } from "lucide-react";
 import {
+  MAX_TABS_PER_WORKSPACE,
+  MAX_WORKSPACES,
   Workspace,
   loadOrMigrateWorkspaces,
   saveWorkspaces,
@@ -27,8 +30,10 @@ export const WorkspaceModal: FC<WorkspaceModalProps> = ({
   currentTabs,
   onLoadWorkspace,
 }) => {
+  const dialogRef = useModalBehavior(isOpen, onClose);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [newWsName, setNewWsName] = useState("");
+  const [saveName, setSaveName] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -42,9 +47,22 @@ export const WorkspaceModal: FC<WorkspaceModalProps> = ({
 
   if (!isOpen) return null;
 
+  /** Persists `next` and only then shows it; reports a failed write instead of "saving". */
+  const commit = (next: Workspace[]): boolean => {
+    if (!saveWorkspaces(next)) {
+      setErrorMsg("Could not save workspaces: browser storage is full or unavailable.");
+      return false;
+    }
+    setWorkspaces(next);
+    return true;
+  };
+
   const handleSaveCurrentAsWorkspace = () => {
-    const name = prompt("Enter a name for this workspace:", "Project Workspace");
-    if (!name || !name.trim()) return;
+    if (workspaces.length >= MAX_WORKSPACES) {
+      setErrorMsg(`You can keep up to ${MAX_WORKSPACES} workspaces. Delete one to save another.`);
+      return;
+    }
+    const name = saveName.trim() || `Workspace ${workspaces.length + 1}`;
     setErrorMsg(null);
     // Persist titles + cwd/shell + pane structure + nested layout only.
     // Never scrollback, history, env values, or credentials (see sanitizeTab).
@@ -65,10 +83,15 @@ export const WorkspaceModal: FC<WorkspaceModalProps> = ({
       };
       return sanitizeTab(raw) ?? { title: t.title || "Terminal" };
     });
-    const newWs = createWorkspace(name.trim(), tabsV2);
-    const updated = [newWs, ...workspaces];
-    saveWorkspaces(updated);
-    setWorkspaces(updated);
+    const newWs = createWorkspace(name, tabsV2);
+    if (!commit([newWs, ...workspaces])) return;
+    setSaveName("");
+    // createWorkspace keeps the first MAX_TABS_PER_WORKSPACE tabs: say so.
+    if (tabsV2.length > MAX_TABS_PER_WORKSPACE) {
+      setErrorMsg(
+        `Saved "${name}" with the first ${MAX_TABS_PER_WORKSPACE} of ${tabsV2.length} tabs (the per-workspace limit).`
+      );
+    }
   };
 
   const handleCreateNewEmpty = () => {
@@ -76,26 +99,22 @@ export const WorkspaceModal: FC<WorkspaceModalProps> = ({
       setErrorMsg("Workspace name cannot be empty.");
       return;
     }
+    if (workspaces.length >= MAX_WORKSPACES) {
+      setErrorMsg(`You can keep up to ${MAX_WORKSPACES} workspaces. Delete one to create another.`);
+      return;
+    }
     setErrorMsg(null);
     const newWs = createWorkspace(newWsName.trim(), [{ title: "Terminal 1" }]);
-    const updated = [newWs, ...workspaces];
-    saveWorkspaces(updated);
-    setWorkspaces(updated);
-    setNewWsName("");
+    if (commit([newWs, ...workspaces])) setNewWsName("");
   };
 
   const handleRename = (id: string) => {
     if (!editName.trim()) return;
-    const updated = renameWorkspace(workspaces, id, editName.trim());
-    saveWorkspaces(updated);
-    setWorkspaces(updated);
-    setEditingId(null);
+    if (commit(renameWorkspace(workspaces, id, editName.trim()))) setEditingId(null);
   };
 
   const handleDelete = (id: string) => {
-    const updated = deleteWorkspace(workspaces, id);
-    saveWorkspaces(updated);
-    setWorkspaces(updated);
+    commit(deleteWorkspace(workspaces, id));
   };
 
   const handleRestore = (ws: Workspace) => {
@@ -116,7 +135,12 @@ export const WorkspaceModal: FC<WorkspaceModalProps> = ({
 
   return (
     <div className="modal-backdrop" onClick={onClose} role="dialog" aria-label="Named Workspaces">
-      <div className="settings-modal" onClick={(e) => e.stopPropagation()} role="document">
+      <div
+        className="settings-modal"
+        ref={dialogRef}
+        onClick={(e) => e.stopPropagation()}
+        role="document"
+      >
         <div className="modal-header">
           <h3>Named Workspaces &amp; Sessions</h3>
           <button className="btn-close" onClick={onClose} title="Close">
@@ -131,10 +155,22 @@ export const WorkspaceModal: FC<WorkspaceModalProps> = ({
             persisted.
           </p>
 
-          <div style={{ display: "flex", gap: "8px", margin: "8px 0" }}>
+          <div className="setting-row" style={{ margin: "8px 0" }}>
+            <input
+              type="text"
+              className="text-input modal-input"
+              placeholder={`Workspace name (optional, e.g. Workspace ${workspaces.length + 1})`}
+              aria-label="Name for the saved layout"
+              value={saveName}
+              maxLength={80}
+              onChange={(e) => setSaveName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleSaveCurrentAsWorkspace();
+              }}
+            />
             <button className="btn btn-primary" onClick={handleSaveCurrentAsWorkspace}>
               <Bookmark size={14} />
-              <span>Save Current Layout as Workspace</span>
+              <span>Save Current Layout</span>
             </button>
           </div>
 
@@ -161,6 +197,7 @@ export const WorkspaceModal: FC<WorkspaceModalProps> = ({
                             value={editName}
                             onChange={(e) => setEditName(e.target.value)}
                             autoFocus
+                            {...{ [ESCAPE_OWNER_ATTR]: "true" }}
                             onKeyDown={(e) => {
                               if (e.key === "Enter") handleRename(ws.id);
                               if (e.key === "Escape") setEditingId(null);

@@ -55,6 +55,24 @@ describe("useCallPause", () => {
     expect(resume).toHaveBeenCalledTimes(1);
   });
 
+  it("does not resume over the user's own Play during the call", async () => {
+    const pause = vi.fn();
+    const resume = vi.fn();
+    const root = createRoot(document.createElement("div"));
+    const render = (playing: boolean) =>
+      act(async () => root.render(<Probe playing={playing} pause={pause} resume={resume} />));
+    await render(true);
+    await flush();
+    act(() => emitCall({ active: true }));
+    expect(pause).toHaveBeenCalledTimes(1);
+    await render(false); // the pause took effect
+    await render(true); // the user pressed Play mid-call
+    await render(false); // ...and then Pause again
+    act(() => emitCall({ active: false }));
+    expect(resume).not.toHaveBeenCalled();
+    act(() => root.unmount());
+  });
+
   it("leaves already-paused music alone", async () => {
     const { pause, resume } = await mount(false);
     await flush();

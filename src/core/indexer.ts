@@ -789,8 +789,12 @@ export async function indexProject(
         if (entry.isSymbolicLink()) {
           try {
             entryCanonical = fs.realpathSync(fullPath);
-          } catch {
-            continue; // Broken symlink or unresolvable
+          } catch (err: unknown) {
+            // A dangling link (ENOENT) has nothing behind it to index. Any
+            // other failure (loop, permission, a junction Windows will not
+            // resolve) hides content that may exist, so the scan is partial.
+            if ((err as NodeJS.ErrnoException)?.code !== "ENOENT") unreadableDirs++;
+            continue;
           }
         } else {
           entryCanonical = path.join(canonicalDir, entry.name);
@@ -808,8 +812,9 @@ export async function indexProject(
             const stat = fs.statSync(entryCanonical);
             isDir = stat.isDirectory();
             isFile = stat.isFile();
-          } catch {
-            continue; // Dangling symlink
+          } catch (err: unknown) {
+            if ((err as NodeJS.ErrnoException)?.code !== "ENOENT") unreadableDirs++;
+            continue; // Dangling symlink (or one whose target cannot be inspected)
           }
         }
 
@@ -825,6 +830,9 @@ export async function indexProject(
           scanDir(fullPath, depth + 1, entryCanonical);
         } else if (isFile) {
           totalFilesSeen++;
+          // The scan is synchronous, so no timer can fire during it: keep the
+          // project lock fresh from here (cheap, rate-limited inside `touch`).
+          lock.touch();
 
           if (isSensitiveFile(entry.name)) continue;
           if (isBinaryFile(entry.name)) continue;
@@ -1086,6 +1094,11 @@ export async function indexProject(
     // an invalid candidate can never be observed by concurrent readers or
     // survive a crash between save and validation.
     if (!options.dryRun) {
+      // A build slow enough to lose its lock (hung for minutes) must not
+      // publish over whatever the new owner wrote.
+      if (!lock.isHeld()) {
+        throw new Error(`Index lock for project ${meta.name} was lost during the build`);
+      }
       saveProjectIndex(meta.id, projectIndex);
     }
     return projectIndex;
@@ -1094,7 +1107,7 @@ export async function indexProject(
     if (!options.dryRun) {
       // Dual-copy status update (meta.json + embedded index meta) so
       // freshness readers never disagree after a failure.
-      markProjectGraphStatus(meta.id, "failed", errMsg);
+      markProjectGraphStatus(meta.id, "failed", errMsg, { lockHeld: true });
     }
     throw err;
   } finally {

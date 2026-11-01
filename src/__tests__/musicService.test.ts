@@ -2,6 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearLegacyQueue,
+  describePlayerError,
   embedSrcForTrack,
   extractPlaylistId,
   hasNextItem,
@@ -140,6 +141,27 @@ describe("embed control + telemetry", () => {
         JSON.stringify({ event: "infoDelivery", info: { videoData: { title: 5 } } })
       )
     ).toBeNull();
+  });
+});
+
+describe("YouTube embed errors", () => {
+  it("surfaces an onError code so the player can stop claiming it is playing", () => {
+    expect(parseYouTubePlayerMessage(JSON.stringify({ event: "onError", info: 150 }))).toEqual({
+      error: 150,
+    });
+  });
+
+  it("ignores an onError without a numeric code", () => {
+    expect(parseYouTubePlayerMessage(JSON.stringify({ event: "onError", info: null }))).toBeNull();
+    expect(parseYouTubePlayerMessage(JSON.stringify({ event: "onError", info: "x" }))).toBeNull();
+  });
+
+  it("explains embedding-disabled, removed and unknown errors in plain words", () => {
+    expect(describePlayerError(101)).toBe(describePlayerError(150));
+    expect(describePlayerError(150)).toMatch(/doesn't allow it to play in an embedded player/);
+    expect(describePlayerError(100)).toMatch(/removed or is private/);
+    expect(describePlayerError(153)).toMatch(/blocked the embedded player/);
+    expect(describePlayerError(999)).toContain("999");
   });
 });
 

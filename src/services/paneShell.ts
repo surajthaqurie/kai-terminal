@@ -28,3 +28,15 @@ export function resolvePaneShell(
   const profile = shells.find((s) => sameShellPath(s.path, shellPath));
   return profile ? withSkipProfileArgs(profile, skipProfile) : fallback;
 }
+
+/**
+ * The shell new terminals use: the configured default if it is detected, else
+ * the system's default, else the first detected shell. An empty or unknown
+ * configured id therefore means "System Default" at startup AND when saved.
+ */
+export function pickDefaultShell(
+  shells: ShellProfile[],
+  configuredId: string | undefined
+): ShellProfile | undefined {
+  return shells.find((s) => s.id === configuredId) || shells.find((s) => s.is_default) || shells[0];
+}

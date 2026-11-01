@@ -367,20 +367,34 @@ pub fn warm_host_pty_cache() {
     static WARM_ONCE: std::sync::Once = std::sync::Once::new();
     WARM_ONCE.call_once(|| {
         std::thread::spawn(|| {
-            let build = current_windows_build();
-            let _ = BUILD_CACHE.set(build);
+            // Cache only a successful probe: a timeout under load must not stick.
+            if let Some(build) = current_windows_build() {
+                let _ = BUILD_CACHE.set(build);
+            }
         });
     });
 }
 
 #[cfg(target_os = "windows")]
-static BUILD_CACHE: OnceLock<Option<u32>> = OnceLock::new();
+static BUILD_CACHE: OnceLock<u32> = OnceLock::new();
 
 pub fn check_host_pty_support() -> Result<(), TerminalError> {
     #[cfg(target_os = "windows")]
     {
-        let cached = BUILD_CACHE.get_or_init(current_windows_build);
-        match *cached {
+        // A failed probe (e.g. `reg`/`cmd /c ver` timing out at login on a loaded
+        // machine) is NOT cached, so the next PTY creation probes again instead of
+        // failing until the app restarts.
+        let build = match BUILD_CACHE.get() {
+            Some(b) => Some(*b),
+            None => {
+                let probed = current_windows_build();
+                if let Some(b) = probed {
+                    let _ = BUILD_CACHE.set(b);
+                }
+                probed
+            }
+        };
+        match build {
             Some(b) => check_windows_build_supported(b),
             None => Err(TerminalError::PtyCreationFailed(
                 "Unable to determine Windows version: Kai requires Windows 10 version 1809 (build 17763) or later / Windows 11 with ConPTY and the WebView2 runtime. Update Windows and reinstall if this persists.".to_string(),
@@ -1105,6 +1119,23 @@ fn is_allowed_youtube_url(url: &str) -> bool {
     false
 }
 
+/// True for our GitHub repo URLs whose remainder is plain path/query text. On
+/// Windows the URL becomes an argument of `cmd /c start`, where `& | ^ < > % " ( )`
+/// would run extra commands, so (like the YouTube and Azure branches) anything
+/// outside a conservative alphabet is refused instead of escaped.
+fn is_allowed_github_repo_url(url: &str) -> bool {
+    let Some(rest) = url.strip_prefix(EXTERNAL_URL_BASE) else {
+        return false;
+    };
+    rest.chars().all(|c| {
+        c.is_ascii_alphanumeric()
+            || matches!(
+                c,
+                '.' | '_' | '~' | '/' | '+' | '-' | '#' | '?' | '=' | ':' | '@'
+            )
+    })
+}
+
 const AZURE_DEVOPS_URL_BASE: &str = "https://dev.azure.com/";
 
 /// True only for `https://dev.azure.com/` and
@@ -1140,7 +1171,7 @@ pub fn validate_external_url(url: &str) -> Result<(), TerminalError> {
         ));
     }
     if !(url == EXTERNAL_URL_FALLBACK
-        || url.starts_with(EXTERNAL_URL_BASE)
+        || is_allowed_github_repo_url(url)
         || is_allowed_youtube_url(url)
         || is_allowed_azure_devops_url(url))
     {
@@ -2019,6 +2050,30 @@ mod tests {
         assert!(validate_external_url("http://github.com/surajthaqurie/kai-terminal/").is_err());
         assert!(validate_external_url("https://github.com/surajthaqurie/kai-terminal/ x").is_err());
         assert!(validate_external_url("").is_err());
+    }
+
+    #[test]
+    fn test_validate_external_url_refuses_cmd_metacharacters_on_github_urls() {
+        // `cmd /c start "" <url>` would run whatever follows `&`, `|`, `^`, `%`...
+        for bad in [
+            "https://github.com/surajthaqurie/kai-terminal/x&calc.exe",
+            "https://github.com/surajthaqurie/kai-terminal/releases/tag/v1|calc",
+            "https://github.com/surajthaqurie/kai-terminal/x^&calc",
+            "https://github.com/surajthaqurie/kai-terminal/%COMSPEC%",
+            "https://github.com/surajthaqurie/kai-terminal/x\"y",
+            "https://github.com/surajthaqurie/kai-terminal/x>out.txt",
+            "https://github.com/surajthaqurie/kai-terminal/x(y)",
+        ] {
+            assert!(validate_external_url(bad).is_err(), "should refuse {bad}");
+        }
+        // Real release links keep working (tags with dots, dashes, plus signs).
+        for ok in [
+            "https://github.com/surajthaqurie/kai-terminal/releases/tag/v0.2.1",
+            "https://github.com/surajthaqurie/kai-terminal/releases/tag/v1.0.0-rc.1+build.5",
+            "https://github.com/surajthaqurie/kai-terminal/releases?page=2#latest",
+        ] {
+            assert!(validate_external_url(ok).is_ok(), "should allow {ok}");
+        }
     }
 
     #[test]

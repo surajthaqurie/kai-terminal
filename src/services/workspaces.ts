@@ -57,8 +57,9 @@ interface WorkspacesDoc {
 export const WORKSPACES_KEY = "kai_workspaces_v1";
 export const LEGACY_WORKSPACES_KEY = "terminal_workspaces_v1";
 export const LEGACY_LAYOUT_KEY = "terminal_tab_layout_v1";
-const MAX_WORKSPACES = 20;
-const MAX_TABS_PER_WORKSPACE = 10;
+/** Most workspaces kept, and tabs kept per workspace (the UI says so instead of dropping silently). */
+export const MAX_WORKSPACES = 20;
+export const MAX_TABS_PER_WORKSPACE = 10;
 
 function safeTitle(t: unknown): string {
   return typeof t === "string" && t.trim() ? t.slice(0, 80) : "Terminal";
@@ -270,11 +271,13 @@ function readLS(key: string): string | null {
   }
 }
 
-function writeLS(key: string, value: string): void {
+/** Returns whether the value was stored (storage can be full or unavailable). */
+function writeLS(key: string, value: string): boolean {
   try {
     localStorage.setItem(key, value);
+    return true;
   } catch {
-    // ignore quota errors
+    return false;
   }
 }
 
@@ -294,12 +297,16 @@ export function loadWorkspaces(): Workspace[] {
   }
 }
 
-export function saveWorkspaces(workspaces: Workspace[]): void {
+/**
+ * Persists the list. Returns `false` when it could not be stored (quota or
+ * disabled storage) so the UI never reports "saved" for data that is gone.
+ */
+export function saveWorkspaces(workspaces: Workspace[]): boolean {
   const safe = workspaces
     .map(sanitizeWorkspace)
     .filter((w): w is Workspace => w !== null)
     .slice(0, MAX_WORKSPACES);
-  writeLS(WORKSPACES_KEY, JSON.stringify({ version: 2, workspaces: safe }));
+  return writeLS(WORKSPACES_KEY, JSON.stringify({ version: 2, workspaces: safe }));
 }
 
 /** Migrate legacy v1 tab layout into a single "Restored session" workspace. Returns null when nothing to migrate. */
@@ -320,10 +327,17 @@ export function migrateLegacyLayout(rawLegacy: unknown): Workspace | null {
   };
 }
 
-/** Load workspaces, migrating legacy layout once when no v2 doc exists. */
+/**
+ * Load workspaces, migrating the legacy layout once, only when NO workspaces
+ * document exists yet. An empty list in an existing document means the user
+ * deleted their workspaces: re-migrating then would resurrect the live session
+ * (`terminal_tab_layout_v1` is rewritten on every tab change) as a workspace
+ * they just removed, so the list could never be empty.
+ */
 export function loadOrMigrateWorkspaces(): Workspace[] {
   const existing = loadWorkspaces();
   if (existing.length > 0) return existing;
+  if (readLS(WORKSPACES_KEY) !== null || readLS(LEGACY_WORKSPACES_KEY) !== null) return [];
   try {
     const legacyRaw = readLS(LEGACY_LAYOUT_KEY);
     if (!legacyRaw) return [];

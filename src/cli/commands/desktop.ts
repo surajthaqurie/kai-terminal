@@ -1,8 +1,7 @@
 import fs from "fs";
-import { execSync } from "child_process";
 import { registerProject, resolveCanonicalPath } from "../../core/registry";
 import { saveActiveProjectState } from "../activeProject";
-import { findKaiAppBinary, launchKaiApp } from "../desktopApp";
+import { closeKaiApp, findKaiAppBinary, launchKaiApp } from "../desktopApp";
 
 export async function runOpen(args: string[]): Promise<number> {
   const targetPath = args[1] || process.cwd();
@@ -18,7 +17,7 @@ export async function runOpen(args: string[]): Promise<number> {
   }
 
   const meta = registerProject(canonicalPath);
-  saveActiveProjectState(meta.canonicalPath, meta.name, meta.id, "code");
+  const stateSaved = saveActiveProjectState(meta.canonicalPath, meta.name, meta.id, "code");
 
   const appBinary = findKaiAppBinary();
   if (!appBinary) {
@@ -27,9 +26,12 @@ export async function runOpen(args: string[]): Promise<number> {
     return 1;
   }
 
-  const launched = launchKaiApp(appBinary, meta.canonicalPath);
+  const launched = await launchKaiApp(appBinary, meta.canonicalPath);
   if (launched) {
-    console.log(`[kai] Opened Kai Terminal for "${meta.name}" (${meta.canonicalPath})`);
+    // The app learns about Code Mode only from the state file saved above.
+    console.log(
+      `[kai] Opened Kai Terminal for "${meta.name}" (${meta.canonicalPath})${stateSaved ? "" : " without Code Mode (its state could not be saved)"}`
+    );
     return 0;
   } else {
     console.error(`[kai] Error: Failed to launch Kai Terminal app at ${appBinary}`);
@@ -38,31 +40,17 @@ export async function runOpen(args: string[]): Promise<number> {
 }
 
 export async function runClose(): Promise<number> {
-  try {
-    if (process.platform === "win32") {
-      try {
-        execSync("taskkill /F /IM kai.exe", { stdio: "ignore" });
-      } catch {}
-      try {
-        execSync("taskkill /F /IM cross-platform-terminal-backend.exe", { stdio: "ignore" });
-      } catch {}
-    } else {
-      try {
-        execSync("pkill -x kai", { stdio: "ignore" });
-      } catch {}
-      try {
-        execSync("pkill -x cross-platform-terminal-backend", { stdio: "ignore" });
-      } catch {}
-      try {
-        execSync("pkill -x kai-terminal", { stdio: "ignore" });
-      } catch {}
-    }
-    console.log(`[kai] Kai Terminal instances closed.`);
-    return 0;
-  } catch (err: unknown) {
-    console.error(
-      `[kai] Error closing Kai Terminal: ${err instanceof Error ? err.message : String(err)}`
-    );
-    return 1;
+  const results = closeKaiApp();
+  const closed = results.filter((r) => r.outcome === "closed");
+  const failed = results.filter((r) => r.outcome === "failed");
+  if (closed.length > 0) {
+    const what = closed.map((r) => (r.count && r.count > 1 ? `${r.name} x${r.count}` : r.name));
+    console.log(`[kai] Closed Kai Terminal (${what.join(", ")}).`);
+  } else if (failed.length === 0) {
+    console.log(`[kai] No running Kai Terminal instance found.`);
   }
+  for (const r of failed) {
+    console.error(`[kai] Error: could not close ${r.name}: ${r.detail}`);
+  }
+  return failed.length > 0 ? 1 : 0;
 }
