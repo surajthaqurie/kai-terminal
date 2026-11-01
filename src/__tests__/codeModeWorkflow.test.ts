@@ -347,6 +347,16 @@ describe("graph integrity and rollback (audit)", () => {
     // object literal would silently set the prototype instead).
     const protoPolluted = { ...goodBase, symbolIndex: JSON.parse('{ "__proto__": [] }') };
     expect(validateGraphCandidate(protoPolluted).valid).toBe(false);
+    // Class constructors are indexed under the legitimate name `constructor`
+    // (and `prototype` / `toString` are plain symbol names): must validate.
+    const protoNames = {
+      ...goodBase,
+      symbolIndex: JSON.parse(
+        '{ "constructor": [{ "name": "constructor", "filePath": "a.ts", "location": {} }],' +
+          ' "prototype": [], "toString": [] }'
+      ),
+    };
+    expect(validateGraphCandidate(protoNames).valid).toBe(true);
     // Path traversal in file key.
     expect(
       validateGraphCandidate({

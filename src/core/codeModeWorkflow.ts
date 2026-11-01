@@ -328,7 +328,11 @@ export function validateGraphCandidate(candidate: unknown): { valid: boolean; er
     const symbolKeys = Reflect.ownKeys(symbols);
     for (const key of symbolKeys) {
       const name = String(key);
-      if (name === "__proto__" || name === "constructor" || name === "prototype") {
+      // Only `__proto__` is unsafe. `constructor` / `prototype` / `toString`
+      // are legitimate symbol names (every class constructor is indexed as
+      // `constructor`); the index is built with a null prototype and every
+      // reader guards with hasOwnProperty, so they cannot pollute anything.
+      if (name === "__proto__") {
         errors.push(`unsafe symbol key: ${name}`);
         break;
       }
