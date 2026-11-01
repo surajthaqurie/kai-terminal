@@ -31,6 +31,8 @@ import {
   preferredAccountId,
   providerLabel,
 } from "./integrationsViewModel";
+import { effectiveRules } from "../core/integrations/workflowRules";
+import { WorkflowRulesSection } from "./WorkflowRulesSection";
 
 interface IntegrationsPanelProps {
   projectDir: string;
@@ -690,6 +692,15 @@ const ProviderCard: FC<ProviderCardProps> = ({ provider, projectDir }) => {
               <RefreshCw size={13} className={busy === "load" ? "spin" : ""} />
             </button>
           </div>
+
+          {state === "active" && binding && (
+            <WorkflowRulesSection
+              projectDir={projectDir}
+              rules={effectiveRules(binding.rules)}
+              disabled={disabled}
+              onSaved={() => void refresh()}
+            />
+          )}
 
           {confirmReplace && (
             <div className="integration-confirm" role="group" aria-label="Confirm replace">

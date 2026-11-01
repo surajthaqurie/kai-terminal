@@ -295,6 +295,22 @@ export function createAzureDevOpsProvider(deps: AzureDeps = {}): IntegrationProv
         }
         return out.sort((a, b) => a.name.localeCompare(b.name));
       },
+
+      async listBranches(account, secrets, project, repo) {
+        const c = new AzureCall(account, secrets, deps);
+        const raw = await c.get<Json>(`${enc(project)}/_apis/git/repositories/${enc(repo)}/refs`, {
+          filter: "heads/",
+          $top: MAX_DISCOVERY_ROWS,
+        });
+        const out: string[] = [];
+        for (const row of list(raw)) {
+          const name = (row as Json).name;
+          if (typeof name === "string" && name.startsWith("refs/heads/")) {
+            out.push(name.slice("refs/heads/".length));
+          }
+        }
+        return out.sort((a, b) => a.localeCompare(b));
+      },
     },
 
     workItems: {

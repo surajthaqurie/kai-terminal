@@ -24,13 +24,12 @@ let api: Api;
 let autoRestore: boolean | undefined;
 
 function Harness() {
-  const tabsState = useTabs({ cwd: "", effectiveShellPath: undefined, setLastError: vi.fn() });
+  const tabsState = useTabs({ effectiveShellPath: undefined, setLastError: vi.fn() });
   const persistence = useSessionPersistence({
     tabs: tabsState.tabs,
     setTabs: tabsState.setTabs,
     setActiveTabId: tabsState.setActiveTabId,
     autoRestoreSession: autoRestore,
-    onWorkspaceCwd: vi.fn(),
   });
   api = { tabsState, persistence };
   return null;

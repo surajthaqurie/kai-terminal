@@ -20,6 +20,7 @@ import {
 const REMOTE = "https://dev.azure.com/Contoso/Payments/_git/api";
 const INTEGRATION_TOOLS = [
   "kai_integration_status",
+  "kai_workflow_rules",
   "kai_work_item_search",
   "kai_work_item_get",
   "kai_pr_list",

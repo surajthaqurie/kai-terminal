@@ -13,7 +13,6 @@ interface PaneCwdOptions {
   tabsRef: MutableRefObject<TerminalTab[]>;
   activeTabIdRef: MutableRefObject<string>;
   setTabs: Dispatch<SetStateAction<TerminalTab[]>>;
-  setCwd: (cwd: string) => void;
   applyGitInfo: (dir: string, info: GitInfo, updatesFooter: boolean) => void;
 }
 
@@ -21,13 +20,7 @@ interface PaneCwdOptions {
  * Handles a pane reporting its working directory (OSC 7 / OSC 9;9 / backend
  * `getPtyCwd`). Returns a stable `(tabId, paneId, cwd)` callback.
  */
-export function usePaneCwd({
-  tabsRef,
-  activeTabIdRef,
-  setTabs,
-  setCwd,
-  applyGitInfo,
-}: PaneCwdOptions) {
+export function usePaneCwd({ tabsRef, activeTabIdRef, setTabs, applyGitInfo }: PaneCwdOptions) {
   return useCallback(
     (tabId: string, paneId: string, resolved: string) => {
       if (!resolved) return;
@@ -57,9 +50,8 @@ export function usePaneCwd({
       const live = tabsRef.current.find((t) => t.id === tabId);
       const livePane = live?.panes.find((p) => p.id === paneId);
       // Only the pane's OWN recorded directory counts. Falling back to the
-      // tab's or the footer's directory made a pane whose first report equalled
-      // the footer's (a new tab starting in the same folder) look "unchanged",
-      // so it was never recorded: later it followed whatever the footer showed.
+      // tab's directory made a pane whose first report equalled it look
+      // "unchanged", so it was never recorded.
       const current = livePane?.cwd;
       const drivesFooter =
         activeTabIdRef.current === tabId &&
@@ -81,12 +73,11 @@ export function usePaneCwd({
         )
       );
       if (drivesFooter) {
-        setCwd(cleaned);
         recordRecentProject(cleaned);
         invalidateGitCache(cleaned);
         refreshBadge();
       }
     },
-    [tabsRef, activeTabIdRef, setTabs, setCwd, applyGitInfo]
+    [tabsRef, activeTabIdRef, setTabs, applyGitInfo]
   );
 }

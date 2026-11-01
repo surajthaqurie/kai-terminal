@@ -56,7 +56,7 @@ This document describes process execution controls, IPC capabilities, permission
   - Status transitions (`markProjectGraphStatus`) atomically synchronize both `meta.json` and embedded index copies.
 - **MCP Stdio Isolation & Stream Protection:**
   - The MCP server operates exclusively over standard input/output (`stdio`) JSON-RPC. It does not listen on network sockets or open network ports.
-  - The code-map tools make no network requests. If a project is connected to an external service (`kai integration azure`), that project's integration tools make outbound HTTPS requests to that service only, with bounded size and time, and expose no write operations. A project that is not connected lists none of them.
+  - The code-map tools make no network requests. If a project is connected to an external service (`kai integration azure`), that project's integration tools make outbound HTTPS requests to that service only, with bounded size and time, and expose no write operations. The workflow-rules tool only computes names locally: work item titles are reduced to a safe slug for branch names and are never placed inside a command. A project that is not connected lists none of them.
   - Text returned by an external service is untrusted (other people write it): it is reduced to plain text, size-capped, and every response carries a notice saying so.
   - A project's connection is a private file under `~/.kai/projects/<id>/`, never inside the repository, so cloning a repository cannot switch an integration on or aim it at an organization.
   - All tools are strictly read-only on project sources.

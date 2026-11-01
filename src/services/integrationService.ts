@@ -11,6 +11,7 @@ import type {
   IntegrationStatusView,
   IntegrationUser,
 } from "../core/integrations/rpcTypes";
+import type { WorkflowRules } from "../core/integrations/workflowRules";
 
 type Failure = { ok: false; error: IntegrationErrorBody };
 
@@ -163,6 +164,29 @@ export async function bindIntegration(input: {
   replace?: boolean;
 }): Promise<RpcResult<IntegrationBindingView>> {
   const res = await integrationRpc({ op: "bind", ...input });
+  return pick(
+    res,
+    (r) => typeof r.binding === "object" && r.binding !== null,
+    (r) => r.binding as IntegrationBindingView
+  );
+}
+
+/** Branches of the repository bound to the folder (a network call). */
+export async function listIntegrationBranches(projectDir: string): Promise<RpcResult<string[]>> {
+  const res = await integrationRpc({ op: "branches", projectDir });
+  return pick(
+    res,
+    (r) => Array.isArray(r.branches),
+    (r) => r.branches as string[]
+  );
+}
+
+/** Saves the project's workflow rules (omitted fields reset to their defaults). */
+export async function setIntegrationRules(
+  projectDir: string,
+  rules: Partial<WorkflowRules>
+): Promise<RpcResult<IntegrationBindingView>> {
+  const res = await integrationRpc({ op: "set_rules", projectDir, rules });
   return pick(
     res,
     (r) => typeof r.binding === "object" && r.binding !== null,

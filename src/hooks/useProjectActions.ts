@@ -10,10 +10,8 @@ import {
 } from "../services/projectService";
 
 interface ProjectActionsOptions {
-  /** Active pane's project dir (pane -> tab -> toolbar). */
+  /** Active pane's project dir (pane -> tab). */
   effectiveProjectDir: string;
-  /** Global toolbar working directory. */
-  cwd: string;
   /** Default editor binary from Settings. */
   editorPath: string | undefined;
   setLastError: (message: string | null) => void;
@@ -25,7 +23,6 @@ const errorMessage = (err: unknown) => (err instanceof Error ? err.message : Str
 /** Open-in-editor and git status / changes-review actions for the active project. */
 export function useProjectActions({
   effectiveProjectDir,
-  cwd,
   editorPath,
   setLastError,
   applyGitInfo,
@@ -53,7 +50,7 @@ export function useProjectActions({
   const openEditor = useCallback(
     async (editorBinary?: string, dirOverride?: string) => {
       try {
-        const dir = dirOverride || effectiveProjectDir || cwd.trim() || ".";
+        const dir = dirOverride || effectiveProjectDir || ".";
         // Explicit picker choice wins; otherwise fall back to Settings default.
         const configured = editorPath?.trim() || undefined;
         await openProjectInEditor(dir, editorBinary || configured);
@@ -62,7 +59,7 @@ export function useProjectActions({
         setLastError(errorMessage(err));
       }
     },
-    [effectiveProjectDir, cwd, editorPath, setLastError]
+    [effectiveProjectDir, editorPath, setLastError]
   );
 
   const openFileInEditor = useCallback(
@@ -82,7 +79,7 @@ export function useProjectActions({
       try {
         const dir = dirOverride || effectiveProjectDir;
         if (!dir) {
-          setLastError("No project directory set. Enter a working directory first.");
+          setLastError("No project directory yet. Open a terminal in a folder first.");
           return;
         }
         if (action === "changes") {
@@ -108,14 +105,14 @@ export function useProjectActions({
   /** Opens the changes review for the active dir (optionally reporting when there is none). */
   const reviewChanges = useCallback(
     (reportMissing = false) => {
-      const dir = effectiveProjectDir || cwd.trim();
+      const dir = effectiveProjectDir;
       if (dir) {
         setGitChangesModal({ dir });
       } else if (reportMissing) {
-        setLastError("No project directory set. Enter or open a directory first.");
+        setLastError("No project directory yet. Open a terminal in a folder first.");
       }
     },
-    [effectiveProjectDir, cwd, setLastError]
+    [effectiveProjectDir, setLastError]
   );
 
   const closeGitStatus = useCallback(() => setGitStatusModal(null), []);

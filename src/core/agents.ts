@@ -937,16 +937,50 @@ function readJsonConfig(filePath: string): {
   }
 }
 
+/** Drop Win32 verbatim prefixes (`\\?\C:\…`, `\\?\UNC\…`) that agents' spawn/config parsing mishandles. */
+export function stripVerbatimPrefix(p: string): string {
+  if (p.startsWith("\\\\?\\UNC\\")) return `\\\\${p.slice(8)}`;
+  if (p.startsWith("\\\\?\\")) return p.slice(4);
+  return p;
+}
+
+/**
+ * True when an existing kai entry launches a script file that is gone from disk
+ * (e.g. the app was reinstalled to another folder). Such an entry can never start,
+ * so setup rewrites it instead of reporting "already present".
+ */
+function isStaleKaiEntry(entry: unknown, nextBin: string): boolean {
+  if (!entry || typeof entry !== "object") return false;
+  const e = entry as { command?: unknown; args?: unknown };
+  const parts: unknown[] = Array.isArray(e.command)
+    ? e.command
+    : [e.command, ...(Array.isArray(e.args) ? e.args : [])];
+  const script = parts.find(
+    (p): p is string => typeof p === "string" && /\.(c|m)?js$/i.test(p) && path.isAbsolute(p)
+  );
+  if (!script) return false;
+  const current = stripVerbatimPrefix(script);
+  // Same target as the one being written: nothing to repair.
+  if (current === nextBin) return false;
+  try {
+    return !fs.existsSync(current);
+  } catch {
+    return false;
+  }
+}
+
 /** Insert (or refresh with force) the kai-terminal entry inside a parsed
  *  JSON config. A legacy "kai" entry is migrated: it is removed and the
- *  entry is rewritten under the new name. */
+ *  entry is rewritten under the new name. An entry whose script no longer
+ *  exists is treated as stale and rewritten without needing force. */
 export function mergeKaiMcpEntry(
   data: Record<string, unknown>,
   keyStyle: AgentConfigKeyStyle,
-  kaiBin: string,
+  rawKaiBin: string,
   projectArg: string,
   force: boolean
 ): { alreadyConfigured: boolean } {
+  const kaiBin = stripVerbatimPrefix(rawKaiBin);
   const entry: Record<string, unknown> =
     keyStyle === "mcp-opencode"
       ? { type: "local", command: ["node", kaiBin, "mcp", projectArg], enabled: true }
@@ -967,7 +1001,13 @@ export function mergeKaiMcpEntry(
     data[containerKey] = container;
   }
   const servers = container as Record<string, unknown>;
-  if (servers[MCP_SERVER_NAME] !== undefined && !force) return { alreadyConfigured: true };
+  if (
+    servers[MCP_SERVER_NAME] !== undefined &&
+    !force &&
+    !isStaleKaiEntry(servers[MCP_SERVER_NAME], kaiBin)
+  ) {
+    return { alreadyConfigured: true };
+  }
   // Migration: the legacy "kai" key moves out of the way so each agent sees
   // exactly one kai-terminal server (no duplicate registration).
   delete servers[LEGACY_MCP_SERVER_NAME];

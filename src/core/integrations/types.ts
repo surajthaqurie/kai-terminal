@@ -6,6 +6,7 @@ import type {
   IntegrationUser,
 } from "./rpcTypes";
 import type { SecretStore } from "./secretStore";
+import type { WorkflowRules } from "./workflowRules";
 
 export type { DetectedCoordinates, IntegrationUser };
 
@@ -34,6 +35,8 @@ export interface ProjectBinding {
   project: string;
   repo: string | null;
   boundAt: string;
+  /** Workflow rules the user changed; anything absent uses its default. */
+  rules?: Partial<WorkflowRules>;
 }
 
 export class IntegrationError extends Error {
@@ -258,6 +261,13 @@ export interface IntegrationProvider {
       secrets: SecretStore,
       project: string
     ): Promise<RepoInfo[]>;
+    /** Branch names (without `refs/heads/`) of one repository, sorted. */
+    listBranches(
+      account: IntegrationAccount,
+      secrets: SecretStore,
+      project: string,
+      repo: string
+    ): Promise<string[]>;
   };
   workItems?: {
     search(ctx: ProviderContext, q: WorkItemQuery): Promise<Page<WorkItemSummary>>;

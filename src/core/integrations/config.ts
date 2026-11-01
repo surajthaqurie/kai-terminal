@@ -9,6 +9,7 @@ import {
   resolveCanonicalPath,
 } from "../registry";
 import { IntegrationError, type IntegrationAccount, type ProjectBinding } from "./types";
+import { readStoredRules } from "./workflowRules";
 
 /**
  * Two stores, kept apart on purpose:
@@ -150,12 +151,14 @@ function parseBinding(raw: string): ProjectBinding | null {
       typeof v.project === "string" &&
       (v.repo === null || typeof v.repo === "string")
     ) {
+      const rules = readStoredRules(v.rules);
       return {
         provider: v.provider,
         account: v.account,
         project: v.project,
         repo: v.repo as string | null,
         boundAt: typeof v.boundAt === "string" ? v.boundAt : "",
+        ...(rules ? { rules } : {}),
       };
     }
   } catch {

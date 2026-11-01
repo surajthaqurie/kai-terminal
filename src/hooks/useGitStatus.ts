@@ -7,7 +7,6 @@ import {
   resolveEffectiveProjectDir,
 } from "../services/projectService";
 import type { TerminalPane, TerminalTab } from "../types/terminal";
-import { useLatest } from "./useLatest";
 
 /**
  * Pause before the first `git` probe in a directory the user just entered.
@@ -43,9 +42,7 @@ interface GitStatusOptions {
   activeTab: TerminalTab | undefined;
   activePane: TerminalPane | undefined;
   activePaneId: string | undefined;
-  /** Global toolbar working directory. */
-  cwd: string;
-  /** Active pane's project dir (pane -> tab -> toolbar). */
+  /** Active pane's project dir (pane -> tab). */
   effectiveProjectDir: string;
 }
 
@@ -63,10 +60,8 @@ export function useGitStatus({
   activeTab,
   activePane,
   activePaneId,
-  cwd,
   effectiveProjectDir,
 }: GitStatusOptions) {
-  const cwdRef = useLatest(cwd);
   const [gitInfoByDir, setGitInfoByDir] = useState<Record<string, GitInfo | null>>({});
   const [footer, setFooter] = useState<GitFooter>(EMPTY_FOOTER);
   const [isRefreshingGit, setIsRefreshingGit] = useState(false);
@@ -96,7 +91,7 @@ export function useGitStatus({
 
   /** Resolve each pane's own project dir (pane -> tab -> global). */
   const paneDirsKey = tabs
-    .map((t) => t.panes.map((p) => resolveEffectiveProjectDir(p.cwd, t.cwd, cwd)).join("|"))
+    .map((t) => t.panes.map((p) => resolveEffectiveProjectDir(p.cwd, t.cwd)).join("|"))
     .join("||");
 
   // Refresh git status per distinct pane directory (each split owns its
@@ -107,11 +102,7 @@ export function useGitStatus({
   // other apps. The status bar reads the active pane's entry from the map.
   useEffect(() => {
     const dirs = Array.from(
-      new Set(
-        tabs.flatMap((t) =>
-          t.panes.map((p) => resolveEffectiveProjectDir(p.cwd, t.cwd, cwdRef.current))
-        )
-      )
+      new Set(tabs.flatMap((t) => t.panes.map((p) => resolveEffectiveProjectDir(p.cwd, t.cwd))))
     ).filter(Boolean);
     if (dirs.length === 0) {
       updateFooter(EMPTY_FOOTER);
@@ -125,11 +116,7 @@ export function useGitStatus({
           (info) => {
             if (cancelled) return;
             // Keep the active-pane footer in sync.
-            const activeDir = resolveEffectiveProjectDir(
-              activePane?.cwd,
-              activeTab?.cwd,
-              cwdRef.current
-            );
+            const activeDir = resolveEffectiveProjectDir(activePane?.cwd, activeTab?.cwd);
             applyGitInfo(dir, info, dir === activeDir);
           },
           () => {
@@ -148,7 +135,7 @@ export function useGitStatus({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paneDirsKey, activeTabId]);
 
-  // Footer git badge with dwell: the path pill updates instantly, but the
+  // Footer git badge with dwell: the active directory updates instantly, but the
   // git probe only fires after the user has stayed in one directory for
   // ~800 ms. Fast `cd` hopping keeps the last good badge instead of
   // flickering through "No git repo" / partial states. Cache hits still
@@ -197,7 +184,7 @@ export function useGitStatus({
     const liveTabs = tabsRef.current;
     const tab = liveTabs.find((t) => t.id === activeTabIdRef.current) || liveTabs[0];
     const pane = tab?.panes.find((p) => p.id === tab.activePaneId) || tab?.panes[0];
-    const dir = resolveEffectiveProjectDir(pane?.cwd, tab?.cwd, cwdRef.current);
+    const dir = resolveEffectiveProjectDir(pane?.cwd, tab?.cwd);
     if (!dir || isRefreshingGit) return;
     setIsRefreshingGit(true);
     invalidateGitCache(dir);
@@ -209,7 +196,7 @@ export function useGitStatus({
         }
       )
       .finally(() => setIsRefreshingGit(false));
-  }, [isRefreshingGit, applyGitInfo, tabsRef, activeTabIdRef, cwdRef]);
+  }, [isRefreshingGit, applyGitInfo, tabsRef, activeTabIdRef]);
 
   // The status bar prefers the active directory's own entry; the shared
   // footer state only covers directories not probed yet.

@@ -3117,46 +3117,6 @@ button.status-git-btn-clickable:focus-visible {
   white-space: nowrap;
 }
 
-.status-dir {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  background: transparent;
-  padding: 1px 4px;
-  color: var(--text-secondary);
-  font-size: var(--text-xs);
-  max-width: 52vw;
-  min-width: 0;
-  flex: 1 1 auto;
-  overflow: hidden;
-  user-select: text;
-}
-
-.status-dir-text {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  /* Full path stays intact in the DOM + tooltip; CSS only clips what
-     does not fit, on every OS. Wide cap so typical Windows/Linux/macOS
-     project paths render completely. */
-  max-width: 46vw;
-  min-width: 60px;
-  font-family: var(--font-mono);
-  user-select: text;
-  cursor: text;
-}
-
-/* Footer path is a button (click-to-copy) styled as plain status text. */
-.status-dir-btn {
-  border: none;
-  font: inherit;
-  cursor: pointer;
-}
-
-.status-dir-btn:hover .status-dir-text {
-  color: var(--accent-primary);
-}
-
 .status-right {
   margin-left: auto;
 }
@@ -4237,10 +4197,6 @@ button.status-git-btn-clickable:focus-visible {
 
   .tab-title {
     max-width: 90px;
-  }
-
-  .status-dir {
-    display: none;
   }
 
   .setting-row {
@@ -5653,6 +5609,36 @@ button.status-git-btn-clickable:focus-visible {
   font-size: 12px;
   line-height: 1.5;
   overflow-wrap: anywhere;
+}
+
+/* Integrations tab: a text-only button that reads as a link ("More" / "Less") */
+.link-button {
+  align-self: flex-start;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  color: var(--accent-primary);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.link-button:hover {
+  text-decoration-thickness: 2px;
+}
+
+.link-button:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+.integration-more {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 /* Integrations tab: "Switch project" picker (fetched on demand, never on tab open) */

@@ -8,6 +8,7 @@
  * Pure types: no Node imports, safe for the UI bundle.
  */
 import type { IntegrationAuthMethod } from "./providerCatalog";
+import type { WorkflowRules } from "./workflowRules";
 
 export interface IntegrationAccountView {
   /** Stable id such as `azure-devops:contoso`. */
@@ -30,6 +31,8 @@ export interface IntegrationBindingView {
   project: string;
   repo: string | null;
   boundAt: string;
+  /** The workflow rules in force: the user's changes on top of the defaults. */
+  rules: WorkflowRules;
 }
 
 export interface DetectedCoordinates {
@@ -120,7 +123,15 @@ export type IntegrationRpcRequest =
       /** Replace a different integration already bound here. */
       replace?: boolean;
     }
-  | { op: "unbind"; projectDir: string; logout?: boolean };
+  | { op: "unbind"; projectDir: string; logout?: boolean }
+  /** Branches of the repository bound to this folder (network call). */
+  | { op: "branches"; projectDir: string }
+  /**
+   * Replace the project's workflow rules. Omitted fields go back to their
+   * default, so `rules: {}` resets everything. Invalid values, and a merge
+   * branch the repository does not have, are rejected.
+   */
+  | { op: "set_rules"; projectDir: string; rules: Partial<WorkflowRules> };
 
 export interface IntegrationUser {
   name: string;
@@ -141,6 +152,7 @@ export type IntegrationRpcResponse =
   | { ok: true; status: IntegrationStatusView }
   | { ok: true; projects: IntegrationProjectView[] }
   | { ok: true; repos: IntegrationRepoView[] }
+  | { ok: true; branches: string[] }
   | { ok: true; account: IntegrationAccountView; user: IntegrationUser }
   | { ok: true; accounts: IntegrationAccountView[]; user: IntegrationUser }
   | { ok: true; user: IntegrationUser }

@@ -468,7 +468,7 @@ describe("Active Split Terminal and PaneHeader Component", () => {
 });
 
 describe("StatusBar Footer with Active Split Directory, Mode and Git", () => {
-  it("renders active split current path, code mode, and git branch in footer", async () => {
+  it("renders code mode and git branch in the footer, with no path", async () => {
     const React = await import("react");
     const { createRoot } = await import("react-dom/client");
     const { StatusBar } = await import("../components/StatusBar");
@@ -492,10 +492,9 @@ describe("StatusBar Footer with Active Split Directory, Mode and Git", () => {
       );
     });
 
-    // 1. Current path is displayed in status-dir with Folder icon
-    const dirBtn = container.querySelector(".status-dir");
-    expect(dirBtn).not.toBeNull();
-    expect(dirBtn?.textContent).toContain("/home/user/workspace/kai");
+    // 1. The footer carries no working-directory path.
+    expect(container.querySelector(".status-dir")).toBeNull();
+    expect(container.textContent).not.toContain("/home/user/workspace/kai");
 
     // 2. Code mode pill is displayed
     const modePill = container.querySelector(".status-mode-pill");
@@ -508,17 +507,13 @@ describe("StatusBar Footer with Active Split Directory, Mode and Git", () => {
     const gitDot = container.querySelector(".status-git-dot");
     expect(gitDot?.classList.contains("dirty")).toBe(true);
 
-    // 4. Path text is rendered cleanly for selection
-    const dirText = container.querySelector(".status-dir-text");
-    expect(dirText?.textContent).toBe("/home/user/workspace/kai");
-
-    // 5. Order is strictly mode pill -> git -> path
+    // 4. Order is strictly mode pill -> git
     const statusLeftChildren = Array.from(container.querySelector(".status-left")?.children || []);
     expect(statusLeftChildren[0]?.classList.contains("status-mode-pill")).toBe(true);
     expect(statusLeftChildren[1]?.classList.contains("status-git-wrap")).toBe(true);
-    expect(statusLeftChildren[2]?.classList.contains("status-dir")).toBe(true);
+    expect(statusLeftChildren).toHaveLength(2);
 
-    // 6. Footer git menu removed: branch is display-only, no Changes menu.
+    // 5. Footer git menu removed: branch is display-only, no Changes menu.
     expect(container.querySelector(".status-git-menu")).toBeNull();
     expect(container.querySelector("button.status-git-btn")).toBeNull();
 

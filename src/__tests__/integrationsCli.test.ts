@@ -153,7 +153,7 @@ describe("kai integration azure (setup)", () => {
     expect(res.out).toMatch(/✔ Work items\s+readable/);
     expect(res.out).toMatch(/✔ Pull requests\s+readable/);
     expect(res.out).toMatch(/✔ Builds\s+readable/);
-    expect(res.out).toContain("Agents now get 7 Azure DevOps tools");
+    expect(res.out).toContain("Agents now get 8 Azure DevOps tools");
 
     expect(findBinding(dir)?.binding).toMatchObject({ project: "Payments", repo: "api" });
     const cfg = JSON.parse(fs.readFileSync(claudeConfig(dir), "utf8"));
@@ -459,6 +459,7 @@ describe("kai azure list", () => {
             return fakeDiscovery.listProjects(account, secrets);
           },
           listRepos: fakeDiscovery.listRepos,
+          listBranches: fakeDiscovery.listBranches,
         },
       })
     );
@@ -716,6 +717,7 @@ describe("project auto-detection", () => {
         discovery: {
           listProjects: async () => [{ name: "Billing" }, { name: "Other" }],
           listRepos: async () => [{ name: "ledger" }],
+          listBranches: async () => ["main"],
         },
       })
     );

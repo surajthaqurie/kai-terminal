@@ -9,7 +9,9 @@ import {
   type Capability,
   type IntegrationProvider,
   type Page,
+  type ProviderContext,
 } from "./types";
+import { effectiveRules } from "./workflowRules";
 import type { ToolOutcome } from "../mcpTools";
 import { clipChars, parsePageArgs, type Shrinkable } from "../mcpResponse";
 
@@ -36,6 +38,13 @@ const TOOL_DEFS: ToolDef[] = [
   {
     name: "kai_integration_status",
     description: "Which external service this project is connected to, and which tools it offers.",
+    capability: "status",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "kai_workflow_rules",
+    description:
+      "The branch to start new work from and open pull requests into. Call before creating a branch. Guidance, not enforced.",
     capability: "status",
     inputSchema: { type: "object", properties: {} },
   },
@@ -191,6 +200,21 @@ const DETAIL_SHRINK: Shrinkable[] = [
   { key: "relations" },
 ];
 
+/** The repository's default branch, or null when it is not bound to one or the lookup fails. */
+async function repoDefaultBranch(
+  provider: IntegrationProvider,
+  ctx: ProviderContext
+): Promise<string | null> {
+  const repo = ctx.binding.repo;
+  if (!repo || !provider.discovery) return null;
+  try {
+    const repos = await provider.discovery.listRepos(ctx.account, ctx.secrets, ctx.binding.project);
+    return repos.find((r) => r.name.toLowerCase() === repo.toLowerCase())?.defaultBranch ?? null;
+  } catch {
+    return null; // the rules are still useful without the default branch
+  }
+}
+
 /** Run one neutral tool against the project's active integration. */
 export async function runIntegrationTool(
   name: string,
@@ -224,6 +248,27 @@ export async function runIntegrationTool(
     });
 
     switch (name) {
+      case "kai_workflow_rules": {
+        const { mergeBranch } = effectiveRules(ctx.binding.rules);
+        if (mergeBranch) {
+          return {
+            kind: "json",
+            payload: {
+              baseBranch: mergeBranch,
+              note: `Create new branches from origin/${mergeBranch} and open pull requests into ${mergeBranch}.`,
+            },
+          };
+        }
+        // No merge branch is configured: the repository's own default is the base.
+        const baseBranch = await repoDefaultBranch(provider, ctx);
+        return {
+          kind: "json",
+          payload: {
+            baseBranch,
+            note: "No merge branch is configured: use the repository's default branch.",
+          },
+        };
+      }
       case "kai_work_item_search": {
         if (!provider.workItems) return unsupported();
         const page = parsePageArgs(args, PAGE);

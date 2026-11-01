@@ -30,6 +30,7 @@ import {
   type SecretLocation,
   type SecretStore,
 } from "./secretStore";
+import { compactRules, effectiveRules, RulesError, type WorkflowRules } from "./workflowRules";
 import {
   asIntegrationError,
   IntegrationError,
@@ -145,7 +146,8 @@ export function loginCommandFor(
 }
 
 function bindingView(b: ProjectBinding): IntegrationBindingView {
-  return { ...b };
+  const { rules, ...rest } = b;
+  return { ...rest, rules: effectiveRules(rules) };
 }
 
 async function accountView(
@@ -620,10 +622,80 @@ export function bind(
     project,
     repo: input.repo !== undefined ? input.repo : (own?.repo ?? null),
     boundAt: new Date().toISOString(),
+    // Switching project or account is not a reason to lose the team's merge branch.
+    ...(existing?.binding.rules ? { rules: existing.binding.rules } : {}),
   };
   // Replace across roots too: the nearest existing binding is this project's one binding.
   if (existing && existing.root !== root) removeBinding(existing.root);
   writeBinding(root, binding);
+  return binding;
+}
+
+/** Branches of the repository this folder is bound to. A network call. */
+export async function listBranches(projectDir: string, deps: ServiceDeps = {}): Promise<string[]> {
+  const { provider, ctx } = await resolveReady(projectDir, deps);
+  const repo = ctx.binding.repo;
+  if (!repo || !provider.discovery) {
+    throw new IntegrationError(
+      "bad_request",
+      "This project is not bound to a repository.",
+      "Pick a repository on the integration card first."
+    );
+  }
+  return provider.discovery.listBranches(ctx.account, ctx.secrets, ctx.binding.project, repo);
+}
+
+/**
+ * Replace this folder's workflow rules. `input` is the complete desired set:
+ * omitted fields return to their default, and a value equal to the default is
+ * not stored. Nothing is written when a field is invalid, or when the merge
+ * branch is not a branch of the repository. If the repository cannot be reached
+ * the branch is accepted as typed: being offline must not block a save.
+ */
+export async function setRules(
+  providerId: string,
+  projectDir: string,
+  input: unknown,
+  deps: ServiceDeps = {}
+): Promise<ProjectBinding> {
+  const found = findBinding(projectDir);
+  if (!found || found.binding.provider !== providerId) {
+    throw new IntegrationError(
+      "no_account",
+      "This project is not connected yet.",
+      "Connect it first, then set its rules."
+    );
+  }
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    throw new IntegrationError("bad_request", "rules must be an object.");
+  }
+  let rules: Partial<WorkflowRules>;
+  try {
+    rules = compactRules(input as Partial<Record<keyof WorkflowRules, unknown>>);
+  } catch (err) {
+    if (err instanceof RulesError) throw new IntegrationError("bad_request", err.message);
+    throw err;
+  }
+  if (rules.mergeBranch) {
+    let branches: string[] | null = null;
+    try {
+      branches = await listBranches(projectDir, deps);
+    } catch {
+      branches = null;
+    }
+    if (branches && !branches.includes(rules.mergeBranch)) {
+      throw new IntegrationError(
+        "not_found",
+        `The repository has no branch named "${rules.mergeBranch}".`,
+        branches.length > 0
+          ? `Available: ${branches.slice(0, 8).join(", ")}${branches.length > 8 ? ", …" : ""}`
+          : undefined
+      );
+    }
+  }
+  const { rules: _previous, ...rest } = found.binding;
+  const binding: ProjectBinding = Object.keys(rules).length > 0 ? { ...rest, rules } : rest;
+  writeBinding(found.root, binding);
   return binding;
 }
 
@@ -759,6 +831,13 @@ export async function handleRpc(
     case "unbind":
       await unbind(providerId, request.projectDir, { logout: request.logout }, deps);
       return { ok: true, done: true };
+    case "branches":
+      return { ok: true, branches: await listBranches(request.projectDir, deps) };
+    case "set_rules":
+      return {
+        ok: true,
+        binding: bindingView(await setRules(providerId, request.projectDir, request.rules, deps)),
+      };
     default:
       throw new IntegrationError("bad_request", "Unknown operation.");
   }

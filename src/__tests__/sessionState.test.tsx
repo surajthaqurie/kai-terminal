@@ -5,7 +5,6 @@ import { act } from "react";
 import { useTabs } from "../hooks/useTabs";
 import { useSessionExit } from "../hooks/useSessionExit";
 import { usePaneCwd } from "../hooks/usePaneCwd";
-import { useLatest } from "../hooks/useLatest";
 import {
   LAYOUT_KEY,
   createDefaultTab,
@@ -37,19 +36,12 @@ interface Api {
   reportCwd: ReturnType<typeof usePaneCwd>;
 }
 let api: Api;
-/** The footer's working directory as the harness reports it to `useTabs`. */
-const footer = { cwd: "" };
 /** Detected shells and the default one, as the harness reports them to `useSessionExit`. */
 const shells = { current: [] as ShellProfile[] };
 const defaultShellId = { current: "" };
 
 function Harness() {
-  const tabsState = useTabs({
-    cwd: footer.cwd,
-    effectiveShellPath: undefined,
-    setLastError: vi.fn(),
-  });
-  const footerCwd = useLatest("");
+  const tabsState = useTabs({ effectiveShellPath: undefined, setLastError: vi.fn() });
   const exit = useSessionExit({
     tabs: tabsState.tabs,
     setTabs: tabsState.setTabs,
@@ -58,14 +50,12 @@ function Harness() {
     activeTabIdRef: tabsState.activeTabIdRef,
     shellsRef: shells,
     selectedShellIdRef: defaultShellId,
-    cwdRef: footerCwd,
     setLastError: vi.fn(),
   });
   const reportCwd = usePaneCwd({
     tabsRef: tabsState.tabsRef,
     activeTabIdRef: tabsState.activeTabIdRef,
     setTabs: tabsState.setTabs,
-    setCwd: vi.fn(),
     applyGitInfo: vi.fn(),
   });
   api = { tabsState, exit, reportCwd };
@@ -74,7 +64,6 @@ function Harness() {
 
 let unmount: () => void;
 beforeEach(async () => {
-  footer.cwd = "";
   shells.current = [];
   defaultShellId.current = "";
   vi.mocked(closeAppWindow).mockClear();
@@ -172,16 +161,11 @@ describe("focus and open-by-folder", () => {
     expect(api.tabsState.tabs[0].activePaneId).toBe(before);
   });
 
-  it("opens the tab that is in the folder, not the first tab, when the footer shows that folder", async () => {
+  it("opens the tab that is in the folder, not the first tab", async () => {
     await act(async () => api.tabsState.newTab({ cwd: "C:\\work\\a" }));
     await act(async () => api.tabsState.newTab({ cwd: "C:\\work\\b" }));
     const [, a, b] = api.tabsState.tabs;
     expect(api.tabsState.activeTabId).toBe(b.id);
-
-    // The footer follows the active tab (b). Opening b's folder must find b, and
-    // opening a's folder must find a even though it is not the footer's folder.
-    footer.cwd = "C:\\work\\a";
-    await act(async () => api.tabsState.renameTab(b.id, b.title)); // re-render with the new footer
 
     await act(async () => api.tabsState.openOrFocusDir("C:\\work\\a"));
     expect(api.tabsState.activeTabId).toBe(a.id);
@@ -196,8 +180,25 @@ describe("focus and open-by-folder", () => {
   });
 });
 
+describe("a new tab starts at the default (home) folder", () => {
+  it("never inherits the folder of the tab it was opened from", async () => {
+    await act(async () => api.reportCwd(api.tabsState.tabs[0].id, paneOf(0).id, "C:\\work\\x"));
+    await act(async () => api.tabsState.newTab());
+    const fresh = api.tabsState.tabs[1];
+    expect(fresh.cwd).toBeUndefined();
+    expect(fresh.panes[0].cwd).toBeUndefined();
+  });
+
+  it("a split inherits the focused pane's folder", async () => {
+    await act(async () => api.reportCwd(api.tabsState.tabs[0].id, paneOf(0).id, "C:\\work\\x"));
+    await act(async () => api.tabsState.splitPane("vertical"));
+    expect(api.tabsState.tabs[0].panes).toHaveLength(2);
+    expect(api.tabsState.tabs[0].panes[1].cwd).toBe("C:\\work\\x");
+  });
+});
+
 describe("a pane's own directory is recorded", () => {
-  it("records a pane's first report even when it equals the footer directory", async () => {
+  it("records a pane's first report", async () => {
     await act(async () => api.tabsState.newTab());
     const tab = api.tabsState.tabs[1];
     expect(tab.panes[0].cwd).toBeUndefined();

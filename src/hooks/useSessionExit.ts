@@ -34,7 +34,6 @@ interface SessionExitOptions {
   activeTabIdRef: MutableRefObject<string>;
   shellsRef: MutableRefObject<ShellProfile[]>;
   selectedShellIdRef: MutableRefObject<string>;
-  cwdRef: MutableRefObject<string>;
   setLastError: (message: string | null) => void;
 }
 
@@ -55,7 +54,6 @@ export function useSessionExit({
   activeTabIdRef,
   shellsRef,
   selectedShellIdRef,
-  cwdRef,
   setLastError,
 }: SessionExitOptions) {
   const exitTimesRef = useRef<number[]>([]);
@@ -182,25 +180,12 @@ export function useSessionExit({
       void closeAppWindow().then((closed) => {
         if (closed) return;
         const selectedShell = shellsRef.current.find((s) => s.id === selectedShellIdRef.current);
-        const fresh = createDefaultTab(
-          "Terminal 1",
-          selectedShell?.path,
-          cwdRef.current.trim() || undefined
-        );
+        const fresh = createDefaultTab("Terminal 1", selectedShell?.path);
         setTabs([fresh]);
         setActiveTabId(fresh.id);
       });
     },
-    [
-      tabsRef,
-      activeTabIdRef,
-      shellsRef,
-      selectedShellIdRef,
-      cwdRef,
-      setTabs,
-      setActiveTabId,
-      setLastError,
-    ]
+    [tabsRef, activeTabIdRef, shellsRef, selectedShellIdRef, setTabs, setActiveTabId, setLastError]
   );
 
   // Retry after a crash-loop / instant-death fault: re-spawn the same pane

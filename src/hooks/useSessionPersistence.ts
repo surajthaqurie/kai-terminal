@@ -22,8 +22,6 @@ interface SessionPersistenceOptions {
   setActiveTabId: (id: string) => void;
   /** Opt-in: load the previous session immediately instead of offering it. */
   autoRestoreSession: boolean | undefined;
-  /** Receives the first restored tab's cwd after a workspace load. */
-  onWorkspaceCwd: (cwd: string) => void;
 }
 
 const toTabs = (persisted: PersistedTab[]) =>
@@ -38,7 +36,6 @@ export function useSessionPersistence({
   setTabs,
   setActiveTabId,
   autoRestoreSession,
-  onWorkspaceCwd,
 }: SessionPersistenceOptions) {
   // Tabs from the previous launch, offered once via banner (never auto-run).
   const [pendingRestore, setPendingRestore] = useState<PersistedTab[] | null>(() => {
@@ -117,9 +114,8 @@ export function useSessionPersistence({
       // The user chose a different layout: the previous-session offer no longer
       // applies (and must stop holding back the saved layout).
       setPendingRestore(null);
-      if (safe.tabs[0]?.cwd) onWorkspaceCwd(safe.tabs[0].cwd);
     },
-    [applyRestoredTabs, onWorkspaceCwd]
+    [applyRestoredTabs]
   );
 
   return { pendingRestore, restoreSession, dismissRestore, restoreWorkspace };

@@ -262,7 +262,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
     onStatusRef.current = onSessionStatusChange;
     const onCwdResolvedRef = useRef(onCwdResolved);
     onCwdResolvedRef.current = onCwdResolved;
-    // Footer path gate: changed directories are held until typing stops and
+    // Directory gate: changed directories are held until typing stops and
     // the candidate settles (see createCwdSettler); deliver() is the only
     // place that reaches the app. Created once per pane.
     const lastKeyAtRef = useRef(0);

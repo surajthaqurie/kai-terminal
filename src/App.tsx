@@ -66,10 +66,6 @@ function App() {
     },
     [notify]
   );
-  // Global toolbar working directory (follows the active pane).
-  const [cwd, setCwd] = useState<string>("");
-  const cwdRef = useLatest(cwd);
-
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [isAiCliOpen, setIsAiCliOpen] = useState(false);
@@ -88,7 +84,6 @@ function App() {
   const music = useMusicPlayer({ showMusicPlayer: userSettings.showMusicPlayer });
 
   const tabsState = useTabs({
-    cwd,
     effectiveShellPath: config.effectiveShellPath,
     setLastError,
   });
@@ -152,8 +147,8 @@ function App() {
     [config.setSelectedShellId, tabsState.newTab, focusActiveTerminalSoon]
   );
 
-  /** Effective project dir: active pane -> tab -> global toolbar input. */
-  const effectiveProjectDir = resolveEffectiveProjectDir(activePane?.cwd, activeTab?.cwd, cwd);
+  /** Active project dir: the focused pane's folder, else its tab's. Empty until a new shell reports one. */
+  const effectiveProjectDir = resolveEffectiveProjectDir(activePane?.cwd, activeTab?.cwd);
 
   const { setPaneCodeMode, modeDisplay, exitCodeMode } = useCodeMode({
     activePaneId,
@@ -167,12 +162,10 @@ function App() {
     activeTab,
     activePane,
     activePaneId,
-    cwd,
     effectiveProjectDir,
   });
   const project = useProjectActions({
     effectiveProjectDir,
-    cwd,
     editorPath: userSettings.editorPath,
     setLastError: reportError,
     applyGitInfo: git.applyGitInfo,
@@ -181,7 +174,6 @@ function App() {
     tabsRef,
     activeTabIdRef,
     setTabs,
-    setCwd,
     applyGitInfo: git.applyGitInfo,
   });
   const sessionExit = useSessionExit({
@@ -192,7 +184,6 @@ function App() {
     activeTabIdRef,
     shellsRef: config.shellsRef,
     selectedShellIdRef: config.selectedShellIdRef,
-    cwdRef,
     setLastError,
   });
   const persistence = useSessionPersistence({
@@ -200,7 +191,6 @@ function App() {
     setTabs,
     setActiveTabId,
     autoRestoreSession: userSettings.autoRestoreSession,
-    onWorkspaceCwd: setCwd,
   });
   const updates = useAppUpdates({
     autoCheckUpdates: userSettings.autoCheckUpdates,

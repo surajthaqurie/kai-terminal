@@ -22,8 +22,6 @@ import { applyTabsUpdate } from "./tabsSync";
 const PANE_NOTICE_MS = 4000;
 
 interface TabsOptions {
-  /** Global toolbar working directory (fallback for pane splits). */
-  cwd: string;
   /** Effective shell binary for new sessions (custom path wins over profile). */
   effectiveShellPath: string | undefined;
   setLastError: (message: string | null) => void;
@@ -35,7 +33,7 @@ interface TabsOptions {
  * values for long-lived callbacks (pty-exit, Tauri events) that must never
  * see a stale `tabs` snapshot.
  */
-export function useTabs({ cwd, effectiveShellPath, setLastError }: TabsOptions) {
+export function useTabs({ effectiveShellPath, setLastError }: TabsOptions) {
   // Fast startup: always open with a single fresh tab so the window paints
   // immediately (one PTY). A previous session, if any, is offered via an
   // explicit "Restore session" banner instead of auto-spawning N shells —
@@ -49,7 +47,6 @@ export function useTabs({ cwd, effectiveShellPath, setLastError }: TabsOptions) 
     initialTabsRef.current[0]?.id ?? "session-1"
   );
   const tabsRef = useLatest(tabs);
-  const cwdRef = useLatest(cwd);
   const activeTabIdRef = useLatest(activeTabId);
 
   // Transient, non-error notice shown when a pane split is refused.
@@ -100,22 +97,16 @@ export function useTabs({ cwd, effectiveShellPath, setLastError }: TabsOptions) 
       const norm = normalizeCwdForCompare(cleaned);
       const sameDir = (c: string | undefined) =>
         Boolean(c) && normalizeCwdForCompare(cleanCwdForStore(c as string)) === norm;
-      // Match on each tab's OWN folders. The footer directory is not part of the
-      // per-tab test: when it equalled `dir`, every tab matched and the first
-      // one was focused instead of the tab actually in that folder. It only
-      // breaks the tie for the active tab, which the footer follows.
-      const found =
-        tabsRef.current.find((t) => [t.cwd, ...t.panes.map((p) => p.cwd)].some(sameDir)) ??
-        (sameDir(cwdRef.current)
-          ? tabsRef.current.find((t) => t.id === activeTabIdRef.current)
-          : undefined);
+      const found = tabsRef.current.find((t) =>
+        [t.cwd, ...t.panes.map((p) => p.cwd)].some(sameDir)
+      );
       if (found) {
         setActiveTabId(found.id);
         return;
       }
       newTab({ cwd: cleaned });
     },
-    [newTab, tabsRef, cwdRef, activeTabIdRef]
+    [newTab, tabsRef]
   );
 
   const closeTab = useCallback(
@@ -200,12 +191,9 @@ export function useTabs({ cwd, effectiveShellPath, setLastError }: TabsOptions) 
       setTabs((prev) =>
         prev.map((tab) => {
           if (tab.id !== activeTabId) return tab;
-          // Split ONLY the active pane: inherit the active pane's cwd
-          // (proper parent path chain: active pane -> tab -> toolbar).
+          // Split ONLY the active pane: it inherits that pane's folder (else the tab's).
           const fromPane = tab.panes.find((p) => p.id === tab.activePaneId);
-          const inheritCwd =
-            resolveEffectiveProjectDir(fromPane?.cwd, tab.cwd, cwd.trim() || undefined) ||
-            undefined;
+          const inheritCwd = resolveEffectiveProjectDir(fromPane?.cwd, tab.cwd) || undefined;
           const next = splitTab(tab, tab.id, direction, (id) => ({
             id,
             // A split opens in the shell of the terminal it was split from.
@@ -218,7 +206,7 @@ export function useTabs({ cwd, effectiveShellPath, setLastError }: TabsOptions) 
         })
       );
     },
-    [activeTabId, effectiveShellPath, cwd, tabsRef]
+    [activeTabId, effectiveShellPath, tabsRef]
   );
 
   const closeActivePane = useCallback(() => {

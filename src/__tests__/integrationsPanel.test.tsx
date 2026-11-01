@@ -16,6 +16,7 @@ const svc = vi.hoisted(() => ({
 }));
 vi.mock("../services/integrationService", () => svc);
 
+import { DEFAULT_RULES } from "../core/integrations/workflowRules";
 import { IntegrationsPanel } from "../components/IntegrationsPanel";
 import { AiCliPanel } from "../components/AiCliPanel";
 import {
@@ -334,6 +335,7 @@ describe("IntegrationsPanel", () => {
           project: "Payments",
           repo: "api",
           boundAt: "2026-10-29T00:00:00Z",
+          rules: DEFAULT_RULES,
         },
       },
     });
@@ -431,6 +433,7 @@ describe("IntegrationsPanel", () => {
           project: "Payments",
           repo: "api",
           boundAt: "2026-10-29T00:00:00Z",
+          rules: DEFAULT_RULES,
         },
       },
     });
@@ -527,6 +530,7 @@ describe("IntegrationsPanel", () => {
           project: "Payments",
           repo: "api",
           boundAt: "",
+          rules: DEFAULT_RULES,
         },
       },
     });
@@ -620,6 +624,7 @@ describe("IntegrationsPanel: switch project", () => {
           project: "Payments",
           repo: "api",
           boundAt: "2026-10-29T00:00:00Z",
+          rules: DEFAULT_RULES,
         },
         ...over,
       },
@@ -723,6 +728,7 @@ describe("IntegrationsPanel: switch project", () => {
         project: "Web",
         repo: "site",
         boundAt: "",
+        rules: DEFAULT_RULES,
       },
     });
     svc.getIntegrationStatus

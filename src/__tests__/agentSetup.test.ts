@@ -500,12 +500,15 @@ describe("Claude Code configuration predictability & scope enforcement", () => {
     const repo = makeTempHome();
     fs.mkdirSync(path.join(repo, ".git"));
     const configPath = path.join(repo, ".mcp.json");
+    // A real, still-present script: only a missing one counts as stale.
+    const oldBin = path.join(home, "old-kai.js");
+    fs.writeFileSync(oldBin, "");
 
     const initial = {
       unrelatedTopLevel: "preserve-me",
       mcpServers: {
         "other-server": { command: "python", args: ["-m", "other"] },
-        "kai-terminal": { command: "node", args: ["/old/bin/kai.js", "mcp", "."] },
+        "kai-terminal": { command: "node", args: [oldBin, "mcp", "."] },
       },
     };
     fs.writeFileSync(configPath, JSON.stringify(initial, null, 2));
@@ -543,6 +546,30 @@ describe("Claude Code configuration predictability & scope enforcement", () => {
     });
     // Ensure no duplicate registration keys
     expect(Object.keys(updated.mcpServers)).toEqual(["other-server", "kai-terminal"]);
+  });
+
+  it("repairs an entry whose script is gone (reinstall elsewhere) without force and strips \\\\?\\ prefixes", () => {
+    const home = makeTempHome();
+    const repo = makeTempHome();
+    fs.mkdirSync(path.join(repo, ".git"));
+    const configPath = path.join(repo, ".mcp.json");
+    const gone = path.join(home, "removed-install", "dist", "cli", "index.js");
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        mcpServers: { "kai-terminal": { command: "node", args: [gone, "mcp", "."] } },
+      })
+    );
+
+    const res = applyAgentSetup("claude", "\\\\?\\C:\\Program Files\\kai\\index.js", {
+      homeDir: home,
+      projectDir: repo,
+      scope: "project",
+    });
+    expect(res.wrote).toBe(true);
+    expect(res.alreadyConfigured).toBe(false);
+    const updated = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+    expect(updated.mcpServers["kai-terminal"].args[0]).toBe("C:\\Program Files\\kai\\index.js");
   });
 
   it("refuses to overwrite malformed JSON to avoid data loss", () => {

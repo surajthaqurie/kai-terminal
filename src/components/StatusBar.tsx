@@ -4,7 +4,6 @@ import type { ShellProfile } from "../types/terminal";
 import {
   GitBranch,
   ArrowUpCircle,
-  Folder,
   Code,
   Terminal,
   RefreshCw,
@@ -62,8 +61,8 @@ interface StatusBarProps {
 
 /**
  * Always-visible bottom status bar. It only reports: the focused terminal's shell
- * (click to change it), mode, git branch (click
- * opens the Changes Review & Diff modal) and working directory on the left;
+ * (click to change it), mode and git branch (click
+ * opens the Changes Review & Diff modal) on the left;
  * the music mini-player (while one is active), the app version (or an update chip
  * when an update exists) and the "check for updates" button on the right.
  */
@@ -94,28 +93,9 @@ export const StatusBar: FC<StatusBarProps> = ({
   onMusicNext,
   onMusicMute,
 }) => {
-  const [copiedPath, setCopiedPath] = useState(false);
-
   const repoName = gitRepoRoot
     ? gitRepoRoot.split(/[/\\]/).filter(Boolean).pop() || gitRepoRoot
     : null;
-
-  // Full path is always the source of truth: the button shows as much
-  // as fits (CSS ellipsis) while the tooltip + click-to-copy expose the
-  // complete value on every OS. No JS middle-truncation, so long Windows
-  // paths are never cut to an unreadable fragment.
-  const dirDisplay = projectDir || "";
-
-  const handleCopyPath = async () => {
-    if (!projectDir) return;
-    try {
-      await navigator.clipboard.writeText(projectDir);
-      setCopiedPath(true);
-      setTimeout(() => setCopiedPath(false), 1500);
-    } catch {
-      // clipboard unavailable: tooltip still shows the full path
-    }
-  };
 
   const [dragX, setDragX] = useState<number>(() => {
     try {
@@ -341,18 +321,6 @@ export const StatusBar: FC<StatusBarProps> = ({
               </button>
             )}
           </span>
-        )}
-        {projectDir && (
-          <button
-            type="button"
-            className="status-dir status-dir-btn"
-            title={`${projectDir}${copiedPath ? "\nCopied!" : "\nClick to copy full path"}`}
-            aria-label={`Current directory: ${projectDir}. Activate to copy the full path.`}
-            onClick={handleCopyPath}
-          >
-            <Folder size={12} aria-hidden="true" />
-            <span className="status-dir-text">{dirDisplay}</span>
-          </button>
         )}
       </div>
 

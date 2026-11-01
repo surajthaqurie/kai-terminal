@@ -165,12 +165,20 @@ const activeTabContent = () =>
   )!;
 const banner = (label: string) => container.querySelector(`[aria-label="${label}"]`);
 const modal = (name: string) => registry.modals[name]!;
-const statusDirLabel = () =>
-  container.querySelector('[aria-label^="Current directory:"]')?.getAttribute("aria-label");
 const persistedTitles = () =>
   (JSON.parse(localStorage.getItem(LAYOUT_KEY) ?? "[]") as Array<{ title: string }>).map(
     (t) => t.title
   );
+
+/** Folder the active pane resolves to, read through the changes review (undefined when none). */
+async function activeDir() {
+  await runAction("review-changes");
+  const dir = container.querySelector('[data-testid="gitChanges"]')
+    ? modal("gitChanges").dir
+    : undefined;
+  if (dir) await act(async () => modal("gitChanges").onClose());
+  return dir as string | undefined;
+}
 
 async function resolveCwd(id: string, cwd: string) {
   await act(async () => {
@@ -606,7 +614,7 @@ describe("App shell: session persistence", () => {
       });
     });
     expect(tabTitles()).toEqual(["One", "Two"]);
-    expect(statusDirLabel()).toContain("/w/one");
+    expect(await activeDir()).toBe("/w/one");
     expect(modal("workspace").currentTabs).toHaveLength(2);
   });
 
@@ -626,11 +634,11 @@ describe("App shell: session persistence", () => {
 });
 
 describe("App shell: working directory, git and Code Mode footer", () => {
-  it("shows the resolved cwd and its git branch in the footer", async () => {
+  it("shows the git branch of the resolved cwd in the footer, and no path", async () => {
     await mount();
-    expect(statusDirLabel()).toBeUndefined();
+    expect(container.querySelector('[aria-label^="Git branch"]')).toBeNull();
     await resolveCwd(paneId(0), "/work/proj");
-    expect(statusDirLabel()).toContain("/work/proj");
+    expect(container.querySelector(".status-dir")).toBeNull();
     expect(
       container.querySelector('[aria-label^="Git branch main"]')!.getAttribute("aria-label")
     ).toContain("Git branch main, uncommitted changes");
@@ -649,10 +657,17 @@ describe("App shell: working directory, git and Code Mode footer", () => {
     await resolveCwd(paneId(0), "/work/one");
     await newTabKey();
     await resolveCwd(paneId(1), "/work/two");
-    expect(statusDirLabel()).toContain("/work/two");
+    expect(await activeDir()).toBe("/work/two");
     await press("Digit1", "1");
     await flush();
-    expect(statusDirLabel()).toContain("/work/one");
+    expect(await activeDir()).toBe("/work/one");
+  });
+
+  it("a new tab does not borrow the previous tab's folder before its shell reports one", async () => {
+    await mount();
+    await resolveCwd(paneId(0), "/work/one");
+    await newTabKey();
+    expect(await activeDir()).toBeUndefined();
   });
 
   it("opens git status and the changes review for the active directory", async () => {
@@ -683,7 +698,7 @@ describe("App shell: working directory, git and Code Mode footer", () => {
     await runAction("review-changes");
     expect(container.querySelector('[data-testid="gitChanges"]')).toBeNull();
     expect(modal("diagnostics").lastError).toBe(
-      "No project directory set. Enter or open a directory first."
+      "No project directory yet. Open a terminal in a folder first."
     );
   });
 
