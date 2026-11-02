@@ -66,7 +66,7 @@ Only one integration is active per project. A project that is not connected sees
 | Tool | Does |
 | :--- | :--- |
 | `kai_integration_status` | Which service and account this project uses, and which tools it offers |
-| `kai_workflow_rules` | The project's merge branch: where to start new branches and which branch pull requests target (the repository's default when none is set). Guidance only: nothing is validated or blocked |
+| `kai_workflow_rules` | The project's merge branch (where to start new branches and which branch pull requests target; the repository's default when none is set) and, when one is set, the regular expression new branch names should match. Guidance only: nothing is validated or blocked |
 | `kai_work_item_search` | Search work items (`text`, `state`, `type`, `assignedTo` or read-only `wiql`), paged |
 | `kai_work_item_get` | One work item: description, acceptance criteria, relations, recent comments |
 | `kai_pr_list` | Pull requests (`status`, `repo`), paged |

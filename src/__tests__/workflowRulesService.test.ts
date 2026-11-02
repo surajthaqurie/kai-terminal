@@ -117,6 +117,40 @@ describe("merge branch: storage", () => {
     await expect(setRules("azure-devops", repoDir, "nope")).rejects.toThrow(/must be an object/);
   });
 
+  it("saves, reads back and removes a branch naming pattern", async () => {
+    useFakeAzure([BRANCHES]);
+    const pattern = String.raw`^(feature|bugfix)/\d+-[a-z0-9-]+$`;
+    await setRules("azure-devops", repoDir, { mergeBranch: "", branchPattern: pattern });
+    expect(findBinding(repoDir)?.binding.rules).toEqual({ branchPattern: pattern });
+    const status = await getStatus("azure-devops", repoDir);
+    expect(status.project.binding?.rules).toEqual({ ...DEFAULT_RULES, branchPattern: pattern });
+
+    // Removing it (empty) stores nothing again.
+    await setRules("azure-devops", repoDir, { mergeBranch: "", branchPattern: "" });
+    expect(findBinding(repoDir)?.binding.rules).toBeUndefined();
+  });
+
+  it("removes one rule and keeps the other", async () => {
+    useFakeAzure([BRANCHES]);
+    const pattern = String.raw`^feature/\d+$`;
+    await setRules("azure-devops", repoDir, { mergeBranch: "develop", branchPattern: pattern });
+    await setRules("azure-devops", repoDir, { mergeBranch: "", branchPattern: pattern });
+    expect(findBinding(repoDir)?.binding.rules).toEqual({ branchPattern: pattern });
+  });
+
+  it("rejects a bad pattern with the reason and writes nothing", async () => {
+    await expect(
+      setRules("azure-devops", repoDir, { branchPattern: "^feature/(" })
+    ).rejects.toThrow(/Not a valid regular expression/);
+    await expect(setRules("azure-devops", repoDir, { branchPattern: ".*" })).rejects.toThrow(
+      /matches an empty name/
+    );
+    await expect(setRules("azure-devops", repoDir, { branchPattern: 5 })).rejects.toThrow(
+      /Branch naming must be text/
+    );
+    expect(findBinding(repoDir)?.binding.rules).toBeUndefined();
+  });
+
   it("refuses a folder that is not connected", async () => {
     const other = makeRepo("https://example.com/x.git");
     try {
@@ -150,6 +184,21 @@ describe("kai_workflow_rules tool", () => {
     expect(res.json).toMatchObject({ baseBranch: "develop" });
     expect(res.json!.note).toContain("origin/develop");
     expect(Object.keys(res.json!).sort()).toEqual(["baseBranch", "note"]);
+  });
+
+  it("adds the branch naming pattern only when one is set", async () => {
+    useFakeAzure([BRANCHES]);
+    const pattern = String.raw`^(feature|bugfix)/\d+-[a-z0-9-]+$`;
+    await setRules("azure-devops", repoDir, { mergeBranch: "develop", branchPattern: pattern });
+    const res = await callTool(repoDir, "kai_workflow_rules");
+    expect(res.json).toMatchObject({ baseBranch: "develop", branchPattern: pattern });
+    expect(res.json!.branchPatternNote).toContain(pattern);
+    expect(Object.keys(res.json!).sort()).toEqual([
+      "baseBranch",
+      "branchPattern",
+      "branchPatternNote",
+      "note",
+    ]);
   });
 
   it("falls back to the repository default when none is configured", async () => {

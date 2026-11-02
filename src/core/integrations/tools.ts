@@ -44,7 +44,7 @@ const TOOL_DEFS: ToolDef[] = [
   {
     name: "kai_workflow_rules",
     description:
-      "The branch to start new work from and open pull requests into. Call before creating a branch. Guidance, not enforced.",
+      "The branch to start new work from and open pull requests into, and the regular expression new branch names should match when one is set. Call before creating a branch. Guidance, not enforced.",
     capability: "status",
     inputSchema: { type: "object", properties: {} },
   },
@@ -249,12 +249,20 @@ export async function runIntegrationTool(
 
     switch (name) {
       case "kai_workflow_rules": {
-        const { mergeBranch } = effectiveRules(ctx.binding.rules);
+        const { mergeBranch, branchPattern } = effectiveRules(ctx.binding.rules);
+        // A naming pattern is only included when one is set.
+        const naming = branchPattern
+          ? {
+              branchPattern,
+              branchPatternNote: `Name new branches so the whole name matches this regular expression: ${branchPattern}`,
+            }
+          : {};
         if (mergeBranch) {
           return {
             kind: "json",
             payload: {
               baseBranch: mergeBranch,
+              ...naming,
               note: `Create new branches from origin/${mergeBranch} and open pull requests into ${mergeBranch}.`,
             },
           };
@@ -265,6 +273,7 @@ export async function runIntegrationTool(
           kind: "json",
           payload: {
             baseBranch,
+            ...naming,
             note: "No merge branch is configured: use the repository's default branch.",
           },
         };

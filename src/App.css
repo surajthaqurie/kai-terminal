@@ -5647,6 +5647,22 @@ button.status-git-btn-clickable:focus-visible {
   gap: 8px;
 }
 
+/* A field and its Remove button on one line (merge branch, branch naming) */
+.integration-field-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.integration-field-row .text-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.integration-field-row input[aria-invalid="true"] {
+  border-color: var(--color-danger);
+}
+
 /* Integrations tab: "Switch project" picker (fetched on demand, never on tab open) */
 .integration-switch {
   display: flex;

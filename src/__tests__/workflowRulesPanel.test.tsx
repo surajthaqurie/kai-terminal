@@ -74,6 +74,15 @@ describe("WorkflowRulesSection in the Integrations card", () => {
       el!.dispatchEvent(new Event("change", { bubbles: true }));
     });
   };
+  const type = async (value: string) => {
+    const el = q<HTMLInputElement>("input[type=text]");
+    expect(el).toBeTruthy();
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      setter.call(el, value);
+      el!.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  };
   const optionValues = () => [...container.querySelectorAll("option")].map((o) => o.value);
   const render = async () => {
     await act(async () => {
@@ -105,18 +114,20 @@ describe("WorkflowRulesSection in the Integrations card", () => {
 
     const more = button("More");
     expect(more?.getAttribute("aria-expanded")).toBe("false");
-    expect(q('[aria-label="Merge branch"]')).toBeNull();
+    expect(q('[aria-label="Branch rules"]')).toBeNull();
     expect(svc.listIntegrationBranches).not.toHaveBeenCalled();
 
     await click(more);
     expect(button("Less")?.getAttribute("aria-expanded")).toBe("true");
     expect(svc.listIntegrationBranches).toHaveBeenCalledWith("/repo");
-    expect(q('[aria-label="Merge branch"]')?.textContent).toContain("Merge branch");
-    // Only the merge branch: no naming, commit or pull request rules.
-    expect(container.textContent).not.toMatch(/commit|pull request title|branch name/i);
+    const group = q('[aria-label="Branch rules"]')?.textContent ?? "";
+    expect(group).toContain("Merge branch");
+    expect(group).toContain("Branch naming (regex)");
+    // Only these two: no commit message or pull request title rules.
+    expect(container.textContent).not.toMatch(/commit|pull request title/i);
 
     await click(button("Less"));
-    expect(q('[aria-label="Merge branch"]')).toBeNull();
+    expect(q('[aria-label="Branch rules"]')).toBeNull();
   });
 
   it("offers the repository default first, then the real branches", async () => {
@@ -155,7 +166,10 @@ describe("WorkflowRulesSection in the Integrations card", () => {
     expect(button("Save")?.disabled).toBe(false);
     await click(button("Save"));
 
-    expect(svc.setIntegrationRules).toHaveBeenCalledWith("/repo", { mergeBranch: "develop" });
+    expect(svc.setIntegrationRules).toHaveBeenCalledWith("/repo", {
+      mergeBranch: "develop",
+      branchPattern: "",
+    });
     expect(svc.getIntegrationStatus).toHaveBeenCalledTimes(2);
     expect(container.textContent).toContain("Saved.");
     expect(button("Save")?.disabled).toBe(true);
@@ -175,7 +189,10 @@ describe("WorkflowRulesSection in the Integrations card", () => {
 
     await select("");
     await click(button("Save"));
-    expect(svc.setIntegrationRules).toHaveBeenCalledWith("/repo", { mergeBranch: "" });
+    expect(svc.setIntegrationRules).toHaveBeenCalledWith("/repo", {
+      mergeBranch: "",
+      branchPattern: "",
+    });
   });
 
   it("keeps a saved branch selectable even when the repository no longer lists it", async () => {
@@ -219,5 +236,114 @@ describe("WorkflowRulesSection in the Integrations card", () => {
     expect(q("[role=alert]")?.textContent).toContain("has no branch named");
     expect(container.textContent).not.toContain("Saved.");
     expect(q<HTMLSelectElement>("select")?.value).toBe("develop");
+  });
+
+  describe("branch naming (regex)", () => {
+    const PATTERN = String.raw`^(feature|bugfix)/d+-[a-z0-9-]+$`;
+    const prepare = async (rules: WorkflowRules = DEFAULT_RULES) => {
+      svc.getIntegrationStatus.mockResolvedValue({ ok: true, value: activeStatus(rules) });
+      svc.listIntegrationBranches.mockResolvedValue({ ok: true, value: BRANCHES });
+      svc.setIntegrationRules.mockResolvedValue({
+        ok: true,
+        value: activeStatus(rules).project.binding,
+      });
+      await render();
+      await click(button("More"));
+    };
+
+    it("starts empty and shows no error before it is touched", async () => {
+      await prepare({ ...DEFAULT_RULES, branchPattern: "^(" }); // a bad stored value
+      expect(q<HTMLInputElement>("input[type=text]")?.value).toBe("^(");
+      expect(container.textContent).not.toContain("Not a valid regular expression");
+    });
+
+    it("explains a broken pattern as you type and blocks saving", async () => {
+      await prepare();
+      await type("^feature/(");
+      expect(container.textContent).toMatch(/Not a valid regular expression: .+./);
+      expect(q("input[type=text]")?.getAttribute("aria-invalid")).toBe("true");
+      expect(button("Save")?.disabled).toBe(true);
+
+      await type(".*");
+      expect(container.textContent).toContain("matches an empty name");
+
+      await type(PATTERN);
+      expect(container.textContent).not.toMatch(/Not a valid|matches an empty/);
+      expect(q("input[type=text]")?.getAttribute("aria-invalid")).toBeNull();
+      expect(button("Save")?.disabled).toBe(false);
+    });
+
+    it("only suggests anchors and still lets you save", async () => {
+      await prepare();
+      await type(String.raw`feature/d+`);
+      expect(container.textContent).toContain("start with ^ and end with $");
+      expect(button("Save")?.disabled).toBe(false);
+    });
+
+    it("saves the pattern together with the merge branch", async () => {
+      await prepare();
+      await select("develop");
+      await type(PATTERN);
+      await click(button("Save"));
+      expect(svc.setIntegrationRules).toHaveBeenCalledWith("/repo", {
+        mergeBranch: "develop",
+        branchPattern: PATTERN,
+      });
+      expect(container.textContent).toContain("Saved.");
+    });
+
+    it("removes the pattern with its Remove button, then saves the removal", async () => {
+      await prepare({ ...DEFAULT_RULES, mergeBranch: "develop", branchPattern: PATTERN });
+      const remove = container.querySelector<HTMLButtonElement>(
+        '[aria-label="Remove branch naming"]'
+      );
+      expect(remove?.disabled).toBe(false);
+      await click(remove);
+      expect(q<HTMLInputElement>("input[type=text]")?.value).toBe("");
+      expect(q<HTMLSelectElement>("select")?.value).toBe("develop"); // the other rule stays
+      expect(
+        container.querySelector<HTMLButtonElement>('[aria-label="Remove branch naming"]')?.disabled
+      ).toBe(true);
+
+      await click(button("Save"));
+      expect(svc.setIntegrationRules).toHaveBeenCalledWith("/repo", {
+        mergeBranch: "develop",
+        branchPattern: "",
+      });
+    });
+
+    it("removes the merge branch with its Remove button", async () => {
+      await prepare({ ...DEFAULT_RULES, mergeBranch: "develop", branchPattern: PATTERN });
+      await click(container.querySelector('[aria-label="Remove merge branch"]'));
+      expect(q<HTMLSelectElement>("select")?.value).toBe("");
+      expect(q<HTMLInputElement>("input[type=text]")?.value).toBe(PATTERN);
+      await click(button("Save"));
+      expect(svc.setIntegrationRules).toHaveBeenCalledWith("/repo", {
+        mergeBranch: "",
+        branchPattern: PATTERN,
+      });
+    });
+
+    it("keeps both Remove buttons off when nothing is set", async () => {
+      await prepare();
+      for (const label of ["Remove merge branch", "Remove branch naming"]) {
+        expect(
+          container.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`)?.disabled
+        ).toBe(true);
+      }
+    });
+
+    it("shows the server's reason when saving the pattern fails and keeps what was typed", async () => {
+      await prepare();
+      svc.setIntegrationRules.mockResolvedValue({
+        ok: false,
+        error: { code: "bad_request", message: "Pattern is too long (201 of 200 characters)." },
+      });
+      await type(PATTERN);
+      await click(button("Save"));
+      expect(q("[role=alert]")?.textContent).toContain("too long");
+      expect(q<HTMLInputElement>("input[type=text]")?.value).toBe(PATTERN);
+      expect(container.textContent).not.toContain("Saved.");
+    });
   });
 });
