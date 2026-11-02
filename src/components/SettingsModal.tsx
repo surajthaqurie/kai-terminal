@@ -257,13 +257,50 @@ export const SettingsModal: FC<SettingsModalProps> = ({
       ? (formData.fixedKeybindings?.[action] ?? DEFAULT_FIXED_SHORTCUTS[action])
       : formData.keybindings[action];
 
-  const bindingGroups: Array<{ heading?: string; actions: AnyShortcutId[] }> = [
-    { actions: Object.keys(SHORTCUT_ACTION_LABELS) as ShortcutActionId[] },
+  // Grouped by what the key works on, so people find a shortcut by task.
+  const bindingGroups: Array<{ heading: string; actions: AnyShortcutId[] }> = [
+    {
+      heading: "Tabs",
+      actions: ["newTab", "closeTab", "nextTab", "prevTab"] satisfies ShortcutActionId[],
+    },
+    {
+      heading: "Panes",
+      actions: [
+        "splitVertical",
+        "splitHorizontal",
+        "closePane",
+        "nextPane",
+        "prevPane",
+      ] satisfies ShortcutActionId[],
+    },
+    {
+      heading: "App",
+      actions: ["commandPalette", "search", "settings"] satisfies ShortcutActionId[],
+    },
+    {
+      heading: "Music Time",
+      actions: [
+        "toggleMusic",
+        "musicPlayPause",
+        "musicNext",
+        "musicMute",
+      ] satisfies ShortcutActionId[],
+    },
     {
       heading: "Terminal keys (zoom, copy / paste, scroll, tab jump)",
       actions: Object.keys(FIXED_ACTION_LABELS) as FixedActionId[],
     },
   ];
+  const defaultFor = (action: AnyShortcutId): string =>
+    isFixedAction(action) ? DEFAULT_FIXED_SHORTCUTS[action] : DEFAULT_SETTINGS.keybindings[action];
+  const isCustomised = (action: AnyShortcutId) => bindingFor(action) !== defaultFor(action);
+  // Name the other action so a conflict says what to change, not just that one exists.
+  const conflictPartners = (action: AnyShortcutId): string =>
+    conflicts
+      .filter((c) => c.actions.includes(action))
+      .flatMap((c) => c.actions.filter((a) => a !== action))
+      .map((a) => `"${BINDING_LABELS[a]}"`)
+      .join(", ");
 
   const handleBindingChange = (action: AnyShortcutId, value: string) => {
     let err: string | null;
@@ -291,6 +328,12 @@ export const SettingsModal: FC<SettingsModalProps> = ({
       else delete copy[action];
       return copy;
     });
+  };
+
+  /** Puts one shortcut back to its default and clears any error it showed. */
+  const handleResetOne = (action: AnyShortcutId) => {
+    handleBindingChange(action, defaultFor(action));
+    setRecordingAction(null);
   };
 
   const handleResetBindings = () => {
@@ -832,7 +875,8 @@ export const SettingsModal: FC<SettingsModalProps> = ({
                   <label>
                     Keyboard Shortcuts{" "}
                     <span className="muted-text">
-                      (Click a field and press the key combination; Backspace clears it)
+                      (Click a field and press the new key combination. Esc cancels. Use{" "}
+                      {isMac ? "Cmd" : "Ctrl"} or Alt with a key, or F1–F12 on its own)
                     </span>
                   </label>
                   <button
@@ -846,14 +890,12 @@ export const SettingsModal: FC<SettingsModalProps> = ({
                 </div>
 
                 {bindingGroups.map(({ heading, actions }) => (
-                  <div key={heading ?? "actions"} style={{ marginTop: heading ? "16px" : 0 }}>
-                    {heading && <label style={{ display: "block" }}>{heading}</label>}
+                  <div key={heading} style={{ marginTop: "16px" }}>
+                    <label style={{ display: "block" }}>{heading}</label>
                     <div className="shortcuts-table">
                       {actions.map((action) => {
                         const isRecording = recordingAction === action;
-                        const placeholder = isFixedAction(action)
-                          ? DEFAULT_FIXED_SHORTCUTS[action]
-                          : DEFAULT_SETTINGS.keybindings[action];
+                        const placeholder = platformLabel(defaultFor(action), isMac);
                         return (
                           <div key={action} className="shortcut-row-item">
                             <span className="shortcut-label">{BINDING_LABELS[action]}</span>
@@ -863,7 +905,11 @@ export const SettingsModal: FC<SettingsModalProps> = ({
                                 className={`text-input modal-input shortcut-input ${
                                   isRecording ? "recording" : ""
                                 }`}
-                                value={isRecording ? "Press shortcut..." : bindingFor(action) || ""}
+                                value={
+                                  isRecording
+                                    ? "Press shortcut..."
+                                    : platformLabel(bindingFor(action) || "", isMac)
+                                }
                                 // A recorder, not a text box: typing here used to write
                                 // "Press shortcut...x" into the binding.
                                 readOnly
@@ -883,13 +929,30 @@ export const SettingsModal: FC<SettingsModalProps> = ({
                                   {bindingErrors[action] ??
                                     (reservedFor.has(action)
                                       ? `${platformLabel(bindingFor(action), isMac)} is reserved for "${reservedFor.get(action)}".`
-                                      : `Conflicts with another action (${platformLabel(
+                                      : `${platformLabel(
                                           bindingFor(action),
                                           isMac
-                                        )}).`)}
+                                        )} is also used by ${conflictPartners(action)}. Change one of them.`)}
                                 </p>
                               )}
                             </div>
+                            <button
+                              type="button"
+                              className="btn btn-secondary btn-small shortcut-reset"
+                              onClick={() => handleResetOne(action)}
+                              // Always in the layout so rows stay aligned; only usable
+                              // (and visible) once the shortcut differs from its default.
+                              style={{ visibility: isCustomised(action) ? "visible" : "hidden" }}
+                              disabled={!isCustomised(action)}
+                              tabIndex={isCustomised(action) ? 0 : -1}
+                              aria-label={`Reset ${BINDING_LABELS[action]} to ${platformLabel(
+                                defaultFor(action),
+                                isMac
+                              )}`}
+                              title={`Reset to ${platformLabel(defaultFor(action), isMac)}`}
+                            >
+                              <RotateCcw size={12} />
+                            </button>
                           </div>
                         );
                       })}

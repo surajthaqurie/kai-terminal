@@ -2,14 +2,52 @@ import {
   UserSettings,
   ThemeName,
   CursorStyle,
+  FixedShortcutsConfig,
   KeybindingsConfig,
   ProjectWorkspaceSettings,
 } from "../types/terminal";
 import { ITheme } from "@xterm/xterm";
 import { PtyService } from "./ptyService";
-import { DEFAULT_FIXED_SHORTCUTS, parseBinding, resolveFixedBindings } from "./shortcuts";
+import {
+  DEFAULT_FIXED_SHORTCUTS,
+  findConflicts,
+  parseBinding,
+  resolveFixedBindings,
+  type ShortcutActionId,
+} from "./shortcuts";
 
+/**
+ * Windows Terminal-style defaults. Ctrl+Shift is for tabs and app panels,
+ * Alt+Shift is for panes, and nothing needs Ctrl+Alt (which is AltGr on
+ * Windows, so it types characters on many layouts). Ctrl and Cmd are
+ * interchangeable.
+ */
 export const DEFAULT_KEYBINDINGS: KeybindingsConfig = {
+  newTab: "Ctrl+Shift+T",
+  closeTab: "Ctrl+Shift+W",
+  splitHorizontal: "Alt+Shift+-",
+  splitVertical: "Alt+Shift+=",
+  closePane: "Alt+Shift+W",
+  search: "Ctrl+Shift+F",
+  commandPalette: "Ctrl+Shift+P",
+  settings: "Ctrl+,",
+  nextTab: "Ctrl+Tab",
+  prevTab: "Ctrl+Shift+Tab",
+  nextPane: "Alt+Shift+]",
+  prevPane: "Alt+Shift+[",
+  toggleMusic: "Ctrl+Shift+M",
+  musicPlayPause: "Ctrl+Shift+Space",
+  musicNext: "Ctrl+Shift+.",
+  musicMute: "Ctrl+Shift+,",
+};
+
+/**
+ * The defaults before the Windows Terminal-style scheme. A saved binding that
+ * still equals one of these was never customised, so it moves to the new
+ * default once (see `migrateLegacyKeybindings`). Actions absent here
+ * (`prevPane`) are new and simply take their default.
+ */
+export const LEGACY_DEFAULT_KEYBINDINGS: Readonly<Partial<KeybindingsConfig>> = {
   newTab: "Ctrl+Shift+T",
   closeTab: "Ctrl+Shift+W",
   splitHorizontal: "Ctrl+Alt+S",
@@ -26,6 +64,58 @@ export const DEFAULT_KEYBINDINGS: KeybindingsConfig = {
   musicNext: "Ctrl+Alt+N",
   musicMute: "Ctrl+Alt+U",
 };
+
+/**
+ * One-time move of untouched legacy defaults to the new ones. A binding the
+ * user changed is left alone, and so is an old default whose replacement would
+ * now collide with something the user bound (it keeps working as before).
+ * Returns the bindings to feed into `normalize`; missing keys take defaults.
+ */
+export function migrateLegacyKeybindings(
+  saved: unknown,
+  fixed?: Partial<FixedShortcutsConfig> | null
+): Partial<KeybindingsConfig> {
+  if (!saved || typeof saved !== "object") return {};
+  const input = saved as Record<string, unknown>;
+  const kept: Record<string, unknown> = {};
+  const moved: ShortcutActionId[] = [];
+  for (const action of Object.keys(DEFAULT_KEYBINDINGS) as ShortcutActionId[]) {
+    const value = input[action];
+    const legacy = LEGACY_DEFAULT_KEYBINDINGS[action];
+    const parsedValue = typeof value === "string" ? parseBinding(value) : null;
+    const parsedLegacy = legacy ? parseBinding(legacy) : null;
+    const untouched =
+      parsedValue !== null &&
+      parsedLegacy !== null &&
+      parsedValue.ctrlOrCmd === parsedLegacy.ctrlOrCmd &&
+      parsedValue.alt === parsedLegacy.alt &&
+      parsedValue.shift === parsedLegacy.shift &&
+      parsedValue.code === parsedLegacy.code;
+    if (untouched && legacy !== DEFAULT_KEYBINDINGS[action]) {
+      moved.push(action);
+    } else if (value !== undefined) {
+      kept[action] = value;
+    }
+  }
+  // A moved action takes its new default unless that now collides with a kept
+  // binding; then it keeps the old key so nothing silently stops working.
+  const next: Partial<KeybindingsConfig> = { ...(kept as Partial<KeybindingsConfig>) };
+  for (const action of moved) next[action] = DEFAULT_KEYBINDINGS[action];
+  const resolvedFixed = resolveFixedBindings(fixed);
+  const reverted = new Set<ShortcutActionId>();
+  for (let pass = 0; pass < moved.length; pass++) {
+    const full = { ...DEFAULT_KEYBINDINGS, ...next } as KeybindingsConfig;
+    const clashes = findConflicts(full, resolvedFixed)
+      .flatMap((c) => c.actions)
+      .filter((a): a is ShortcutActionId => a in DEFAULT_KEYBINDINGS)
+      .filter((a) => moved.includes(a as ShortcutActionId)) as ShortcutActionId[];
+    const target = clashes.find((a) => !reverted.has(a));
+    if (!target) break;
+    reverted.add(target);
+    next[target] = LEGACY_DEFAULT_KEYBINDINGS[target] as string;
+  }
+  return next;
+}
 
 /** Default terminal font before the bundled JetBrains Mono; still migrated on load. */
 export const PREVIOUS_DEFAULT_FONT_FAMILY =
@@ -59,6 +149,8 @@ const LEGACY_PROJECT_SETTINGS_PREFIX = "terminal_project_settings_";
 const SETTINGS_VERSION = 1;
 /** Stored beside the settings once they were saved after the 14 -> 12 font default change. */
 const FONT_DEFAULT_MIGRATED = "_fontDefaultMigrated";
+/** Stored beside the settings once they were saved after the shortcut-defaults change. */
+const KEYBINDINGS_MIGRATED = "_keybindingsMigrated";
 
 /** Theme ids the Appearance panel can mark selected. Single source of truth. */
 const KNOWN_THEME_IDS: ReadonlyArray<ThemeName> = [
@@ -412,6 +504,15 @@ export class SettingsService {
         if (parsed.fontSize === 14 && !parsed[FONT_DEFAULT_MIGRATED]) {
           parsed.fontSize = 12;
         }
+        // One-time: the default shortcuts moved to the Windows Terminal-style
+        // scheme. Every save writes KEYBINDINGS_MIGRATED, so a combo the user
+        // sets afterwards (even an old default) is kept as chosen.
+        if (!parsed[KEYBINDINGS_MIGRATED]) {
+          parsed.keybindings = migrateLegacyKeybindings(
+            parsed.keybindings,
+            parsed.fixedKeybindings
+          );
+        }
         return SettingsService.normalize(parsed);
       }
     } catch {
@@ -442,7 +543,12 @@ export class SettingsService {
       const safe = SettingsService.normalize(settings);
       localStorage.setItem(
         STORAGE_KEY,
-        JSON.stringify({ ...safe, version: SETTINGS_VERSION, [FONT_DEFAULT_MIGRATED]: true })
+        JSON.stringify({
+          ...safe,
+          version: SETTINGS_VERSION,
+          [FONT_DEFAULT_MIGRATED]: true,
+          [KEYBINDINGS_MIGRATED]: true,
+        })
       );
     } catch {
       // Fail silently if localStorage disabled

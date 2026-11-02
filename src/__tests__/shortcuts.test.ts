@@ -25,9 +25,12 @@ describe("shortcut registry", () => {
   it("preserves existing defaults", () => {
     expect(DEFAULT_KEYBINDINGS.newTab).toBe("Ctrl+Shift+T");
     expect(DEFAULT_KEYBINDINGS.closeTab).toBe("Ctrl+Shift+W");
-    expect(DEFAULT_KEYBINDINGS.splitHorizontal).toBe("Ctrl+Alt+S");
-    expect(DEFAULT_KEYBINDINGS.splitVertical).toBe("Ctrl+Alt+V");
-    expect(DEFAULT_KEYBINDINGS.closePane).toBe("Ctrl+Alt+W");
+    expect(DEFAULT_KEYBINDINGS.splitHorizontal).toBe("Alt+Shift+-");
+    expect(DEFAULT_KEYBINDINGS.splitVertical).toBe("Alt+Shift+=");
+    expect(DEFAULT_KEYBINDINGS.closePane).toBe("Alt+Shift+W");
+    expect(DEFAULT_KEYBINDINGS.settings).toBe("Ctrl+,");
+    expect(DEFAULT_KEYBINDINGS.nextTab).toBe("Ctrl+Tab");
+    expect(DEFAULT_KEYBINDINGS.prevTab).toBe("Ctrl+Shift+Tab");
     for (const v of Object.values(DEFAULT_KEYBINDINGS)) {
       expect(parseBinding(v)).not.toBeNull();
     }

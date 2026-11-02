@@ -2582,6 +2582,11 @@ select.modal-input {
   overflow-wrap: anywhere;
 }
 
+.shortcut-reset {
+  flex: 0 0 auto;
+  padding: 5px 7px;
+}
+
 .shortcut-row-item kbd {
   flex: 0 0 auto;
   white-space: nowrap;

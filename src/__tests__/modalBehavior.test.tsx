@@ -208,4 +208,55 @@ describe("SettingsModal", () => {
     await key("Escape", {}, recorder);
     expect(onClose).toHaveBeenCalledTimes(1);
   });
+
+  describe("Shortcuts tab", () => {
+    const openShortcuts = async () => {
+      await render(<SettingsModal isOpen onClose={() => {}} {...settingsProps} />);
+      const tab = [...host.querySelectorAll<HTMLButtonElement>(".modal-tab-btn")].find((b) =>
+        b.textContent?.includes("Shortcuts")
+      )!;
+      await act(async () => tab.click());
+    };
+    const row = (label: string) =>
+      [...host.querySelectorAll<HTMLElement>(".shortcut-row-item")].find(
+        (r) => r.querySelector(".shortcut-label")?.textContent === label
+      )!;
+    const input = (label: string) => row(label).querySelector<HTMLInputElement>("input")!;
+    const reset = (label: string) =>
+      row(label).querySelector<HTMLButtonElement>(".shortcut-reset")!;
+    const record = async (label: string, init: KeyboardEventInit) => {
+      await act(async () => input(label).focus());
+      await key(init.key ?? "", init, input(label));
+    };
+
+    it("groups the shortcuts by what they act on", async () => {
+      await openShortcuts();
+      const headings = [...host.querySelectorAll(".settings-tab-panel label")].map(
+        (l) => l.textContent
+      );
+      expect(headings).toEqual(expect.arrayContaining(["Tabs", "Panes", "App", "Music Time"]));
+      expect(input("Split terminal (vertical)").value).toBe("Alt+Shift+=");
+    });
+
+    it("records Ctrl+Tab-style chords and offers a per-row reset only once changed", async () => {
+      await openShortcuts();
+      expect(reset("Next tab").disabled).toBe(true);
+      await record("Next tab", { key: "ArrowRight", code: "ArrowRight", ctrlKey: true });
+      expect(input("Next tab").value).toBe("Ctrl+ArrowRight");
+      expect(reset("Next tab").disabled).toBe(false);
+      await act(async () => reset("Next tab").click());
+      expect(input("Next tab").value).toBe("Ctrl+Tab");
+      expect(reset("Next tab").disabled).toBe(true);
+    });
+
+    it("names the other action when two shortcuts collide", async () => {
+      await openShortcuts();
+      await record("Find in terminal", { key: "P", code: "KeyP", ctrlKey: true, shiftKey: true });
+      const alerts = [...host.querySelectorAll(".shortcut-input-group .error-text")].map(
+        (e) => e.textContent ?? ""
+      );
+      expect(alerts.some((t) => t.includes('"Toggle command palette"'))).toBe(true);
+      expect(alerts.some((t) => t.includes('"Find in terminal"'))).toBe(true);
+    });
+  });
 });

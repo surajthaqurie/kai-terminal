@@ -70,6 +70,7 @@ describe("command palette", () => {
     newTab: noop,
     cycleTab: noop,
     focusNextPane: noop,
+    focusPrevPane: noop,
     openWorkspaces: noop,
     splitPane: noop,
     closeActivePane: noop,

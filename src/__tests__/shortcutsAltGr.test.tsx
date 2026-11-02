@@ -8,7 +8,12 @@ import { DEFAULT_KEYBINDINGS } from "../services/settingsService";
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const handlers = {
-  keybindings: DEFAULT_KEYBINDINGS,
+  // The defaults no longer use Ctrl+Alt (AltGr), but a user can still bind it.
+  keybindings: {
+    ...DEFAULT_KEYBINDINGS,
+    splitHorizontal: "Ctrl+Alt+S",
+    nextPane: "Ctrl+Alt+]",
+  },
   newTab: vi.fn(),
   closeActiveTab: vi.fn(),
   toggleCommandPalette: vi.fn(),
@@ -18,6 +23,7 @@ const handlers = {
   closeActivePane: vi.fn(),
   cycleTab: vi.fn(),
   focusNextPane: vi.fn(),
+  focusPrevPane: vi.fn(),
   gotoTab: vi.fn(),
   zoomFont: vi.fn(),
   toggleMusic: vi.fn(),
@@ -49,7 +55,13 @@ const press = (init: KeyboardEventInit) => {
 };
 
 describe("AltGr is text input, not a shortcut", () => {
-  // Ctrl+Alt+S is "split horizontal" by default.
+  it("the default bindings avoid Ctrl+Alt entirely", () => {
+    for (const binding of Object.values(DEFAULT_KEYBINDINGS)) {
+      expect(binding).not.toMatch(/Ctrl\+Alt/);
+    }
+  });
+
+  // Ctrl+Alt+S is "split horizontal" in this test's custom bindings.
   const CTRL_ALT_S = { code: "KeyS", key: "s", ctrlKey: true, altKey: true };
 
   it("a real Ctrl+Alt+S still splits the pane", () => {

@@ -14,7 +14,7 @@ This document lists the operating system boundaries, terminal constraints, and i
 ### 2. Operating System Global Shortcuts
 - **Cause:** Host operating systems reserve specific global hotkeys (e.g., `Cmd+Space` on macOS, `Win+L` or `Ctrl+Alt+Del` on Windows) at the kernel/window-manager level.
 - **Behavior:** Webview applications cannot intercept or override host-reserved system shortcuts.
-- **Workaround:** Configure alternative application shortcuts in Settings → Shortcuts.
+- **Workaround:** Configure alternative application shortcuts in Settings → Shortcuts. Kai's own defaults avoid `Ctrl+Alt` (AltGr on Windows) for this reason.
 
 ### 3. Windows File Symlink Privileges
 - **Cause:** Windows requires Developer Mode or elevated (Administrator) privileges to create file symlinks (`EPERM`).

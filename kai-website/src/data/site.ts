@@ -39,12 +39,17 @@ export const SHORTCUTS: Shortcut[] = [
   { label: 'Jump to tab 1–8 / last', keys: ['Ctrl', '1–8 / 9'] },
   { label: 'New tab', keys: ['Ctrl', 'Shift', 'T'] },
   { label: 'Close tab', keys: ['Ctrl', 'Shift', 'W'] },
-  { label: 'Split horizontal', keys: ['Ctrl', 'Alt', 'S'] },
-  { label: 'Split vertical', keys: ['Ctrl', 'Alt', 'V'] },
-  { label: 'Close split pane', keys: ['Ctrl', 'Alt', 'W'] },
+  { label: 'Next tab', keys: ['Ctrl', 'Tab'] },
+  { label: 'Previous tab', keys: ['Ctrl', 'Shift', 'Tab'] },
+  { label: 'Split side by side', keys: ['Alt', 'Shift', '='] },
+  { label: 'Split stacked', keys: ['Alt', 'Shift', '-'] },
+  { label: 'Close split pane', keys: ['Alt', 'Shift', 'W'] },
+  { label: 'Next / previous pane', keys: ['Alt', 'Shift', ']', '['] },
   { label: 'Find in output', keys: ['Ctrl', 'Shift', 'F'] },
-  { label: 'Next / prev tab', keys: ['Ctrl', 'Shift', ']', '['] },
-  { label: 'Settings', keys: ['Ctrl', 'Shift', ','] },
+  { label: 'Review git changes', keys: ['Ctrl', 'Shift', 'G'] },
+  { label: 'Settings', keys: ['Ctrl', ','] },
+  { label: 'Show Music Time', keys: ['Ctrl', 'Shift', 'M'] },
+  { label: 'Music play / pause', keys: ['Ctrl', 'Shift', 'Space'] },
 ];
 
 export type CompareRow = { label: string; kai: string; electron: string; alacritty: string };

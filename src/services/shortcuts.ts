@@ -15,7 +15,8 @@ export const SHORTCUT_ACTION_LABELS: Record<ShortcutActionId, string> = {
   settings: "Open settings",
   nextTab: "Next tab",
   prevTab: "Previous tab",
-  nextPane: "Next active pane",
+  nextPane: "Next pane",
+  prevPane: "Previous pane",
   toggleMusic: "Toggle Music Time",
   musicPlayPause: "Music play / pause",
   musicNext: "Music next track",
@@ -183,8 +184,26 @@ export function eventToBindingString(
   return parts.join("+");
 }
 
-/** Navigation keys the shortcut recorder can capture by their `code`. */
-const RECORDABLE_NAMED_KEYS = new Set(["Home", "End", "Insert", "PageUp", "PageDown"]);
+/**
+ * Named keys the shortcut recorder can capture by their `code` (they all need
+ * Ctrl/Cmd or Alt, so a bare Tab or Space still moves focus / types as usual).
+ * Escape, Backspace and Delete are not here: the recorder uses them to cancel
+ * and clear.
+ */
+const RECORDABLE_NAMED_KEYS = new Set([
+  "Home",
+  "End",
+  "Insert",
+  "PageUp",
+  "PageDown",
+  "Tab",
+  "Space",
+  "Enter",
+  "ArrowUp",
+  "ArrowDown",
+  "ArrowLeft",
+  "ArrowRight",
+]);
 
 /** Subset of a keyboard event the matchers read; `KeyboardEvent` satisfies it. */
 type KeyLike = {

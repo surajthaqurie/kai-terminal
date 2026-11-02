@@ -145,8 +145,8 @@ async function press(code: string, key: string, mods: Mods = { ctrl: true }) {
 }
 
 const newTabKey = () => press("KeyT", "t", { ctrl: true });
-const splitVerticalKey = () => press("KeyV", "v", { ctrl: true, alt: true });
-const splitHorizontalKey = () => press("KeyS", "s", { ctrl: true, alt: true });
+const splitVerticalKey = () => press("Equal", "+", { alt: true, shift: true });
+const splitHorizontalKey = () => press("Minus", "_", { alt: true, shift: true });
 
 const tabEls = () => [...container.querySelectorAll<HTMLElement>('[role="tab"]')];
 const tabTitles = () => tabEls().map((el) => el.getAttribute("aria-label")!.split(", ")[0]);
@@ -282,9 +282,9 @@ describe("App shell: tabs", () => {
     await newTabKey();
     await newTabKey();
     expect(activeTitle()).toBe("Terminal 3");
-    await press("BracketRight", "]", { ctrl: true, shift: true });
+    await press("Tab", "Tab", { ctrl: true });
     expect(activeTitle()).toBe("Terminal 1");
-    await press("BracketLeft", "[", { ctrl: true, shift: true });
+    await press("Tab", "Tab", { ctrl: true, shift: true });
     expect(activeTitle()).toBe("Terminal 3");
   });
 
@@ -353,19 +353,19 @@ describe("App shell: tabs", () => {
 });
 
 describe("App shell: panes", () => {
-  it("Ctrl+Alt+V splits side by side with a draggable divider; Ctrl+Alt+W closes the pane", async () => {
+  it("Alt+Shift+= splits side by side with a draggable divider; Alt+Shift+W closes the pane", async () => {
     await mount();
     await splitVerticalKey();
     expect(terminalsIn(0)).toHaveLength(2);
     const dividers = container.querySelectorAll(".pane-divider");
     expect(dividers).toHaveLength(1);
     expect(dividers[0].classList.contains("pane-divider-vertical")).toBe(true);
-    await press("KeyW", "w", { ctrl: true, alt: true });
+    await press("KeyW", "W", { alt: true, shift: true });
     expect(terminalsIn(0)).toHaveLength(1);
     expect(container.querySelectorAll(".pane-divider")).toHaveLength(0);
   });
 
-  it("Ctrl+Alt+S splits stacked; the new pane inherits the active pane's cwd", async () => {
+  it("Alt+Shift+- splits stacked; the new pane inherits the active pane's cwd", async () => {
     await mount();
     await resolveCwd(paneId(0), "/work/proj");
     await splitHorizontalKey();
@@ -394,14 +394,16 @@ describe("App shell: panes", () => {
     expect(inactive.classList.contains("active-pane")).toBe(true);
   });
 
-  it("Ctrl+Alt+] cycles the active pane", async () => {
+  it("Alt+Shift+] / [ cycle the active pane forward and back", async () => {
     await mount();
     await splitVerticalKey();
     const panes = () => [...activeTabContent().querySelectorAll<HTMLElement>(".pane-grid-pane")];
-    const before = panes().findIndex((p) => p.classList.contains("active-pane"));
-    await press("BracketRight", "]", { ctrl: true, alt: true });
-    const after = panes().findIndex((p) => p.classList.contains("active-pane"));
-    expect(after).not.toBe(before);
+    const active = () => panes().findIndex((p) => p.classList.contains("active-pane"));
+    const before = active();
+    await press("BracketRight", "}", { alt: true, shift: true });
+    expect(active()).not.toBe(before);
+    await press("BracketLeft", "{", { alt: true, shift: true });
+    expect(active()).toBe(before);
   });
 
   it("refuses splits past the pane limit and explains why, then auto-dismisses the notice", async () => {
@@ -824,8 +826,8 @@ describe("App shell: new-tab focus handoff and auto-repeat guard", () => {
       act(async () => {
         window.dispatchEvent(
           new KeyboardEvent("keydown", {
-            code: "BracketLeft",
-            key: "{",
+            code: "Tab",
+            key: "Tab",
             ctrlKey: true,
             shiftKey: true,
             repeat,
@@ -867,12 +869,12 @@ describe("App shell: new-tab focus handoff and auto-repeat guard", () => {
 });
 
 describe("App shell: settings, themes and terminal actions", () => {
-  it("Ctrl+Shift+, toggles preferences", async () => {
+  it("Ctrl+, toggles preferences", async () => {
     await mount();
     expect(modal("settings").isOpen).toBe(false);
-    await press("Comma", ",", { ctrl: true, shift: true });
+    await press("Comma", ",", { ctrl: true });
     expect(modal("settings").isOpen).toBe(true);
-    await press("Comma", ",", { ctrl: true, shift: true });
+    await press("Comma", ",", { ctrl: true });
     expect(modal("settings").isOpen).toBe(false);
   });
 
@@ -886,6 +888,7 @@ describe("App shell: settings, themes and terminal actions", () => {
       "next-tab",
       "prev-tab",
       "next-pane",
+      "prev-pane",
       "manage-workspaces",
       "split-horizontal",
       "split-vertical",
@@ -906,6 +909,9 @@ describe("App shell: settings, themes and terminal actions", () => {
       "open-settings",
     ]);
     expect(actions.find((a) => a.id === "new-tab")!.shortcut).toBe("Ctrl+Shift+T");
+    expect(actions.find((a) => a.id === "split-vertical")!.shortcut).toBe("Alt+Shift+=");
+    expect(actions.find((a) => a.id === "next-tab")!.shortcut).toBe("Ctrl+Tab");
+    expect(actions.find((a) => a.id === "open-settings")!.shortcut).toBe("Ctrl+,");
     expect(actions.find((a) => a.id === "review-changes")!.shortcut).toBe("Ctrl+Shift+G");
   });
 
@@ -1109,7 +1115,7 @@ describe("App shell: AI CLI, music and updates", () => {
   it("the music toggle mounts the player, enables it in settings and relays playback state to the footer", async () => {
     await mount();
     expect(registry.modals.music).toBeUndefined();
-    await press("KeyM", "m", { ctrl: true, alt: true });
+    await press("KeyM", "M", { ctrl: true, shift: true });
     expect(modal("music").open).toBe(true);
     expect(modal("settings").settings.showMusicPlayer).toBe(true);
     // Enabling the player must survive a restart, not just this session.
@@ -1127,7 +1133,7 @@ describe("App shell: AI CLI, music and updates", () => {
     await act(async () => modal("music").onMutedChange(true));
     expect(container.querySelector('[aria-label="Unmute music"]')).not.toBeNull();
 
-    await press("KeyM", "m", { ctrl: true, alt: true });
+    await press("KeyM", "M", { ctrl: true, shift: true });
     expect(modal("music").open).toBe(false);
   });
 
@@ -1137,15 +1143,15 @@ describe("App shell: AI CLI, music and updates", () => {
     for (const name of ["kai-music-toggle-play", "kai-music-next", "kai-music-mute"]) {
       window.addEventListener(name, () => seen.push(name));
     }
-    await press("Space", " ", { ctrl: true, alt: true });
-    await press("KeyN", "n", { ctrl: true, alt: true });
-    await press("KeyU", "u", { ctrl: true, alt: true });
+    await press("Space", " ", { ctrl: true, shift: true });
+    await press("Period", ">", { ctrl: true, shift: true });
+    await press("Comma", "<", { ctrl: true, shift: true });
     expect(seen).toEqual(["kai-music-toggle-play", "kai-music-next", "kai-music-mute"]);
   });
 
   it("footer play opens the player when nothing is loaded, and only toggles once a track exists", async () => {
     await mount();
-    await press("KeyM", "m", { ctrl: true, alt: true });
+    await press("KeyM", "M", { ctrl: true, shift: true });
     await act(async () => modal("music").onClose());
     expect(modal("music").open).toBe(false);
     const seen: string[] = [];
@@ -1173,19 +1179,19 @@ describe("App shell: AI CLI, music and updates", () => {
   it("music shortcuts and footer Next/Previous open the player when nothing is loaded, not when it is disabled", async () => {
     await mount();
     // Player disabled: the shortcut stays a no-op (nothing mounted, nothing opened).
-    await press("Space", " ", { ctrl: true, alt: true });
+    await press("Space", " ", { ctrl: true, shift: true });
     expect(registry.modals.music).toBeUndefined();
 
     // Enabled, then closed, with no song loaded.
-    await press("KeyM", "m", { ctrl: true, alt: true });
+    await press("KeyM", "M", { ctrl: true, shift: true });
     await act(async () => modal("music").onClose());
     expect(modal("music").open).toBe(false);
 
-    await press("Space", " ", { ctrl: true, alt: true });
+    await press("Space", " ", { ctrl: true, shift: true });
     expect(modal("music").open).toBe(true);
 
     await act(async () => modal("music").onClose());
-    await press("KeyN", "n", { ctrl: true, alt: true });
+    await press("Period", ">", { ctrl: true, shift: true });
     expect(modal("music").open).toBe(true);
 
     await act(async () => modal("music").onClose());
@@ -1198,7 +1204,7 @@ describe("App shell: AI CLI, music and updates", () => {
       modal("music").onTrackChange({ title: "Lo-fi", videoId: "abc123" }, true);
       modal("music").onClose();
     });
-    await press("KeyN", "n", { ctrl: true, alt: true });
+    await press("Period", ">", { ctrl: true, shift: true });
     expect(modal("music").open).toBe(false);
   });
 
@@ -1299,7 +1305,7 @@ describe("App shell: render isolation", () => {
   it("footer-only updates (music progress, playback state) never re-render terminals", async () => {
     await mount();
     await newTabKey();
-    await press("KeyM", "m", { ctrl: true, alt: true });
+    await press("KeyM", "M", { ctrl: true, shift: true });
     await flush();
     const before = totalRenders();
     for (let progress = 1; progress <= 20; progress++) {

@@ -197,6 +197,7 @@ export interface KeybindingsConfig {
   nextTab: string;
   prevTab: string;
   nextPane: string;
+  prevPane: string;
   toggleMusic: string;
   musicPlayPause: string;
   musicNext: string;

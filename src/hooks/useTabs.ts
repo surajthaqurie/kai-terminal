@@ -218,16 +218,22 @@ export function useTabs({ effectiveShellPath, setLastError }: TabsOptions) {
     );
   }, [activeTabId]);
 
-  /** Moves keyboard focus to the next pane of the active tab (wraps). */
-  const focusNextPane = useCallback(() => {
-    if (!activeTab || activeTab.panes.length <= 1) return;
-    const idx = activeTab.panes.findIndex((p) => p.id === activePaneId);
-    if (idx < 0) return;
-    const nextId = activeTab.panes[(idx + 1) % activeTab.panes.length].id;
-    setTabs((prev) =>
-      prev.map((t) => (t.id === activeTab.id ? { ...t, activePaneId: nextId } : t))
-    );
-  }, [activeTab, activePaneId]);
+  /** Moves keyboard focus to the next / previous pane of the active tab (wraps). */
+  const stepPane = useCallback(
+    (step: 1 | -1) => {
+      if (!activeTab || activeTab.panes.length <= 1) return;
+      const idx = activeTab.panes.findIndex((p) => p.id === activePaneId);
+      if (idx < 0) return;
+      const count = activeTab.panes.length;
+      const nextId = activeTab.panes[(idx + step + count) % count].id;
+      setTabs((prev) =>
+        prev.map((t) => (t.id === activeTab.id ? { ...t, activePaneId: nextId } : t))
+      );
+    },
+    [activeTab, activePaneId]
+  );
+  const focusNextPane = useCallback(() => stepPane(1), [stepPane]);
+  const focusPrevPane = useCallback(() => stepPane(-1), [stepPane]);
 
   /** Selects the next / previous tab (wraps). */
   const cycleTab = useCallback(
@@ -349,6 +355,7 @@ export function useTabs({ effectiveShellPath, setLastError }: TabsOptions) {
     splitPane,
     closeActivePane,
     focusNextPane,
+    focusPrevPane,
     cycleTab,
     gotoTab,
     focusPane,

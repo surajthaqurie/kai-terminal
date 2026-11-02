@@ -208,11 +208,22 @@ On macOS use `Cmd` where `Ctrl` is shown. Plain `Ctrl+C` always stays the shell 
 | `Ctrl+=` / `Ctrl+-` / `Ctrl+0` | Zoom the font in / out / back to the saved size (this session only) |
 | `Ctrl+1` … `8`, `Ctrl+9` | Jump to that tab, or to the last tab |
 | `Ctrl+Shift+T` / `W` | New tab / close tab |
+| `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous tab |
+| `Alt+Shift+=` / `Alt+Shift+-` | Split the pane side by side / stacked |
+| `Alt+Shift+W` | Close the active pane |
+| `Alt+Shift+]` / `Alt+Shift+[` | Focus the next / previous pane |
 | `Ctrl+Shift+P` | Command palette |
 | `Ctrl+Shift+F` | Find in output |
 | `Ctrl+Shift+G` | Review git changes |
+| `Ctrl+,` | Settings |
+| `Ctrl+Shift+M` | Show / hide Music Time |
+| `Ctrl+Shift+Space` / `.` / `,` | Music: play-pause / next track / mute |
 
-Every shortcut above is remappable in **Settings → Shortcuts** except `Ctrl/Shift+Insert`, `Shift+PageUp` / `PageDown` and `Ctrl+Shift+G`, which stay fixed and are listed there read-only. `Ctrl+T` also always opens a new tab, so Settings will not let you bind `Ctrl+T`, `Ctrl+Shift+T` (other than to New tab) or `Ctrl+Shift+G` to anything else. Music Time pauses for calls automatically.
+The defaults follow Windows Terminal: `Ctrl+Shift` for tabs and app panels, `Alt+Shift` for panes. None of them needs `Ctrl+Alt`, which Windows reports as AltGr and many keyboard layouts use to type characters. On macOS, `Alt` is the `Option` key.
+
+**Upgrading from an older version?** Shortcuts you never changed move to the new defaults once. Any shortcut you set yourself keeps its key, and an old default stays put if its new key would clash with one of yours. The old `Ctrl+Alt+…` pane and music keys, `Ctrl+Shift+]` / `[` for tabs and `Ctrl+Shift+,` for Settings are replaced, so rebind them in **Settings → Shortcuts** if you prefer them.
+
+Every shortcut above is remappable in **Settings → Shortcuts** (grouped as Tabs, Panes, App, Music Time and Terminal keys, with a reset button on each one you changed, and conflicts that name the other action) except `Ctrl/Shift+Insert`, `Shift+PageUp` / `PageDown` and `Ctrl+Shift+G`, which stay fixed and are listed there read-only. `Ctrl+T` also always opens a new tab, so Settings will not let you bind `Ctrl+T`, `Ctrl+Shift+T` (other than to New tab) or `Ctrl+Shift+G` to anything else. Music Time pauses for calls automatically.
 
 ### Privacy and limits
 

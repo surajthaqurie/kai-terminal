@@ -34,6 +34,7 @@ export interface CommandActionContext {
   newTab: () => void;
   cycleTab: (step: 1 | -1) => void;
   focusNextPane: () => void;
+  focusPrevPane: () => void;
   openWorkspaces: () => void;
   splitPane: (direction: SplitDirection) => void;
   closeActivePane: () => void;
@@ -86,11 +87,19 @@ export function buildCommandActions(ctx: CommandActionContext): CommandAction[] 
     },
     {
       id: "next-pane",
-      label: "Focus Next Active Pane",
+      label: "Focus Next Pane",
       category: "Navigation",
       shortcut: key(kb.nextPane),
       icon: <Columns size={16} />,
       perform: ctx.focusNextPane,
+    },
+    {
+      id: "prev-pane",
+      label: "Focus Previous Pane",
+      category: "Navigation",
+      shortcut: key(kb.prevPane),
+      icon: <Columns size={16} />,
+      perform: ctx.focusPrevPane,
     },
     {
       id: "manage-workspaces",

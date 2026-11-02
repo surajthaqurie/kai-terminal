@@ -22,6 +22,7 @@ export interface AppShortcutHandlers {
   closeActivePane: () => void;
   cycleTab: (step: 1 | -1) => void;
   focusNextPane: () => void;
+  focusPrevPane: () => void;
   gotoTab: (index: number | "last") => void;
   zoomFont: (delta: 1 | -1 | 0) => void;
   toggleMusic: () => void;
@@ -31,7 +32,12 @@ export interface AppShortcutHandlers {
 
 const MODIFIER_KEYS = new Set(["Control", "Shift", "Alt", "Meta"]);
 /** Actions that make sense while the key is held down; every other action fires once. */
-const REPEATABLE_ACTIONS = new Set<ShortcutActionId>(["nextTab", "prevTab", "nextPane"]);
+const REPEATABLE_ACTIONS = new Set<ShortcutActionId>([
+  "nextTab",
+  "prevTab",
+  "nextPane",
+  "prevPane",
+]);
 
 /**
  * Centralized application shortcuts: honors user-configured bindings,
@@ -119,6 +125,8 @@ export function useAppShortcuts(handlers: AppShortcutHandlers) {
           return h.cycleTab(-1);
         case "nextPane":
           return h.focusNextPane();
+        case "prevPane":
+          return h.focusPrevPane();
         case "toggleMusic":
           return h.toggleMusic();
         case "musicPlayPause":

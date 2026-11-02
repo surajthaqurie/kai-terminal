@@ -18,7 +18,7 @@ export function GuidePage() {
   }, []);
 
   const displayKeys = (keys: string[]) =>
-    isMac ? keys.map((k) => (k === 'Ctrl' ? 'Cmd ⌘' : k)) : keys;
+    isMac ? keys.map((k) => (k === 'Ctrl' ? 'Cmd ⌘' : k === 'Alt' ? 'Option ⌥' : k)) : keys;
 
   return (
     <>
@@ -141,10 +141,10 @@ export function GuidePage() {
             <div className="t-section-head">
               <Badge tone="neutral">Productivity</Badge>
               <h2 className="t-section-title">Essential Shortcuts</h2>
-              <p className="t-section-sub">Default key combinations. Every shortcut here is remappable in Settings, except Ctrl/Shift+Insert, Shift+PageUp/PageDown and Ctrl+Shift+G.</p>
+              <p className="t-section-sub">Kai uses Windows Terminal-style defaults: Ctrl+Shift for tabs and app panels, Alt+Shift for panes, and nothing that needs Ctrl+Alt (AltGr on Windows). Change any of them in Settings → Shortcuts, except Ctrl/Shift+Insert, Shift+PageUp/PageDown and Ctrl+Shift+G. Upgrading? Shortcuts you never changed move to these defaults; ones you set yourself stay as they are.</p>
             </div>
             <div className="t-panel">
-              <div className="t-probe-head"><span>Terminal Shortcuts</span><span className="t-pill">Ctrl / Cmd (⌘)</span></div>
+              <div className="t-probe-head"><span>Terminal Shortcuts</span><span className="t-pill">Ctrl / Cmd (⌘) · Alt / Option (⌥)</span></div>
               <ul className="t-keys">
                 {SHORTCUTS.map((s) => (
                   <li key={s.label}>
