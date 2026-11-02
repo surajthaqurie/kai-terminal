@@ -894,6 +894,10 @@ describe("App shell: settings, themes and terminal actions", () => {
       "split-vertical",
       "close-pane",
       "toggle-music",
+      "music-play-pause",
+      "music-previous",
+      "music-next",
+      "music-mute",
       "rename-session",
       "open-editor",
       "git-status",
@@ -906,6 +910,7 @@ describe("App shell: settings, themes and terminal actions", () => {
       "clear-terminal",
       "ai-cli",
       "diagnostics",
+      "keyboard-shortcuts",
       "open-settings",
     ]);
     expect(actions.find((a) => a.id === "new-tab")!.shortcut).toBe("Ctrl+Shift+T");
@@ -913,6 +918,12 @@ describe("App shell: settings, themes and terminal actions", () => {
     expect(actions.find((a) => a.id === "next-tab")!.shortcut).toBe("Ctrl+Tab");
     expect(actions.find((a) => a.id === "open-settings")!.shortcut).toBe("Ctrl+,");
     expect(actions.find((a) => a.id === "review-changes")!.shortcut).toBe("Ctrl+Shift+G");
+    // Every music action in the palette shows the key that does the same thing.
+    expect(actions.find((a) => a.id === "toggle-music")!.shortcut).toBe("Ctrl+Shift+M");
+    expect(actions.find((a) => a.id === "music-play-pause")!.shortcut).toBe("Ctrl+Shift+Space");
+    expect(actions.find((a) => a.id === "music-previous")!.shortcut).toBe("Ctrl+Shift+,");
+    expect(actions.find((a) => a.id === "music-next")!.shortcut).toBe("Ctrl+Shift+.");
+    expect(actions.find((a) => a.id === "music-mute")!.shortcut).toBe("Ctrl+Shift+0");
   });
 
   it("palette hints for copy, paste and clear show the defaults, and follow the user's remapped keys", async () => {
@@ -1140,13 +1151,104 @@ describe("App shell: AI CLI, music and updates", () => {
   it("music transport shortcuts and footer buttons dispatch window events", async () => {
     await mount();
     const seen: string[] = [];
-    for (const name of ["kai-music-toggle-play", "kai-music-next", "kai-music-mute"]) {
+    for (const name of [
+      "kai-music-toggle-play",
+      "kai-music-next",
+      "kai-music-previous",
+      "kai-music-mute",
+    ]) {
       window.addEventListener(name, () => seen.push(name));
     }
     await press("Space", " ", { ctrl: true, shift: true });
     await press("Period", ">", { ctrl: true, shift: true });
     await press("Comma", "<", { ctrl: true, shift: true });
-    expect(seen).toEqual(["kai-music-toggle-play", "kai-music-next", "kai-music-mute"]);
+    await press("Digit0", ")", { ctrl: true, shift: true });
+    expect(seen).toEqual([
+      "kai-music-toggle-play",
+      "kai-music-next",
+      "kai-music-previous",
+      "kai-music-mute",
+    ]);
+  });
+
+  it("palette 'Keyboard Shortcuts' opens Settings on the Shortcuts tab, and a normal open does not force a tab", async () => {
+    await mount();
+    await runAction("keyboard-shortcuts");
+    expect(modal("settings").isOpen).toBe(true);
+    expect(modal("settings").initialTab).toBe("shortcuts");
+
+    await act(async () => modal("settings").onClose());
+    expect(modal("settings").isOpen).toBe(false);
+    expect(modal("settings").initialTab).toBeUndefined();
+
+    await press("Comma", ",", { ctrl: true });
+    expect(modal("settings").isOpen).toBe(true);
+    expect(modal("settings").initialTab).toBeUndefined();
+  });
+
+  it("buttons that have a shortcut show the current key in their tooltip", async () => {
+    await mount();
+    const title = (selector: string) => container.querySelector<HTMLElement>(selector)!.title;
+    expect(title('[aria-label="New terminal tab"]')).toBe("New tab (Ctrl+Shift+T)");
+    expect(title('[aria-label="Open settings"]')).toBe("Settings (Ctrl+,)");
+    // The close button of a tab (shown once there is more than one).
+    await press("KeyT", "T", { ctrl: true, shift: true });
+    expect(container.querySelector<HTMLElement>('button[title^="Close tab"]')!.title).toBe(
+      "Close tab (Ctrl+Shift+W)"
+    );
+  });
+
+  it("footer music buttons show the shortcut that does the same thing", async () => {
+    await mount();
+    await press("KeyM", "M", { ctrl: true, shift: true });
+    const title = (label: string) =>
+      container.querySelector<HTMLButtonElement>(`.music-mini [aria-label="${label}"]`)!.title;
+    expect(title("Previous song")).toBe("Previous song (Ctrl+Shift+,)");
+    expect(title("Next song")).toBe("Next song (Ctrl+Shift+.)");
+    const mute = container.querySelector<HTMLButtonElement>(
+      '.music-mini [aria-label="Mute music"], .music-mini [aria-label="Unmute music"]'
+    )!;
+    expect(mute.title).toBe("Mute / unmute (Ctrl+Shift+0)");
+    expect(title("Play music")).toBe("Play / pause (Ctrl+Shift+Space)");
+  });
+
+  it("palette music commands turn the player on and open it when it is switched off", async () => {
+    await mount();
+    // Shortcut keys stay a no-op while the player is off (see the test below)...
+    expect(registry.modals.music).toBeUndefined();
+    // ...but picking a music command in the palette is deliberate, so it opens the player.
+    await runAction("music-play-pause");
+    expect(modal("music").open).toBe(true);
+    expect(JSON.parse(localStorage.getItem("kai_user_settings") ?? "{}").showMusicPlayer).toBe(
+      true
+    );
+  });
+
+  it("palette music commands send the transport event once the player is on", async () => {
+    await mount();
+    await press("KeyM", "M", { ctrl: true, shift: true });
+    await act(async () => {
+      modal("music").onTrackChange({ title: "Lo-fi", videoId: "abc123" }, true);
+    });
+    const seen: string[] = [];
+    for (const name of [
+      "kai-music-toggle-play",
+      "kai-music-next",
+      "kai-music-previous",
+      "kai-music-mute",
+    ]) {
+      window.addEventListener(name, () => seen.push(name));
+    }
+    await runAction("music-play-pause");
+    await runAction("music-previous");
+    await runAction("music-next");
+    await runAction("music-mute");
+    expect(seen).toEqual([
+      "kai-music-toggle-play",
+      "kai-music-previous",
+      "kai-music-next",
+      "kai-music-mute",
+    ]);
   });
 
   it("footer play opens the player when nothing is loaded, and only toggles once a track exists", async () => {

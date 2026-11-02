@@ -16,6 +16,7 @@ import {
 import type { InstalledEditor } from "../services/projectService";
 import type { CommandAction } from "./CommandPalette";
 import { PopupMenu, type MenuEntry } from "./PopupMenu";
+import { useShortcutTitle } from "../hooks/useShortcutHints";
 
 interface HeaderActionsProps {
   /** The palette's action list: the "more" menu reuses its handlers and shortcuts. */
@@ -60,6 +61,7 @@ export const HeaderActions: FC<HeaderActionsProps> = ({
   latestVersion,
   onViewUpdate,
 }) => {
+  const shortcutTitle = useShortcutTitle();
   const editorEntries = useMemo<MenuEntry[]>(() => {
     const editorEntries: MenuEntry[] = [];
     if (onOpenEditor) {
@@ -182,7 +184,7 @@ export const HeaderActions: FC<HeaderActionsProps> = ({
         type="button"
         className="header-icon-btn"
         onClick={onOpenSettings}
-        title="Settings"
+        title={shortcutTitle("Settings", "settings")}
         aria-label="Open settings"
       >
         <Settings size={15} aria-hidden="true" />

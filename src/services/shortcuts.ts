@@ -17,11 +17,44 @@ export const SHORTCUT_ACTION_LABELS: Record<ShortcutActionId, string> = {
   prevTab: "Previous tab",
   nextPane: "Next pane",
   prevPane: "Previous pane",
-  toggleMusic: "Toggle Music Time",
-  musicPlayPause: "Music play / pause",
-  musicNext: "Music next track",
-  musicMute: "Music mute / unmute",
+  toggleMusic: "Show / hide music player",
+  musicPlayPause: "Music: play / pause",
+  musicPrevious: "Music: previous song",
+  musicNext: "Music: next song",
+  musicMute: "Music: mute / unmute",
 };
+
+/** The music actions that have a global shortcut, keyed by what the player button does. */
+export type MusicHintId = "toggle" | "playPause" | "previous" | "next" | "mute";
+
+const MUSIC_HINT_ACTIONS: Record<MusicHintId, ShortcutActionId> = {
+  toggle: "toggleMusic",
+  playPause: "musicPlayPause",
+  previous: "musicPrevious",
+  next: "musicNext",
+  mute: "musicMute",
+};
+
+/**
+ * The CURRENT music shortcuts as display text (Cmd on macOS), for button
+ * tooltips. They follow Settings, so a remapped key shows up as remapped.
+ */
+export function musicShortcutHints(
+  bindings: KeybindingsConfig,
+  isMac: boolean
+): Record<MusicHintId, string> {
+  const out = {} as Record<MusicHintId, string>;
+  for (const id of Object.keys(MUSIC_HINT_ACTIONS) as MusicHintId[]) {
+    out[id] = platformLabel(bindings[MUSIC_HINT_ACTIONS[id]] ?? "", isMac);
+  }
+  return out;
+}
+
+/** "Previous song (P or Ctrl+Shift+,)": a tooltip listing every key that does it. */
+export function withKeys(title: string, ...keys: Array<string | undefined>): string {
+  const list = keys.filter((k): k is string => Boolean(k && k.trim()));
+  return list.length > 0 ? `${title} (${list.join(" or ")})` : title;
+}
 
 export interface ParsedBinding {
   ctrlOrCmd: boolean;
@@ -375,10 +408,13 @@ export function isTypingTarget(target: EventTarget | null): boolean {
   return false;
 }
 
-/** Render a binding with the platform modifier name. */
+/**
+ * Render a binding with the platform's own modifier names: Ctrl everywhere but
+ * macOS, where Ctrl is Cmd and Alt is the Option key.
+ */
 export function platformLabel(binding: string, isMac: boolean): string {
   if (!isMac) return binding.replace(/^Cmd\b/, "Ctrl");
-  return binding.replace(/^Ctrl\b/, "Cmd");
+  return binding.replace(/^Ctrl\b/, "Cmd").replace(/\bAlt\b/g, "Option");
 }
 
 export function isMacPlatform(): boolean {

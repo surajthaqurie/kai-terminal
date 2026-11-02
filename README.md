@@ -216,14 +216,16 @@ On macOS use `Cmd` where `Ctrl` is shown. Plain `Ctrl+C` always stays the shell 
 | `Ctrl+Shift+F` | Find in output |
 | `Ctrl+Shift+G` | Review git changes |
 | `Ctrl+,` | Settings |
-| `Ctrl+Shift+M` | Show / hide Music Time |
-| `Ctrl+Shift+Space` / `.` / `,` | Music: play-pause / next track / mute |
+| `Ctrl+Shift+M` | Show / hide the music player |
+| `Ctrl+Shift+Space` | Music: play / pause |
+| `Ctrl+Shift+,` / `Ctrl+Shift+.` | Music: previous song / next song (the `<` and `>` keys) |
+| `Ctrl+Shift+0` | Music: mute / unmute |
 
 The defaults follow Windows Terminal: `Ctrl+Shift` for tabs and app panels, `Alt+Shift` for panes. None of them needs `Ctrl+Alt`, which Windows reports as AltGr and many keyboard layouts use to type characters. On macOS, `Alt` is the `Option` key.
 
-**Upgrading from an older version?** Shortcuts you never changed move to the new defaults once. Any shortcut you set yourself keeps its key, and an old default stays put if its new key would clash with one of yours. The old `Ctrl+Alt+…` pane and music keys, `Ctrl+Shift+]` / `[` for tabs and `Ctrl+Shift+,` for Settings are replaced, so rebind them in **Settings → Shortcuts** if you prefer them.
+**Upgrading from an older version?** Shortcuts you never changed move to the new defaults once. Any shortcut you set yourself keeps its key, and an old default stays put if its new key would clash with one of yours. The old `Ctrl+Alt+…` pane and music keys (and Mute on `Ctrl+Shift+,`, which is now Previous song), `Ctrl+Shift+]` / `[` for tabs and `Ctrl+Shift+,` for Settings are replaced, so rebind them in **Settings → Shortcuts** if you prefer them.
 
-Every shortcut above is remappable in **Settings → Shortcuts** (grouped as Tabs, Panes, App, Music Time and Terminal keys, with a reset button on each one you changed, and conflicts that name the other action) except `Ctrl/Shift+Insert`, `Shift+PageUp` / `PageDown` and `Ctrl+Shift+G`, which stay fixed and are listed there read-only. `Ctrl+T` also always opens a new tab, so Settings will not let you bind `Ctrl+T`, `Ctrl+Shift+T` (other than to New tab) or `Ctrl+Shift+G` to anything else. Music Time pauses for calls automatically.
+Hover any music button (in the player or the status bar) to see the key for it, and find every music action by typing "music" in the command palette (`Ctrl+Shift+P`). **Settings → Shortcuts** has a search box: type a name (`split`), a group (`music`) or a key chord (`Ctrl+Shift+W`) to find a shortcut fast. Every shortcut above is remappable in **Settings → Shortcuts** (grouped as Tabs, Panes, App, Music Time and Terminal keys, with a reset button on each one you changed, and conflicts that name the other action) except `Ctrl/Shift+Insert`, `Shift+PageUp` / `PageDown` and `Ctrl+Shift+G`, which stay fixed and are listed there read-only. `Ctrl+T` also always opens a new tab, so Settings will not let you bind `Ctrl+T`, `Ctrl+Shift+T` (other than to New tab) or `Ctrl+Shift+G` to anything else. Music Time pauses for calls automatically.
 
 ### Privacy and limits
 

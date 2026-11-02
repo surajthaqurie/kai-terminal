@@ -175,12 +175,20 @@ describe("SettingsService", () => {
     expect(SettingsService.normalize({ skipShellProfile: true }).skipShellProfile).toBe(true);
   });
 
-  it("should have default fontSize of 12 and system font family", () => {
-    expect(DEFAULT_SETTINGS.fontSize).toBe(12);
+  it("should have default fontSize of 14 and system font family", () => {
+    expect(DEFAULT_SETTINGS.fontSize).toBe(14);
     expect(DEFAULT_SETTINGS.fontFamily).toContain("Fira Code");
     expect(DEFAULT_SETTINGS.fontFamily).toContain("monospace");
     const normalized = SettingsService.normalize({});
-    expect(normalized.fontSize).toBe(12);
+    expect(normalized.fontSize).toBe(14);
+    // A missing or non-numeric size recovers to the default, not to a stale 12.
+    expect(SettingsService.normalize({ fontSize: Number.NaN }).fontSize).toBe(14);
+  });
+
+  it("defaults to a blinking cursor", () => {
+    expect(DEFAULT_SETTINGS.cursorBlink).toBe(true);
+    expect(SettingsService.normalize({}).cursorBlink).toBe(true);
+    expect(SettingsService.normalize({ cursorBlink: false }).cursorBlink).toBe(false);
   });
 
   it("should safely handle loadSystemDefaults", async () => {
@@ -234,11 +242,45 @@ describe("SettingsService keybinding and font persistence", () => {
     expect(SettingsService.loadSettings().fontSize).toBe(14);
   });
 
-  it("still migrates the old unmodified 14 default (settings saved before the marker existed)", () => {
+  it("an old 14 (saved before any marker existed) ends up at 14, not 12", () => {
+    // 14 -> 12 (old migration) then 12 -> 14 (the defaults moved back).
     localStorage.setItem(
       "kai_user_settings",
       JSON.stringify({ ...DEFAULT_SETTINGS, fontSize: 14, version: 1 })
     );
-    expect(SettingsService.loadSettings().fontSize).toBe(12);
+    expect(SettingsService.loadSettings().fontSize).toBe(14);
+  });
+
+  describe("font size 14 and blinking cursor become the defaults once", () => {
+    const stored = (extra: Record<string, unknown>) =>
+      localStorage.setItem("kai_user_settings", JSON.stringify({ version: 1, ...extra }));
+
+    it("moves the old 12 / steady-cursor defaults that every earlier install saved", () => {
+      stored({ fontSize: 12, cursorBlink: false, _fontDefaultMigrated: true });
+      const s = SettingsService.loadSettings();
+      expect(s.fontSize).toBe(14);
+      expect(s.cursorBlink).toBe(true);
+    });
+
+    it("keeps a size or cursor the user picked (anything but the old defaults)", () => {
+      stored({ fontSize: 16, cursorBlink: true, _fontDefaultMigrated: true });
+      const s = SettingsService.loadSettings();
+      expect(s.fontSize).toBe(16);
+      expect(s.cursorBlink).toBe(true);
+    });
+
+    it("runs once: a 12 and steady cursor chosen after the move are kept", () => {
+      SettingsService.saveSettings({ ...DEFAULT_SETTINGS, fontSize: 12, cursorBlink: false });
+      const s = SettingsService.loadSettings();
+      expect(s.fontSize).toBe(12);
+      expect(s.cursorBlink).toBe(false);
+    });
+
+    it("a fresh install gets 14 and a blinking cursor", () => {
+      localStorage.clear();
+      const s = SettingsService.loadSettings();
+      expect(s.fontSize).toBe(14);
+      expect(s.cursorBlink).toBe(true);
+    });
   });
 });

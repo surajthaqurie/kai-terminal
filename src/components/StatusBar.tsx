@@ -1,6 +1,7 @@
 import { FC, useRef, useState } from "react";
 import { ShellPicker } from "./ShellPicker";
 import type { ShellProfile } from "../types/terminal";
+import { withKeys, type MusicHintId } from "../services/shortcuts";
 import {
   GitBranch,
   ArrowUpCircle,
@@ -55,6 +56,8 @@ interface StatusBarProps {
   onMusicPrevious?: () => void;
   onMusicNext?: () => void;
   onMusicMute?: () => void;
+  /** The current music shortcuts as display text, shown in the button tooltips. */
+  musicShortcuts?: Record<MusicHintId, string>;
 }
 
 /**
@@ -89,6 +92,7 @@ export const StatusBar: FC<StatusBarProps> = ({
   onMusicPrevious,
   onMusicNext,
   onMusicMute,
+  musicShortcuts,
 }) => {
   const repoName = gitRepoRoot
     ? gitRepoRoot.split(/[/\\]/).filter(Boolean).pop() || gitRepoRoot
@@ -317,7 +321,10 @@ export const StatusBar: FC<StatusBarProps> = ({
             role="group"
             aria-label="YouTube Music player"
             style={dragX ? { transform: `translateX(${dragX}px)` } : undefined}
-            title="YouTube Music — click to open player, drag to move it in the footer"
+            title={withKeys(
+              "YouTube Music — click to open player, drag to move it in the footer",
+              musicShortcuts?.toggle
+            )}
             onPointerDown={onMiniPointerDown}
             onPointerMove={onMiniPointerMove}
             onPointerUp={endMiniDrag}
@@ -370,7 +377,7 @@ export const StatusBar: FC<StatusBarProps> = ({
               type="button"
               className="status-check-btn"
               onClick={onMusicPlayPause}
-              title="Play / pause"
+              title={withKeys("Play / pause", musicShortcuts?.playPause)}
               aria-label={music.playing ? "Pause music" : "Play music"}
             >
               {music.playing ? (
@@ -383,7 +390,7 @@ export const StatusBar: FC<StatusBarProps> = ({
               type="button"
               className="status-check-btn"
               onClick={onMusicPrevious}
-              title="Previous song"
+              title={withKeys("Previous song", musicShortcuts?.previous)}
               aria-label="Previous song"
             >
               <SkipBack size={12} aria-hidden="true" />
@@ -392,7 +399,7 @@ export const StatusBar: FC<StatusBarProps> = ({
               type="button"
               className="status-check-btn"
               onClick={onMusicNext}
-              title="Next song"
+              title={withKeys("Next song", musicShortcuts?.next)}
               aria-label="Next song"
             >
               <SkipForward size={12} aria-hidden="true" />
@@ -401,7 +408,7 @@ export const StatusBar: FC<StatusBarProps> = ({
               type="button"
               className="status-check-btn"
               onClick={onMusicMute}
-              title="Mute / unmute"
+              title={withKeys("Mute / unmute", musicShortcuts?.mute)}
               aria-label={music.muted ? "Unmute music" : "Mute music"}
               aria-pressed={music.muted}
             >

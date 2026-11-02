@@ -65,7 +65,10 @@ export interface MusicPreset {
 }
 
 const CURATED_PRESETS: MusicPreset[] = [
-  { id: "lofi-girl", title: "Lofi Hip Hop Radio", videoId: "jfKfPfyJRdk" },
+  // Every preset must allow embedding: the Lofi Girl live radio (jfKfPfyJRdk)
+  // returns YouTube error 101/150 in an embed, which left "random" with a dead
+  // player one pick in four.
+  { id: "lofi-girl", title: "Lofi Study Session", videoId: "lTRiuFIWV54" },
   { id: "synthwave", title: "Synthwave Radio", videoId: "4xDzrJKXOOY" },
   { id: "chillhop", title: "Chillhop Radio", videoId: "5yx6BWlEVcY" },
   { id: "coding-focus", title: "Deep Focus Beats", videoId: "0w80F8FffQ4" },
@@ -141,6 +144,29 @@ export function hasNextItem(track: MusicTrack | null): boolean {
   return Boolean(track?.playlistId);
 }
 
+/** A plain http(s) origin such as `http://localhost:1420` or `http://tauri.localhost`. */
+const WEB_ORIGIN = /^https?:\/\/[^/\s]+$/i;
+
+/**
+ * The page's origin when it is a normal web origin YouTube accepts, else null
+ * (opaque `null`, `file://`, or the `tauri://localhost` scheme of the macOS /
+ * Linux desktop builds).
+ */
+export function currentWebOrigin(): string | null {
+  if (typeof window === "undefined") return null;
+  const origin = window.location?.origin;
+  return typeof origin === "string" && WEB_ORIGIN.test(origin) ? origin : null;
+}
+
+/**
+ * True when the embed can be remote-controlled from this page. The embed only
+ * honours postMessage commands from the origin it was told about, so this is
+ * false exactly when `embedSrcForTrack` had to use a placeholder origin.
+ */
+export function canControlEmbed(): boolean {
+  return currentWebOrigin() !== null;
+}
+
 /**
  * Embed src for a track, or null when there is nothing embeddable.
  * `muted` and `loop` only apply at load; later changes use commands.
@@ -155,22 +181,26 @@ export function embedSrcForTrack(
   loop = false,
   startSeconds = 0
 ): string | null {
-  // Only pass `origin` if it is a standard web HTTP/HTTPS origin (e.g. dev server).
-  // In desktop webviews (Tauri), `window.location.origin` is `tauri://localhost` or `tauri://`,
-  // which causes YouTube's embed configuration validator to crash with Error 153 if passed as-is.
-  // We provide https://www.youtube-nocookie.com as the safe fallback origin and widget_referrer.
-  const isWebOrigin =
-    typeof window !== "undefined" &&
-    window.location?.origin &&
-    /^https?:\/\/(?!tauri)/i.test(window.location.origin);
-
-  const originParam = isWebOrigin
-    ? `&origin=${encodeURIComponent(window.location.origin)}`
+  // `origin` must be the page's REAL origin: the embed only accepts commands
+  // (play / pause / mute / seek / volume) from that origin and only posts its
+  // telemetry (title, time, state) back to it. Substituting another origin
+  // leaves the player deaf to every button while the UI still toggles.
+  // That covers the desktop app on Windows, which serves the UI from
+  // `http://tauri.localhost`. Only a non-web scheme (`tauri://localhost` on
+  // macOS / Linux) is rejected by YouTube's embed validator (Error 153), so
+  // only there do we fall back to a placeholder origin; the player then loads
+  // but cannot be remote-controlled (see `canControlEmbed`).
+  const origin = currentWebOrigin();
+  const originParam = origin
+    ? `&origin=${encodeURIComponent(origin)}`
     : `&origin=${encodeURIComponent("https://www.youtube-nocookie.com")}&widget_referrer=${encodeURIComponent("https://www.youtube-nocookie.com")}`;
 
   const loopParam = loop && track.videoId ? `&loop=1&playlist=${track.videoId}` : "";
   const startParam = startSeconds > 0 ? `&start=${Math.max(0, Math.floor(startSeconds))}` : "";
-  const tail = `autoplay=1&rel=0&controls=0&enablejsapi=1${originParam}${muted ? "&mute=1" : ""}${loopParam}${startParam}`;
+  // Without a controllable origin our buttons cannot reach the player, so show
+  // YouTube's own controls instead of leaving the video with no way to operate it.
+  const controls = origin ? 0 : 1;
+  const tail = `autoplay=1&rel=0&controls=${controls}&enablejsapi=1${originParam}${muted ? "&mute=1" : ""}${loopParam}${startParam}`;
   if (track.videoId) {
     const list = track.playlistId ? `&list=${track.playlistId}` : "";
     return `https://www.youtube-nocookie.com/embed/${track.videoId}?${tail}${list}`;

@@ -1,11 +1,13 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from "vitest";
+import { buildShortcutHints } from "../hooks/useShortcutHints";
 import {
   DEFAULT_KEYBINDINGS,
   DEFAULT_SETTINGS,
   LEGACY_DEFAULT_KEYBINDINGS,
   SettingsService,
   migrateLegacyKeybindings,
+  migrateMusicKeybindings,
 } from "../services/settingsService";
 import {
   DEFAULT_FIXED_SHORTCUTS,
@@ -13,6 +15,10 @@ import {
   eventToBindingString,
   findConflicts,
   findReservedConflicts,
+  matchShortcut,
+  musicShortcutHints,
+  platformLabel,
+  withKeys,
   type ShortcutActionId,
 } from "../services/shortcuts";
 
@@ -59,8 +65,9 @@ describe("Windows Terminal-style defaults", () => {
       ["settings", { key: ",", code: "Comma", ctrlKey: true }],
       ["toggleMusic", { key: "M", code: "KeyM", ctrlKey: true, shiftKey: true }],
       ["musicPlayPause", { key: " ", code: "Space", ctrlKey: true, shiftKey: true }],
+      ["musicPrevious", { key: "<", code: "Comma", ctrlKey: true, shiftKey: true }],
       ["musicNext", { key: ">", code: "Period", ctrlKey: true, shiftKey: true }],
-      ["musicMute", { key: "<", code: "Comma", ctrlKey: true, shiftKey: true }],
+      ["musicMute", { key: ")", code: "Digit0", ctrlKey: true, shiftKey: true }],
     ];
     for (const [action, e] of chords) {
       const full = { ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, ...e };
@@ -113,7 +120,17 @@ describe("migrating saved shortcuts", () => {
     const kb = SettingsService.loadSettings().keybindings;
     expect(kb.search).toBe("Ctrl+,");
     expect(kb.settings).toBe(LEGACY_DEFAULT_KEYBINDINGS.settings);
-    expect(findConflicts(kb, DEFAULT_FIXED_SHORTCUTS)).toEqual([]);
+    // The old Settings key (Ctrl+Shift+,) is also Previous song's default. The user's
+    // own key keeps working (it is earlier in the registry) and Settings names the clash.
+    const conflicts = findConflicts(kb, DEFAULT_FIXED_SHORTCUTS);
+    expect(conflicts).toHaveLength(1);
+    expect(conflicts[0].actions.sort()).toEqual(["musicPrevious", "settings"]);
+    expect(
+      matchShortcut(
+        new KeyboardEvent("keydown", { code: "Comma", ctrlKey: true, shiftKey: true }),
+        kb
+      )
+    ).toBe("settings");
   });
 
   it("runs once: a legacy combo chosen after the migration is kept", () => {
@@ -134,5 +151,119 @@ describe("migrating saved shortcuts", () => {
       expect(() => migrateLegacyKeybindings(bad)).not.toThrow();
     }
     expect(migrateLegacyKeybindings(null)).toEqual({});
+  });
+});
+
+describe("music shortcuts", () => {
+  it("Previous and Next sit on the < and > keys, and Mute is no longer on <", () => {
+    expect(DEFAULT_KEYBINDINGS.musicPrevious).toBe("Ctrl+Shift+,");
+    expect(DEFAULT_KEYBINDINGS.musicNext).toBe("Ctrl+Shift+.");
+    expect(DEFAULT_KEYBINDINGS.musicMute).toBe("Ctrl+Shift+0");
+    expect(findConflicts(DEFAULT_KEYBINDINGS, DEFAULT_FIXED_SHORTCUTS)).toEqual([]);
+    expect(findReservedConflicts(DEFAULT_KEYBINDINGS)).toEqual([]);
+  });
+
+  it("Ctrl+Shift+0 is Mute, not zoom reset", () => {
+    const e = new KeyboardEvent("keydown", { code: "Digit0", ctrlKey: true, shiftKey: true });
+    expect(matchShortcut(e, DEFAULT_KEYBINDINGS)).toBe("musicMute");
+  });
+
+  describe("Mute moves off Ctrl+Shift+, once", () => {
+    it("an install that saved after the last update gets Previous on < without a clash", () => {
+      // Saved by the previous version: Mute on <, and no Previous action yet.
+      const saved = { ...DEFAULT_KEYBINDINGS, musicMute: "Ctrl+Shift+," } as Record<string, string>;
+      delete saved.musicPrevious;
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({ keybindings: saved, version: 1, _keybindingsMigrated: true })
+      );
+      const kb = SettingsService.loadSettings().keybindings;
+      expect(kb.musicMute).toBe("Ctrl+Shift+0");
+      expect(kb.musicPrevious).toBe("Ctrl+Shift+,");
+      expect(findConflicts(kb, DEFAULT_FIXED_SHORTCUTS)).toEqual([]);
+    });
+
+    it("a Mute key the user chose is kept", () => {
+      expect(migrateMusicKeybindings({ musicMute: "Ctrl+Shift+U" })).toEqual({
+        musicMute: "Ctrl+Shift+U",
+      });
+    });
+
+    it("spelling of the old key does not matter (Cmd, spacing)", () => {
+      expect(migrateMusicKeybindings({ musicMute: "Cmd+Shift+," }).musicMute).toBe("Ctrl+Shift+0");
+    });
+
+    it("keeps the old key when the new one is already bound to something else", () => {
+      const out = migrateMusicKeybindings({ musicMute: "Ctrl+Shift+,", search: "Ctrl+Shift+0" });
+      expect(out.musicMute).toBe("Ctrl+Shift+,");
+      expect(out.search).toBe("Ctrl+Shift+0");
+    });
+
+    it("runs once: Ctrl+Shift+, chosen for Mute after the migration is kept", () => {
+      SettingsService.saveSettings({
+        ...DEFAULT_SETTINGS,
+        keybindings: {
+          ...DEFAULT_KEYBINDINGS,
+          musicMute: "Ctrl+Shift+,",
+          musicPrevious: "Ctrl+Shift+P",
+        },
+      });
+      expect(SettingsService.loadSettings().keybindings.musicMute).toBe("Ctrl+Shift+,");
+    });
+
+    it("copes with missing or corrupt input", () => {
+      expect(migrateMusicKeybindings(null)).toEqual({});
+      expect(migrateMusicKeybindings("nope")).toEqual({});
+      expect(migrateMusicKeybindings({ musicMute: 42 })).toEqual({ musicMute: 42 });
+    });
+  });
+
+  describe("tooltip hints", () => {
+    it("follow the current bindings and the platform", () => {
+      const kb = { ...DEFAULT_KEYBINDINGS, musicNext: "Ctrl+Alt+N" };
+      expect(musicShortcutHints(kb, false)).toEqual({
+        toggle: "Ctrl+Shift+M",
+        playPause: "Ctrl+Shift+Space",
+        previous: "Ctrl+Shift+,",
+        next: "Ctrl+Alt+N",
+        mute: "Ctrl+Shift+0",
+      });
+      expect(musicShortcutHints(DEFAULT_KEYBINDINGS, true).next).toBe("Cmd+Shift+.");
+    });
+
+    it("withKeys lists every key and drops empty ones", () => {
+      expect(withKeys("Next song", "N", "Ctrl+Shift+.")).toBe("Next song (N or Ctrl+Shift+.)");
+      expect(withKeys("Next song", undefined, "")).toBe("Next song");
+      expect(withKeys("Mute", "M")).toBe("Mute (M)");
+    });
+  });
+});
+
+describe("shortcut labels per platform", () => {
+  it("macOS shows Cmd and Option; Windows and Linux show Ctrl and Alt", () => {
+    expect(platformLabel("Ctrl+Shift+T", true)).toBe("Cmd+Shift+T");
+    expect(platformLabel("Alt+Shift+W", true)).toBe("Option+Shift+W");
+    expect(platformLabel("Ctrl+Alt+N", true)).toBe("Cmd+Option+N");
+    expect(platformLabel("Cmd+Shift+T", false)).toBe("Ctrl+Shift+T");
+    expect(platformLabel("Alt+Shift+W", false)).toBe("Alt+Shift+W");
+    // Keys that merely contain "alt" are untouched.
+    expect(platformLabel("Ctrl+Shift+Space", true)).toBe("Cmd+Shift+Space");
+  });
+
+  it("is display text only: the stored binding still parses as written", () => {
+    expect(
+      eventMatchesBinding(
+        { ctrlKey: false, metaKey: false, altKey: true, shiftKey: true, code: "KeyW" },
+        "Alt+Shift+W"
+      )
+    ).toBe(true);
+  });
+
+  it("builds a hint for every remappable action from the current bindings", () => {
+    const hints = buildShortcutHints({ ...DEFAULT_KEYBINDINGS, closeTab: "Ctrl+Alt+X" }, true);
+    expect(hints.newTab).toBe("Cmd+Shift+T");
+    expect(hints.closePane).toBe("Option+Shift+W");
+    expect(hints.closeTab).toBe("Cmd+Option+X");
+    expect(Object.keys(hints).sort()).toEqual(Object.keys(DEFAULT_KEYBINDINGS).sort());
   });
 });

@@ -5,6 +5,7 @@ import { PopupMenu, type MenuEntry } from "./PopupMenu";
 import { AppIcon } from "./AppIcon";
 import { WindowControls } from "./WindowControls";
 import { isTauriAvailable } from "../services/ptyService";
+import { useShortcutTitle } from "../hooks/useShortcutHints";
 import { isMacPlatform } from "../services/shortcuts";
 
 interface TabBarProps {
@@ -69,6 +70,7 @@ export const TabBar: FC<TabBarProps> = ({
   onNewTabWithShell,
   children,
 }) => {
+  const shortcutTitle = useShortcutTitle();
   const [editingTabId, setEditingTabId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
   const [menu, setMenu] = useState<MenuState | null>(null);
@@ -482,7 +484,7 @@ export const TabBar: FC<TabBarProps> = ({
                       onCloseTab(tab.id);
                     }}
                     onPointerDown={(e) => e.stopPropagation()}
-                    title="Close Session"
+                    title={shortcutTitle("Close tab", "closeTab")}
                     aria-label={`Close ${tab.title}`}
                   >
                     <X size={12} />
@@ -503,7 +505,7 @@ export const TabBar: FC<TabBarProps> = ({
           type="button"
           className="tab-add-btn"
           onClick={onNewTab}
-          title="New Tab (Ctrl+T / Cmd+T — works on Windows, Linux and macOS)"
+          title={shortcutTitle("New tab", "newTab")}
           aria-label="New terminal tab"
         >
           <Plus size={16} />

@@ -1600,14 +1600,15 @@ pub struct SystemTerminalConfig {
 
 /// Detects host terminal settings and preferences (e.g. Kali Linux QTerminal / XFCE terminal / system font).
 pub fn detect_system_terminal_config() -> SystemTerminalConfig {
-    let font_size = 12u16;
+    // Must match the frontend DEFAULT_SETTINGS (font size 14, blinking cursor).
+    let font_size = 14u16;
     let default_shell = env::var("SHELL").ok();
 
     #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
     let (font_family, theme, cursor_blink, cursor_style, opacity) = {
         let mut font_family = "'Fira Code', 'FiraCode', 'DejaVu Sans Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace".to_string();
         let mut theme = "kai-dark".to_string();
-        let mut cursor_blink = false;
+        let mut cursor_blink = true;
         let mut cursor_style = "block".to_string();
         let mut opacity = 1.0f64;
 
@@ -1707,7 +1708,7 @@ pub fn detect_system_terminal_config() -> SystemTerminalConfig {
         // other value here silently unselects the default appearance on
         // fresh installs.
         "kai-dark".to_string(),
-        false,
+        true,
         "block".to_string(),
         1.0f64,
     );
@@ -1717,7 +1718,7 @@ pub fn detect_system_terminal_config() -> SystemTerminalConfig {
         "Consolas, 'Cascadia Code', 'Lucida Console', monospace".to_string(),
         // Same contract as macOS above: keep the frontend default selected.
         "kai-dark".to_string(),
-        false,
+        true,
         "block".to_string(),
         1.0f64,
     );
@@ -2266,7 +2267,7 @@ mod tests {
     fn test_detect_system_terminal_config() {
         let _env = crate::test_support::lock_test_env();
         let config = detect_system_terminal_config();
-        assert_eq!(config.font_size, 12);
+        assert_eq!(config.font_size, 14);
         assert!(!config.font_family.is_empty());
         assert!(!config.theme.is_empty());
         assert!(config.opacity >= 0.2 && config.opacity <= 1.0);

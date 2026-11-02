@@ -209,6 +209,20 @@ describe("SettingsModal", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  it("opens on the tab it is asked to, and keeps the usual first tab otherwise", async () => {
+    const activeTabLabel = () =>
+      host.querySelector<HTMLButtonElement>(".modal-tab-btn.active")?.textContent ?? "";
+    await render(<SettingsModal isOpen onClose={() => {}} {...settingsProps} />);
+    expect(activeTabLabel()).toContain("Appearance");
+
+    await render(<SettingsModal isOpen={false} onClose={() => {}} {...settingsProps} />);
+    await render(
+      <SettingsModal isOpen initialTab="shortcuts" onClose={() => {}} {...settingsProps} />
+    );
+    expect(activeTabLabel()).toContain("Shortcuts");
+    expect($("input.shortcut-filter")).not.toBeNull();
+  });
+
   describe("Shortcuts tab", () => {
     const openShortcuts = async () => {
       await render(<SettingsModal isOpen onClose={() => {}} {...settingsProps} />);
@@ -247,6 +261,72 @@ describe("SettingsModal", () => {
       await act(async () => reset("Next tab").click());
       expect(input("Next tab").value).toBe("Ctrl+Tab");
       expect(reset("Next tab").disabled).toBe(true);
+    });
+
+    describe("find a shortcut", () => {
+      const filter = async (text: string) => {
+        const box = $("input.shortcut-filter") as HTMLInputElement;
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+        await act(async () => {
+          setter.call(box, text);
+          box.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+      };
+      const labels = () =>
+        [...host.querySelectorAll(".shortcut-row-item .shortcut-label")].map((l) => l.textContent);
+
+      it("lists every shortcut when the box is empty", async () => {
+        await openShortcuts();
+        expect(labels()).toEqual(
+          expect.arrayContaining(["New tab", "Music: previous song", "Zoom in"])
+        );
+      });
+
+      it("finds a shortcut by name, by group, or by its keys", async () => {
+        await openShortcuts();
+        await filter("music");
+        expect(labels()).toEqual([
+          "Show / hide music player",
+          "Music: play / pause",
+          "Music: previous song",
+          "Music: next song",
+          "Music: mute / unmute",
+        ]);
+        // Hides the groups with nothing left in them.
+        const headings = [...host.querySelectorAll(".settings-tab-panel label")].map(
+          (l) => l.textContent
+        );
+        expect(headings).toContain("Music Time");
+        expect(headings).not.toContain("Tabs");
+
+        await filter("ctrl shift w");
+        expect(labels()).toEqual(["Close tab or pane"]);
+        await filter("Ctrl+Shift+W");
+        expect(labels()).toEqual(["Close tab or pane"]);
+        await filter("split");
+        expect(labels()).toEqual(["Split terminal (vertical)", "Split terminal (horizontal)"]);
+      });
+
+      it("says so when nothing matches, and clearing it brings everything back", async () => {
+        await openShortcuts();
+        await filter("zzzz");
+        expect(labels()).toEqual([]);
+        expect(host.textContent).toContain("No shortcut matches");
+        await filter("");
+        expect(labels().length).toBeGreaterThan(20);
+      });
+
+      it("a shortcut being edited keeps working while filtered", async () => {
+        await openShortcuts();
+        await filter("previous song");
+        await record("Music: previous song", {
+          key: "B",
+          code: "KeyB",
+          ctrlKey: true,
+          shiftKey: true,
+        });
+        expect(input("Music: previous song").value).toBe("Ctrl+Shift+B");
+      });
     });
 
     it("names the other action when two shortcuts collide", async () => {

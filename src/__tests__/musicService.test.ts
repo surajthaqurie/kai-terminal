@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  canControlEmbed,
   clearLegacyQueue,
   describePlayerError,
   embedSrcForTrack,
@@ -53,29 +54,73 @@ describe("music input resolution", () => {
     expect(embedSrcForTrack(pl)).toContain("listType=playlist&list=PLabcdefghijkl");
   });
 
-  it("uses youtube-nocookie.com and never leaks tauri:// origin to prevent Error 153", () => {
+  describe("embed origin", () => {
     const t = resolveInputToTrack("dQw4w9WgXcQ")!;
-    const src = embedSrcForTrack(t)!;
-    expect(src).toContain("youtube-nocookie.com/embed/dQw4w9WgXcQ");
-    expect(src).not.toContain("origin=tauri");
-
     const originalLocation = window.location;
-    try {
-      Object.defineProperty(window, "location", {
-        value: new URL("tauri://localhost"),
-        writable: true,
-        configurable: true,
+    const withLocation = (href: string, run: () => void) => {
+      try {
+        Object.defineProperty(window, "location", {
+          value: new URL(href),
+          writable: true,
+          configurable: true,
+        });
+        run();
+      } finally {
+        Object.defineProperty(window, "location", {
+          value: originalLocation,
+          writable: true,
+          configurable: true,
+        });
+      }
+    };
+
+    it("always embeds from youtube-nocookie.com", () => {
+      expect(embedSrcForTrack(t)).toContain("youtube-nocookie.com/embed/dQw4w9WgXcQ");
+    });
+
+    it("passes the page's real origin so YouTube accepts commands from it", () => {
+      withLocation("http://localhost:1420/", () => {
+        const src = embedSrcForTrack(t)!;
+        expect(src).toContain("origin=http%3A%2F%2Flocalhost%3A1420");
+        expect(src).not.toContain("widget_referrer=");
+        expect(src).toContain("controls=0");
+        expect(canControlEmbed()).toBe(true);
       });
-      const tauriSrc = embedSrcForTrack(t)!;
-      expect(tauriSrc).toContain("youtube-nocookie.com/embed/dQw4w9WgXcQ");
-      expect(tauriSrc).not.toContain("origin=tauri");
-      expect(tauriSrc).toContain("widget_referrer=");
-    } finally {
-      Object.defineProperty(window, "location", {
-        value: originalLocation,
-        writable: true,
-        configurable: true,
+    });
+
+    // Regression: the desktop app on Windows serves the UI from
+    // http://tauri.localhost. It used to be swapped for a placeholder origin, so
+    // YouTube ignored every command and no button did anything.
+    it.each(["http://tauri.localhost/", "https://tauri.localhost/"])(
+      "uses %s as the origin instead of a placeholder (Windows desktop)",
+      (href) => {
+        withLocation(href, () => {
+          const src = embedSrcForTrack(t)!;
+          expect(src).toContain(`origin=${encodeURIComponent(new URL(href).origin)}`);
+          expect(src).not.toContain("origin=https%3A%2F%2Fwww.youtube-nocookie.com");
+          expect(src).toContain("controls=0");
+          expect(canControlEmbed()).toBe(true);
+        });
+      }
+    );
+
+    it("falls back to a placeholder origin for the tauri:// scheme (Error 153) and shows native controls", () => {
+      withLocation("tauri://localhost", () => {
+        const src = embedSrcForTrack(t)!;
+        expect(src).not.toContain("origin=tauri");
+        expect(src).toContain("origin=https%3A%2F%2Fwww.youtube-nocookie.com");
+        expect(src).toContain("widget_referrer=");
+        // Our buttons cannot reach the player here, so YouTube's own controls show.
+        expect(src).toContain("controls=1");
+        expect(canControlEmbed()).toBe(false);
       });
+    });
+  });
+
+  it("only offers random presets that allow embedding", () => {
+    // jfKfPfyJRdk (Lofi Girl radio) returns YouTube error 101/150 when embedded.
+    for (let i = 0; i < 200; i++) {
+      expect(resolveInputToTrack("random")?.videoId).not.toBe("jfKfPfyJRdk");
     }
   });
 

@@ -200,6 +200,7 @@ export interface KeybindingsConfig {
   prevPane: string;
   toggleMusic: string;
   musicPlayPause: string;
+  musicPrevious: string;
   musicNext: string;
   musicMute: string;
 }

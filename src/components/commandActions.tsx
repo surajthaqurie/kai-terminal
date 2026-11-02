@@ -10,11 +10,17 @@ import {
   Edit3,
   FolderOpen,
   GitCompare,
+  Keyboard,
+  Music,
+  Play,
   Plus,
   Rows,
   Search,
   Settings,
+  SkipBack,
+  SkipForward,
   Trash2,
+  VolumeX,
   XCircle,
 } from "lucide-react";
 import {
@@ -39,6 +45,8 @@ export interface CommandActionContext {
   splitPane: (direction: SplitDirection) => void;
   closeActivePane: () => void;
   toggleMusic: () => void;
+  /** Sends a transport event (play / pause, next, previous, mute) to the music player. */
+  musicCommand: (eventName: string) => void;
   renameActiveTab: () => void;
   openEditor: () => void;
   showGitStatus: () => void;
@@ -52,6 +60,8 @@ export interface CommandActionContext {
   openAiCli: () => void;
   openDiagnostics: () => void;
   openSettings: () => void;
+  /** Opens Settings on the Shortcuts tab. */
+  openShortcutSettings: () => void;
 }
 
 export function buildCommandActions(ctx: CommandActionContext): CommandAction[] {
@@ -134,11 +144,43 @@ export function buildCommandActions(ctx: CommandActionContext): CommandAction[] 
     },
     {
       id: "toggle-music",
-      label: "Toggle Music Time",
+      label: "Music: Show / Hide Player",
       category: "Music",
       shortcut: key(kb.toggleMusic),
-      icon: <Activity size={16} />,
+      icon: <Music size={16} />,
       perform: ctx.toggleMusic,
+    },
+    {
+      id: "music-play-pause",
+      label: "Music: Play / Pause",
+      category: "Music",
+      shortcut: key(kb.musicPlayPause),
+      icon: <Play size={16} />,
+      perform: () => ctx.musicCommand("kai-music-toggle-play"),
+    },
+    {
+      id: "music-previous",
+      label: "Music: Previous Song",
+      category: "Music",
+      shortcut: key(kb.musicPrevious),
+      icon: <SkipBack size={16} />,
+      perform: () => ctx.musicCommand("kai-music-previous"),
+    },
+    {
+      id: "music-next",
+      label: "Music: Next Song",
+      category: "Music",
+      shortcut: key(kb.musicNext),
+      icon: <SkipForward size={16} />,
+      perform: () => ctx.musicCommand("kai-music-next"),
+    },
+    {
+      id: "music-mute",
+      label: "Music: Mute / Unmute",
+      category: "Music",
+      shortcut: key(kb.musicMute),
+      icon: <VolumeX size={16} />,
+      perform: () => ctx.musicCommand("kai-music-mute"),
     },
     {
       id: "rename-session",
@@ -229,6 +271,13 @@ export function buildCommandActions(ctx: CommandActionContext): CommandAction[] 
       category: "Help",
       icon: <Activity size={16} />,
       perform: ctx.openDiagnostics,
+    },
+    {
+      id: "keyboard-shortcuts",
+      label: "Keyboard Shortcuts (view and change)",
+      category: "Help",
+      icon: <Keyboard size={16} />,
+      perform: ctx.openShortcutSettings,
     },
     {
       id: "open-settings",

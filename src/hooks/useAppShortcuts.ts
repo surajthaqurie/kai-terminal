@@ -131,6 +131,8 @@ export function useAppShortcuts(handlers: AppShortcutHandlers) {
           return h.toggleMusic();
         case "musicPlayPause":
           return h.musicEvent("kai-music-toggle-play");
+        case "musicPrevious":
+          return h.musicEvent("kai-music-previous");
         case "musicNext":
           return h.musicEvent("kai-music-next");
         case "musicMute":

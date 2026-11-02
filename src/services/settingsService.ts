@@ -35,11 +35,52 @@ export const DEFAULT_KEYBINDINGS: KeybindingsConfig = {
   prevTab: "Ctrl+Shift+Tab",
   nextPane: "Alt+Shift+]",
   prevPane: "Alt+Shift+[",
+  // One cluster on Ctrl+Shift: M opens the player, Space plays / pauses, and the
+  // `<` and `>` keys go back and forward like the arrows on a media player.
   toggleMusic: "Ctrl+Shift+M",
   musicPlayPause: "Ctrl+Shift+Space",
+  musicPrevious: "Ctrl+Shift+,",
   musicNext: "Ctrl+Shift+.",
-  musicMute: "Ctrl+Shift+,",
+  musicMute: "Ctrl+Shift+0",
 };
+
+/**
+ * Mute used to sit on `Ctrl+Shift+,`, the `<` key, which belongs to Previous
+ * song. Someone who never changed it moves to the new default once (see
+ * `migrateMusicKeybindings`).
+ */
+const SUPERSEDED_MUSIC_MUTE = "Ctrl+Shift+,";
+
+/**
+ * One-time move of an untouched old Mute binding to its new default, so Mute
+ * and Previous do not both claim `Ctrl+Shift+,`. A Mute binding the user chose
+ * stays as chosen, and so does the old one if the new key is already taken by
+ * something they bound. Returns the bindings to feed into `normalize`.
+ */
+export function migrateMusicKeybindings(
+  saved: unknown,
+  fixed?: Partial<FixedShortcutsConfig> | null
+): Partial<KeybindingsConfig> {
+  if (!saved || typeof saved !== "object") return {};
+  const next = { ...(saved as Record<string, unknown>) } as Partial<KeybindingsConfig>;
+  const current = next.musicMute;
+  const parsedCurrent = typeof current === "string" ? parseBinding(current) : null;
+  const parsedOld = parseBinding(SUPERSEDED_MUSIC_MUTE);
+  const untouched =
+    parsedCurrent !== null &&
+    parsedOld !== null &&
+    parsedCurrent.ctrlOrCmd === parsedOld.ctrlOrCmd &&
+    parsedCurrent.alt === parsedOld.alt &&
+    parsedCurrent.shift === parsedOld.shift &&
+    parsedCurrent.code === parsedOld.code;
+  if (!untouched) return next;
+  const moved = { ...next, musicMute: DEFAULT_KEYBINDINGS.musicMute };
+  const full = { ...DEFAULT_KEYBINDINGS, ...moved } as KeybindingsConfig;
+  const clash = findConflicts(full, resolveFixedBindings(fixed)).some((c) =>
+    c.actions.includes("musicMute")
+  );
+  return clash ? next : moved;
+}
 
 /**
  * The defaults before the Windows Terminal-style scheme. A saved binding that
@@ -125,9 +166,9 @@ export const DEFAULT_SETTINGS: UserSettings = {
   theme: "kai-dark",
   fontFamily:
     "'JetBrains Mono Variable', 'JetBrains Mono', 'Fira Code', 'DejaVu Sans Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace",
-  fontSize: 12,
+  fontSize: 14,
   scrollback: 10000,
-  cursorBlink: false,
+  cursorBlink: true,
   cursorStyle: "block",
   opacity: 1.0,
   customShellPath: "",
@@ -151,6 +192,13 @@ const SETTINGS_VERSION = 1;
 const FONT_DEFAULT_MIGRATED = "_fontDefaultMigrated";
 /** Stored beside the settings once they were saved after the shortcut-defaults change. */
 const KEYBINDINGS_MIGRATED = "_keybindingsMigrated";
+/** Stored beside the settings once they were saved after the 14 / blinking-cursor defaults returned. */
+const TERMINAL_DEFAULTS_MIGRATED = "_terminalDefaultsMigrated";
+/** The font size and cursor blink defaults before they became 14 and on. */
+const PREVIOUS_DEFAULT_FONT_SIZE = 12;
+const PREVIOUS_DEFAULT_CURSOR_BLINK = false;
+/** Stored beside the settings once they were saved after Mute moved off `Ctrl+Shift+,`. */
+const MUSIC_KEYS_MIGRATED = "_musicKeysMigrated";
 
 /** Theme ids the Appearance panel can mark selected. Single source of truth. */
 const KNOWN_THEME_IDS: ReadonlyArray<ThemeName> = [
@@ -456,7 +504,7 @@ export class SettingsService {
     } else {
       merged.fontFamily = merged.fontFamily.slice(0, 512);
     }
-    if (!Number.isFinite(merged.fontSize)) merged.fontSize = 12;
+    if (!Number.isFinite(merged.fontSize)) merged.fontSize = DEFAULT_SETTINGS.fontSize;
     merged.fontSize = Math.max(8, Math.min(36, Math.round(merged.fontSize)));
     if (!Number.isFinite(merged.scrollback)) merged.scrollback = 10000;
     merged.scrollback = Math.max(1000, Math.min(100000, Math.round(merged.scrollback)));
@@ -504,6 +552,19 @@ export class SettingsService {
         if (parsed.fontSize === 14 && !parsed[FONT_DEFAULT_MIGRATED]) {
           parsed.fontSize = 12;
         }
+        // One-time: the defaults are now font size 14 and a blinking cursor. A saved
+        // 12 / off is what every install wrote while those were the defaults, so it
+        // moves once; anything else the user picked is kept. Every save writes
+        // TERMINAL_DEFAULTS_MIGRATED, so a 12 or a steady cursor chosen afterwards
+        // stays. (Runs after the 14 -> 12 step above, so an old 14 ends up at 14.)
+        if (!parsed[TERMINAL_DEFAULTS_MIGRATED]) {
+          if (parsed.fontSize === PREVIOUS_DEFAULT_FONT_SIZE) {
+            parsed.fontSize = DEFAULT_SETTINGS.fontSize;
+          }
+          if (parsed.cursorBlink === PREVIOUS_DEFAULT_CURSOR_BLINK) {
+            parsed.cursorBlink = DEFAULT_SETTINGS.cursorBlink;
+          }
+        }
         // One-time: the default shortcuts moved to the Windows Terminal-style
         // scheme. Every save writes KEYBINDINGS_MIGRATED, so a combo the user
         // sets afterwards (even an old default) is kept as chosen.
@@ -512,6 +573,10 @@ export class SettingsService {
             parsed.keybindings,
             parsed.fixedKeybindings
           );
+        }
+        // One-time: Mute moved off `Ctrl+Shift+,` so Previous song can have it.
+        if (!parsed[MUSIC_KEYS_MIGRATED]) {
+          parsed.keybindings = migrateMusicKeybindings(parsed.keybindings, parsed.fixedKeybindings);
         }
         return SettingsService.normalize(parsed);
       }
@@ -530,9 +595,9 @@ export class SettingsService {
     if (!config) return {};
     return {
       fontFamily: config.font_family || DEFAULT_SETTINGS.fontFamily,
-      fontSize: 12, // Always ensure default font size is 12
+      fontSize: DEFAULT_SETTINGS.fontSize,
       theme: normalizeThemeId(config.theme),
-      cursorBlink: config.cursor_blink ?? false,
+      cursorBlink: config.cursor_blink ?? DEFAULT_SETTINGS.cursorBlink,
       cursorStyle: (config.cursor_style as CursorStyle) || "block",
       opacity: config.opacity ?? 1.0,
     };
@@ -548,6 +613,8 @@ export class SettingsService {
           version: SETTINGS_VERSION,
           [FONT_DEFAULT_MIGRATED]: true,
           [KEYBINDINGS_MIGRATED]: true,
+          [MUSIC_KEYS_MIGRATED]: true,
+          [TERMINAL_DEFAULTS_MIGRATED]: true,
         })
       );
     } catch {

@@ -1,6 +1,7 @@
 import { FC } from "react";
 import { GitBranch, Bot, FolderOpen, ListOrdered, GitCompare, X } from "lucide-react";
 import type { GitInfo } from "../services/projectService";
+import { useShortcutTitle } from "../hooks/useShortcutHints";
 
 interface PaneHeaderProps {
   paneId: string;
@@ -38,6 +39,7 @@ export const PaneHeader: FC<PaneHeaderProps> = ({
   onOpenEditor,
   onClosePane,
 }) => {
+  const shortcutTitle = useShortcutTitle();
   const branch = gitInfo?.branch ?? null;
   const dirty = gitInfo?.dirty ?? false;
 
@@ -152,7 +154,7 @@ export const PaneHeader: FC<PaneHeaderProps> = ({
             e.stopPropagation();
             onClosePane();
           }}
-          title="Close split"
+          title={shortcutTitle("Close split", "closePane")}
           aria-label="Close split"
         >
           <X size={11} aria-hidden="true" />

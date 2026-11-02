@@ -160,6 +160,8 @@ interface SettingsModalProps {
   onCheckUpdates?: () => void;
   onViewUpdate?: () => void;
   onDownloadAndInstall?: () => void;
+  /** Tab to show when the dialog opens; without it the last tab is kept. */
+  initialTab?: SettingsTab;
 }
 
 /** Applies a theme to the document (colors, color-scheme, browser chrome). */
@@ -184,15 +186,22 @@ export const SettingsModal: FC<SettingsModalProps> = ({
   onCheckUpdates,
   onViewUpdate,
   onDownloadAndInstall,
+  initialTab,
 }) => {
   const dialogRef = useModalBehavior(isOpen, () => handleCancel());
   const [formData, setFormData] = useState<UserSettings>(settings);
-  const [activeTab, setActiveTab] = useState<SettingsTab>("appearance");
+  const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab ?? "appearance");
+  // Opened on a specific tab (e.g. from the palette's Keyboard Shortcuts).
+  useEffect(() => {
+    if (isOpen && initialTab) setActiveTab(initialTab);
+  }, [isOpen, initialTab]);
   const [selectedFontPreset, setSelectedFontPreset] = useState<string>("custom");
   // Monospace families installed on this PC (desktop app); loaded once.
   const [installedFonts, setInstalledFonts] = useState<string[]>([]);
   const [selectedEditorPreset, setSelectedEditorPreset] = useState<string>("");
   const [recordingAction, setRecordingAction] = useState<string | null>(null);
+  // Filter box above the shortcut list: the list is long, so find one by name or key.
+  const [shortcutFilter, setShortcutFilter] = useState("");
   const [bindingErrors, setBindingErrors] = useState<Record<string, string>>({});
   const isMac = isMacPlatform();
 
@@ -282,6 +291,7 @@ export const SettingsModal: FC<SettingsModalProps> = ({
       actions: [
         "toggleMusic",
         "musicPlayPause",
+        "musicPrevious",
         "musicNext",
         "musicMute",
       ] satisfies ShortcutActionId[],
@@ -291,6 +301,41 @@ export const SettingsModal: FC<SettingsModalProps> = ({
       actions: Object.keys(FIXED_ACTION_LABELS) as FixedActionId[],
     },
   ];
+  // Typing a name ("music", "split pane") matches the START of words in a row's
+  // name, keys or group, so "w" does not match "ne(w) tab". Typing a chord with
+  // "+" ("Ctrl+Shift+W") matches rows whose keys are exactly that chord.
+  const splitWords = (text: string) =>
+    text
+      .toLowerCase()
+      .split(/[\s+/]+/)
+      .filter(Boolean);
+  const filterWords = splitWords(shortcutFilter);
+  const filterIsChord = shortcutFilter.includes("+");
+  const rowMatches = (label: string, keys: string, group: string) => {
+    if (filterWords.length === 0) return true;
+    if (filterIsChord) {
+      const keyWords = splitWords(keys);
+      return filterWords.every((w) => keyWords.includes(w));
+    }
+    const words = splitWords(`${label} ${keys} ${group}`);
+    return filterWords.every((w) => words.some((t) => t.startsWith(w)));
+  };
+  const visibleGroups = bindingGroups
+    .map((g) => ({
+      ...g,
+      actions: g.actions.filter((a) =>
+        rowMatches(
+          BINDING_LABELS[a],
+          // Both spellings, so "alt" finds a row that shows "Option" on macOS.
+          `${platformLabel(bindingFor(a) || "", isMac)} ${bindingFor(a) || ""}`,
+          g.heading
+        )
+      ),
+    }))
+    .filter((g) => g.actions.length > 0);
+  const visibleHelp = FIXED_SHORTCUT_HELP.filter((row) =>
+    rowMatches(row.label, isMac ? row.keys.replace(/Ctrl/g, "Cmd") : row.keys, "other built-in")
+  );
   const defaultFor = (action: AnyShortcutId): string =>
     isFixedAction(action) ? DEFAULT_FIXED_SHORTCUTS[action] : DEFAULT_SETTINGS.keybindings[action];
   const isCustomised = (action: AnyShortcutId) => bindingFor(action) !== defaultFor(action);
@@ -876,7 +921,8 @@ export const SettingsModal: FC<SettingsModalProps> = ({
                     Keyboard Shortcuts{" "}
                     <span className="muted-text">
                       (Click a field and press the new key combination. Esc cancels. Use{" "}
-                      {isMac ? "Cmd" : "Ctrl"} or Alt with a key, or F1–F12 on its own)
+                      {isMac ? "Cmd" : "Ctrl"} or {isMac ? "Option" : "Alt"} with a key, or F1–F12
+                      on its own)
                     </span>
                   </label>
                   <button
@@ -889,7 +935,24 @@ export const SettingsModal: FC<SettingsModalProps> = ({
                   </button>
                 </div>
 
-                {bindingGroups.map(({ heading, actions }) => (
+                <input
+                  type="search"
+                  className="text-input modal-input shortcut-filter"
+                  value={shortcutFilter}
+                  onChange={(e) => setShortcutFilter(e.target.value)}
+                  placeholder="Find a shortcut, e.g. music, split, Ctrl+T"
+                  aria-label="Find a shortcut"
+                  style={{ marginTop: "12px", width: "100%" }}
+                />
+                {filterWords.length > 0 &&
+                  visibleGroups.length === 0 &&
+                  visibleHelp.length === 0 && (
+                    <p className="muted-text" role="status" style={{ marginTop: "12px" }}>
+                      No shortcut matches “{shortcutFilter.trim()}”.
+                    </p>
+                  )}
+
+                {visibleGroups.map(({ heading, actions }) => (
                   <div key={heading} style={{ marginTop: "16px" }}>
                     <label style={{ display: "block" }}>{heading}</label>
                     <div className="shortcuts-table">
@@ -966,12 +1029,14 @@ export const SettingsModal: FC<SettingsModalProps> = ({
                   </p>
                 )}
 
-                <label style={{ marginTop: "16px", display: "block" }}>
-                  Other built-in shortcuts{" "}
-                  <span className="muted-text">(fixed, not remappable)</span>
-                </label>
+                {visibleHelp.length > 0 && (
+                  <label style={{ marginTop: "16px", display: "block" }}>
+                    Other built-in shortcuts{" "}
+                    <span className="muted-text">(fixed, not remappable)</span>
+                  </label>
+                )}
                 <div className="shortcuts-table">
-                  {FIXED_SHORTCUT_HELP.map((row) => (
+                  {visibleHelp.map((row) => (
                     <div key={row.keys} className="shortcut-row-item">
                       <span className="shortcut-label">{row.label}</span>
                       <kbd className="muted-text">

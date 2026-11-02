@@ -21,6 +21,8 @@ import {
   WorkspaceModal,
 } from "./components/lazyPanels";
 import { useAppShortcuts } from "./hooks/useAppShortcuts";
+import { ShortcutHintsProvider, buildShortcutHints } from "./hooks/useShortcutHints";
+import type { SettingsTab } from "./components/SettingsModal";
 import { useAppUpdates } from "./hooks/useAppUpdates";
 import { useCodeMode } from "./hooks/useCodeMode";
 import { useGitStatus } from "./hooks/useGitStatus";
@@ -39,7 +41,7 @@ import { useWindowRefit } from "./hooks/useWindowRefit";
 import { resolvePaneShell } from "./services/paneShell";
 import { SettingsService } from "./services/settingsService";
 import { resolveEffectiveProjectDir } from "./services/projectService";
-import { isMacPlatform, platformLabel } from "./services/shortcuts";
+import { isMacPlatform, musicShortcutHints, platformLabel } from "./services/shortcuts";
 import { RELEASES_PAGE_URL } from "./services/updateService";
 import type { ShellProfile, TerminalTab } from "./types/terminal";
 import "./App.css";
@@ -67,6 +69,9 @@ function App() {
     [notify]
   );
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  // Tab Settings opens on when something asks for a specific one (the palette's
+  // Keyboard Shortcuts); undefined keeps the usual behaviour.
+  const [settingsTab, setSettingsTab] = useState<SettingsTab | undefined>(undefined);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [isAiCliOpen, setIsAiCliOpen] = useState(false);
   const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState(false);
@@ -261,18 +266,41 @@ function App() {
     setIsAiCliOpen(true);
   }, [effectiveProjectDir]);
   const openSettings = useCallback(() => setIsSettingsOpen(true), []);
+  const openShortcutSettings = useCallback(() => {
+    setSettingsTab("shortcuts");
+    setIsSettingsOpen(true);
+  }, []);
   // Opening the player for the first time also enables it in Settings so the
   // footer mini-player and shortcuts stay available after the panel closes.
+  const enableMusicPlayer = () => {
+    if (userSettings.showMusicPlayer) return;
+    // Persist too: `config.saveSettings` only applies settings to this session,
+    // so without this the footer player vanishes again after a restart.
+    const next = { ...userSettings, showMusicPlayer: true };
+    SettingsService.saveSettings(next);
+    config.saveSettings(next);
+  };
   const toggleMusicPanel = () => {
     const opening = !music.isOpen;
     music.togglePanel();
-    if (opening && !userSettings.showMusicPlayer) {
-      // Persist too: `config.saveSettings` only applies settings to this session,
-      // so without this the footer player vanishes again after a restart.
-      const next = { ...userSettings, showMusicPlayer: true };
-      SettingsService.saveSettings(next);
-      config.saveSettings(next);
+    if (opening) enableMusicPlayer();
+  };
+  // What the music buttons' tooltips show: the CURRENT keys, so a remap in Settings
+  // is reflected right away.
+  const musicHints = musicShortcutHints(userSettings.keybindings, isMacPlatform());
+  // The current key of every action, for the tooltips of the buttons that have one.
+  const shortcutHints = buildShortcutHints(userSettings.keybindings, isMacPlatform());
+  // Play / pause / next / previous / mute chosen in the command palette. That is
+  // a deliberate pick, so with the player switched off it does what the user is
+  // after: turn the player on and open it to choose a song, rather than doing
+  // nothing.
+  const musicCommand = (name: string) => {
+    if (!userSettings.showMusicPlayer) {
+      enableMusicPlayer();
+      music.openPanel();
+      return;
     }
+    music.transport(name);
   };
 
   useAppShortcuts({
@@ -291,6 +319,8 @@ function App() {
     gotoTab: tabsState.gotoTab,
     zoomFont: config.zoomFont,
     toggleMusic: toggleMusicPanel,
+    // Keys stay a no-op while the player is switched off in Settings, so a stray
+    // press never pops it up; Show / hide (above) is the key that turns it on.
     musicEvent: music.transport,
     reviewChanges: () => project.reviewChanges(),
   });
@@ -316,6 +346,7 @@ function App() {
     splitPane: tabsState.splitPane,
     closeActivePane: tabsState.closeActivePane,
     toggleMusic: toggleMusicPanel,
+    musicCommand,
     renameActiveTab: () => setRenameTarget(activeTab),
     openEditor: () => void project.openEditor(),
     showGitStatus: () => void project.showGit("status"),
@@ -329,237 +360,246 @@ function App() {
     openAiCli,
     openDiagnostics: () => setIsDiagnosticsOpen(true),
     openSettings,
+    openShortcutSettings,
   });
 
   return (
-    <div className="app-layout" data-theme={userSettings.theme}>
-      <div className="app-header">
-        <TabBar
-          tabs={tabs}
-          activeTabId={activeTabId}
-          onSelectTab={setActiveTabId}
-          onCloseTab={tabsState.closeTab}
-          onNewTab={() => newTabAndFocus()}
-          onRenameTab={tabsState.renameTab}
-          onMoveTab={tabsState.moveTab}
-          onReorderTabs={tabsState.reorderTabs}
-          onMoveTabToIndex={tabsState.moveTabToIndex}
-          onSetTabColor={tabsState.setTabColor}
-          shells={config.shells}
-          selectedShellId={config.selectedShellId}
-          onNewTabWithShell={newTabWithShell}
-        >
-          <HeaderActions
-            actions={commandActions}
-            paletteShortcut={platformLabel(
-              userSettings.keybindings.commandPalette,
-              isMacPlatform()
-            )}
-            onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
-            onOpenAiCli={openAiCli}
-            onOpenSettings={openSettings}
-            onOpenEditor={project.openEditor}
-            editorPath={userSettings.editorPath}
-            installedEditors={project.installedEditors}
-            isLoadingEditors={project.isLoadingEditors}
-            onRefreshEditors={project.refreshInstalledEditors}
-            updateAvailable={updates.updateInfo?.updateAvailable ?? false}
-            latestVersion={updates.updateInfo?.latestVersion ?? null}
-            onViewUpdate={updates.viewUpdate}
-          />
-        </TabBar>
-      </div>
+    <ShortcutHintsProvider hints={shortcutHints}>
+      <div className="app-layout" data-theme={userSettings.theme}>
+        <div className="app-header">
+          <TabBar
+            tabs={tabs}
+            activeTabId={activeTabId}
+            onSelectTab={setActiveTabId}
+            onCloseTab={tabsState.closeTab}
+            onNewTab={() => newTabAndFocus()}
+            onRenameTab={tabsState.renameTab}
+            onMoveTab={tabsState.moveTab}
+            onReorderTabs={tabsState.reorderTabs}
+            onMoveTabToIndex={tabsState.moveTabToIndex}
+            onSetTabColor={tabsState.setTabColor}
+            shells={config.shells}
+            selectedShellId={config.selectedShellId}
+            onNewTabWithShell={newTabWithShell}
+          >
+            <HeaderActions
+              actions={commandActions}
+              paletteShortcut={platformLabel(
+                userSettings.keybindings.commandPalette,
+                isMacPlatform()
+              )}
+              onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
+              onOpenAiCli={openAiCli}
+              onOpenSettings={openSettings}
+              onOpenEditor={project.openEditor}
+              editorPath={userSettings.editorPath}
+              installedEditors={project.installedEditors}
+              isLoadingEditors={project.isLoadingEditors}
+              onRefreshEditors={project.refreshInstalledEditors}
+              updateAvailable={updates.updateInfo?.updateAvailable ?? false}
+              latestVersion={updates.updateInfo?.latestVersion ?? null}
+              onViewUpdate={updates.viewUpdate}
+            />
+          </TabBar>
+        </div>
 
-      {updates.updateOutcome && (
-        <UpdateResultNotice
-          outcome={updates.updateOutcome}
-          onDismiss={updates.dismissUpdateOutcome}
-          onRetry={() => {
-            updates.dismissUpdateOutcome();
-            void updates.checkUpdates(true);
-          }}
-        />
-      )}
-
-      {updates.updateBannerVisible &&
-        updates.updateInfo?.updateAvailable &&
-        updates.updateInfo.latestVersion && (
-          <UpdateBanner
-            currentVersion={updates.updateInfo.currentVersion}
-            latestVersion={updates.updateInfo.latestVersion}
-            releaseUrl={updates.updateInfo.releaseUrl ?? RELEASES_PAGE_URL}
-            releaseName={updates.updateInfo.releaseName}
-            releaseAuthor={updates.updateInfo.releaseAuthor}
-            assetLabel={updates.updateInfo.selectedAssetLabel}
-            downloadState={updates.updateDownload}
-            onDownloadAndInstall={() => void updates.downloadAndInstall()}
-            onViewRelease={updates.viewUpdate}
-            onDismiss={updates.dismissUpdate}
-            onLater={updates.remindLater}
+        {updates.updateOutcome && (
+          <UpdateResultNotice
+            outcome={updates.updateOutcome}
+            onDismiss={updates.dismissUpdateOutcome}
+            onRetry={() => {
+              updates.dismissUpdateOutcome();
+              void updates.checkUpdates(true);
+            }}
           />
         )}
 
-      <div className="app-body">
-        <SessionBanners
-          pendingRestoreCount={persistence.pendingRestore?.length ?? 0}
-          onRestoreSession={persistence.restoreSession}
-          onDismissRestore={persistence.dismissRestore}
-          paneNotice={tabsState.paneNotice}
-          onDismissNotice={tabsState.dismissPaneNotice}
-          faultMessage={sessionExit.loopFault?.message ?? null}
-          onRetryFault={sessionExit.retryFaultedPane}
-          onOpenSettings={openSettings}
-          onDismissFault={sessionExit.dismissFault}
-        />
-        {tabs.map((tab) => (
-          <TabPanes
-            key={tab.id}
-            tab={tab}
-            isActive={tab.id === activeTabId}
-            selectedShell={config.selectedShell}
-            shells={config.shells}
-            skipShellProfile={userSettings.skipShellProfile === true}
-            settings={userSettings}
-            terminalRefs={terminalRefs}
-            onFocusPane={tabsState.focusPane}
-            onCodeModeChange={setPaneCodeMode}
-            onCwdResolved={handleCwdResolved}
-            onExit={handleSessionExit}
-            onStatusChange={tabsState.setPaneStatus}
-            onResizeSplit={tabsState.resizeSplit}
+        {updates.updateBannerVisible &&
+          updates.updateInfo?.updateAvailable &&
+          updates.updateInfo.latestVersion && (
+            <UpdateBanner
+              currentVersion={updates.updateInfo.currentVersion}
+              latestVersion={updates.updateInfo.latestVersion}
+              releaseUrl={updates.updateInfo.releaseUrl ?? RELEASES_PAGE_URL}
+              releaseName={updates.updateInfo.releaseName}
+              releaseAuthor={updates.updateInfo.releaseAuthor}
+              assetLabel={updates.updateInfo.selectedAssetLabel}
+              downloadState={updates.updateDownload}
+              onDownloadAndInstall={() => void updates.downloadAndInstall()}
+              onViewRelease={updates.viewUpdate}
+              onDismiss={updates.dismissUpdate}
+              onLater={updates.remindLater}
+            />
+          )}
+
+        <div className="app-body">
+          <SessionBanners
+            pendingRestoreCount={persistence.pendingRestore?.length ?? 0}
+            onRestoreSession={persistence.restoreSession}
+            onDismissRestore={persistence.dismissRestore}
+            paneNotice={tabsState.paneNotice}
+            onDismissNotice={tabsState.dismissPaneNotice}
+            faultMessage={sessionExit.loopFault?.message ?? null}
+            onRetryFault={sessionExit.retryFaultedPane}
+            onOpenSettings={openSettings}
+            onDismissFault={sessionExit.dismissFault}
           />
-        ))}
-      </div>
+          {tabs.map((tab) => (
+            <TabPanes
+              key={tab.id}
+              tab={tab}
+              isActive={tab.id === activeTabId}
+              selectedShell={config.selectedShell}
+              shells={config.shells}
+              skipShellProfile={userSettings.skipShellProfile === true}
+              settings={userSettings}
+              terminalRefs={terminalRefs}
+              onFocusPane={tabsState.focusPane}
+              onCodeModeChange={setPaneCodeMode}
+              onCwdResolved={handleCwdResolved}
+              onExit={handleSessionExit}
+              onStatusChange={tabsState.setPaneStatus}
+              onResizeSplit={tabsState.resizeSplit}
+            />
+          ))}
+        </div>
 
-      <Suspense
-        fallback={
-          isSettingsOpen ||
-          isCommandPaletteOpen ||
-          isAiCliOpen ||
-          isDiagnosticsOpen ||
-          isWorkspaceOpen ? (
-            <div className="modal-backdrop" aria-label="Loading panel" role="status">
-              <div className="command-palette-modal" style={{ padding: 16 }}>
-                <span className="muted-text">Loading…</span>
+        <Suspense
+          fallback={
+            isSettingsOpen ||
+            isCommandPaletteOpen ||
+            isAiCliOpen ||
+            isDiagnosticsOpen ||
+            isWorkspaceOpen ? (
+              <div className="modal-backdrop" aria-label="Loading panel" role="status">
+                <div className="command-palette-modal" style={{ padding: 16 }}>
+                  <span className="muted-text">Loading…</span>
+                </div>
               </div>
-            </div>
-          ) : null
-        }
-      >
-        <CommandPalette
-          isOpen={isCommandPaletteOpen}
-          onClose={() => setIsCommandPaletteOpen(false)}
-          actions={commandActions}
+            ) : null
+          }
+        >
+          <CommandPalette
+            isOpen={isCommandPaletteOpen}
+            onClose={() => setIsCommandPaletteOpen(false)}
+            actions={commandActions}
+          />
+
+          <SettingsModal
+            isOpen={isSettingsOpen}
+            onClose={() => {
+              setIsSettingsOpen(false);
+              setSettingsTab(undefined);
+            }}
+            initialTab={settingsTab}
+            settings={userSettings}
+            onSaveSettings={config.saveSettings}
+            shells={config.shells}
+            appVersion={updates.appVersion}
+            updateInfo={updates.updateInfo}
+            isCheckingUpdates={updates.isCheckingUpdates}
+            updateDownload={updates.updateDownload}
+            onCheckUpdates={() => void updates.checkUpdates(true)}
+            onViewUpdate={updates.viewUpdate}
+            onDownloadAndInstall={() => void updates.downloadAndInstall()}
+          />
+
+          <WorkspaceModal
+            isOpen={isWorkspaceOpen}
+            onClose={() => setIsWorkspaceOpen(false)}
+            currentTabs={tabs}
+            onLoadWorkspace={persistence.restoreWorkspace}
+          />
+
+          <AiCliPanel
+            isOpen={isAiCliOpen}
+            onClose={() => setIsAiCliOpen(false)}
+            projectDir={aiCliDir || effectiveProjectDir}
+            onLaunchInTerminal={(dir) => {
+              newTabAndFocus({ cwd: dir || undefined });
+              setIsAiCliOpen(false);
+            }}
+          />
+
+          {project.gitChangesModal && (
+            <GitChangesModal
+              dir={project.gitChangesModal.dir}
+              onClose={project.closeGitChanges}
+              onOpenEditor={(dir, file) => void project.openFileInEditor(dir, file)}
+            />
+          )}
+
+          {project.gitStatusModal && (
+            <GitStatusModal
+              dir={project.gitStatusModal.dir}
+              output={project.gitStatusModal.output}
+              onClose={project.closeGitStatus}
+            />
+          )}
+
+          <DiagnosticsModal
+            isOpen={isDiagnosticsOpen}
+            onClose={() => setIsDiagnosticsOpen(false)}
+            lastError={lastError}
+          />
+
+          <MusicHost
+            mounted={Boolean(userSettings.showMusicPlayer) || music.isOpen}
+            startMuted={music.muted}
+            open={music.isOpen}
+            onClose={music.closePanel}
+            onRequestOpen={music.openPanel}
+            onTrackChange={music.handleTrackChange}
+            onMutedChange={music.setMuted}
+            onProgressChange={music.setProgress}
+            shortcutHints={musicHints}
+          />
+        </Suspense>
+
+        {renameTarget && (
+          <RenameTabDialog
+            key={renameTarget.id}
+            tab={renameTarget}
+            onRename={tabsState.renameTab}
+            onClose={() => setRenameTarget(null)}
+          />
+        )}
+
+        <ToastHost
+          notices={notices}
+          onDismiss={dismissNotice}
+          onDetails={() => setIsDiagnosticsOpen(true)}
         />
 
-        <SettingsModal
-          isOpen={isSettingsOpen}
-          onClose={() => setIsSettingsOpen(false)}
-          settings={userSettings}
-          onSaveSettings={config.saveSettings}
-          shells={config.shells}
+        <StatusBar
+          gitBranch={git.statusGit.branch}
+          gitDirty={git.statusGit.dirty}
+          gitRepoRoot={git.statusGit.repoRoot}
+          projectDir={effectiveProjectDir}
           appVersion={updates.appVersion}
-          updateInfo={updates.updateInfo}
+          updateAvailable={updates.updateInfo?.updateAvailable ?? false}
+          latestVersion={updates.updateInfo?.latestVersion ?? null}
           isCheckingUpdates={updates.isCheckingUpdates}
-          updateDownload={updates.updateDownload}
           onCheckUpdates={() => void updates.checkUpdates(true)}
           onViewUpdate={updates.viewUpdate}
-          onDownloadAndInstall={() => void updates.downloadAndInstall()}
+          onRefreshGit={git.refreshGit}
+          isRefreshingGit={git.isRefreshingGit}
+          onOpenGitChanges={() => void project.showGit("changes")}
+          shells={config.shells}
+          currentShell={activePaneShell}
+          onChangeShell={changeActiveShell}
+          mode={modeDisplay}
+          music={music.footerState}
+          onToggleMusicPanel={toggleMusicPanel}
+          musicOpen={music.isOpen}
+          onMusicPlayPause={music.playPause}
+          onMusicPrevious={() => music.transport("kai-music-previous")}
+          onMusicNext={() => music.transport("kai-music-next")}
+          onMusicMute={() => music.dispatchEvent("kai-music-mute")}
+          musicShortcuts={musicHints}
         />
-
-        <WorkspaceModal
-          isOpen={isWorkspaceOpen}
-          onClose={() => setIsWorkspaceOpen(false)}
-          currentTabs={tabs}
-          onLoadWorkspace={persistence.restoreWorkspace}
-        />
-
-        <AiCliPanel
-          isOpen={isAiCliOpen}
-          onClose={() => setIsAiCliOpen(false)}
-          projectDir={aiCliDir || effectiveProjectDir}
-          onLaunchInTerminal={(dir) => {
-            newTabAndFocus({ cwd: dir || undefined });
-            setIsAiCliOpen(false);
-          }}
-        />
-
-        {project.gitChangesModal && (
-          <GitChangesModal
-            dir={project.gitChangesModal.dir}
-            onClose={project.closeGitChanges}
-            onOpenEditor={(dir, file) => void project.openFileInEditor(dir, file)}
-          />
-        )}
-
-        {project.gitStatusModal && (
-          <GitStatusModal
-            dir={project.gitStatusModal.dir}
-            output={project.gitStatusModal.output}
-            onClose={project.closeGitStatus}
-          />
-        )}
-
-        <DiagnosticsModal
-          isOpen={isDiagnosticsOpen}
-          onClose={() => setIsDiagnosticsOpen(false)}
-          lastError={lastError}
-        />
-
-        <MusicHost
-          mounted={Boolean(userSettings.showMusicPlayer) || music.isOpen}
-          startMuted={music.muted}
-          open={music.isOpen}
-          onClose={music.closePanel}
-          onRequestOpen={music.openPanel}
-          onTrackChange={music.handleTrackChange}
-          onMutedChange={music.setMuted}
-          onProgressChange={music.setProgress}
-        />
-      </Suspense>
-
-      {renameTarget && (
-        <RenameTabDialog
-          key={renameTarget.id}
-          tab={renameTarget}
-          onRename={tabsState.renameTab}
-          onClose={() => setRenameTarget(null)}
-        />
-      )}
-
-      <ToastHost
-        notices={notices}
-        onDismiss={dismissNotice}
-        onDetails={() => setIsDiagnosticsOpen(true)}
-      />
-
-      <StatusBar
-        gitBranch={git.statusGit.branch}
-        gitDirty={git.statusGit.dirty}
-        gitRepoRoot={git.statusGit.repoRoot}
-        projectDir={effectiveProjectDir}
-        appVersion={updates.appVersion}
-        updateAvailable={updates.updateInfo?.updateAvailable ?? false}
-        latestVersion={updates.updateInfo?.latestVersion ?? null}
-        isCheckingUpdates={updates.isCheckingUpdates}
-        onCheckUpdates={() => void updates.checkUpdates(true)}
-        onViewUpdate={updates.viewUpdate}
-        onRefreshGit={git.refreshGit}
-        isRefreshingGit={git.isRefreshingGit}
-        onOpenGitChanges={() => void project.showGit("changes")}
-        shells={config.shells}
-        currentShell={activePaneShell}
-        onChangeShell={changeActiveShell}
-        mode={modeDisplay}
-        music={music.footerState}
-        onToggleMusicPanel={toggleMusicPanel}
-        musicOpen={music.isOpen}
-        onMusicPlayPause={music.playPause}
-        onMusicPrevious={() => music.transport("kai-music-previous")}
-        onMusicNext={() => music.transport("kai-music-next")}
-        onMusicMute={() => music.dispatchEvent("kai-music-mute")}
-      />
-    </div>
+      </div>
+    </ShortcutHintsProvider>
   );
 }
 

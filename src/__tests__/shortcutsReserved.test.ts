@@ -75,6 +75,8 @@ describe("command palette", () => {
     splitPane: noop,
     closeActivePane: noop,
     toggleMusic: noop,
+    musicCommand: noop,
+    openShortcutSettings: noop,
     renameActiveTab: noop,
     openEditor: noop,
     showGitStatus: noop,

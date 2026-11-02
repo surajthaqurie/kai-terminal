@@ -33,10 +33,11 @@ import {
   X,
 } from "lucide-react";
 import { useCallPause } from "../../hooks/useCallPause";
-import { isTypingTarget } from "../../services/shortcuts";
+import { isTypingTarget, withKeys, type MusicHintId } from "../../services/shortcuts";
 import { openExternalUrl } from "../../services/updateService";
 import {
   MusicTrack,
+  canControlEmbed,
   isYouTubeEmbedOrigin,
   YOUTUBE_LISTENING_HANDSHAKE,
   YouTubeCommand,
@@ -69,6 +70,8 @@ interface MusicPanelProps {
   onProgressChange?: (percent: number) => void;
   /** Ask the host to open the drawer (e.g. so a playback error is visible). */
   onRequestOpen?: () => void;
+  /** The current global music shortcuts, shown in the button tooltips. */
+  shortcutHints?: Record<MusicHintId, string>;
 }
 
 function isOnline(): boolean {
@@ -92,6 +95,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
   onMutedChange,
   onProgressChange,
   onRequestOpen,
+  shortcutHints,
 }) => {
   const [query, setQuery] = useState("");
   const [track, setTrack] = useState<MusicTrack | null>(null);
@@ -249,6 +253,13 @@ export const MusicPanel: FC<MusicPanelProps> = ({
       report(0);
       return;
     }
+    if (!canControlEmbed()) {
+      // The embed ignores commands from this page's origin (macOS / Linux
+      // desktop builds): say so instead of showing buttons that do nothing.
+      setNotice(
+        "This window can't remote-control YouTube, so the player buttons won't respond. Use the controls on the video."
+      );
+    }
     let received = false;
     let tries = 0;
     const handshake = () => {
@@ -401,9 +412,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
       }
     }
     // Fallback: replay current video from start
-    sendCommand("seekTo", [0, true]);
-    sendCommand("playVideo");
-    setPlaying(true);
+    replayCurrent();
   };
 
   // Keep the suggestion queue filled for the current song. For a pasted link or
@@ -563,6 +572,13 @@ export const MusicPanel: FC<MusicPanelProps> = ({
 
   const replayCurrent = () => {
     if (!src) return;
+    if (playbackError !== null) {
+      // The embed refused this video: replaying cannot work, and claiming
+      // "playing" would leave the button showing Pause for silence.
+      setNotice(describePlayerError(playbackError));
+      if (!open) onRequestOpen?.();
+      return;
+    }
     sendCommand("seekTo", [0, true]);
     sendCommand("playVideo");
     setPlaying(true);
@@ -819,7 +835,10 @@ export const MusicPanel: FC<MusicPanelProps> = ({
   });
 
   const [showDimPopover, setShowDimPopover] = useState(false);
-  const dimPopoverRef = useRef<HTMLDivElement | null>(null);
+  // Wraps the trigger button AND the popover: a press on the trigger must not
+  // count as an "outside" press, or mousedown closes the popover and the click
+  // that follows reopens it, so the button could never close its own popover.
+  const dimGroupRef = useRef<HTMLDivElement | null>(null);
 
   const enableDim = (percent?: number) => {
     if (typeof percent === "number") {
@@ -849,7 +868,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
   useEffect(() => {
     if (!showDimPopover) return;
     const handleOutsideClick = (e: MouseEvent) => {
-      if (dimPopoverRef.current && !dimPopoverRef.current.contains(e.target as Node)) {
+      if (dimGroupRef.current && !dimGroupRef.current.contains(e.target as Node)) {
         setShowDimPopover(false);
       }
     };
@@ -1202,7 +1221,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
             <h3>YouTube Music</h3>
           </div>
           <div className="music-head-actions">
-            <div className="music-dim-group">
+            <div className="music-dim-group" ref={dimGroupRef}>
               <button
                 type="button"
                 className={`btn btn-icon ${isDimmed ? "music-control-active" : ""}`}
@@ -1217,7 +1236,6 @@ export const MusicPanel: FC<MusicPanelProps> = ({
               </button>
               {showDimPopover && (
                 <div
-                  ref={dimPopoverRef}
                   className="music-dim-popover"
                   role="dialog"
                   aria-label="Adjust dim opacity"
@@ -1456,7 +1474,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
                 className="btn btn-icon music-ctrl-btn"
                 onClick={previous}
                 disabled={!src}
-                title="Previous song (P)"
+                title={withKeys("Previous song", "P", shortcutHints?.previous)}
                 aria-label="Previous song"
               >
                 <SkipBack size={14} />
@@ -1466,7 +1484,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
                 className="music-play"
                 onClick={togglePlay}
                 disabled={!src}
-                title="Play / pause (Space)"
+                title={withKeys("Play / pause", "Space", shortcutHints?.playPause)}
                 aria-label={playing ? "Pause" : "Play"}
               >
                 {playing ? <Pause size={14} /> : <Play size={14} />}
@@ -1476,9 +1494,11 @@ export const MusicPanel: FC<MusicPanelProps> = ({
                 className="btn btn-icon music-ctrl-btn"
                 onClick={next}
                 disabled={!src && queue.length === 0}
-                title={
-                  queue.length > 0 ? `Play next: ${queue[0].title} (N)` : "Next song / replay (N)"
-                }
+                title={withKeys(
+                  queue.length > 0 ? `Play next: ${queue[0].title}` : "Next song / replay",
+                  "N",
+                  shortcutHints?.next
+                )}
                 aria-label="Next song"
               >
                 <SkipForward size={14} />
@@ -1530,7 +1550,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
                   type="button"
                   className="btn btn-icon music-ctrl-btn"
                   onClick={toggleMute}
-                  title={muted ? "Unmute (M)" : "Mute (M)"}
+                  title={withKeys(muted ? "Unmute" : "Mute", "M", shortcutHints?.mute)}
                   aria-label={muted ? "Unmute" : "Mute"}
                   aria-pressed={muted}
                 >

@@ -48,8 +48,10 @@ export const SHORTCUTS: Shortcut[] = [
   { label: 'Find in output', keys: ['Ctrl', 'Shift', 'F'] },
   { label: 'Review git changes', keys: ['Ctrl', 'Shift', 'G'] },
   { label: 'Settings', keys: ['Ctrl', ','] },
-  { label: 'Show Music Time', keys: ['Ctrl', 'Shift', 'M'] },
+  { label: 'Show / hide music player', keys: ['Ctrl', 'Shift', 'M'] },
   { label: 'Music play / pause', keys: ['Ctrl', 'Shift', 'Space'] },
+  { label: 'Music previous / next song', keys: ['Ctrl', 'Shift', ', / .'] },
+  { label: 'Music mute', keys: ['Ctrl', 'Shift', '0'] },
 ];
 
 export type CompareRow = { label: string; kai: string; electron: string; alacritty: string };
