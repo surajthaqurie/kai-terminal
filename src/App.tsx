@@ -1,4 +1,4 @@
-import { Suspense, useCallback, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { HeaderActions } from "./components/HeaderActions";
 import { TabBar } from "./components/TabBar";
 import { StatusBar } from "./components/StatusBar";
@@ -117,17 +117,32 @@ function App() {
    * (Ctrl+C / `exit`): focus used to be dropped to the document, so typed
    * keys went nowhere (or re-triggered whatever toolbar control had focus).
    */
+  const focusRafRef = useRef<number | null>(null);
+  const focusTimerRef = useRef<number | null>(null);
+  const cancelPendingFocus = useCallback(() => {
+    if (focusRafRef.current !== null) cancelAnimationFrame(focusRafRef.current);
+    if (focusTimerRef.current !== null) window.clearTimeout(focusTimerRef.current);
+    focusRafRef.current = null;
+    focusTimerRef.current = null;
+  }, []);
+  // Drop any pending retry on unmount so it can't fire after teardown
+  // (e.g. a test environment that has already removed `window`).
+  useEffect(() => cancelPendingFocus, [cancelPendingFocus]);
+
   const focusActiveTerminalSoon = useCallback(() => {
+    cancelPendingFocus();
     const attempt = (tries: number) => {
+      focusRafRef.current = null;
+      focusTimerRef.current = null;
       const term = getActiveTerminal();
       if (term) {
         term.focus();
       } else if (tries > 0) {
-        window.setTimeout(() => attempt(tries - 1), 50);
+        focusTimerRef.current = window.setTimeout(() => attempt(tries - 1), 50);
       }
     };
-    requestAnimationFrame(() => attempt(3));
-  }, [getActiveTerminal]);
+    focusRafRef.current = requestAnimationFrame(() => attempt(3));
+  }, [getActiveTerminal, cancelPendingFocus]);
 
   const newTabAndFocus = useCallback(
     (opts?: { cwd?: string }) => {
