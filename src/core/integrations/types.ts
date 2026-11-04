@@ -37,6 +37,12 @@ export interface ProjectBinding {
   boundAt: string;
   /** Workflow rules the user changed; anything absent uses its default. */
   rules?: Partial<WorkflowRules>;
+  /**
+   * The user allowed agents to change data in the service (comment, create a pull
+   * request, change a state) for this project. Stored only when true; off by default,
+   * and only a person at a terminal or in the desktop app can turn it on.
+   */
+  writeTools?: boolean;
 }
 
 export class IntegrationError extends Error {
@@ -140,6 +146,27 @@ export interface PullRequestDetail extends PullRequestSummary {
   threadsTotal: number;
 }
 
+/** What a write tool reports back: enough to find the change, never the secret or the whole body. */
+export interface WorkItemCommentResult {
+  workItemId: number;
+  commentId?: number;
+  url: string;
+}
+
+export interface WorkItemStateResult {
+  workItemId: number;
+  previousState?: string;
+  state: string;
+  url: string;
+}
+
+export interface PullRequestCommentResult {
+  pullRequestId: number;
+  threadId?: number;
+  commentId?: number;
+  url: string;
+}
+
 export interface BuildSummary {
   id: number;
   number: string;
@@ -195,6 +222,24 @@ export interface PullRequestQuery {
   offset: number;
 }
 
+export interface PullRequestCreateInput {
+  sourceBranch: string;
+  targetBranch: string;
+  title: string;
+  description?: string;
+  isDraft?: boolean;
+}
+
+export interface PullRequestCommentInput {
+  id: number;
+  text: string;
+  /** Reply to this existing thread instead of starting a new one. */
+  threadId?: number;
+  /** Start the thread on a line of a changed file (both or neither). */
+  filePath?: string;
+  line?: number;
+}
+
 export interface BuildQuery {
   status?: "inProgress" | "completed" | "notStarted" | "all";
   result?: "succeeded" | "failed" | "canceled" | "partiallySucceeded";
@@ -230,7 +275,10 @@ export interface RepoInfo {
 
 export interface IntegrationProvider {
   info: ProviderInfo;
-  /** Parse a git remote URL into this provider's coordinates, or null. */
+  /**
+   * Parse a git remote URL into this provider's coordinates, or null. An address that
+   * is only a guess (a self-hosted server's SSH remote) is flagged `needsConfirmation`.
+   */
   detectFromRemote(url: string): DetectedCoordinates | null;
   /** Normalized account (id, baseUrl, apiVersion) for a login request. */
   buildAccount(input: {
@@ -272,15 +320,37 @@ export interface IntegrationProvider {
   workItems?: {
     search(ctx: ProviderContext, q: WorkItemQuery): Promise<Page<WorkItemSummary>>;
     get(ctx: ProviderContext, id: number): Promise<WorkItemDetail>;
+    /**
+     * Writes. Optional, and only ever offered to an agent for a project whose user
+     * turned write tools on. Each one changes data in the remote service.
+     */
+    addComment?(ctx: ProviderContext, id: number, text: string): Promise<WorkItemCommentResult>;
+    setState?(ctx: ProviderContext, id: number, state: string): Promise<WorkItemStateResult>;
   };
   pullRequests?: {
     list(ctx: ProviderContext, q: PullRequestQuery): Promise<Page<PullRequestSummary>>;
     get(ctx: ProviderContext, id: number): Promise<PullRequestDetail>;
+    /** Opens a pull request between two EXISTING branches; never creates a branch. */
+    create?(ctx: ProviderContext, input: PullRequestCreateInput): Promise<PullRequestSummary>;
+    addComment?(
+      ctx: ProviderContext,
+      input: PullRequestCommentInput
+    ): Promise<PullRequestCommentResult>;
   };
   builds?: {
     list(ctx: ProviderContext, q: BuildQuery): Promise<Page<BuildSummary>>;
     log(ctx: ProviderContext, id: number, q: BuildLogQuery): Promise<BuildLogResult>;
   };
+}
+
+/** True when the provider can write at all (any write method exists). */
+export function supportsWrites(provider: IntegrationProvider): boolean {
+  return Boolean(
+    provider.workItems?.addComment ||
+    provider.workItems?.setState ||
+    provider.pullRequests?.create ||
+    provider.pullRequests?.addComment
+  );
 }
 
 export function capabilitiesOf(provider: IntegrationProvider): Set<Capability> {

@@ -1317,3 +1317,13 @@ h1:hover .t-doc-anchor, h2:hover .t-doc-anchor, h3:hover .t-doc-anchor { opacity
   .t-ref-nav { max-height: 320px; overflow-y: auto; }
   .t-ref-group-head { flex-direction: column; }
 }
+
+/* ——— Screenshots gallery ——— */
+.t-shots { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 1.75rem; }
+.t-shot { margin: 0; border-radius: 14px; overflow: hidden; background-color: var(--card-bg); border: 1px solid var(--border-default); display: flex; flex-direction: column; }
+.t-shot:first-child { grid-column: 1 / -1; }
+.t-shot img { display: block; width: 100%; height: auto; border-bottom: 1px solid var(--border-subtle); background: #0d1117; }
+.t-shot figcaption { display: flex; flex-direction: column; gap: 0.35rem; padding: 1.1rem 1.35rem 1.35rem; }
+.t-shot figcaption strong { color: var(--text-primary); font-size: 1.02rem; }
+.t-shot figcaption span { color: var(--text-secondary); font-size: 0.92rem; line-height: 1.6; }
+@media (min-width: 900px) { .t-shot:first-child img { max-width: 960px; margin-inline: auto; } }

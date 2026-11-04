@@ -1,6 +1,6 @@
 [package]
 name = "kai"
-version = "0.2.1"
+version = "0.2.2"
 description = "Kai Terminal Rust Backend"
 authors = ["surajthaqurie"]
 license = "MIT"
@@ -20,6 +20,16 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 futures-util = { version = "0.3", optional = true }
 tauri = { version = "2.1.0", features = [], optional = true }
 tauri-plugin-single-instance = { version = "2", optional = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_System_LibraryLoader",
+  "Win32_System_SystemInformation",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_WindowsAndMessaging",
+] }
 
 [features]
 default = ["tauri"]

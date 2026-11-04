@@ -115,6 +115,32 @@ export async function loginWithBrowser(): Promise<
   );
 }
 
+/**
+ * Sign in to an Azure DevOps Server with an access token. The CLI verifies the
+ * token against the server first and stores it in the OS secret store only when
+ * the server accepts it. The token travels in the request on the CLI's stdin
+ * (never in an argument list) and is never echoed back. `baseUrl` must already
+ * be validated (`validateServerForm`); the CLI checks it again.
+ */
+export async function loginWithToken(input: {
+  baseUrl: string;
+  token: string;
+}): Promise<RpcResult<{ account: IntegrationAccountView; user: IntegrationUser }>> {
+  const res = await integrationRpc({
+    op: "login",
+    // Unused for a Server: its account is named by the address.
+    org: "",
+    authMethod: "pat",
+    pat: input.token,
+    baseUrl: input.baseUrl,
+  });
+  return pick(
+    res,
+    (r) => typeof r.account === "object" && r.account !== null && typeof r.user === "object",
+    (r) => ({ account: r.account as IntegrationAccountView, user: r.user as IntegrationUser })
+  );
+}
+
 /** The account's projects. A network call: only ask when the user opens a picker. */
 export async function listProjects(account: string): Promise<RpcResult<IntegrationProjectView[]>> {
   const res = await integrationRpc({ op: "projects", account });

@@ -3,7 +3,7 @@
   "private": false,
   "author": "surajthaqurie",
   "license": "MIT",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "type": "module",
   "bin": {
     "kai": "./bin/kai.js"
@@ -50,9 +50,12 @@
     "@fontsource-variable/jetbrains-mono": "^5.3.0",
     "@tauri-apps/api": "^2.12.4",
     "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-image": "^0.9.0",
     "@xterm/addon-search": "^0.16.0",
+    "@xterm/addon-web-links": "^0.12.0",
     "@xterm/addon-webgl": "^0.19.0",
     "@xterm/xterm": "^6.0.0",
+    "gpt-tokenizer": "^4.1.0",
     "lucide-react": "^0.460.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"

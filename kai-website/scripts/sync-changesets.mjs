@@ -95,12 +95,23 @@ try {
     while ((m = regex.exec(text)) !== null) {
       const v = m[1];
       const relTag = `v${v}`;
-      const rawLines = m[2].split('\n').map((l) => l.trim()).filter(Boolean);
-      const bulletLines = rawLines.filter((l) => l.startsWith('- ') || l.startsWith('* '));
-      const notes = bulletLines.slice(0, 8).map((l) => l.replace(/^[-*]\s+([a-f0-9]+:\s*)?/, '- ')).join('\n');
-      const firstTitle = bulletLines[0] ? bulletLines[0].replace(/^[-*]\s+([a-f0-9]+:\s*)?/, '').split(':')[0] : `Release ${relTag}`;
-      const name = `Kai ${relTag} — ${firstTitle}`;
       const prev = existingByTag.get(relTag);
+      // Published history is frozen: only the current version is re-parsed.
+      if (prev && v !== version) {
+        byTag.set(relTag, prev);
+        continue;
+      }
+      const rawLines = m[2].split('\n').filter((l) => l.trim());
+      // Top-level bullets only: one headline per change. Indented sub-bullets
+      // stay in CHANGELOG.md; they would crowd the website card.
+      const topLevel = rawLines.filter((l) => /^[-*]\s/.test(l));
+      const strip = (l) => l.replace(/^[-*]\s+([a-f0-9]{7,}:\s*)?/, '').trim();
+      const notes = topLevel.slice(0, 20).map((l) => `- ${strip(l)}`).join('\n');
+      // A short curated headline (scripts/release-titles.json) wins over the first bullet.
+      let titles = {};
+      try { titles = JSON.parse(readFileSync(join(here, 'release-titles.json'), 'utf8')); } catch { /* optional */ }
+      const firstTitle = titles[v] || (topLevel[0] ? strip(topLevel[0]).split(':')[0].replace(/\.$/, '') : `Release ${relTag}`);
+      const name = `Kai ${relTag} — ${firstTitle}`;
       // Same tag + identical content -> keep old date so history is stable.
       // Same tag + changed notes/name -> refresh date so the update is visible.
       // New tag -> stamp now.

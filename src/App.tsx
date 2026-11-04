@@ -27,7 +27,7 @@ import { useAppUpdates } from "./hooks/useAppUpdates";
 import { useCodeMode } from "./hooks/useCodeMode";
 import { useGitStatus } from "./hooks/useGitStatus";
 import { useLatest } from "./hooks/useLatest";
-import { readClipboardText } from "./services/clipboardService";
+import { readPasteContent } from "./services/clipboardService";
 import { useMusicPlayer } from "./hooks/useMusicPlayer";
 import { useNotices } from "./hooks/useNotices";
 import { usePaneCwd } from "./hooks/usePaneCwd";
@@ -327,7 +327,7 @@ function App() {
 
   const pasteFromClipboard = useCallback(async () => {
     try {
-      const text = await readClipboardText();
+      const text = await readPasteContent();
       if (text) getActiveTerminal()?.pasteText(text);
     } catch (err) {
       console.error("Failed to read clipboard:", err);

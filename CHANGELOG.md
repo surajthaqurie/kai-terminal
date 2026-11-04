@@ -1,5 +1,163 @@
 # Changelog
 
+## 0.2.2
+
+### Patch Changes
+
+- Website and README refresh: real screenshots of the app (the window, `kai teams`, the Azure DevOps rules), a "See it in action" gallery on the home page, new feature cards for Teams chat, links and file paste and the nine themes, a Teams FAQ, and a 0.2.2 hero image. `SECURITY.md` and `KNOWN_LIMITATIONS.md` now cover Microsoft Teams.
+
+- e60d0ef: Azure DevOps projects can now set a merge branch and a branch naming pattern that agents use for every work item.
+
+  - A **Merge branch** list behind **More** on the Azure DevOps card, filled from the repository's real branches. A branch the repository does not have is refused when you save (offline, it is accepted as typed). Only a change from the default is stored, and it survives switching project.
+  - A **Branch naming (regex)** field next to it: an optional regular expression new branch names should match. It is checked as you type and when you save, with a plain reason for each problem (a broken pattern, slashes or flags around it, surrounding spaces, more than 200 characters, a nested repeat like `(a+)+`, a pattern that matches an empty name). A pattern without `^` and `$` only gets a tip.
+  - Both have a **Remove** button. Removing the merge branch goes back to the repository default; removing the naming pattern lets agents choose their own names. Nothing is stored for a cleared field.
+  - New `kai_workflow_rules` MCP tool. It returns the merge branch, or the repository's default branch when none is set, plus the naming pattern when one is set, so new branches start there, follow the pattern, and pull requests target the merge branch.
+  - It is guidance: nothing is validated or blocked when an agent commits or pushes.
+
+- Azure DevOps sign-in no longer dead-ends when this build has no browser sign-in set up.
+
+  - `kai integration azure` now says "Browser sign-in is not set up in this build of Kai" and signs in with the Azure CLI or an access token instead, rather than stopping. Choosing `--az`, `--pat-stdin` or `--server-url` is unchanged.
+  - In the desktop app, **Connect** shows the same explanation plus what to do: run `kai integration azure` in a terminal.
+
+- 465f239: The footer **Code Mode** pill is now display-only. Clicking it used to flip the footer to "Terminal" while the agent was still running in Code Mode, so the footer disagreed with the terminal. Code Mode now ends only when `kai <agent>` exits or `kai stop` runs.
+- 05b721a: Friendlier terminal defaults, and every shortcut is easier to find on every OS.
+
+  - **Font size 14 and a blinking cursor are the defaults** on Windows, macOS and Linux. If you never changed them (a saved size of 12 with a steady cursor, which is what earlier versions saved), they move once. A size or cursor you chose yourself, including a different size, is kept, and so is a 12 or a steady cursor you pick from now on.
+  - **Every button with a shortcut shows its key**: New tab, Close tab, Close split and Settings now say, for example, "New tab (Ctrl+Shift+T)", and follow your own keys if you changed them. The New tab tooltip no longer carries a long "Ctrl+T / Cmd+T" note.
+  - **macOS wording**: shortcuts show `Cmd` and `Option` there (the Alt key is Option), everywhere they appear: tooltips, the command palette and Settings.
+  - **Keyboard Shortcuts in the command palette**: `Ctrl+Shift+P`, then "Keyboard Shortcuts" opens Settings straight on the Shortcuts tab, where you can search and change any of them.
+
+- 0940037: Themed header, footer and font list, plus a repaint after `clear`.
+
+  - **Header and footer follow the theme**: the tab strip and status bar now use each theme's own terminal colour instead of a separate near-black, so the whole window reads as one themed piece (inactive and hovered tabs use the theme's darker and lighter surfaces; the see-through window picks it up too).
+  - **Font list**: Settings → Font & Display now has a themed, scrolling list instead of the OS-drawn dropdown. It shows the bundled JetBrains Mono, the clean monospace fonts installed on your PC (Cascadia Code, Cascadia Mono, Consolas and Ubuntu Sans Mono first; each shown in its own typeface), the OS default and a custom field. Icon and symbol fonts, CJK fonts and Courier are left out. The installed list comes from the OS on Windows (font registry), Linux (`fontconfig`, then the font folders) and macOS (the font folders); the browser build and any failed lookup fall back to the built-in presets.
+  - **`clear` / `cls` / Clear-Host**: after output that wipes the screen the terminal now repaints every row and scrolls to the bottom, so the prompt that follows is no longer left unpainted. This was not reproduced on a running desktop app, so please report it if a prompt still goes missing after `clear` (and say which shell).
+
+- 5de9f9e: Integrations tools appear in a running agent, and `kai` works in WSL.
+
+  - **Live tool list**: the MCP server now announces `tools: { listChanged: true }` and sends `notifications/tools/list_changed` (within about two seconds, once the client has sent `initialized`) after `kai integration azure` or `kai azure remove`. An agent that honors it refreshes its tools without a restart; one that does not still needs one. `KAI_MCP_TOOLS_POLL_MS` sets the check interval and `0` turns it off.
+  - **WSL**: a `wsl.exe` terminal now lists `KAI_TERMINAL` in `WSLENV`, keeping your own entries, so `kai <agent>` can run inside WSL instead of refusing to start.
+  - **Tests**: the directory-link tests skip, with a reason, on a Windows build that creates a junction but will not follow it, instead of failing or passing without checking anything.
+
+- Microsoft Teams chat in the terminal: `kai integration teams` and `kai teams`.
+
+  - **`kai integration teams`** signs you in with your Microsoft account in the browser (nothing to type) and checks that your teams and chats can be read. It is your own account, shared by every terminal, not tied to a folder. The token goes to the OS secret store. `kai integration teams remove` signs out. Reading what others write in channels needs an administrator's approval in most organizations, so it is a separate step (`--channels`); chats and sending to channels work without it. Setup guide for maintainers: `docs/teams-sign-in.md`.
+  - **`kai teams`** opens the chat in the tab you run it in: teams, channels and chats on the left, the conversation on the right, a message box below. Everything is clickable and everything works from the keyboard. It takes no options.
+  - **It keeps itself up to date**: the open conversation refreshes every few seconds (slower while the window is not focused, and at once when you return), the chat list refreshes on its own with the newest chats first and a dot on every conversation with unseen messages (channels and chats you opened this session included), a new message elsewhere shows a notice and rings the bell when the window is not focused, and edits and deletions show up. The header shows `synced 09:41`, `offline, retry ...` (it backs off and recovers on its own) or `sign-in expired`.
+  - **Older messages** load when you scroll to the top. **Sending is instant**: your message shows at once as `sending...`, and if Teams refuses it the text and attachments come back. Each conversation keeps its own draft.
+  - **Pictures show in the conversation**: inline where the terminal draws them (iTerm2, WezTerm, mintty and Kai Terminal), otherwise as a line you click to open in your image viewer. Kai Terminal now draws inline images (iTerm2 protocol and Sixel). A link to another site names the site before you click.
+  - **Send images and files**: Ctrl+V, the Attach button, or a pasted path (Kai Terminal pastes copied files as paths). Images go inline in the message; other files are uploaded to your OneDrive and shared as a link. Up to 4 items of 4 MB.
+  - **Yours, not your agents'**: the Teams sign-in is never put in an environment variable, an agent's config or the MCP server; there is no command that reads or posts without a person at the keyboard; and both Teams commands refuse to run inside an AI agent's session. That is checked three ways: a known agent CLI (Claude Code, Codex, Gemini, Copilot, OpenCode, Aider, Cline and others) among the processes that started the command, the variable an agent sets on its commands, and the need for an interactive terminal. Kai also marks every agent it starts.
+  - Message text is cleaned of terminal escape sequences before it is shown, so a message cannot move the cursor, change the title or hide text. Pasted and opened images are saved in a private per-user temp folder.
+
+- 05b721a: Music player: the play, pause, next, previous, mute, volume and seek buttons now control the video in the desktop app.
+
+  - **Buttons did nothing on desktop**: the player was told it lived on `youtube-nocookie.com` instead of the app's real address (`http://tauri.localhost` on Windows). YouTube only accepts commands from the address it was given, so every button changed its own icon but the video kept playing, and the title and time never updated. The real address is now passed, so the buttons and the footer mini-player act on the video.
+  - **macOS and Linux**: those builds have no address YouTube accepts, so the player cannot be remote-controlled there. It now shows YouTube's own controls on the video and a notice explaining why, instead of buttons that silently do nothing.
+  - **Dim button**: pressing it a second time now closes its popover (it used to reopen it).
+  - **Random**: one of the four random songs (the Lofi Girl live radio) forbids embedding and left a dead player. It is replaced with a video that plays.
+  - **Unplayable videos**: Next and Previous no longer switch the button to "Pause" for a video YouTube refused to play; they show the reason instead.
+
+- 36694cf: Music player at small sizes: the controls no longer get cut off.
+
+  - **Controls**: at the narrowest width the previous-track button and the volume slider were clipped. The controls now wrap, so the volume sits on a second row when the player is narrow, and everything stays visible.
+  - **Height**: the smallest height is now 360px (was 320px) so the wrapped row fits. A height you saved below that is raised to it, not reset.
+  - **Search box**: the placeholder is shorter ("Paste a link or search a song") so it is no longer cut mid-word.
+
+- 05b721a: Music shortcuts that are easier to find and remember, and a search box for all shortcuts.
+
+  - **Previous song now has a shortcut**: `Ctrl+Shift+,` goes back and `Ctrl+Shift+.` goes forward, the `<` and `>` keys, like a media player. Before, the player and status bar had a Previous button but no key for it, and `Ctrl+Shift+,` was Mute.
+  - **Mute moved to `Ctrl+Shift+0`**. If you never changed Mute, it moves once; a Mute key you chose yourself stays as it is. Rebind any of them in **Settings → Shortcuts**.
+  - **Hover to learn the key**: every music button in the player and the status bar now shows its shortcut in the tooltip (for example "Next song (N or Ctrl+Shift+.)"), and follows your own keys if you changed them.
+  - **Command palette**: `Ctrl+Shift+P`, then type "music" to play / pause, go to the previous or next song, or mute. Each entry shows its key. With the player switched off, picking one turns the player on and opens it.
+  - **Search in Settings → Shortcuts**: type a name (`split`), a group (`music`) or a key chord (`Ctrl+Shift+W`) to jump to a shortcut instead of scrolling the whole list.
+  - **Plainer names**: "Show / hide music player", "Music: play / pause", "Music: previous song", "Music: next song", "Music: mute / unmute".
+
+- e60d0ef: New tabs open in your home folder, and the footer no longer shows a path.
+
+  - A new tab used to borrow the previous tab's folder for the moment before its shell reported one, so the git badge, "open in editor" and the AI panel pointed at the wrong project. Each tab now only knows its own folder; the shared "toolbar" folder it fell back to is gone.
+  - Splits still open in the folder of the pane they were split from.
+  - Removed the working-directory path from the footer (the git branch, mode and shell picker stay).
+  - `kai mcp <agent>` now repairs an MCP entry whose script no longer exists (for example after the app was reinstalled elsewhere) instead of reporting it as already configured, and writes plain paths without the Windows `\?\` prefix.
+
+- 810d407: Steadier terminals and sessions, errors you can see, and a pass over silent failures.
+
+  **Terminal**
+
+  - **The shell now gets the right size.** A window resize, a font loading late or a split that happened while a shell was starting changed the terminal grid but never reached the shell, which kept its smaller size (a prompt at the top of a tall, mostly blank terminal) until the next resize. The shell is now re-sized as soon as it starts. Window-focus refits no longer re-send an unchanged size (each one made ConPTY repaint the shell), and a font or setting change that alters the grid is sent too. The terminal size cap rose from 500 to 1000 columns and from 300 to 500 rows, so a maximized 4K pane is no longer narrower for the shell than on screen.
+  - **No lost first prompt, no hidden crash.** A fast shell could print its first prompt, or a broken one could exit, before Kai had its session id, and those events were thrown away: a blank terminal until a keypress, or a dead shell still shown as connected with no "Shell exited right after opening" banner. They are now held and replayed in order.
+  - **A saved folder that no longer exists no longer locks a terminal out.** A restored tab whose folder is gone (an unplugged drive, a stopped WSL) used to fail on every Retry. The terminal now says so and opens in your home folder.
+  - **An unknown exit status is a failure, not a clean exit.** It used to count as `0`, which skipped the crash-loop guards and could quit Kai from its last tab.
+  - **Two shells ending together** (for example `wsl --shutdown`) no longer leave one dead, unclosable tab or pane behind, and closing two tabs quickly closes both.
+
+  **Sessions and tabs**
+
+  - **New tabs start in your home folder**, as before the footer folder began leaking into them; a pane's own folder is always recorded, so later splits and saved layouts no longer follow whatever the footer shows.
+  - **Loading the previous session no longer replaces live tabs.** It replaces only the untouched starter tab; otherwise the previous tabs are added next to yours. Opening or closing a tab resumes saving your layout (it used to stay suspended while the offer was ignored), loading a workspace dismisses the offer, and turning on auto-restore later no longer wipes open tabs.
+  - A single-pane tab saves its own shell and folder after a split collapses, a tab's status reflects all of its panes (one failed split is not hidden by a healthy one), `kai-open-project` focuses the tab actually in that folder, and a click on a pane that was just closed no longer leaves focus on nothing.
+  - **Crash-loop banner:** it goes away when its tab is closed, replaced, or fixed from the footer shell picker; **Retry** falls back to your default shell when the pane's own shell is no longer installed; and the message now points at what works (the footer shell picker).
+  - **Workspaces:** saving uses a name field instead of a blocking `prompt()` (which does not work in macOS WebViews), tells you when only the first 10 tabs of a layout were kept or the 20-workspace limit is reached, and reports a failed save instead of claiming success. Deleting your last workspace no longer brings back the live session as a "Restored session" workspace.
+
+  **Messages you can see**
+
+  - Failures of actions that gave no feedback (opening the editor, git status, update checks and downloads, launch-at-startup, the shell list) now appear as a toast above the status bar. Errors stay until dismissed and have a **Details** button that opens Diagnostics; confirmations fade. A manual **Check for updates** that finds nothing now says "You're up to date".
+  - A failed background update check no longer erases an update that was already found, and is retried at the next launch instead of 24 hours later.
+  - **Dialogs** (Settings, AI providers, Workspaces, Diagnostics, Git status, Rename) close on Escape, take keyboard focus (so typing no longer reaches the shell behind the backdrop), keep Tab inside, and return focus to the terminal. Escape cancels shortcut recording first. Closing Settings with its shortcut now restores the saved theme instead of leaving a previewed one applied. The Diagnostics download no longer revokes its file before the WebView starts saving it.
+
+  **Settings that did not stick**
+
+  - A bare function-key shortcut (such as `F5`) no longer reverts on save, and a malformed one (`Ctrl+`) is no longer accepted.
+  - A font size of 14 you chose is kept (it was reset to 12 on every start); switching **Default shell** back to _System Default_ applies immediately; enabling the music player from the footer or `Ctrl+Alt+M` is now saved; saving any setting no longer desynchronizes the footer mute icon from the audio; the command palette shows your remapped copy, paste and clear keys.
+  - **AltGr is text, not a shortcut.** On layouts where AltGr is reported as `Ctrl+Alt` (German, Polish and others), typing characters such as `~` or `ś` no longer fires shortcuts like "next pane" or "split". A real `Ctrl+Alt+…` shortcut still works on layouts without an AltGr key.
+  - **The update sweep keeps your data.** The cache cleanup after an update used to delete the music player's favorites, volume, pin and size, the renderer override and (now) validated AI provider paths. They are kept.
+
+  **Music Time**
+
+  - The footer play, next and previous buttons and their shortcuts open the player when nothing is loaded instead of doing nothing.
+  - **A video that cannot be embedded** (YouTube error 101/150, removed, private) now says why and shows "Play" instead of claiming to be playing; pressing Play again explains rather than flipping the icon.
+  - **Next and auto-advance find different songs for a pasted link or a preset.** The related-song search used the link or id itself, which only returns the song already playing; it now uses the real title once YouTube reports it, ignores results from a song you have already left, and keeps the queue filled.
+  - Escape undoes one layer at a time (dim popover, then the queue drawer, then the player; a pinned player stays), and the end of a call no longer resumes over a Play or Pause you pressed during it.
+
+  **AI providers**
+
+  - A custom CLI is checked before it is saved (a typo used to be saved and reappear as a "missing" card forever), custom entries have a **Remove** button, and a path you validated for a built-in provider is remembered instead of reverting at the next re-detect.
+
+  **Security and robustness**
+
+  - On Windows, probing for tools no longer runs a same-named file from the project folder: a cloned repository containing `gopls.cmd`, `az.bat` or `kai.exe` was executed by language-server detection, Azure CLI sign-in, `kai close` and the desktop-app lookup. Those lookups now ignore the current directory.
+  - GitHub links opened from Kai go through the same strict character check as YouTube and Azure links (a `&` or `|` in a release tag could have run another command through `cmd /c start`). The updater's repository guard no longer depends on the host's capitalization.
+  - A Windows version probe that timed out once no longer blocks every new terminal until restart. The `kai` PowerShell and shell shims quote the Node path, so `kai` works from `C:\Program Files\nodejs`.
+
+  Verified in a real browser and with a stand-in desktop backend, and by unit and component tests; the new terminal-size, early-event and missing-folder paths have not yet been run against the real Windows desktop app, so please report anything that still looks wrong.
+
+- Terminal: links open from the output, and you can paste copied files and images.
+
+  - **Links now open**: web addresses in the terminal (sign-in links, build logs, docs) are underlined when you point at them. Ctrl+click (Cmd+click on macOS) opens them in your browser. Before, nothing in the terminal was clickable. A plain click still just selects text, so TUIs that use the mouse keep working. Only `http` and `https` links open, and never through a shell, so a `&` in an address cannot run anything.
+  - **Paste a copied file**: copy files in Explorer, Finder or a file manager and paste (Ctrl+Shift+V, Cmd+V or Shift+Insert). Their paths are pasted, quoted when they contain spaces, ready for a command or an AI CLI.
+  - **Paste a copied image**: a screenshot or "Copy image" from a browser is saved as a PNG in the temp folder and its path is pasted, so AI CLIs can attach it. Saved images older than a day are cleaned up. Before, pasting anything that was not text did nothing.
+  - Plain text still pastes as before, and a paste never presses Enter.
+
+- 7df6e17: Themes: trimmed to nine and added Rosé Pine.
+
+  - **Kept**: Kai Dark (default), Gruvbox Dark, Catppuccin Mocha, Tokyo Night, Nord, Dracula, Solarized Dark, One Dark. Their colours are unchanged.
+  - **Added**: Rose Pine.
+  - **Removed**: Monokai, GitHub Dark, GitHub Light and Solarized Light. Saved settings that used one of them open in Kai Dark. There are no light themes any more.
+
+- 262bff0: UI refresh: new theme set, a working background-opacity slider, a cleaner header and a per-terminal shell picker.
+
+  - **Themes**: Kai Dark (new default), GitHub Dark / Light, Gruvbox Dark and Monokai are new; Kali is retired (saved settings move to Kai Dark). Dim text (autosuggestions, comments) is readable in every theme — Solarized Dark's was invisible. Window chrome is tuned per theme and contrast-tested.
+  - **Opacity**: the slider now makes the whole window see-through on Windows and Linux (header, tabs, footer and terminal), not just the terminal background. macOS keeps the terminal-only fade.
+  - **Header**: the app icon and name sit at the far left; "Open project in editor" is an icon right after the search box (the caret lists installed editors); Music Time and the editor list are gone from the More menu.
+  - **Shell per terminal**: the footer starts with a shell picker for the focused terminal. Switching restarts that terminal in the new shell after a confirmation and keeps its folder; splits open in their parent's shell, and each terminal's shell is saved with the session.
+
+- 65380d4: Friendlier default shortcuts, in the Windows Terminal style, and a clearer Shortcuts screen.
+
+  - **New defaults**: panes use `Alt+Shift` (`Alt+Shift+=` splits side by side, `Alt+Shift+-` stacks, `Alt+Shift+W` closes, `Alt+Shift+]` / `[` move between panes), tabs cycle with `Ctrl+Tab` / `Ctrl+Shift+Tab`, Settings is `Ctrl+,`, and Music Time moves to `Ctrl+Shift+M`, `Space`, `.` and `,`. Nothing needs `Ctrl+Alt` any more, because Windows reports it as AltGr and many keyboard layouts use it to type characters.
+  - **Previous pane**: a new "Previous pane" action (`Alt+Shift+[`), also in the command palette.
+  - **Upgrading**: shortcuts you never changed move to the new defaults once. A shortcut you set yourself keeps its key, and an old default stays if its new key would clash with one of yours. Rebind the old keys in Settings → Shortcuts if you prefer them.
+  - **Settings → Shortcuts**: shortcuts are grouped (Tabs, Panes, App, Music Time, Terminal keys), each changed shortcut has its own reset button, a conflict names the other action, macOS shows `Cmd`, and the recorder now captures Tab, Space, Enter and the arrow keys (it could not record the old `Ctrl+Alt+Space` default).
+  - **Docs and website**: the README, the Guide page's shortcut list and the architecture notes show the new keys.
+
 ## 0.2.1
 
 ### Patch Changes

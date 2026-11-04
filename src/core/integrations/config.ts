@@ -23,12 +23,12 @@ import { readStoredRules } from "./workflowRules";
 const BINDING_FILE = "integration.json";
 const BINDING_VERSION = 1;
 
-function configPath(): string {
+export function configPath(): string {
   return path.join(getKaiHomeDir(), "config.json");
 }
 
 /** The raw config object. Throws on corrupt JSON rather than overwrite what the user wrote. */
-function readConfigFile(): Record<string, unknown> {
+export function readConfigFile(): Record<string, unknown> {
   const file = configPath();
   if (!fs.existsSync(file)) return {};
   let parsed: unknown;
@@ -159,6 +159,8 @@ function parseBinding(raw: string): ProjectBinding | null {
         repo: v.repo as string | null,
         boundAt: typeof v.boundAt === "string" ? v.boundAt : "",
         ...(rules ? { rules } : {}),
+        // Only an explicit `true` counts: anything else, or a hand-edit, stays off.
+        ...(v.writeTools === true ? { writeTools: true } : {}),
       };
     }
   } catch {

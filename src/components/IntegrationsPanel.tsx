@@ -14,22 +14,30 @@ import {
   listProjects,
   listRepos,
   loginWithBrowser,
+  loginWithToken,
   logoutIntegration,
   unbindIntegration,
   verifyIntegration,
 } from "../services/integrationService";
 import {
+  accountMatchesRemote,
+  accountName,
   badgeFor,
   deriveCardState,
   describeAccount,
   describeDetected,
+  explainSignInError,
   formatError,
   isSameSelection,
+  isServerAccount,
   needsRelogin,
   pickRepoForProject,
   pickSwitchProject,
   preferredAccountId,
   providerLabel,
+  validateServerForm,
+  type ServerFormErrors,
+  type ServerFormInput,
 } from "./integrationsViewModel";
 import { effectiveRules } from "../core/integrations/workflowRules";
 import { WorkflowRulesSection } from "./WorkflowRulesSection";
@@ -64,7 +72,16 @@ export const IntegrationsPanel: FC<IntegrationsPanelProps> = ({ projectDir }) =>
 );
 
 type Busy =
-  "load" | "connect" | "bind" | "verify" | "unbind" | "logout" | "projects" | "repos" | null;
+  | "load"
+  | "connect"
+  | "server"
+  | "bind"
+  | "verify"
+  | "unbind"
+  | "logout"
+  | "projects"
+  | "repos"
+  | null;
 
 /** The open "Switch project" picker. `null` lists mean "still loading". */
 interface SwitchState {
@@ -90,6 +107,11 @@ const ProviderCard: FC<ProviderCardProps> = ({ provider, projectDir }) => {
   const [confirmReplace, setConfirmReplace] = useState(false);
   const [confirmLogout, setConfirmLogout] = useState<string | null>(null);
   const [switching, setSwitching] = useState<SwitchState | null>(null);
+  // The Azure DevOps Server form (null = closed) and the project typed in it, kept for a
+  // "Replace" confirmation so the second bind targets the same project.
+  const [serverForm, setServerForm] = useState<ServerFormInput | null>(null);
+  const [serverErrors, setServerErrors] = useState<ServerFormErrors>({});
+  const [pendingProject, setPendingProject] = useState<string | null>(null);
 
   // Responses from a request that was superseded (or the panel closed) are dropped.
   const requestSeq = useRef(0);
@@ -117,6 +139,9 @@ const ProviderCard: FC<ProviderCardProps> = ({ provider, projectDir }) => {
   useEffect(() => {
     switchSeq.current++;
     setSwitching(null);
+    setServerForm(null);
+    setServerErrors({});
+    setPendingProject(null);
     setBusy("load");
     setNotice(null);
     setError(null);
@@ -152,16 +177,15 @@ const ProviderCard: FC<ProviderCardProps> = ({ provider, projectDir }) => {
     void run("connect", async () => {
       const res = await loginWithBrowser();
       if (!res.ok) {
-        setError(res.error);
+        setError(explainSignInError(res.error));
         return;
       }
       const who = res.value.user.email ?? res.value.user.name;
       const signedIn = res.value.accounts;
       // The folder's own organization, else the only one: nothing to choose.
       const account =
-        (detected
-          ? signedIn.find((a) => a.org.toLowerCase() === detected.org.toLowerCase())
-          : undefined) ?? (signedIn.length === 1 ? signedIn[0] : null);
+        (detected ? signedIn.find((a) => accountMatchesRemote(a, detected)) : undefined) ??
+        (signedIn.length === 1 ? signedIn[0] : null);
       if (!account) {
         setAccountChoice(signedIn[0]?.id ?? null);
         await refresh();
@@ -175,7 +199,7 @@ const ProviderCard: FC<ProviderCardProps> = ({ provider, projectDir }) => {
       setAccountChoice(account.id);
       // Signing in for the folder's own organization is the whole job: make it
       // active right away instead of leaving a second "Use for this project" click.
-      const ownRemote = detected && detected.org.toLowerCase() === account.org.toLowerCase();
+      const ownRemote = accountMatchesRemote(account, detected);
       if (!binding && ownRemote) {
         const bound = await bindIntegration({ projectDir, account: account.id });
         if (!mounted.current) return;
@@ -208,11 +232,91 @@ const ProviderCard: FC<ProviderCardProps> = ({ provider, projectDir }) => {
     });
   };
 
+  const openServerForm = (url = "") => {
+    closeSwitch();
+    setServerForm({ url, project: "", token: "" });
+    setServerErrors({});
+    setNotice(null);
+    setError(null);
+  };
+
+  const closeServerForm = () => {
+    setServerForm(null);
+    setServerErrors({});
+  };
+
+  /**
+   * Azure DevOps Server: sign in with an access token (the CLI verifies it before
+   * keeping it), then make the account active. A typed project is checked against
+   * the server's real projects; with none typed, the folder's own remote is used when
+   * it is on this server, else the project picker opens.
+   */
+  const handleServerConnect = () => {
+    if (!serverForm) return;
+    const checked = validateServerForm(serverForm);
+    if (!checked.ok) {
+      setServerErrors(checked.errors);
+      return;
+    }
+    setServerErrors({});
+    const { baseUrl, project, token } = checked.value;
+    let chooseProjectFor: string | null = null;
+    void run("server", async () => {
+      const res = await loginWithToken({ baseUrl, token });
+      if (!res.ok) {
+        setError(res.error);
+        return;
+      }
+      // The token is saved by the CLI now; this window keeps no copy.
+      closeServerForm();
+      const { account, user } = res.value;
+      const who = user.email ?? user.name;
+      const name = accountName(account);
+      setAccountChoice(account.id);
+
+      const ownRemote = accountMatchesRemote(account, detected);
+      if (project || (!binding && ownRemote)) {
+        const bound = await bindIntegration({
+          projectDir,
+          account: account.id,
+          ...(project ? { project } : {}),
+        });
+        if (!mounted.current) return;
+        await refresh();
+        if (!mounted.current) return;
+        if (bound.ok) {
+          setNotice(
+            `Connected to ${name} as ${who}. Active for this project (${bound.value.project}${
+              bound.value.repo ? ` / ${bound.value.repo}` : ""
+            }).`
+          );
+          return;
+        }
+        if (bound.error.code === "needs_confirmation") {
+          setPendingProject(project);
+          setConfirmReplace(true);
+        } else {
+          setError(bound.error);
+        }
+        setNotice(`Connected to ${name} as ${who}.`);
+        return;
+      }
+      await refresh();
+      if (!mounted.current) return;
+      setNotice(`Connected to ${name} as ${who}.`);
+      // Nothing says which project: let the user pick it, unless another account is active already.
+      if (!binding) chooseProjectFor = account.id;
+    }).then(() => {
+      if (chooseProjectFor && mounted.current) void openPicker(chooseProjectFor, null);
+    });
+  };
+
   const handleBind = (replace: boolean) => {
     void run("bind", async () => {
       const res = await bindIntegration({
         projectDir,
         ...(selectedAccount ? { account: selectedAccount } : {}),
+        ...(pendingProject ? { project: pendingProject } : {}),
         ...(replace ? { replace: true } : {}),
       });
       if (!res.ok) {
@@ -220,9 +324,11 @@ const ProviderCard: FC<ProviderCardProps> = ({ provider, projectDir }) => {
           setConfirmReplace(true);
           return;
         }
+        setPendingProject(null);
         setError(res.error);
         return;
       }
+      setPendingProject(null);
       setConfirmReplace(false);
       await refresh();
       if (mounted.current) {
@@ -329,7 +435,7 @@ const ProviderCard: FC<ProviderCardProps> = ({ provider, projectDir }) => {
    */
   const activateAccount = (target: IntegrationAccountView) => {
     closeSwitch();
-    if (detected && detected.org.toLowerCase() === target.org.toLowerCase()) {
+    if (accountMatchesRemote(target, detected)) {
       void run("bind", async () => {
         const res = await bindIntegration({ projectDir, account: target.id });
         if (!res.ok) {
@@ -340,7 +446,7 @@ const ProviderCard: FC<ProviderCardProps> = ({ provider, projectDir }) => {
         await refresh();
         if (mounted.current) {
           setNotice(
-            `${target.org} is now active for this project (${res.value.project}${
+            `${accountName(target)} is now active for this project (${res.value.project}${
               res.value.repo ? ` / ${res.value.repo}` : ""
             }).`
           );
@@ -455,7 +561,10 @@ const ProviderCard: FC<ProviderCardProps> = ({ provider, projectDir }) => {
               <span className="muted-text integration-detected">
                 Account:{" "}
                 <strong>
-                  {accounts.find((a) => a.id === switching.account)?.org ?? switching.account}
+                  {(() => {
+                    const target = accounts.find((a) => a.id === switching.account);
+                    return target ? accountName(target) : switching.account;
+                  })()}
                 </strong>
               </span>
               {switching.projects === null ? (
@@ -580,13 +689,24 @@ const ProviderCard: FC<ProviderCardProps> = ({ provider, projectDir }) => {
                     </span>
                   ) : (
                     <span className="integration-row-actions">
+                      {needsRelogin(account) && isServerAccount(account) && (
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-small"
+                          disabled={disabled}
+                          onClick={() => openServerForm(account.baseUrl)}
+                          aria-label={`Enter a new token for ${accountName(account)}`}
+                        >
+                          Enter token
+                        </button>
+                      )}
                       {!account.usedByThisProject && !needsRelogin(account) && (
                         <button
                           type="button"
                           className="btn btn-secondary btn-small"
                           disabled={disabled}
                           onClick={() => activateAccount(account)}
-                          aria-label={`Make ${account.org} active for this project`}
+                          aria-label={`Make ${accountName(account)} active for this project`}
                         >
                           Make active
                         </button>
@@ -596,7 +716,7 @@ const ProviderCard: FC<ProviderCardProps> = ({ provider, projectDir }) => {
                         className="btn btn-secondary btn-small"
                         disabled={disabled}
                         onClick={() => setConfirmLogout(account.id)}
-                        aria-label={`Sign out ${account.org}`}
+                        aria-label={`Sign out ${accountName(account)}`}
                       >
                         Sign out
                       </button>
@@ -618,7 +738,7 @@ const ProviderCard: FC<ProviderCardProps> = ({ provider, projectDir }) => {
               >
                 {accounts.map((a) => (
                   <option key={a.id} value={a.id}>
-                    {a.org}
+                    {accountName(a)}
                   </option>
                 ))}
               </select>
@@ -676,6 +796,17 @@ const ProviderCard: FC<ProviderCardProps> = ({ provider, projectDir }) => {
                   ? "Sign in with another account"
                   : `Connect ${provider.label}`}
             </button>
+            {!serverForm && (
+              <button
+                type="button"
+                className="btn btn-secondary btn-small"
+                disabled={disabled}
+                onClick={() => openServerForm()}
+                title="For an on-premises server: sign in with an access token"
+              >
+                Azure DevOps Server…
+              </button>
+            )}
             <button
               type="button"
               className="btn btn-secondary btn-small"
@@ -692,6 +823,103 @@ const ProviderCard: FC<ProviderCardProps> = ({ provider, projectDir }) => {
               <RefreshCw size={13} className={busy === "load" ? "spin" : ""} />
             </button>
           </div>
+
+          {serverForm && (
+            <form
+              className="integration-switch"
+              aria-label="Azure DevOps Server"
+              noValidate
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleServerConnect();
+              }}
+            >
+              <span className="muted-text" style={{ fontSize: "12px" }}>
+                Azure DevOps Server signs in with an access token (read access to Work Items, Code,
+                Build and Project and Team). The Azure CLI and browser sign-in only work with Azure
+                DevOps Services. The token is checked against the server first, then kept in your
+                operating system&apos;s secret store.
+              </span>
+              <div className="setting-field">
+                <label htmlFor={`${provider.id}-url`}>Server URL</label>
+                <input
+                  id={`${provider.id}-url`}
+                  className="text-input modal-input"
+                  type="text"
+                  inputMode="url"
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder="https://tfs.contoso.com/DefaultCollection"
+                  value={serverForm.url}
+                  disabled={disabled}
+                  aria-invalid={serverErrors.url ? true : undefined}
+                  aria-describedby={serverErrors.url ? `${provider.id}-url-error` : undefined}
+                  onChange={(e) => setServerForm({ ...serverForm, url: e.target.value })}
+                />
+                {serverErrors.url && (
+                  <span id={`${provider.id}-url-error`} className="error-text">
+                    {serverErrors.url}
+                  </span>
+                )}
+              </div>
+              <div className="setting-field">
+                <label htmlFor={`${provider.id}-server-project`}>Project (optional)</label>
+                <input
+                  id={`${provider.id}-server-project`}
+                  className="text-input modal-input"
+                  type="text"
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder="Leave empty to use this folder's remote, or choose from a list"
+                  value={serverForm.project}
+                  disabled={disabled}
+                  aria-invalid={serverErrors.project ? true : undefined}
+                  aria-describedby={
+                    serverErrors.project ? `${provider.id}-server-project-error` : undefined
+                  }
+                  onChange={(e) => setServerForm({ ...serverForm, project: e.target.value })}
+                />
+                {serverErrors.project && (
+                  <span id={`${provider.id}-server-project-error`} className="error-text">
+                    {serverErrors.project}
+                  </span>
+                )}
+              </div>
+              <div className="setting-field">
+                <label htmlFor={`${provider.id}-token`}>Access token</label>
+                <input
+                  id={`${provider.id}-token`}
+                  className="text-input modal-input"
+                  type="password"
+                  autoComplete="off"
+                  spellCheck={false}
+                  value={serverForm.token}
+                  disabled={disabled}
+                  aria-invalid={serverErrors.token ? true : undefined}
+                  aria-describedby={serverErrors.token ? `${provider.id}-token-error` : undefined}
+                  onChange={(e) => setServerForm({ ...serverForm, token: e.target.value })}
+                />
+                {serverErrors.token && (
+                  <span id={`${provider.id}-token-error`} className="error-text">
+                    {serverErrors.token}
+                  </span>
+                )}
+              </div>
+              <div className="ai-provider-actions">
+                <button type="submit" className="btn btn-primary btn-small" disabled={disabled}>
+                  {busy === "server" ? "Connecting…" : "Connect Server"}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-small"
+                  disabled={busy === "server"}
+                  onClick={closeServerForm}
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          )}
 
           {state === "active" && binding && (
             <WorkflowRulesSection
@@ -719,7 +947,10 @@ const ProviderCard: FC<ProviderCardProps> = ({ provider, projectDir }) => {
               <button
                 type="button"
                 className="btn btn-secondary btn-small"
-                onClick={() => setConfirmReplace(false)}
+                onClick={() => {
+                  setConfirmReplace(false);
+                  setPendingProject(null);
+                }}
               >
                 Cancel
               </button>

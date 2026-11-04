@@ -2,6 +2,7 @@ import crypto from "crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { authHeaderFor, resetAzTokenCache } from "../core/integrations/providers/azure-devops/auth";
 import {
+  browserSignInAvailable,
   clientIdFrom,
   parseTokenSet,
   refreshTokenSet,
@@ -70,6 +71,16 @@ describe("clientIdFrom", () => {
 
   it("accepts an override from the environment", () => {
     expect(clientIdFrom(env)).toBe(CLIENT_ID);
+  });
+});
+
+describe("browserSignInAvailable", () => {
+  it("is true only when a valid app id is configured", () => {
+    expect(browserSignInAvailable({} as NodeJS.ProcessEnv)).toBe(false);
+    expect(browserSignInAvailable({ KAI_AZURE_CLIENT_ID: "not-a-guid" } as NodeJS.ProcessEnv)).toBe(
+      false
+    );
+    expect(browserSignInAvailable(env)).toBe(true);
   });
 });
 

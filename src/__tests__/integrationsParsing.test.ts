@@ -131,13 +131,118 @@ describe("parseAzureRemote: servers, .git and credentials", () => {
     expect(parseAzureRemote("git@ssh.dev.azure.com:v3/o/p/r.git")?.repo).toBe("r");
   });
 
-  it("does not guess when a server URL has no project segment, or is SSH", () => {
+  it("does not guess when a server URL has no project segment", () => {
     expect(parseAzureRemote("https://tfs.corp.local/Billing/_git/ledger")).toBeNull();
     expect(parseAzureRemote("https://tfs.corp.local/_git/ledger")).toBeNull();
-    expect(
-      parseAzureRemote("ssh://tfs.corp.local:22/tfs/DefaultCollection/Billing/_git/ledger")
-    ).toBeNull();
+    expect(parseAzureRemote("ssh://tfs.corp.local/Billing/_git/ledger")).toBeNull();
     expect(parseAzureRemote("https://github.com/acme/_git/thing")).toBeNull();
+  });
+});
+
+describe("parseAzureRemote: Azure DevOps Server over SSH", () => {
+  const suggested = (baseUrl: string, org: string, project: string, repo: string) => ({
+    org,
+    project,
+    repo,
+    baseUrl,
+    needsConfirmation: true,
+  });
+
+  it.each([
+    [
+      "ssh://tfs.corp.local:22/tfs/DefaultCollection/Billing/_git/ledger",
+      suggested(
+        "https://tfs.corp.local/tfs/DefaultCollection",
+        "DefaultCollection",
+        "Billing",
+        "ledger"
+      ),
+    ],
+    [
+      "ssh://alice@tfs.corp.local:2222/DefaultCollection/Billing/_git/ledger.git",
+      suggested(
+        "https://tfs.corp.local/DefaultCollection",
+        "DefaultCollection",
+        "Billing",
+        "ledger"
+      ),
+    ],
+    [
+      "alice@tfs.corp.local:DefaultCollection/Billing/_git/ledger",
+      suggested(
+        "https://tfs.corp.local/DefaultCollection",
+        "DefaultCollection",
+        "Billing",
+        "ledger"
+      ),
+    ],
+    [
+      "tfs.corp.local:tfs/DefaultCollection/My%20Proj/_git/ledger",
+      suggested(
+        "https://tfs.corp.local/tfs/DefaultCollection",
+        "DefaultCollection",
+        "My Proj",
+        "ledger"
+      ),
+    ],
+    [
+      "alice@tfs.corp.local:v3/DefaultCollection/Billing/ledger",
+      suggested(
+        "https://tfs.corp.local/DefaultCollection",
+        "DefaultCollection",
+        "Billing",
+        "ledger"
+      ),
+    ],
+    [
+      "ssh://alice@TFS.Corp.Local/v3/DefaultCollection/Billing/ledger",
+      suggested(
+        "https://tfs.corp.local/DefaultCollection",
+        "DefaultCollection",
+        "Billing",
+        "ledger"
+      ),
+    ],
+  ])("derives a suggested address from %s", (remote, expected) => {
+    expect(parseAzureRemote(remote)).toEqual(expected);
+  });
+
+  it("drops the SSH port and any credential from the suggested web address", () => {
+    const found = parseAzureRemote(
+      "ssh://alice:s3cret-token@tfs.corp.local:2222/DefaultCollection/Billing/_git/ledger"
+    );
+    expect(found?.baseUrl).toBe("https://tfs.corp.local/DefaultCollection");
+    expect(JSON.stringify(found)).not.toContain("s3cret-token");
+    expect(JSON.stringify(found)).not.toContain("alice");
+    expect(JSON.stringify(found)).not.toContain("2222");
+  });
+
+  it("never flags a cloud remote, which is certain", () => {
+    expect(parseAzureRemote("git@ssh.dev.azure.com:v3/contoso/Payments/api")).not.toHaveProperty(
+      "needsConfirmation"
+    );
+    expect(parseAzureRemote("https://dev.azure.com/contoso/Payments/_git/api")).not.toHaveProperty(
+      "needsConfirmation"
+    );
+    expect(
+      parseAzureRemote("https://tfs.corp.local/tfs/DefaultCollection/Billing/_git/ledger")
+    ).not.toHaveProperty("needsConfirmation");
+  });
+
+  it.each([
+    "git@github.com:acme/api.git",
+    "git@github.com:v3/acme/sub/api.git",
+    "git@gitlab.com:v3/group/sub/repo.git",
+    "ssh://git@bitbucket.org/v3/a/b/c",
+    "git@host.example:group/repo.git",
+    "alice@tfs.corp.local:v3/OnlyTwo/parts",
+    "alice@tfs.corp.local:v3/a/b/c/d",
+    "alice@tfs.corp.local:Billing/_git/ledger",
+    "ssh://tfs.corp.local/_git/ledger",
+    "C:\work\repo",
+    "/srv/git/repo.git",
+  ])("does not mistake %s for an Azure DevOps Server", (remote) => {
+    expect(parseAzureRemote(remote)).toBeNull();
   });
 });
 

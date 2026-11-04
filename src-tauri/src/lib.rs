@@ -14,6 +14,7 @@ pub mod kai_cli;
 pub mod pty;
 pub mod shell;
 pub mod shutdown;
+pub mod snap_layouts;
 pub mod updater;
 
 #[cfg(test)]
@@ -101,6 +102,44 @@ pub(crate) fn shutdown_app(app_handle: &AppHandle) {
 #[tauri::command]
 fn close_app_window(app_handle: AppHandle) {
     shutdown_app(&app_handle);
+}
+
+/// Reports where the page draws its maximize button (CSS pixels, relative to
+/// the window's client area; `None` clears it) so Windows 11 can show its
+/// snap-layouts popup there. Returns whether the native hit test is active;
+/// when it is, the button's hover / pressed look arrives as
+/// `kai-maximize-button-state` events and a click maximizes natively.
+#[cfg(feature = "tauri")]
+#[tauri::command]
+fn set_maximize_button_rect(
+    window: tauri::WebviewWindow,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+) -> bool {
+    #[cfg(windows)]
+    {
+        let rect = snap_layouts::ButtonRect::from_css(
+            x,
+            y,
+            width,
+            height,
+            window.scale_factor().unwrap_or(1.0),
+        );
+        let Ok(hwnd) = window.hwnd() else {
+            return false;
+        };
+        let target = window.clone();
+        snap_layouts::set_maximize_button_rect(hwnd.0 as isize, rect, move |state| {
+            let _ = target.emit("kai-maximize-button-state", state.as_str());
+        })
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (window, x, y, width, height);
+        false
+    }
 }
 
 #[cfg(feature = "tauri")]
@@ -265,6 +304,20 @@ fn open_project_in_editor(
 #[tauri::command(async)]
 fn read_clipboard_text_cmd() -> Result<String, error::TerminalError> {
     clipboard::read_clipboard_text()
+}
+
+/// Paths of files on the clipboard, or of a PNG saved from a copied image.
+#[cfg(feature = "tauri")]
+#[tauri::command(async)]
+fn read_clipboard_attachments_cmd() -> Result<Vec<String>, error::TerminalError> {
+    clipboard::read_clipboard_attachments()
+}
+
+/// Open a Ctrl+clicked terminal link (any http/https site) in the browser.
+#[cfg(feature = "tauri")]
+#[tauri::command(async)]
+fn open_terminal_link_cmd(url: String) -> Result<(), error::TerminalError> {
+    shell::open_terminal_link(&url)
 }
 
 #[cfg(feature = "tauri")]
@@ -446,6 +499,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             close_app_window,
+            set_maximize_button_rect,
             get_available_shells,
             get_ai_cli_status,
             get_ai_cli_details,
@@ -465,6 +519,8 @@ pub fn run() {
             detect_installed_editors_cmd,
             is_call_active_cmd,
             read_clipboard_text_cmd,
+            read_clipboard_attachments_cmd,
+            open_terminal_link_cmd,
             list_system_fonts_cmd,
             open_external_url_cmd,
             search_youtube_video_cmd,

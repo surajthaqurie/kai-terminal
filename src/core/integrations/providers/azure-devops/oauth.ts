@@ -74,6 +74,16 @@ export function clientIdFrom(env: NodeJS.ProcessEnv = process.env): string {
   return id;
 }
 
+/** True when this build has an Entra app registration to sign in with. */
+export function browserSignInAvailable(env: NodeJS.ProcessEnv = process.env): boolean {
+  try {
+    clientIdFrom(env);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const b64url = (buf: Buffer): string => buf.toString("base64url");
 
 export function serializeTokenSet(t: TokenSet): string {
@@ -125,17 +135,36 @@ const PAGE = (title: string, body: string): string =>
   `main{text-align:center;max-width:28rem;padding:1rem}</style></head>` +
   `<body><main><h1>${title}</h1><p>${body}</p></main></body></html>`;
 
-interface Callback {
+export interface Callback {
   code: string;
   redirectUri: string;
   verifier: string;
 }
 
+/**
+ * Which Microsoft app a sign-in is for. Azure DevOps is the default; Teams
+ * passes its own scopes and wording through the same PKCE flow.
+ */
+export interface OAuthApp {
+  scope: string;
+  /** Used in messages: "Your <product> sign-in has expired." */
+  product: string;
+  /** What to tell the user to run to sign in again. */
+  reconnect: string;
+}
+
+const ADO_APP: OAuthApp = {
+  scope: SCOPE,
+  product: "Azure DevOps",
+  reconnect: "Connect again from Kai's Integrations tab, or run `kai integration azure`.",
+};
+
 /** Start the listener, show/open the sign-in address, and wait for the redirect. */
-async function waitForCallback(
+export async function authorizeInBrowser(
   clientId: string,
   deps: OAuthDeps,
-  opts: BrowserLoginOptions
+  opts: BrowserLoginOptions,
+  scope: string = SCOPE
 ): Promise<Callback> {
   const verifier = b64url(crypto.randomBytes(48));
   const challenge = b64url(crypto.createHash("sha256").update(verifier).digest());
@@ -214,7 +243,7 @@ async function waitForCallback(
         response_type: "code",
         redirect_uri: redirectUri,
         response_mode: "query",
-        scope: SCOPE,
+        scope,
         state,
         code_challenge: challenge,
         code_challenge_method: "S256",
@@ -240,11 +269,13 @@ async function waitForCallback(
   });
 }
 
-async function tokenRequest(
+/** Exchange a code or refresh token at the Microsoft token endpoint. */
+export async function requestToken(
   clientId: string,
   form: Record<string, string>,
   deps: OAuthDeps,
-  secrets: string[]
+  secrets: string[],
+  app: OAuthApp = ADO_APP
 ): Promise<TokenSet> {
   const doFetch = deps.fetchImpl ?? fetch;
   const now = (deps.now ?? Date.now)();
@@ -256,7 +287,7 @@ async function tokenRequest(
     res = await doFetch(`${AUTHORITY}/token`, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
-      body: new URLSearchParams({ client_id: clientId, scope: SCOPE, ...form }).toString(),
+      body: new URLSearchParams({ client_id: clientId, scope: app.scope, ...form }).toString(),
       signal: controller.signal,
     });
     text = await res.text();
@@ -285,11 +316,7 @@ async function tokenRequest(
       secrets
     ).slice(0, 300);
     if (code === "invalid_grant" || code === "interaction_required") {
-      throw new IntegrationError(
-        "auth",
-        "Your Azure DevOps sign-in has expired.",
-        "Connect again from Kai's Integrations tab, or run `kai integration azure`."
-      );
+      throw new IntegrationError("auth", `Your ${app.product} sign-in has expired.`, app.reconnect);
     }
     if (code === "invalid_client" || code === "unauthorized_client") {
       throw new IntegrationError(
@@ -326,7 +353,7 @@ async function tokenRequest(
 /** Trade a refresh token for a fresh access token (and the rotated refresh token). */
 export function refreshTokenSet(current: TokenSet, deps: OAuthDeps = {}): Promise<TokenSet> {
   const clientId = clientIdFrom(deps.env);
-  return tokenRequest(
+  return requestToken(
     clientId,
     { grant_type: "refresh_token", refresh_token: current.refreshToken },
     deps,
@@ -386,8 +413,8 @@ export async function signInWithBrowser(
   deps: OAuthDeps = {}
 ): Promise<BrowserLoginResult> {
   const clientId = clientIdFrom(deps.env);
-  const callback = await waitForCallback(clientId, deps, opts);
-  const tokens = await tokenRequest(
+  const callback = await authorizeInBrowser(clientId, deps, opts);
+  const tokens = await requestToken(
     clientId,
     {
       grant_type: "authorization_code",

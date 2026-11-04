@@ -12,12 +12,17 @@ import {
   type Page,
   type ProjectInfo,
   type ProviderContext,
+  type PullRequestCommentInput,
+  type PullRequestCommentResult,
+  type PullRequestCreateInput,
   type PullRequestDetail,
   type PullRequestQuery,
   type PullRequestSummary,
   type RepoInfo,
+  type WorkItemCommentResult,
   type WorkItemDetail,
   type WorkItemQuery,
+  type WorkItemStateResult,
   type WorkItemSummary,
 } from "../../types";
 import { findProvider } from "../../providerCatalog";
@@ -36,6 +41,7 @@ import {
   mapThreads,
   mapWorkItemDetail,
   mapWorkItemSummary,
+  workItemUrl,
 } from "./mapper";
 import { parseAzureRemote } from "./remote";
 
@@ -60,6 +66,12 @@ const DEFAULT_LOG_TAIL = 150;
 const MAX_LOG_CHARS = 24_000;
 const DISCOVERY_PAGE = 100;
 const MAX_DISCOVERY_ROWS = 500;
+
+/** What a refused write says, so a token that can read but not write is not a mystery. */
+const WRITE_TOKEN_HINT =
+  "Changing data needs a token with Work Items (Read & write) and Code (Read & write). Create one, then run `kai integration azure` again. (Browser and Azure CLI sign-ins use your own Azure DevOps permissions.)";
+const WRITE_PERMISSION_HINT =
+  "Your Azure DevOps account may not be allowed to make this change in this project.";
 
 /** Test seam: inject fetch, sleep and the Azure CLI runner. */
 export interface AzureDeps {
@@ -112,7 +124,12 @@ class AzureCall {
 
   private async send(
     url: string,
-    opts: { method?: "GET" | "POST"; body?: unknown; accept?: string }
+    opts: {
+      method?: "GET" | "POST" | "PATCH";
+      body?: unknown;
+      accept?: string;
+      contentType?: string;
+    }
   ): Promise<HttpResponse> {
     const auth = await authHeaderFor(this.account, this.secrets, this.deps.auth, this.patOverride);
     return httpRequest(
@@ -121,7 +138,10 @@ class AzureCall {
         method: opts.method,
         body: opts.body,
         accept: opts.accept,
-        headers: { authorization: auth.header },
+        headers: {
+          authorization: auth.header,
+          ...(opts.contentType ? { "content-type": opts.contentType } : {}),
+        },
         redact: [auth.secret],
         authHint: loginHintFor(this.account),
       },
@@ -137,12 +157,24 @@ class AzureCall {
     return (await this.send(url, {})).json<T>();
   }
 
-  async post<T>(path: string, body: unknown, query: Query = {}): Promise<T> {
+  async post<T>(path: string, body: unknown, query: Query = {}, apiVersion?: string): Promise<T> {
     const url = withQuery(`${this.base}/${path}`, {
       ...query,
-      "api-version": apiVersionOf(this.account),
+      "api-version": apiVersion ?? apiVersionOf(this.account),
     });
     return (await this.send(url, { method: "POST", body })).json<T>();
+  }
+
+  /** A JSON Patch (work item fields). */
+  async patch<T>(path: string, operations: unknown[]): Promise<T> {
+    const url = withQuery(`${this.base}/${path}`, { "api-version": apiVersionOf(this.account) });
+    return (
+      await this.send(url, {
+        method: "PATCH",
+        body: operations,
+        contentType: "application/json-patch+json",
+      })
+    ).json<T>();
   }
 
   async getText(path: string, query: Query = {}): Promise<string> {
@@ -169,6 +201,84 @@ const list = (raw: unknown, key = "value"): unknown[] => {
   const v = (raw as Json | undefined)?.[key];
   return Array.isArray(v) ? v : [];
 };
+
+const commentsApiVersion = (account: IntegrationAccount): string =>
+  `${apiVersionOf(account)}${COMMENTS_API_SUFFIX[apiVersionOf(account)] ?? "-preview.4"}`;
+
+/**
+ * A work item comment is HTML on the wire: escape what the agent wrote, so markup in it
+ * is shown as text, and keep its line breaks.
+ */
+export function commentHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\r?\n/g, "<br>");
+}
+
+/** Adds the write-specific hint to a refusal; every other error passes through unchanged. */
+async function writing<T>(account: IntegrationAccount, run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (err) {
+    if (err instanceof IntegrationError && (err.code === "forbidden" || err.code === "auth")) {
+      throw new IntegrationError(
+        err.code,
+        err.message,
+        account.authMethod === "pat" ? WRITE_TOKEN_HINT : WRITE_PERMISSION_HINT
+      );
+    }
+    throw err;
+  }
+}
+
+/**
+ * The work item's current fields, but only when it is in the bound project: an id from
+ * another project fails closed with the same `not_found` a read gives, before anything is written.
+ */
+async function requireProjectWorkItem(
+  c: AzureCall,
+  project: string,
+  id: number
+): Promise<{ state?: string; rev?: number }> {
+  const raw = await c.get<Json>(`${enc(project)}/_apis/wit/workitems/${id}`, {
+    fields: "System.TeamProject,System.State,System.Rev",
+  });
+  const fields =
+    raw && typeof raw === "object" && !Array.isArray(raw)
+      ? (raw.fields as Record<string, unknown> | undefined)
+      : undefined;
+  const itemProject =
+    fields && typeof fields === "object" ? fields["System.TeamProject"] : undefined;
+  if (
+    typeof itemProject !== "string" ||
+    !itemProject.trim() ||
+    itemProject.trim().toLowerCase() !== project.trim().toLowerCase()
+  ) {
+    throw new IntegrationError("not_found", `Work item ${id} was not found.`);
+  }
+  const state = fields?.["System.State"];
+  return {
+    state: typeof state === "string" ? state : undefined,
+    rev: typeof raw.rev === "number" ? raw.rev : undefined,
+  };
+}
+
+/** The pull request, but only when its repository is in the bound project (fails closed). */
+async function requireProjectPullRequest(c: AzureCall, project: string, id: number): Promise<Json> {
+  const raw = await c.get<Json>(`${enc(project)}/_apis/git/pullrequests/${id}`);
+  const repo = (raw?.repository ?? {}) as Json;
+  const repoProject = ((repo.project ?? {}) as Json).name;
+  if (
+    typeof repoProject !== "string" ||
+    repoProject.trim().toLowerCase() !== project.trim().toLowerCase() ||
+    typeof repo.id !== "string"
+  ) {
+    throw new IntegrationError("not_found", `Pull request ${id} was not found.`);
+  }
+  return raw;
+}
 
 export function createAzureDevOpsProvider(deps: AzureDeps = {}): IntegrationProvider {
   async function fetchWorkItems(
@@ -388,6 +498,47 @@ export function createAzureDevOpsProvider(deps: AzureDeps = {}): IntegrationProv
           };
         }
       },
+
+      async addComment(ctx, id, text): Promise<WorkItemCommentResult> {
+        const c = call(ctx, deps);
+        const project = ctx.binding.project;
+        return writing(ctx.account, async () => {
+          await requireProjectWorkItem(c, project, id);
+          const raw = await c.post<Json>(
+            `${enc(project)}/_apis/wit/workItems/${id}/comments`,
+            { text: commentHtml(text) },
+            {},
+            commentsApiVersion(ctx.account)
+          );
+          return {
+            workItemId: id,
+            ...(typeof raw.id === "number" ? { commentId: raw.id } : {}),
+            url: workItemUrl(c.base, project, id),
+          };
+        });
+      },
+
+      async setState(ctx, id, state): Promise<WorkItemStateResult> {
+        const c = call(ctx, deps);
+        const project = ctx.binding.project;
+        return writing(ctx.account, async () => {
+          const before = await requireProjectWorkItem(c, project, id);
+          const operations: unknown[] = [];
+          // Refuse to overwrite a change made since the state above was read.
+          if (before.rev !== undefined) {
+            operations.push({ op: "test", path: "/rev", value: before.rev });
+          }
+          operations.push({ op: "add", path: "/fields/System.State", value: state });
+          const raw = await c.patch<Json>(`${enc(project)}/_apis/wit/workitems/${id}`, operations);
+          const now = ((raw.fields ?? {}) as Json)["System.State"];
+          return {
+            workItemId: id,
+            ...(before.state ? { previousState: before.state } : {}),
+            state: typeof now === "string" ? now : state,
+            url: workItemUrl(c.base, project, id),
+          };
+        });
+      },
     },
 
     pullRequests: {
@@ -455,6 +606,76 @@ export function createAzureDevOpsProvider(deps: AzureDeps = {}): IntegrationProv
           threads,
           threadsTotal: total,
         };
+      },
+
+      async create(ctx, input: PullRequestCreateInput): Promise<PullRequestSummary> {
+        const c = call(ctx, deps);
+        const project = ctx.binding.project;
+        const repo = ctx.binding.repo;
+        if (!repo) {
+          throw new IntegrationError(
+            "bad_request",
+            "This project is not bound to a repository.",
+            "Pick one first: `kai azure active --repo <name>`."
+          );
+        }
+        return writing(ctx.account, async () => {
+          // Opens a pull request between two existing branches. It never creates a branch.
+          const raw = await c.post<Json>(
+            `${enc(project)}/_apis/git/repositories/${enc(repo)}/pullrequests`,
+            {
+              sourceRefName: `refs/heads/${input.sourceBranch}`,
+              targetRefName: `refs/heads/${input.targetBranch}`,
+              title: input.title,
+              ...(input.description ? { description: input.description } : {}),
+              ...(input.isDraft ? { isDraft: true } : {}),
+            }
+          );
+          return mapPullRequest(raw, c.base, project);
+        });
+      },
+
+      async addComment(ctx, input: PullRequestCommentInput): Promise<PullRequestCommentResult> {
+        const c = call(ctx, deps);
+        const project = ctx.binding.project;
+        return writing(ctx.account, async () => {
+          const pr = await requireProjectPullRequest(c, project, input.id);
+          const repoId = (pr.repository as Json).id as string;
+          const url = mapPullRequest(pr, c.base, project).url;
+          const prPath = `${enc(project)}/_apis/git/repositories/${enc(repoId)}/pullrequests/${input.id}`;
+          if (input.threadId !== undefined) {
+            const reply = await c.post<Json>(`${prPath}/threads/${input.threadId}/comments`, {
+              content: input.text,
+              parentCommentId: 1,
+              commentType: 1,
+            });
+            return {
+              pullRequestId: input.id,
+              threadId: input.threadId,
+              ...(typeof reply.id === "number" ? { commentId: reply.id } : {}),
+              url,
+            };
+          }
+          const line = input.line;
+          const thread = await c.post<Json>(`${prPath}/threads`, {
+            comments: [{ parentCommentId: 0, content: input.text, commentType: 1 }],
+            status: 1,
+            ...(input.filePath && line !== undefined
+              ? {
+                  threadContext: {
+                    filePath: input.filePath,
+                    rightFileStart: { line, offset: 1 },
+                    rightFileEnd: { line, offset: 1 },
+                  },
+                }
+              : {}),
+          });
+          return {
+            pullRequestId: input.id,
+            ...(typeof thread.id === "number" ? { threadId: thread.id } : {}),
+            url,
+          };
+        });
       },
     },
 

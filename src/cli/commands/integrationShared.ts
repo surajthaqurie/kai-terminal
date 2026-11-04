@@ -16,7 +16,15 @@ export interface Flags {
   positional: string[];
 }
 
-const VALUE_FLAGS = new Set(["--org", "--project", "--repo", "--server-url", "--name"]);
+const VALUE_FLAGS = new Set([
+  "--org",
+  "--project",
+  "--repo",
+  "--server-url",
+  "--name",
+  "--merge-branch",
+  "--branch-pattern",
+]);
 
 export function parseFlags(args: string[]): Flags {
   const out: Flags = { bool: new Set(), value: new Map(), positional: [] };

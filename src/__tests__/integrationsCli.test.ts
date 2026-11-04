@@ -314,10 +314,14 @@ describe("kai integration azure (setup)", () => {
     expect(res.err).toContain("Unknown option --yess");
   });
 
-  it("signs in through the browser by default, and says so when Kai's sign-in app is not set up", async () => {
+  it("falls back to the Azure CLI or a token, and says so, when Kai's browser sign-in app is not set up", async () => {
     const dir = repo();
-    const saved = process.env.KAI_AZURE_CLIENT_ID;
+    const bin = path.join(agents.home, "no-az-bin");
+    fs.mkdirSync(bin, { recursive: true });
+    const savedId = process.env.KAI_AZURE_CLIENT_ID;
+    const savedPath = process.env.PATH;
     delete process.env.KAI_AZURE_CLIENT_ID;
+    process.env.PATH = bin;
     fs.rmSync(path.join(env.home, "config.json"));
     try {
       const res = await kai(
@@ -329,16 +333,45 @@ describe("kai integration azure (setup)", () => {
         "Contoso",
         "--no-agents"
       );
+      // It did not stop at "not set up": it said why and went on to the token route.
+      expect(res.out).toContain("Browser sign-in is not set up in this build of Kai");
+      expect(res.out).toContain("Azure CLI or an access token");
+      expect(res.out).not.toContain("Opening your browser");
       expect(res.code).toBe(1);
-      // No organization prompt, no token prompt: it went straight to browser sign-in.
-      expect(res.out).toContain("Opening your browser to sign in to Azure DevOps");
-      expect(res.err).toContain("Browser sign-in is not set up");
-      expect(res.err).toContain("KAI_AZURE_CLIENT_ID");
-      expect(res.err).not.toContain("--pat-stdin");
+      expect(res.err).toContain("No Azure CLI was found and no token was provided");
+      expect(res.err).toContain("--pat-stdin");
     } finally {
-      if (saved !== undefined) process.env.KAI_AZURE_CLIENT_ID = saved;
+      process.env.PATH = savedPath;
+      if (savedId !== undefined) process.env.KAI_AZURE_CLIENT_ID = savedId;
     }
     expect(listAccounts()).toEqual([]);
+  });
+
+  it("stays quiet about browser sign-in when a method is chosen on the command line", async () => {
+    const dir = repo();
+    const bin = path.join(agents.home, "no-az-bin-2");
+    fs.mkdirSync(bin, { recursive: true });
+    const savedId = process.env.KAI_AZURE_CLIENT_ID;
+    const savedPath = process.env.PATH;
+    delete process.env.KAI_AZURE_CLIENT_ID;
+    process.env.PATH = bin;
+    fs.rmSync(path.join(env.home, "config.json"));
+    try {
+      const res = await kai(
+        "integration",
+        "azure",
+        dir,
+        "--yes",
+        "--org",
+        "Contoso",
+        "--az",
+        "--no-agents"
+      );
+      expect(res.out).not.toContain("Browser sign-in is not set up");
+    } finally {
+      process.env.PATH = savedPath;
+      if (savedId !== undefined) process.env.KAI_AZURE_CLIENT_ID = savedId;
+    }
   });
 
   it("asks an Azure DevOps Server for a token even when the Azure CLI is installed", async () => {

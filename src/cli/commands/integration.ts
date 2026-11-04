@@ -1,6 +1,6 @@
 import { spawn } from "child_process";
 import { applyAgentSetup, detectInstalledAgentsSync } from "../../core/agents";
-import { getAccount, listAccounts } from "../../core/integrations/config";
+import { findBinding, getAccount, listAccounts } from "../../core/integrations/config";
 import {
   findProvider,
   PROVIDER_CATALOG,
@@ -8,6 +8,7 @@ import {
 } from "../../core/integrations/providerCatalog";
 import { getProvider } from "../../core/integrations/providers";
 import { azCliOnPath, isCloudBaseUrl } from "../../core/integrations/providers/azure-devops/auth";
+import { browserSignInAvailable } from "../../core/integrations/providers/azure-devops/oauth";
 import type { DetectedCoordinates, IntegrationStatusView } from "../../core/integrations/rpcTypes";
 import {
   accountIdFor,
@@ -18,10 +19,13 @@ import {
   login,
   loginWithBrowser,
   resolveSwitch,
+  setRules,
+  setWriteTools,
   verifyAccount,
   type AccessCheck,
 } from "../../core/integrations/service";
 import { integrationToolDefs } from "../../core/integrations/tools";
+import { checkBranchPattern, effectiveRules } from "../../core/integrations/workflowRules";
 import {
   IntegrationError,
   type IntegrationAccount,
@@ -29,6 +33,8 @@ import {
 } from "../../core/integrations/types";
 import { resolveKaiBin } from "../agentWorkflow";
 import { ask, askHidden, confirm, isInteractive, readAllStdin } from "../prompt";
+import { getTeamsAccount } from "../../core/teams/config";
+import { runTeamsSetup } from "./teams";
 import {
   assertKnownFlags,
   authLabel,
@@ -57,6 +63,8 @@ Usage:
   kai integration list               Every integration and its state
   kai integration <${names}>         Set one up for THIS folder: sign in, connect the
                                      project, select your agents, and verify it works
+  kai integration teams              Sign in to Microsoft Teams (your own account, not
+                                     tied to a folder), then chat with: kai teams
 
 Steps:
   1. Sign-in     Opens your browser; no organization or token to type
@@ -76,6 +84,19 @@ Options for \`kai integration azure\`:
 
 It is safe to run again: it checks the saved sign-in and only asks what is missing.
 Then: kai azure list | kai azure active --name <project> | kai azure remove
+
+Settings of a folder that is already connected (run on their own, not with the options above):
+  --merge-branch <name>        Branch agents start new work from and open pull requests into
+  --clear-merge-branch         Back to the repository's default branch
+  --branch-pattern <regex>     Regular expression new branch names should match, e.g.
+                               "^feature/[0-9]+-[a-z-]+$"  (quote it; guidance for agents,
+                               not enforced)
+  --clear-branch-pattern       Agents choose their own branch names again
+  --allow-writes               Let agents change data as you: comment on work items and
+                               pull requests, change a work item's state, open a pull request
+                               between existing branches. Off by default; only you can turn it
+                               on (it asks first, -y/--yes skips the question)
+  --no-writes                  Read-only again (the default)
 `);
 }
 
@@ -127,6 +148,11 @@ async function runList(args: string[]): Promise<number> {
     console.log(`  ${alias} ${info.label.padEnd(14)} ${STATE_TEXT[state]}`);
     const b = status.project.binding;
     if (b) console.log(`  ${" ".repeat(8)} ${" ".repeat(14)} ${b.account} · ${where(b)}`);
+    if (b?.writeTools) {
+      console.log(
+        `  ${" ".repeat(8)} ${" ".repeat(14)} write tools on: agents can change data here (turn off: kai integration ${info.aliases[0] ?? info.id} --no-writes)`
+      );
+    }
     for (const a of status.accounts) {
       const flag = a.hasCredential ? "" : "  (token missing)";
       console.log(
@@ -140,6 +166,15 @@ async function runList(args: string[]): Promise<number> {
         `  ${" ".repeat(8)} ${" ".repeat(14)} → kai integration ${alias0}${d ? `   (remote: ${d.org} / ${d.project})` : ""}`
       );
     }
+  }
+  const teamsAccount = getTeamsAccount();
+  console.log(
+    `  ${"teams".padEnd(8)} ${"MS Teams".padEnd(14)} ${
+      teamsAccount ? `\u25cf signed in as ${teamsAccount.name}` : "\u25cb not set up"
+    }`
+  );
+  if (!teamsAccount) {
+    console.log(`  ${" ".repeat(8)} ${" ".repeat(14)} \u2192 kai integration teams`);
   }
   return 0;
 }
@@ -314,9 +349,20 @@ async function ensureAccount(
   const provider = getProvider(info.id)!;
   const serverUrl = flagValue(flags, "--server-url");
   const orgFlag = flagValue(flags, "--org");
-  // The token and Azure CLI paths (and on-premises Server) are for scripts and CI.
-  const legacy = serverUrl || flags.bool.has("--pat-stdin") || flags.bool.has("--az");
+  // The token and Azure CLI paths (and on-premises Server) are for scripts and CI,
+  // and for any build that has no Microsoft app registered for browser sign-in.
+  // A self-hosted server's remote is also one: browser sign-in only reaches Azure DevOps Services.
+  const detectedIsServer = detected ? !isCloudBaseUrl(detected.baseUrl) : false;
+  const chosenMethod =
+    serverUrl || flags.bool.has("--pat-stdin") || flags.bool.has("--az") || detectedIsServer;
+  const browserReady = browserSignInAvailable();
+  const legacy = chosenMethod || !browserReady;
   if (!legacy) return ensureBrowserAccount(info, flags, detected);
+  if (!chosenMethod) {
+    console.log(
+      "  Browser sign-in is not set up in this build of Kai, so this signs in with the Azure CLI or an access token instead."
+    );
+  }
   const accounts = listAccounts(info.id);
 
   // Which account: what was typed, else what the git remote belongs to, else the only one.
@@ -508,6 +554,209 @@ async function chooseRemote(
   return Number.isInteger(n) && n >= 1 && n <= all.length ? all[n - 1] : all[0];
 }
 
+/**
+ * A Server SSH remote does not say the server's web address, so Kai only has a guess.
+ * Nothing signs in to a guessed host unasked: confirm it (or take the typed address), or
+ * stop with the exact command to run. Skipped when the person already named the address
+ * (`--server-url`, `--org`) or is already signed in to exactly that address.
+ */
+async function confirmSuggestedRemote(
+  provider: IntegrationProvider,
+  flags: Flags,
+  detected: DetectedCoordinates | null,
+  interactive: boolean
+): Promise<DetectedCoordinates | null> {
+  if (!detected?.needsConfirmation) return detected;
+  if (flagValue(flags, "--server-url", "--org")) return detected;
+  const guess = detected.baseUrl;
+  if (getAccount(accountIdFor(provider, detected))) {
+    console.log(
+      `  Azure DevOps Server SSH remote: using ${guess} (you are already signed in there).`
+    );
+    return detected;
+  }
+  const rerun = `kai integration azure --server-url ${guess} --project "${detected.project}"${
+    detected.repo ? ` --repo "${detected.repo}"` : ""
+  } --pat-stdin`;
+  if (!interactive) {
+    throw new IntegrationError(
+      "needs_confirmation",
+      `This folder's remote is an Azure DevOps Server SSH address. SSH does not say the web address, so ${guess} is only a guess (its port and any virtual directory like /tfs can differ).`,
+      `If that is the address you open in a browser, run: ${rerun}`
+    );
+  }
+  console.log(
+    `  The remote is an Azure DevOps Server over SSH, which does not give its web address.`
+  );
+  console.log(
+    `  Kai's guess: ${guess}  (project ${detected.project}${detected.repo ? `, repository ${detected.repo}` : ""})`
+  );
+  if (await confirm(`  Is that the address you open in your browser?`, true)) return detected;
+  const typed = (
+    await ask(`  Web address (https://<host>[/virtual dir]/<collection>), Enter to cancel: `)
+  ).trim();
+  if (!typed) throw new IntegrationError("bad_request", "Cancelled.");
+  const account = provider.buildAccount({ baseUrl: typed, authMethod: "az" });
+  return {
+    org: account.org,
+    project: detected.project,
+    repo: detected.repo,
+    baseUrl: account.baseUrl,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// settings of a connected folder
+// ---------------------------------------------------------------------------
+
+const RULE_FLAGS = [
+  "--merge-branch",
+  "--clear-merge-branch",
+  "--branch-pattern",
+  "--clear-branch-pattern",
+];
+const WRITE_FLAGS = ["--allow-writes", "--no-writes"];
+const SETTINGS_FLAGS = [...RULE_FLAGS, ...WRITE_FLAGS];
+/** Options that connect a folder; they do not mix with settings. */
+const SETUP_ONLY_FLAGS = [
+  "--org",
+  "--project",
+  "--name",
+  "--repo",
+  "--server-url",
+  "--az",
+  "--pat-stdin",
+  "--no-agents",
+];
+
+const present = (flags: Flags, names: readonly string[]): string[] =>
+  names.filter((n) => flags.bool.has(n) || flags.value.has(n));
+
+function badRequest(message: string, hint?: string): IntegrationError {
+  return new IntegrationError("bad_request", message, hint);
+}
+
+/**
+ * `kai integration azure --merge-branch … / --branch-pattern … / --allow-writes …`: change a
+ * connected folder's settings without signing in again. Rules reuse the desktop path
+ * (`setRules`: same checks, same storage); write tools reuse `setWriteTools`, which refuses
+ * to turn them on from inside an AI agent's session.
+ */
+async function runSettings(info: ProviderInfo, flags: Flags, dir: string): Promise<number> {
+  const alias = info.aliases[0] ?? info.id;
+  const mixed = present(flags, SETUP_ONLY_FLAGS);
+  if (mixed.length > 0) {
+    throw badRequest(
+      `${mixed.join(", ")} connects a folder, and ${present(flags, SETTINGS_FLAGS).join(", ")} changes the settings of a connected one.`,
+      `Run them as two commands: first \`kai integration ${alias}\`, then the settings.`
+    );
+  }
+  const has = (n: string) => flags.bool.has(n) || flags.value.has(n);
+  if (has("--merge-branch") && has("--clear-merge-branch")) {
+    throw badRequest("Use either --merge-branch or --clear-merge-branch, not both.");
+  }
+  if (has("--branch-pattern") && has("--clear-branch-pattern")) {
+    throw badRequest("Use either --branch-pattern or --clear-branch-pattern, not both.");
+  }
+  if (has("--allow-writes") && has("--no-writes")) {
+    throw badRequest("Use either --allow-writes or --no-writes, not both.");
+  }
+  const mergeBranch = flagValue(flags, "--merge-branch");
+  const branchPattern = flagValue(flags, "--branch-pattern");
+  if (has("--merge-branch") && !mergeBranch) {
+    throw badRequest("--merge-branch needs a branch name.", "To remove it: --clear-merge-branch");
+  }
+  if (has("--branch-pattern") && !branchPattern) {
+    throw badRequest(
+      "--branch-pattern needs a regular expression.",
+      'Quote it, e.g. --branch-pattern "^feature/[0-9]+$". To remove it: --clear-branch-pattern'
+    );
+  }
+
+  const found = findBinding(dir);
+  if (!found || found.binding.provider !== info.id) {
+    throw new IntegrationError(
+      "no_account",
+      `This folder is not connected to ${info.label}.`,
+      `Run \`kai integration ${alias}\` first.`
+    );
+  }
+  const yes = flags.bool.has("--yes");
+  console.log(`\n${info.label} settings for ${where(found.binding)}\n`);
+
+  // Everything that can be refused is checked before anything is written.
+  if (has("--allow-writes") && !yes) {
+    console.log(`  Agents will be able to change data in ${info.label} through Kai, as you:`);
+    console.log(`    - add comments to work items and pull requests`);
+    console.log(`    - change a work item's state`);
+    console.log(`    - open a pull request between branches that already exist`);
+    console.log(`  They cannot create branches, merge, delete or edit anything else. Every change`);
+    console.log(
+      `  is made with YOUR sign-in. Tokens (PAT) need Work Items and Code: Read & write;`
+    );
+    console.log(`  browser and Azure CLI sign-ins use your own permissions.`);
+    if (!isInteractive()) {
+      throw badRequest(
+        "Turning on write tools needs your confirmation.",
+        "Re-run in a terminal, or add --yes to confirm without a prompt."
+      );
+    }
+    if (!(await confirm(`  Let agents write to ${info.label} for this folder?`, false))) {
+      console.log(`  Cancelled. Nothing changed.`);
+      return 1;
+    }
+  }
+
+  if (
+    has("--merge-branch") ||
+    has("--clear-merge-branch") ||
+    has("--branch-pattern") ||
+    has("--clear-branch-pattern")
+  ) {
+    const current = effectiveRules(found.binding.rules);
+    const next = {
+      mergeBranch: has("--clear-merge-branch") ? "" : (mergeBranch ?? current.mergeBranch),
+      branchPattern: has("--clear-branch-pattern") ? "" : (branchPattern ?? current.branchPattern),
+    };
+    const saved = await setRules(info.id, dir, next);
+    const rules = effectiveRules(saved.rules);
+    console.log(
+      rules.mergeBranch
+        ? `  ✔ Merge branch: ${rules.mergeBranch}`
+        : `  ✔ Merge branch: none (agents use the repository's default branch)`
+    );
+    console.log(
+      rules.branchPattern
+        ? `  ✔ Branch naming: ${rules.branchPattern}`
+        : `  ✔ Branch naming: none (agents choose their own names)`
+    );
+    const warning = rules.branchPattern ? checkBranchPattern(rules.branchPattern).warning : null;
+    if (warning) console.log(`    ${warning}`);
+    console.log(`    Guidance for agents (the kai_workflow_rules tool). Kai does not enforce it.`);
+  }
+
+  if (has("--allow-writes") || has("--no-writes")) {
+    const on = has("--allow-writes");
+    await setWriteTools(info.id, dir, on);
+    const tools = integrationToolDefs(dir).length;
+    console.log(
+      on
+        ? `  ✔ Write tools: on. Agents now get ${tools} ${info.label} tools here, including the ones that change data.`
+        : `  ✔ Write tools: off. Agents can only read ${info.label} here.`
+    );
+    console.log(
+      on
+        ? `    Turn them off any time: kai integration ${alias} --no-writes`
+        : `    Turn them on: kai integration ${alias} --allow-writes`
+    );
+    console.log(
+      `    A running agent that honors MCP tool-list updates refreshes on its own; restart any that does not.`
+    );
+  }
+  console.log("");
+  return 0;
+}
+
 async function runSetup(info: ProviderInfo, args: string[]): Promise<number> {
   const flags = parseFlags(args);
   assertKnownFlags(flags, [
@@ -520,8 +769,10 @@ async function runSetup(info: ProviderInfo, args: string[]): Promise<number> {
     "--pat-stdin",
     "--no-agents",
     "--yes",
+    ...SETTINGS_FLAGS,
   ]);
   const dir = projectDirFrom(flags);
+  if (present(flags, SETTINGS_FLAGS).length > 0) return runSettings(info, flags, dir);
   const yes = flags.bool.has("--yes");
   const interactive = isInteractive() && !yes;
   const alias = info.aliases[0] ?? info.id;
@@ -532,10 +783,15 @@ async function runSetup(info: ProviderInfo, args: string[]): Promise<number> {
   console.log(`▸ Sign-in`);
   const status = await getStatus(info.id, dir);
   const provider = getProvider(info.id)!;
-  const detected = await chooseRemote(
+  const detected = await confirmSuggestedRemote(
     provider,
-    dir,
-    interactive && !flagValue(flags, "--org", "--server-url", "--project", "--name")
+    flags,
+    await chooseRemote(
+      provider,
+      dir,
+      interactive && !flagValue(flags, "--org", "--server-url", "--project", "--name")
+    ),
+    interactive
   );
   let account = await ensureAccount(info, flags, detected);
   // The remote's project and repository belong to the remote's own account only.
@@ -678,11 +934,12 @@ export async function runIntegration(args: string[]): Promise<number> {
       return 0;
     }
     if (sub === "list" || sub === "ls") return await runList(args.slice(2));
+    if (sub === "teams" || sub === "msteams") return await runTeamsSetup(args.slice(2));
     const info = findProvider(sub);
     if (info) return await runSetup(info, args.slice(2));
     console.error(`[kai] Unknown integration "${args[1]}".`);
     console.error(
-      `  Available: ${PROVIDER_CATALOG.map((p) => p.aliases[0] ?? p.id).join(", ")}. Run \`kai integration list\`.`
+      `  Available: ${[...PROVIDER_CATALOG.map((p) => p.aliases[0] ?? p.id), "teams"].join(", ")}. Run \`kai integration list\`.`
     );
     return 1;
   } catch (err) {

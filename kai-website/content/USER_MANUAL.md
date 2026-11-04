@@ -26,7 +26,7 @@ kai health
 
 Output:
 ```text
-✔ Kai v0.2.1 is ready
+✔ Kai v0.2.2 is ready
 
 ✔ Fast and private · Free
 ```
@@ -102,7 +102,7 @@ kai list -a                     # list installed tools (also: kai list --agent, 
 
 ## Integrations
 
-Connect Kai's MCP server to an outside service so your AI tools can read it. Today that is Azure DevOps (work items, pull requests, builds). Signing in is per user and shared by every folder; each folder has exactly one active project.
+Connect Kai's MCP server to an outside service so your AI tools can read it. Today that is Azure DevOps (work items, pull requests, builds). Signing in is per user and shared by every folder; each folder has exactly one active project. Microsoft Teams chat (below) is set up the same way but belongs to you, not to a folder.
 
 > These commands can run directly in any standard terminal (Bash, Zsh, PowerShell) or inside a Kai Terminal tab. The organization, project and repository always come from the folder's git remote, when it has one, so there is usually nothing to type.
 
@@ -117,7 +117,7 @@ The same setup is in **AI CLI Providers → Integrations**. It reads the same si
 - **Several accounts, one active.** A folder has exactly one active account. Every other signed-in account has **Make active**, and **Switch project** changes the project inside the active one. Each organization has a single sign-in: connecting it again replaces the old one, whether it used the Azure CLI or a token.
 - **Merge branch (More).** Once a folder is active, **More** on the card shows a **Merge branch** list filled from the repository's real branches. It is where agents start new branches and which branch their pull requests go into; **Repository default** (the default) means the repository's own default branch. A branch the repository does not have is refused when you save. Agents read it through the `kai_workflow_rules` tool. It is guidance: Kai never checks or blocks a commit or a push. It is per folder and survives switching project. **Remove** puts it back to the repository default.
 - **Branch naming (More).** Under the merge branch, **Branch naming (regex)** takes an optional regular expression that new branch names should match, such as `^(feature|bugfix)/\d+-[a-z0-9-]+$`. A broken pattern is explained under the field and cannot be saved (for example an unclosed group, slashes around the pattern, or a pattern that matches an empty name); a pattern without `^` and `$` only gets a tip. Agents read it through `kai_workflow_rules`. **Remove** clears it and agents choose their own names. It is guidance: Kai never checks a branch name.
-- Azure DevOps Server (on-premises) is set up with the command line only (`--server-url`).
+- **Azure DevOps Server (on-premises).** **Azure DevOps Server…** on the card opens a short form: the **Server URL** including the collection (for example `https://tfs.contoso.com/DefaultCollection`), an optional **Project**, and an **Access token** (a hidden field). A server signs in with a token only, never the Azure CLI or browser sign-in. Kai checks the token against the server first and keeps it in your operating system's secret store only if the server accepts it. Leave **Project** empty to use this folder's git remote when it is on that server, or to choose from a list. The account then appears in the list like any other (shown as `collection @ host`) with **Make active** and **Sign out**; **Enter token** appears if its token is ever lost. The same setup from a terminal is `kai integration azure --server-url <url> --pat-stdin`.
 
 ---
 
@@ -134,8 +134,8 @@ kai integration list            # add --json for scripts
 ### kai integration azure
 
 - One command sets Azure DevOps up for the current folder. It is safe to run again: it checks what is already done and only asks about what is missing.
-- **Sign-in:** reuses a working sign-in, or signs in with the Azure CLI (offering to run `az login` for you) or an access token. Tokens go to the OS secret store (Windows DPAPI, macOS Keychain piped via stdin without argv exposure, Linux Secret Service), never to a file in a repository or an agent config. Concurrent token requests reuse in-flight authentication calls.
-- **Project (auto-detected):** organization, project and repository come from the folder's git remotes: `dev.azure.com`, `*.visualstudio.com`, their SSH forms, and Azure DevOps Server `https://<host>/<collection>/<project>/_git/<repo>` addresses. It works from any sub-folder of the repository, ignores a trailing `.git`, and never reads a credential embedded in the remote. If the repository has several Azure remotes it asks which one (or uses `origin`'s and says so). With no Azure remote you pick from a list. Names are checked against what Azure really has and stored with their true spelling, and a remote's project is never paired with a different organization's account.
+- **Sign-in:** reuses a working sign-in, or signs in with the Azure CLI (offering to run `az login` for you) or an access token. If this build of Kai has no browser sign-in set up (no Microsoft app registered for it), it says so and uses the Azure CLI or an access token on its own. Tokens go to the OS secret store (Windows DPAPI, macOS Keychain piped via stdin without argv exposure, Linux Secret Service), never to a file in a repository or an agent config. Concurrent token requests reuse in-flight authentication calls.
+- **Project (auto-detected):** organization, project and repository come from the folder's git remotes: `dev.azure.com`, `*.visualstudio.com`, their SSH forms, and Azure DevOps Server `https://<host>/<collection>/<project>/_git/<repo>` addresses. An Azure DevOps Server **SSH** remote (`ssh://user@host/<collection>/<project>/_git/<repo>`, `user@host:<collection>/<project>/_git/<repo>` or `user@host:v3/<collection>/<project>/<repo>`) does not say the server's web address, so Kai only suggests `https://<host>/<collection>` (no SSH port, no virtual directory such as `/tfs`) and **asks you to confirm it before signing in to it**; in a script it stops and prints the exact `--server-url` command to run instead. If you are already signed in to that very address, or you pass `--server-url` yourself, it does not ask. It works from any sub-folder of the repository, ignores a trailing `.git`, and never reads a credential embedded in the remote. If the repository has several Azure remotes it asks which one (or uses `origin`'s and says so). With no Azure remote you pick from a list. Names are checked against what Azure really has and stored with their true spelling, and a remote's project is never paired with a different organization's account.
 - **Agents:** wires Kai's MCP server into every installed agent that is not wired yet (the same as `kai mcp all`, after asking once). Supports both global agent configs (e.g. `~/.claude.json`) and project-scoped configs (e.g. `.mcp.json` for Claude Code, `.cursor/mcp.json`, `.vscode/mcp.json`). Nothing else in an agent's config is touched.
 - **Safety & Boundaries:** work item searches and custom WIQL queries are strictly validated to ensure they remain scoped within the active project boundary, preventing cross-project information leakage.
 - **Check:** makes a small real call for work items, pull requests and builds, so a token that signs in but cannot read is caught now, with a hint about the missing scope.
@@ -149,6 +149,19 @@ kai integration azure --no-agents           # do not touch any agent's config
 ```
 
 Other options: `--az` (use the Azure CLI), `--server-url <url>` (Azure DevOps Server, which signs in with an access token: pipe it with `--pat-stdin`, because on-premises servers do not accept the Azure CLI's tokens). A running agent is told when the tool list changes, so one that honors MCP `tools/list_changed` picks the tools up on its own; restart any that does not.
+
+**Settings of a connected folder.** These run on their own (not together with the options above) and need the folder to be connected already. They do not sign in again.
+
+```bash
+kai integration azure --merge-branch main                      # where agents start new branches and open pull requests
+kai integration azure --branch-pattern "^feature/[0-9]+-[a-z-]+$"   # a regular expression new branch names should match
+kai integration azure --clear-merge-branch --clear-branch-pattern   # back to the repository default / no rule
+kai integration azure --allow-writes                           # let agents comment, change a state, open pull requests (asks first)
+kai integration azure --no-writes                              # read-only again (the default)
+```
+
+- `--merge-branch` and `--branch-pattern` are the same two settings as **More** on the desktop card, with the same checks: a branch the repository does not have is refused (offline, it is accepted as typed), and a broken pattern is explained and not saved. Quote the pattern (in `cmd.exe`, use double quotes so `^` is kept). They are guidance for agents (`kai_workflow_rules`); Kai never checks a branch name or blocks a commit.
+- `--allow-writes` adds four tools that change data as you: `kai_work_item_comment`, `kai_work_item_set_state`, `kai_pr_create` and `kai_pr_comment` (see `MCP.md`). It is off by default, per folder, and only you can turn it on: it asks first (`-y`/`--yes` answers for you in a script) and refuses to run inside an AI agent's session. They never create branches, merge or delete. A personal access token needs **Work Items (Read & write)** and **Code (Read & write)** for them; Azure CLI and browser sign-ins use your own permissions. `kai integration list` shows when write tools are on.
 
 ---
 
@@ -185,6 +198,38 @@ kai remove --name contoso --yes       # remove it without asking
 ```
 
 In the desktop app, the same actions are in the **Integrations** tab of the AI CLI providers panel (robot icon in the header).
+
+---
+
+### kai integration teams
+
+- Set up Microsoft Teams chat. Unlike Azure DevOps it is not tied to a folder or an AI agent: it is your own account, shared by every terminal.
+- **Sign-in:** opens your browser, you sign in with your Microsoft account, and Kai remembers it. Safe to run again: it reuses a working sign-in. The token goes to the OS secret store (Windows DPAPI, macOS Keychain, Linux Secret Service), never to a file in a repository.
+- **Access:** checks that your teams and chats can be read, and tells you whether channel messages can be read too. Reading what others wrote in a channel needs an administrator's approval in most organizations; add it later with `--channels`. Chats and sending to channels work without it.
+- **Sign out:** `remove` forgets the account and deletes its token.
+
+```bash
+kai integration teams              # sign in and check access
+kai integration teams --channels   # also ask to read channel messages (admin approval)
+kai integration teams remove       # sign out and forget this account
+```
+
+---
+
+### kai teams
+
+- The Teams chat, in the tab you run it in. A list of your teams, channels and chats on the left, the conversation on the right, a message box at the bottom. Everything is clickable, and everything also works from the keyboard. It runs in any terminal, inside Kai Terminal or not. Want it in its own tab? Open a new tab (Ctrl+T) and run it there.
+- **Pictures show in the conversation.** Where the terminal draws images (iTerm2, WezTerm, mintty, Kai Terminal) they appear inline. Elsewhere each one is a line you click to open it in your image viewer. A link to another site says which site it opens before you click.
+- **Send an image or file:** copy it and press **Ctrl+V**, or click **Attach**, or paste its path (Kai Terminal pastes copied files as paths). It shows above the message box; click its **x** (or press Backspace on an empty box) to remove it. Images go inline in the message; other files are uploaded to your OneDrive and shared as a link for people in your organization. Up to 4 items per message, 250 MB in total (a picture over 4 MB goes as a link instead of inline). Large files show their upload progress.
+- **Keys:** Enter sends, Ctrl+J starts a new line, Up and Down switch conversation while the box is empty, PageUp and PageDown (or the mouse wheel) scroll, Esc clears the attachments, then the text, then leaves. Ctrl+C also leaves.
+- **It keeps itself up to date.** The open conversation refreshes every few seconds (every 30 seconds while the window is not focused, and at once when you come back). The chat list refreshes every 20 seconds, with the most recent chats first and a **●** next to any chat or channel that has messages from others you have not seen. Channels and chats you have opened in this session are checked too, so their dot stays right. A new message in another conversation shows a notice, and rings the terminal bell when the window is not focused. Edits and deletions show up. The header shows the state: `synced 09:41`, `offline, retry 09:42:10` (it backs off and recovers by itself) or `sign-in expired` (leave and run `kai integration teams`).
+- **Older messages:** scroll to the top (PageUp or the mouse wheel), or click the line there, to load the page before.
+- **Sending:** your message appears at once marked `sending...` and the box is free for the next one. If Teams refuses it, the message goes away and your text and attachments come back. Each conversation keeps its own half-written message while you switch.
+- **It is for you, not your AI agents.** There is no command that lists, reads or posts without a person at the keyboard, the Teams sign-in is never given to an agent (not in its environment, its config or Kai's MCP server), and both Teams commands refuse to run inside an agent's session, whether Kai started the agent or not: a known agent CLI (Claude Code, Codex, Gemini, Copilot, OpenCode, Aider, Cline and others) among the processes that started the command, or the variable an agent sets on its commands, is enough.
+
+```bash
+kai teams                          # open the chat here (first time: kai integration teams)
+```
 
 ## Project graph
 

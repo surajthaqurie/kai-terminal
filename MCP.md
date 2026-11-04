@@ -65,7 +65,7 @@ Only one integration is active per project. A project that is not connected sees
 
 | Tool | Does |
 | :--- | :--- |
-| `kai_integration_status` | Which service and account this project uses, and which tools it offers |
+| `kai_integration_status` | Which service and account this project uses, which tools it offers, and whether write tools are on (`writeTools`) |
 | `kai_workflow_rules` | The project's merge branch (where to start new branches and which branch pull requests target; the repository's default when none is set) and, when one is set, the regular expression new branch names should match. Guidance only: nothing is validated or blocked |
 | `kai_work_item_search` | Search work items (`text`, `state`, `type`, `assignedTo` or read-only `wiql`), paged |
 | `kai_work_item_get` | One work item: description, acceptance criteria, relations, recent comments |
@@ -74,7 +74,27 @@ Only one integration is active per project. A project that is not connected sees
 | `kai_build_list` | Recent builds (`status`, `result`, `branch`), paged |
 | `kai_build_log` | A build's failed steps and log list; `logId` reads log text (last 150 lines, max 400) |
 
-These tools are read-only. Text from the service (work item bodies, comments, PR threads) is written by other people, so each response carries a notice marking it as untrusted data, and rich text is reduced to plain text. They follow the same response limits and paging as the code tools. A failure says what to run, for example `kai integration azure`, and a signed-out account is never replaced by another account.
+These tools only read. Text from the service (work item bodies, comments, PR threads) is written by other people, so each response carries a notice marking it as untrusted data, and rich text is reduced to plain text. They follow the same response limits and paging as the code tools. A failure says what to run, for example `kai integration azure`, and a signed-out account is never replaced by another account.
+
+#### Write tools (off by default)
+
+Four more tools change data in the service. They are **not listed and cannot run** until the person who owns the machine turns them on for one folder:
+
+```bash
+kai integration azure --allow-writes     # asks first; -y/--yes skips the question
+kai integration azure --no-writes        # read-only again
+```
+
+| Tool | Does |
+| :--- | :--- |
+| `kai_work_item_comment` | Adds a comment to a work item of this project (plain text, up to 8,000 characters) |
+| `kai_work_item_set_state` | Changes a work item's state (e.g. `Resolved`); refused if the item changed since Kai read it |
+| `kai_pr_create` | Opens a pull request between two branches that already exist (`sourceBranch`, `targetBranch` — default: the merge branch from `kai_workflow_rules`, else the repository default —, `title` up to 400 characters, `description` up to 4,000, `isDraft`). It never creates a branch |
+| `kai_pr_comment` | Comments on a pull request of this project: a new thread (optionally on a `filePath` and `line`) or a reply (`threadId`) |
+
+- **Only a person turns them on.** `--allow-writes` refuses to run inside an AI agent's session (process-tree and environment checks, the same ones `kai teams` uses), and no MCP tool can change the setting. Turning writes off always works. The setting is stored per folder in the private file under `~/.kai/projects/<id>/`, never in the repository, and it is dropped when the folder is connected to a different account or project.
+- **Checked on every call.** Each write tool's description starts with `WRITES to the remote service`, and the setting is re-read from disk on every call, so an agent that kept an old tool list cannot write after you turn writes off. Inputs are validated and length-capped before any request (an over-long text is refused, never cut), and a work item or pull request of another project fails closed with `not_found` before anything is sent.
+- **Your sign-in, your permissions.** Writes use the same sign-in as reads. Browser and Azure CLI sign-ins act with your own Azure DevOps permissions. A personal access token needs **Work Items (Read & write)** and **Code (Read & write)**; a read-only token still signs in and reads, and a refused write says which scopes are missing. Azure DevOps shows the change as made by you.
 
 ### Security and Isolation Guarantees
 

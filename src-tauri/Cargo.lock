@@ -1951,7 +1951,7 @@ dependencies = [
 
 [[package]]
 name = "kai"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "futures-util",
  "portable-pty",
@@ -1964,6 +1964,7 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "uuid",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

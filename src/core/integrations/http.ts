@@ -6,7 +6,7 @@ import { IntegrationError } from "./types";
  */
 export interface HttpRequest {
   url: string;
-  method?: "GET" | "POST";
+  method?: "GET" | "POST" | "PATCH";
   headers?: Record<string, string>;
   body?: unknown;
   accept?: string;

@@ -9,6 +9,7 @@ const svc = vi.hoisted(() => ({
   listProjects: vi.fn(),
   listRepos: vi.fn(),
   loginWithBrowser: vi.fn(),
+  loginWithToken: vi.fn(),
   verifyIntegration: vi.fn(),
   logoutIntegration: vi.fn(),
   bindIntegration: vi.fn(),
@@ -20,16 +21,22 @@ import { DEFAULT_RULES } from "../core/integrations/workflowRules";
 import { IntegrationsPanel } from "../components/IntegrationsPanel";
 import { AiCliPanel } from "../components/AiCliPanel";
 import {
+  accountMatchesRemote,
+  accountName,
   badgeFor,
+  checkServerAddress,
   deriveCardState,
   describeAccount,
   describeDetected,
+  explainSignInError,
   isSameSelection,
+  isServerAccount,
   needsRelogin,
   pickRepoForProject,
   pickSwitchProject,
   preferredAccountId,
   providerLabel,
+  validateServerForm,
 } from "../components/integrationsViewModel";
 
 const account = (over: Partial<IntegrationAccountView> = {}): IntegrationAccountView => ({
@@ -42,6 +49,15 @@ const account = (over: Partial<IntegrationAccountView> = {}): IntegrationAccount
   usedByThisProject: false,
   ...over,
 });
+
+const serverAccount = (over: Partial<IntegrationAccountView> = {}): IntegrationAccountView =>
+  account({
+    id: "azure-devops:tfs.corp.local/tfs/defaultcollection",
+    org: "DefaultCollection",
+    baseUrl: "https://tfs.corp.local/tfs/DefaultCollection",
+    authMethod: "pat",
+    ...over,
+  });
 
 const status = (over: Partial<IntegrationStatusView> = {}): IntegrationStatusView => ({
   provider: { id: "azure-devops", label: "Azure DevOps" },
@@ -63,6 +79,23 @@ const status = (over: Partial<IntegrationStatusView> = {}): IntegrationStatusVie
 });
 
 describe("integrations view model", () => {
+  it("explains a missing browser sign-in app with the terminal route, and leaves other errors alone", () => {
+    const missing = explainSignInError({
+      code: "config",
+      message: "Browser sign-in is not set up in this build of Kai.",
+      hint: "Set KAI_AZURE_CLIENT_ID.",
+    });
+    expect(missing.message).toContain("not set up");
+    expect(missing.hint).toContain("kai integration azure");
+    expect(missing.hint).toContain("KAI_AZURE_CLIENT_ID");
+    const other = {
+      code: "auth",
+      message: "Sign-in was cancelled.",
+      hint: "Connect again.",
+    } as const;
+    expect(explainSignInError(other)).toEqual(other);
+  });
+
   it("derives one card state from the project binding first, then accounts", () => {
     expect(deriveCardState(null)).toBe("not_connected");
     expect(deriveCardState(status())).toBe("not_connected");
@@ -121,6 +154,114 @@ describe("integrations view model", () => {
     expect(pickRepoForProject(repos, "other")).toBeNull();
     expect(pickRepoForProject(repos, null)).toBeNull();
     expect(pickRepoForProject([], "api")).toBeNull();
+  });
+
+  it("names Server accounts by collection and host, Services accounts by organization", () => {
+    expect(isServerAccount(account())).toBe(false);
+    expect(isServerAccount(account({ baseUrl: "https://contoso.visualstudio.com" }))).toBe(false);
+    expect(isServerAccount(serverAccount())).toBe(true);
+    expect(accountName(account())).toBe("contoso");
+    expect(accountName(serverAccount())).toBe("DefaultCollection @ tfs.corp.local");
+    expect(describeAccount(serverAccount({ user: "Suraj" }))).toBe(
+      "DefaultCollection @ tfs.corp.local · Access token · Suraj"
+    );
+  });
+
+  it("matches a remote to a Server account by host and collection, not by name alone", () => {
+    const remote = {
+      org: "DefaultCollection",
+      baseUrl: "https://tfs.corp.local/tfs/DefaultCollection",
+    };
+    expect(accountMatchesRemote(serverAccount(), remote)).toBe(true);
+    expect(
+      accountMatchesRemote(
+        serverAccount({ baseUrl: "https://tfs.corp.local/tfs/DefaultCollection/" }),
+        remote
+      )
+    ).toBe(true);
+    // Another server with the same collection name is a different account.
+    expect(
+      accountMatchesRemote(
+        serverAccount({ baseUrl: "https://other.local/DefaultCollection" }),
+        remote
+      )
+    ).toBe(false);
+    // A cloud organization never matches a Server remote of the same name.
+    expect(accountMatchesRemote(account({ org: "DefaultCollection" }), remote)).toBe(false);
+    // Services accounts still match by organization, as before.
+    expect(
+      accountMatchesRemote(account(), { org: "CONTOSO", baseUrl: "https://dev.azure.com/contoso" })
+    ).toBe(true);
+    expect(accountMatchesRemote(account(), null)).toBe(false);
+    const s = status({
+      accounts: [account(), serverAccount()],
+      project: { ...status().project, detected: { ...remote, project: "Web", repo: "site" } },
+    });
+    expect(preferredAccountId(s)).toBe(serverAccount().id);
+  });
+
+  it("checks a server address with the CLI's rules", () => {
+    expect(checkServerAddress("  https://tfs.corp.local/tfs/DefaultCollection/  ")).toEqual({
+      ok: true,
+      baseUrl: "https://tfs.corp.local/tfs/DefaultCollection",
+    });
+    expect(checkServerAddress("http://tfs:8080/tfs/DefaultCollection?x=1#y")).toEqual({
+      ok: true,
+      baseUrl: "http://tfs:8080/tfs/DefaultCollection",
+    });
+    // A pasted clone address is reduced to its collection and offers its project.
+    expect(
+      checkServerAddress("https://tfs.corp.local/tfs/DefaultCollection/Payments/_git/api")
+    ).toEqual({
+      ok: true,
+      baseUrl: "https://tfs.corp.local/tfs/DefaultCollection",
+      project: "Payments",
+    });
+    const bad = (raw: string) => {
+      const r = checkServerAddress(raw);
+      expect(r.ok).toBe(false);
+      return r.ok ? "" : r.message;
+    };
+    expect(bad("")).toContain("Enter the server address");
+    expect(bad("tfs.corp.local/collection")).toContain("not a valid address");
+    expect(bad("ftp://tfs.corp.local/c")).toContain("https://");
+    expect(bad("file:///etc/passwd")).toContain("https://");
+    expect(bad("https://me:secret@tfs.corp.local/c")).toContain("user name and password");
+    expect(bad("https://tfs.corp.local")).toContain("collection");
+    expect(bad("https://tfs.corp.local/")).toContain("collection");
+    expect(bad("https://tfs.corp.local/_git/api")).toContain("without /_git/");
+    expect(bad("https://dev.azure.com/contoso")).toContain("Azure DevOps Services");
+    expect(bad("https://contoso.visualstudio.com/DefaultCollection")).toContain(
+      "Azure DevOps Services"
+    );
+  });
+
+  it("validates the whole Server form and reports every problem at once", () => {
+    const ok = validateServerForm({
+      url: "https://tfs.corp.local/tfs/Col",
+      project: " Payments ",
+      token: " tok123 ",
+    });
+    expect(ok).toEqual({
+      ok: true,
+      value: { baseUrl: "https://tfs.corp.local/tfs/Col", project: "Payments", token: "tok123" },
+    });
+    // Project is optional; a clone address supplies it.
+    expect(validateServerForm({ url: "https://h/c", project: "", token: "t" })).toEqual({
+      ok: true,
+      value: { baseUrl: "https://h/c", project: null, token: "t" },
+    });
+    expect(
+      validateServerForm({ url: "https://h/c/Web/_git/site", project: "", token: "t" })
+    ).toMatchObject({ ok: true, value: { project: "Web" } });
+
+    const all = validateServerForm({ url: "nope", project: "a/b", token: "has space" });
+    expect(all.ok).toBe(false);
+    if (!all.ok) expect(Object.keys(all.errors).sort()).toEqual(["project", "token", "url"]);
+    const empty = validateServerForm({ url: "https://h/c", project: "", token: "  " });
+    expect(!empty.ok && empty.errors).toEqual({ token: "Enter an access token." });
+    const long = validateServerForm({ url: "https://h/c", project: "", token: "x".repeat(4097) });
+    expect(!long.ok && long.errors.token).toContain("too long");
   });
 
   it("recognizes a selection that would not change the binding", () => {
@@ -302,6 +443,25 @@ describe("IntegrationsPanel", () => {
     expect(container.textContent).toContain("Active for this project (Payments).");
   });
 
+  it("says what to do when this build has no browser sign-in app, instead of a dead end", async () => {
+    svc.getIntegrationStatus.mockResolvedValue({ ok: true, value: status() });
+    svc.loginWithBrowser.mockResolvedValue({
+      ok: false,
+      error: {
+        code: "config",
+        message: "Browser sign-in is not set up in this build of Kai.",
+        hint: "Register the Kai app in Microsoft Entra and set KAI_AZURE_CLIENT_ID.",
+      },
+    });
+    await render();
+    await click(button("Connect Azure DevOps"));
+    await flush();
+    const text = container.textContent ?? "";
+    expect(text).toContain("Browser sign-in is not set up in this build of Kai.");
+    expect(text).toContain('run "kai integration azure" in a terminal');
+    expect(text).toContain("Azure CLI or an access token");
+  });
+
   it("keeps the sign-in and asks before replacing another integration", async () => {
     svc.getIntegrationStatus
       .mockResolvedValueOnce({ ok: true, value: status() })
@@ -398,11 +558,219 @@ describe("IntegrationsPanel", () => {
     expect(container.textContent).toContain("contoso is now active for this project");
   });
 
-  it("offers no server URL field", async () => {
+  it("keeps the Server form closed until asked, and closes it again on Cancel", async () => {
     svc.getIntegrationStatus.mockResolvedValue({ ok: true, value: status() });
     await render();
     expect(container.textContent).not.toContain("Server URL");
     expect(q("#azure-devops-url")).toBeNull();
+    await click(button("Azure DevOps Server…"));
+    expect(q("form[aria-label='Azure DevOps Server']")).toBeTruthy();
+    expect(q("#azure-devops-url")).toBeTruthy();
+    expect(q("#azure-devops-server-project")).toBeTruthy();
+    // The token is a hidden field, and the form says why a token is needed.
+    expect(q<HTMLInputElement>("#azure-devops-token")?.type).toBe("password");
+    expect(container.textContent).toContain("signs in with an access token");
+    expect(button("Azure DevOps Server…")).toBeUndefined();
+    await click(button("Cancel"));
+    expect(q("form")).toBeNull();
+    expect(button("Azure DevOps Server…")).toBeTruthy();
+  });
+
+  /** Types into a controlled input the way a user would. */
+  const type = async (sel: string, value: string) => {
+    const el = q<HTMLInputElement>(sel);
+    expect(el).toBeTruthy();
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      setter.call(el, value);
+      el!.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  };
+  const submit = async () =>
+    act(async () => {
+      q("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+  const fillServer = async (project?: string) => {
+    await click(button("Azure DevOps Server…"));
+    await type("#azure-devops-url", "https://tfs.corp.local/tfs/DefaultCollection/");
+    if (project) await type("#azure-devops-server-project", project);
+    await type("#azure-devops-token", "s3cret-token");
+    await submit();
+    await flush();
+  };
+
+  it("explains a bad server address and an empty token without contacting the server", async () => {
+    svc.getIntegrationStatus.mockResolvedValue({ ok: true, value: status() });
+    await render();
+    await click(button("Azure DevOps Server…"));
+    await type("#azure-devops-url", "https://tfs.corp.local");
+    await submit();
+    expect(svc.loginWithToken).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("Add the collection to the address");
+    expect(container.textContent).toContain("Enter an access token.");
+    expect(q("#azure-devops-url")?.getAttribute("aria-invalid")).toBe("true");
+    expect(q("#azure-devops-token")?.getAttribute("aria-invalid")).toBe("true");
+  });
+
+  it("signs in to a Server with a token and activates the project typed in the form", async () => {
+    const srv = serverAccount();
+    svc.getIntegrationStatus
+      .mockResolvedValueOnce({ ok: true, value: status() })
+      .mockResolvedValue({ ok: true, value: status({ accounts: [srv] }) });
+    svc.loginWithToken.mockResolvedValue({
+      ok: true,
+      value: { account: srv, user: { name: "Suraj", email: "s@corp.local" } },
+    });
+    svc.bindIntegration.mockResolvedValue({
+      ok: true,
+      value: { account: srv.id, project: "Payments", repo: null },
+    });
+    await render();
+    await fillServer("Payments");
+
+    // The normalized address and the token go to the sign-in; the project to the bind.
+    expect(svc.loginWithToken).toHaveBeenCalledWith({
+      baseUrl: "https://tfs.corp.local/tfs/DefaultCollection",
+      token: "s3cret-token",
+    });
+    expect(svc.loginWithBrowser).not.toHaveBeenCalled();
+    expect(svc.bindIntegration).toHaveBeenCalledWith({
+      projectDir: "/repo",
+      account: srv.id,
+      project: "Payments",
+    });
+    expect(container.textContent).toContain(
+      "Connected to DefaultCollection @ tfs.corp.local as s@corp.local. Active for this project (Payments)."
+    );
+    // The form is gone and no copy of the token stays in the page.
+    expect(q("form")).toBeNull();
+    expect(container.innerHTML).not.toContain("s3cret-token");
+    // The account is listed like any other, with Sign out.
+    expect(container.textContent).toContain("DefaultCollection @ tfs.corp.local · Access token");
+    expect(q("button[aria-label='Sign out DefaultCollection @ tfs.corp.local']")).toBeTruthy();
+  });
+
+  it("opens the project picker after a Server sign-in when no project is typed and the remote is elsewhere", async () => {
+    const srv = serverAccount();
+    svc.getIntegrationStatus
+      .mockResolvedValueOnce({ ok: true, value: status() })
+      .mockResolvedValue({ ok: true, value: status({ accounts: [srv] }) });
+    svc.loginWithToken.mockResolvedValue({
+      ok: true,
+      value: { account: srv, user: { name: "S" } },
+    });
+    svc.listProjects.mockResolvedValue({ ok: true, value: [{ name: "Payments" }] });
+    svc.listRepos.mockResolvedValue({ ok: true, value: [] });
+    await render();
+    await fillServer();
+    expect(svc.bindIntegration).not.toHaveBeenCalled();
+    expect(svc.listProjects).toHaveBeenCalledWith(srv.id);
+    expect(q("[aria-label='Switch project']")?.textContent).toContain(
+      "Account: DefaultCollection @ tfs.corp.local"
+    );
+  });
+
+  it("uses the folder's own Server remote when no project is typed", async () => {
+    const srv = serverAccount();
+    const onServer = status({
+      project: {
+        ...status().project,
+        detected: {
+          org: "DefaultCollection",
+          project: "Web",
+          repo: "site",
+          baseUrl: "https://tfs.corp.local/tfs/DefaultCollection",
+        },
+      },
+    });
+    svc.getIntegrationStatus
+      .mockResolvedValueOnce({ ok: true, value: onServer })
+      .mockResolvedValue({ ok: true, value: { ...onServer, accounts: [srv] } });
+    svc.loginWithToken.mockResolvedValue({
+      ok: true,
+      value: { account: srv, user: { name: "S" } },
+    });
+    svc.bindIntegration.mockResolvedValue({
+      ok: true,
+      value: { account: srv.id, project: "Web", repo: "site" },
+    });
+    await render();
+    await fillServer();
+    expect(svc.bindIntegration).toHaveBeenCalledWith({ projectDir: "/repo", account: srv.id });
+    expect(svc.listProjects).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("Active for this project (Web / site).");
+  });
+
+  it("shows the server's rejection, keeps the form open and saves nothing", async () => {
+    svc.getIntegrationStatus.mockResolvedValue({ ok: true, value: status() });
+    svc.loginWithToken.mockResolvedValue({
+      ok: false,
+      error: { code: "auth", message: "The server rejected the token.", hint: "Create a new one." },
+    });
+    await render();
+    await fillServer();
+    expect(q("[role=alert]")?.textContent).toContain("The server rejected the token.");
+    expect(q("[role=alert]")?.textContent).toContain("Create a new one.");
+    expect(q("form")).toBeTruthy();
+    expect(svc.bindIntegration).not.toHaveBeenCalled();
+    expect(button("Connect Server")?.disabled).toBe(false);
+  });
+
+  it("re-sends the typed project with Replace when another integration is active", async () => {
+    const srv = serverAccount();
+    svc.getIntegrationStatus
+      .mockResolvedValueOnce({ ok: true, value: status() })
+      .mockResolvedValue({
+        ok: true,
+        value: status({ accounts: [srv], project: { ...status().project, otherProvider: "jira" } }),
+      });
+    svc.loginWithToken.mockResolvedValue({
+      ok: true,
+      value: { account: srv, user: { name: "S" } },
+    });
+    svc.bindIntegration
+      .mockResolvedValueOnce({
+        ok: false,
+        error: { code: "needs_confirmation", message: "Replace jira?" },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        value: { account: srv.id, project: "Payments", repo: null },
+      });
+    await render();
+    await fillServer("Payments");
+    expect(container.textContent).toContain("Replace jira in this project?");
+    await click(button("Replace"));
+    expect(svc.bindIntegration).toHaveBeenLastCalledWith({
+      projectDir: "/repo",
+      account: srv.id,
+      project: "Payments",
+      replace: true,
+    });
+  });
+
+  it("offers to enter a new token for a Server account whose token is gone", async () => {
+    const srv = serverAccount({ hasCredential: false });
+    svc.getIntegrationStatus.mockResolvedValue({ ok: true, value: status({ accounts: [srv] }) });
+    await render();
+    expect(container.textContent).toContain("token missing, connect again");
+    expect(q("button[aria-label^='Make ']")).toBeNull();
+    await click(q("button[aria-label='Enter a new token for DefaultCollection @ tfs.corp.local']"));
+    expect(q<HTMLInputElement>("#azure-devops-url")?.value).toBe(
+      "https://tfs.corp.local/tfs/DefaultCollection"
+    );
+  });
+
+  it("signs a Server account out like any other", async () => {
+    const srv = serverAccount();
+    svc.getIntegrationStatus
+      .mockResolvedValueOnce({ ok: true, value: status({ accounts: [srv] }) })
+      .mockResolvedValue({ ok: true, value: status() });
+    svc.logoutIntegration.mockResolvedValue({ ok: true, value: true });
+    await render();
+    await click(button("Sign out"));
+    await click(container.querySelector('[aria-label="Confirm sign out"] button'));
+    expect(svc.logoutIntegration).toHaveBeenCalledWith(srv.id);
   });
 
   it("shows the CLI's error message and hint in an alert", async () => {

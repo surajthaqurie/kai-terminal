@@ -15,6 +15,7 @@ import { runGraph } from "./commands/graph";
 import { runList } from "./commands/list";
 import { runMcp } from "./commands/mcp";
 import { runIntegration } from "./commands/integration";
+import { runTeams } from "./commands/teams";
 import { runProvider } from "./commands/provider";
 import { runRemove } from "./commands/remove";
 import { findProvider } from "../core/integrations/providerCatalog";
@@ -79,6 +80,7 @@ const EXTERNAL_COMMANDS = new Set([
   "session",
   "integration",
   "integrations",
+  "teams",
   "help",
   "--help",
   "-h",
@@ -189,6 +191,8 @@ async function dispatch(command: string, args: string[]): Promise<number> {
 
   // Integrations: `kai integration …`, then `kai azure …` (provider ids and aliases come from the catalog).
   if (command === "integration" || command === "integrations") return runIntegration(args);
+  // Microsoft Teams chat: `kai teams [--new-tab|--here|list|send|remove]`.
+  if (command === "teams") return runTeams(args);
   if (findProvider(command)) return runProvider(args);
 
   // Internal command: AI agent execution (kai <agent> [path])

@@ -1248,6 +1248,83 @@ pub fn open_external_url(url: &str) -> Result<(), TerminalError> {
     }
 }
 
+/// Validation for a link the user Ctrl+clicks in the terminal output.
+///
+/// Unlike [`validate_external_url`] this accepts any http(s) site, because the
+/// text comes from whatever a program printed. It stays safe by being strict
+/// about shape: only `http`/`https`, a real host, no user info (`user@host`
+/// is a classic disguise), and none of whitespace, control characters or
+/// `" < > ^ \` ` backslash`. The opener below also never goes through a shell.
+pub fn validate_terminal_link(url: &str) -> Result<(), TerminalError> {
+    let refuse = |why: &str| {
+        Err(TerminalError::IoError(format!(
+            "Refusing to open this link: {why}."
+        )))
+    };
+    if url.is_empty() || url.len() > 2048 {
+        return refuse("it is empty or too long");
+    }
+    if url
+        .chars()
+        .any(|c| c.is_whitespace() || c.is_control() || "\"<>^`\\".contains(c))
+    {
+        return refuse("it contains characters that are not allowed in a link");
+    }
+    let lower = url.to_ascii_lowercase();
+    let rest = if lower.starts_with("https://") {
+        &url["https://".len()..]
+    } else if lower.starts_with("http://") {
+        &url["http://".len()..]
+    } else {
+        return refuse("only http and https links can be opened");
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    if authority.is_empty() || authority.contains('@') {
+        return refuse("it has no host, or it hides the host behind a user name");
+    }
+    if !authority.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '[') {
+        return refuse("the host is not valid");
+    }
+    Ok(())
+}
+
+/// Open a link from terminal output in the OS default browser.
+///
+/// Windows goes through `rundll32 url.dll,FileProtocolHandler`, NOT `cmd /c
+/// start`: `cmd` would treat the `&` found in nearly every query string as a
+/// command separator. No shell is involved on any OS.
+pub fn open_terminal_link(url: &str) -> Result<(), TerminalError> {
+    validate_terminal_link(url)?;
+    #[cfg(target_os = "windows")]
+    {
+        let mut c = std::process::Command::new("rundll32");
+        c.args(["url.dll,FileProtocolHandler", url]);
+        scrub_chromium_env(&mut c);
+        hide_console(&mut c);
+        c.spawn()
+            .map_err(|e| TerminalError::IoError(format!("Failed to open link: {e}")))?;
+        Ok(())
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(url)
+            .spawn()
+            .map_err(|e| TerminalError::IoError(format!("Failed to open link: {e}")))?;
+        Ok(())
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        let mut c = std::process::Command::new("xdg-open");
+        c.arg(url);
+        scrub_chromium_env(&mut c);
+        c.spawn().map_err(|e| {
+            TerminalError::IoError(format!("Failed to open link (is xdg-open installed?): {e}"))
+        })?;
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct YouTubeVideoItem {
     pub video_id: String,
@@ -2058,6 +2135,48 @@ mod tests {
             assert!(
                 c.get_envs().any(|(k, v)| k == *key && v.is_none()),
                 "{key} must be explicitly removed from the child"
+            );
+        }
+    }
+
+    #[test]
+    fn test_validate_terminal_link_accepts_ordinary_web_links() {
+        for ok in [
+            "https://example.com",
+            "http://localhost:3000/",
+            "https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=abc&response_type=code&scope=a%20b",
+            "HTTPS://Example.com/Path#frag",
+            "https://[::1]:8080/x",
+            "https://example.com/a(b)_c~d,e;f=g",
+        ] {
+            assert!(validate_terminal_link(ok).is_ok(), "should allow {ok}");
+        }
+    }
+
+    #[test]
+    fn test_validate_terminal_link_refuses_unsafe_or_odd_links() {
+        let too_long = format!("https://example.com/{}", "a".repeat(2100));
+        for bad in [
+            "",
+            "ftp://example.com/x",
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "https://",
+            "https:///path",
+            "https://user@evil.example/",
+            "https://example.com/ x",
+            "https://example.com/\"x",
+            "https://example.com/<x>",
+            "https://example.com/a^b",
+            "https://example.com/a`b",
+            "https://example.com\\evil",
+            "https://example.com/\nx",
+            "https://-bad.example/",
+            too_long.as_str(),
+        ] {
+            assert!(
+                validate_terminal_link(bad).is_err(),
+                "should refuse {bad:?}"
             );
         }
     }

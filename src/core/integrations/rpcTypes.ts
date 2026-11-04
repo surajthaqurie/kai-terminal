@@ -33,6 +33,11 @@ export interface IntegrationBindingView {
   boundAt: string;
   /** The workflow rules in force: the user's changes on top of the defaults. */
   rules: WorkflowRules;
+  /**
+   * True when the user let agents change data in the service for this project
+   * (comment, create a pull request, change a state). Off unless turned on.
+   */
+  writeTools?: boolean;
 }
 
 export interface DetectedCoordinates {
@@ -40,6 +45,12 @@ export interface DetectedCoordinates {
   project: string;
   repo: string | null;
   baseUrl: string;
+  /**
+   * True when `baseUrl` is only a guess derived from an SSH remote of a self-hosted
+   * server (SSH and web addresses can differ in port and virtual directory). Ask
+   * the person to confirm it before signing in to it; never send a credential to it unasked.
+   */
+  needsConfirmation?: true;
 }
 
 export type ProjectIntegrationState =
@@ -131,7 +142,12 @@ export type IntegrationRpcRequest =
    * default, so `rules: {}` resets everything. Invalid values, and a merge
    * branch the repository does not have, are rejected.
    */
-  | { op: "set_rules"; projectDir: string; rules: Partial<WorkflowRules> };
+  | { op: "set_rules"; projectDir: string; rules: Partial<WorkflowRules> }
+  /**
+   * Turn the project's agent WRITE tools on or off. Off by default. Turning them on is
+   * refused when an AI agent's session is running the command: only a person decides.
+   */
+  | { op: "set_write_tools"; projectDir: string; enabled: boolean };
 
 export interface IntegrationUser {
   name: string;

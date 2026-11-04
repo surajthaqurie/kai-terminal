@@ -827,9 +827,17 @@ body.tab-dragging * {
     color var(--transition-fast);
 }
 
-.window-control-btn:hover {
+.window-control-btn:hover,
+.window-control-btn.is-native-hover,
+.window-control-btn.is-native-pressed {
   background-color: var(--bg-surface-elevated);
   color: var(--text-primary);
+}
+
+/* Windows 11 snap layouts: the pointer is owned by Windows over the maximize
+   button, so :hover never matches there; the app reports hover / pressed. */
+.window-control-btn.is-native-pressed {
+  filter: brightness(0.9);
 }
 
 .window-control-close:hover {

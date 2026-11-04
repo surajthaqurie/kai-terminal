@@ -30,6 +30,7 @@ import {
   type SecretLocation,
   type SecretStore,
 } from "./secretStore";
+import { assertNotAgentSessionFor } from "../teams/guard";
 import { compactRules, effectiveRules, RulesError, type WorkflowRules } from "./workflowRules";
 import {
   asIntegrationError,
@@ -42,6 +43,7 @@ import {
   type ProjectInfo,
   type ProviderContext,
   type RepoInfo,
+  supportsWrites,
 } from "./types";
 
 /**
@@ -53,6 +55,11 @@ export interface ServiceDeps {
   secrets?: SecretStore;
   /** Remote URLs of the repository at `dir`; defaults to `git remote -v`. */
   remotes?: (dir: string) => string[];
+  /**
+   * Throws when an AI agent is running this command. Checked before write tools are turned on;
+   * defaults to the process-tree and environment check. Test seam.
+   */
+  agentGuard?: () => Promise<void>;
 }
 
 function secretsOf(deps: ServiceDeps): SecretStore {
@@ -146,8 +153,8 @@ export function loginCommandFor(
 }
 
 function bindingView(b: ProjectBinding): IntegrationBindingView {
-  const { rules, ...rest } = b;
-  return { ...rest, rules: effectiveRules(rules) };
+  const { rules, writeTools, ...rest } = b;
+  return { ...rest, rules: effectiveRules(rules), writeTools: writeTools === true };
 }
 
 async function accountView(
@@ -624,6 +631,13 @@ export function bind(
     boundAt: new Date().toISOString(),
     // Switching project or account is not a reason to lose the team's merge branch.
     ...(existing?.binding.rules ? { rules: existing.binding.rules } : {}),
+    // Permission to write belongs to one account and project: another one starts with it off.
+    ...(existing?.binding.writeTools &&
+    existing.binding.provider === providerId &&
+    existing.binding.account === account.id &&
+    existing.binding.project.toLowerCase() === project.toLowerCase()
+      ? { writeTools: true }
+      : {}),
   };
   // Replace across roots too: the nearest existing binding is this project's one binding.
   if (existing && existing.root !== root) removeBinding(existing.root);
@@ -695,6 +709,48 @@ export async function setRules(
   }
   const { rules: _previous, ...rest } = found.binding;
   const binding: ProjectBinding = Object.keys(rules).length > 0 ? { ...rest, rules } : rest;
+  writeBinding(found.root, binding);
+  return binding;
+}
+
+/** Refuses when an AI agent is running the command: only a person decides what agents may write. */
+async function assertPersonSession(deps: ServiceDeps): Promise<void> {
+  if (deps.agentGuard) return deps.agentGuard();
+  return assertNotAgentSessionFor({
+    what: "Turning on write tools",
+    hint: "Only you can let agents change data. Open a normal terminal tab and run `kai integration azure --allow-writes` yourself, or use the Integrations tab.",
+  });
+}
+
+/**
+ * Turn this folder's agent WRITE tools on or off (comment, create a pull request, change a
+ * state). Off by default; stored only when on, in the project's private binding file, never
+ * in the repository. Turning them on is refused inside an AI agent's session. Turning them
+ * off always works.
+ */
+export async function setWriteTools(
+  providerId: string,
+  projectDir: string,
+  enabled: boolean,
+  deps: ServiceDeps = {}
+): Promise<ProjectBinding> {
+  const found = findBinding(projectDir);
+  if (!found || found.binding.provider !== providerId) {
+    throw new IntegrationError(
+      "no_account",
+      "This project is not connected yet.",
+      "Connect it first, then choose whether agents may write."
+    );
+  }
+  if (enabled) {
+    const provider = providerFor(providerId);
+    if (!supportsWrites(provider)) {
+      throw new IntegrationError("bad_request", `${provider.info.label} has no write tools.`);
+    }
+    await assertPersonSession(deps);
+  }
+  const { writeTools: _previous, ...rest } = found.binding;
+  const binding: ProjectBinding = enabled ? { ...rest, writeTools: true } : rest;
   writeBinding(found.root, binding);
   return binding;
 }
@@ -837,6 +893,16 @@ export async function handleRpc(
       return {
         ok: true,
         binding: bindingView(await setRules(providerId, request.projectDir, request.rules, deps)),
+      };
+    case "set_write_tools":
+      if (typeof request.enabled !== "boolean") {
+        throw new IntegrationError("bad_request", "enabled must be true or false.");
+      }
+      return {
+        ok: true,
+        binding: bindingView(
+          await setWriteTools(providerId, request.projectDir, request.enabled, deps)
+        ),
       };
     default:
       throw new IntegrationError("bad_request", "Unknown operation.");

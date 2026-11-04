@@ -25,6 +25,7 @@ import {
   resetTerminalModesAfterAgent,
 } from "../core/codeModeWorkflow";
 import { installCommitMsgHook } from "../core/githooks";
+import { agentEnv } from "../core/teams/guard";
 import { announceCodeMode, clearActiveProjectState, saveActiveProjectState } from "./activeProject";
 import type { AgentDefinition } from "../core/agents";
 
@@ -234,6 +235,9 @@ export async function executeAgentWorkflow(
       async () => {
         const target = resolveSpawnTarget(binaryToRun!, finalArgs);
         const result = await runExternalAgentCommand(target.command, target.args, {
+          // Marks the agent's session, so `kai teams` and `kai integration teams`
+          // refuse to run inside it: your Teams sign-in is not the agent's.
+          env: agentEnv(),
           cwd: meta.canonicalPath,
           timeoutMs: opts.timeoutMs,
           signal: controller.signal,

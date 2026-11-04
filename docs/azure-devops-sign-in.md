@@ -34,8 +34,11 @@ It is a public client, so it has no secret and nothing sensitive ships in the ap
 - A developer machine or CI can override it with the `KAI_AZURE_CLIENT_ID`
   environment variable, which also lets you test a registration before shipping it.
 
-Without a client ID, **Connect** fails with *"Browser sign-in is not set up in this
-build of Kai"* and opens nothing.
+Without a client ID, **Connect** in the desktop app stops with *"Browser sign-in is not set up
+in this build of Kai"* and opens nothing; it also tells the user to run
+`kai integration azure` in a terminal. That command notices there is no client ID, says so, and
+signs in with the Azure CLI or an access token instead, so nobody is left without a way in
+while the registration is pending.
 
 ## How it works
 
@@ -50,11 +53,18 @@ build of Kai"* and opens nothing.
   and stores the rotated refresh token. If the refresh is refused (password change,
   revoked access, 90 days unused), the user is asked to connect again.
 
+## Permissions for write tools
+
+Kai's agent tools only read until you run `kai integration azure --allow-writes` for a folder. Writing needs no extra sign-in step and no extra scope on the browser sign-in: it asks for `user_impersonation`, the same delegated permission reads use, so what an agent can change is limited by what *you* can change in Azure DevOps. The same is true of the Azure CLI. Only an **access token (PAT)** carries its own scopes: for write tools it needs **Work Items (Read & write)** and **Code (Read & write)** (a read-only token keeps working for reads, and a refused write names the missing scopes).
+
 ## Not handled by browser sign-in
 
-- **Azure DevOps Server** (on-premises) cannot use Entra sign-in. Use the
-  command-line fallback: `kai integration azure --server-url <url> --pat-stdin`.
+- **Azure DevOps Server** (on-premises) cannot use Entra sign-in. In the desktop
+  app, use **Azure DevOps Server…** on the card (server URL with the collection,
+  optional project, access token). From a terminal:
+  `kai integration azure --server-url <url> --pat-stdin`.
 - **Scripts and CI** can keep using `--pat-stdin` (an access token on stdin) or
-  `--az` (the Azure CLI's sign-in). The desktop app does not offer either.
+  `--az` (the Azure CLI's sign-in). The desktop app offers neither for Azure
+  DevOps Services; its Server form takes an access token.
 - An organization that is backed by a **different Entra tenant** than the one the
   user signed in with can reject the token. Sign in with the account from that tenant.

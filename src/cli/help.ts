@@ -81,6 +81,12 @@ Manage & Integrate:
   integration azure       Set up Azure DevOps for this folder: sign in, connect,
                           wire your agents, verify (organization, project and
                           repository come from the git remote)
+  integration azure --merge-branch <name> | --branch-pattern <regex> | --allow-writes
+                          Settings of a connected folder: the merge branch and branch
+                          naming guidance for agents (--clear-… removes them), and
+                          opt-in write tools (--allow-writes / --no-writes)
+  integration teams       Sign in to Microsoft Teams (once, in your browser)
+  teams                   Chat in Microsoft Teams, right here in this tab
   azure <list|active|remove>
                           Azure DevOps: list projects, switch this folder's active
                           project (--name), or disconnect it
@@ -109,9 +115,12 @@ Examples:
   kai mcp claude
   kai mcp list
   kai integration azure
+  kai integration azure --merge-branch main --branch-pattern "^feature/[0-9]+$"
   kai azure list
   kai azure active --name <project>
   kai azure remove
+  kai integration teams
+  kai teams
   kai remove --name <account-id>
   kai remove -m claude
   kai list -a

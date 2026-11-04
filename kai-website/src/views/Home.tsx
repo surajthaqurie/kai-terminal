@@ -1,5 +1,6 @@
 import { Hero } from '../sections/Hero';
 import { Workflow } from '../sections/Workflow';
+import { Screens } from '../sections/Screens';
 import { Features } from '../sections/Features';
 import { AiCli } from '../sections/AiCli';
 import { Compare } from '../sections/Compare';
@@ -14,6 +15,7 @@ export function HomePage({ rel }: { rel: SerializableRelease }) {
     <>
       <Hero tag={rel.tag} short={rel.short} version={rel.tag} rel={rel} />
       <Workflow />
+      <Screens />
       <Features />
       <AiCli />
       <Compare />

@@ -11,7 +11,7 @@ import {
   type Page,
   type ProviderContext,
 } from "./types";
-import { effectiveRules } from "./workflowRules";
+import { effectiveRules, isValidBranchName, normalizeBranch } from "./workflowRules";
 import type { ToolOutcome } from "../mcpTools";
 import { clipChars, parsePageArgs, type Shrinkable } from "../mcpResponse";
 
@@ -27,7 +27,19 @@ interface ToolDef {
   description: string;
   capability: Capability | "status";
   inputSchema: Record<string, unknown>;
+  /**
+   * Changes data in the remote service. Listed and runnable only for a project whose
+   * user turned write tools on, and only when the provider implements it.
+   */
+  write?: true;
 }
+
+/** Longest comment a write tool accepts. Over it is refused, never silently cut. */
+const WRITE_TEXT_MAX = 8000;
+const PR_TITLE_MAX = 400;
+const PR_DESCRIPTION_MAX = 4000;
+const STATE_MAX = 60;
+const FILE_PATH_MAX = 400;
 
 const PAGE_PROPS = {
   limit: { type: "number", description: "Page size (default 20, max 50)." },
@@ -128,9 +140,101 @@ const TOOL_DEFS: ToolDef[] = [
       required: ["id"],
     },
   },
+  // ---- Write tools: off unless the user ran `kai integration azure --allow-writes` ----
+  {
+    name: "kai_work_item_comment",
+    description:
+      "WRITES to the remote service: adds a comment to a work item in this project. Only post what the user asked for.",
+    capability: "work-items",
+    write: true,
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "number", description: "Work item id." },
+        text: { type: "string", description: `Plain text, up to ${WRITE_TEXT_MAX} characters.` },
+      },
+      required: ["id", "text"],
+    },
+  },
+  {
+    name: "kai_work_item_set_state",
+    description:
+      "WRITES to the remote service: changes a work item's state (e.g. Active, Resolved). Only when the user asked.",
+    capability: "work-items",
+    write: true,
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "number", description: "Work item id." },
+        state: { type: "string", description: "The new state, exactly as the project spells it." },
+      },
+      required: ["id", "state"],
+    },
+  },
+  {
+    name: "kai_pr_create",
+    description:
+      "WRITES to the remote service: opens a pull request between two branches that already exist and are pushed. Never creates a branch. targetBranch defaults to the project's merge branch.",
+    capability: "pull-requests",
+    write: true,
+    inputSchema: {
+      type: "object",
+      properties: {
+        sourceBranch: { type: "string", description: "Branch with the changes." },
+        targetBranch: {
+          type: "string",
+          description: "Branch to merge into (default: merge branch).",
+        },
+        title: { type: "string", description: `Up to ${PR_TITLE_MAX} characters.` },
+        description: { type: "string", description: `Up to ${PR_DESCRIPTION_MAX} characters.` },
+        isDraft: { type: "boolean", description: "Open as a draft." },
+      },
+      required: ["sourceBranch", "title"],
+    },
+  },
+  {
+    name: "kai_pr_comment",
+    description:
+      "WRITES to the remote service: comments on a pull request in this project, as a new thread (optionally on a file line) or a reply to threadId.",
+    capability: "pull-requests",
+    write: true,
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "number", description: "Pull request id." },
+        text: { type: "string", description: `Markdown, up to ${WRITE_TEXT_MAX} characters.` },
+        threadId: { type: "number", description: "Reply to this thread." },
+        filePath: { type: "string", description: "New thread on this file (needs line)." },
+        line: { type: "number", description: "Line of filePath (needs filePath)." },
+      },
+      required: ["id", "text"],
+    },
+  },
 ];
 
 const TOOL_NAMES = new Set(TOOL_DEFS.map((t) => t.name));
+const WRITE_TOOL_NAMES = new Set(TOOL_DEFS.filter((t) => t.write).map((t) => t.name));
+
+/** True for a tool that changes data in the remote service. */
+export function isWriteTool(name: string): boolean {
+  return WRITE_TOOL_NAMES.has(name);
+}
+
+/** Whether `provider` implements the method behind a write tool. */
+function providerCanWrite(provider: IntegrationProvider, name: string): boolean {
+  switch (name) {
+    case "kai_work_item_comment":
+      return Boolean(provider.workItems?.addComment);
+    case "kai_work_item_set_state":
+      return Boolean(provider.workItems?.setState);
+    case "kai_pr_create":
+      return Boolean(provider.pullRequests?.create);
+    case "kai_pr_comment":
+      return Boolean(provider.pullRequests?.addComment);
+    default:
+      return false;
+  }
+}
 
 export function isIntegrationTool(name: string): boolean {
   return TOOL_NAMES.has(name);
@@ -139,23 +243,47 @@ export function isIntegrationTool(name: string): boolean {
 /** Tool definitions for the project's active provider; empty when nothing is bound. */
 export function integrationToolDefs(projectDir: string): Array<Omit<ToolDef, "capability">> {
   let provider: IntegrationProvider | null = null;
+  let writesAllowed = false;
   try {
     const found = findBinding(projectDir);
     provider = found ? getProvider(found.binding.provider) : null;
+    writesAllowed = found?.binding.writeTools === true;
   } catch {
     return []; // an unreadable binding must never break the code-map tools
   }
   if (!provider) return [];
   const caps = capabilitiesOf(provider);
-  return TOOL_DEFS.filter((t) => t.capability === "status" || caps.has(t.capability)).map(
-    ({ capability: _capability, ...def }) => def
-  );
+  const bound = provider;
+  return TOOL_DEFS.filter((t) => {
+    if (t.write) return writesAllowed && providerCanWrite(bound, t.name);
+    return t.capability === "status" || caps.has(t.capability);
+  }).map(({ capability: _capability, write: _write, ...def }) => def);
 }
 
 const failArgs = (message: string): ToolOutcome => ({ kind: "error", code: -32602, message });
 
 function text(v: unknown, max = 200): string | undefined {
   return typeof v === "string" && v.trim() ? clipChars(v.trim(), max) : undefined;
+}
+
+/**
+ * Free text for a write: required, trimmed, and REFUSED (not cut) when over `max` or when it
+ * carries control characters other than tab and line breaks. Null when not acceptable.
+ */
+function writeText(v: unknown, max: number): string | null {
+  if (typeof v !== "string") return null;
+  const t = v.trim();
+  if (!t || t.length > max) return null;
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(t)) return null;
+  return t;
+}
+
+/** A branch name for a write: the same conservative check as the workflow rules, `refs/heads/` tolerated. */
+function writeBranch(v: unknown): string | null {
+  if (typeof v !== "string") return null;
+  const name = normalizeBranch(v);
+  return isValidBranchName(name) ? name : null;
 }
 
 function positiveInt(v: unknown): number | null {
@@ -237,6 +365,8 @@ export async function runIntegrationTool(
           project: ctx.binding.project,
           repo: ctx.binding.repo,
           capabilities: [...capabilitiesOf(provider)],
+          // Whether the user let agents change data here; the write tools exist only when true.
+          writeTools: ctx.binding.writeTools === true,
         },
       };
     }
@@ -246,6 +376,19 @@ export async function runIntegrationTool(
       code: -32601,
       message: `${label} does not support ${name}.`,
     });
+
+    // Writes are re-checked on every call, from the binding as it is on disk right now, so a
+    // tool list an agent cached before the user turned write tools off cannot still write.
+    if (isWriteTool(name)) {
+      if (ctx.binding.writeTools !== true) {
+        return {
+          kind: "error",
+          code: -32000,
+          message: `${name} changes data in ${label} and write tools are off for this project. Only the user can turn them on (\`kai integration azure --allow-writes\`); ask them if the change is wanted.`,
+        };
+      }
+      if (!providerCanWrite(provider, name)) return unsupported();
+    }
 
     switch (name) {
       case "kai_workflow_rules": {
@@ -337,6 +480,107 @@ export async function runIntegrationTool(
           kind: "json",
           payload: { ...detail, notice: UNTRUSTED_NOTICE },
           shrink: DETAIL_SHRINK,
+        };
+      }
+      case "kai_work_item_comment": {
+        const id = positiveInt(args.id);
+        if (id === null) return failArgs("id must be a positive integer");
+        const body = writeText(args.text, WRITE_TEXT_MAX);
+        if (body === null) {
+          return failArgs(`text is required, at most ${WRITE_TEXT_MAX} characters, and plain text`);
+        }
+        const done = await provider.workItems!.addComment!(ctx, id, body);
+        return { kind: "json", payload: { ok: true, changed: "work item comment added", ...done } };
+      }
+      case "kai_work_item_set_state": {
+        const id = positiveInt(args.id);
+        if (id === null) return failArgs("id must be a positive integer");
+        const state = writeText(args.state, STATE_MAX);
+        if (state === null || /[\r\n\t]/.test(state)) {
+          return failArgs(`state is required, one line, at most ${STATE_MAX} characters`);
+        }
+        const done = await provider.workItems!.setState!(ctx, id, state);
+        return { kind: "json", payload: { ok: true, changed: "work item state changed", ...done } };
+      }
+      case "kai_pr_create": {
+        const source = writeBranch(args.sourceBranch);
+        if (source === null) return failArgs("sourceBranch must be a valid branch name");
+        let target: string | null;
+        if (args.targetBranch === undefined) {
+          const configured = effectiveRules(ctx.binding.rules).mergeBranch;
+          const fallback = configured || (await repoDefaultBranch(provider, ctx)) || "";
+          target = fallback ? fallback : null;
+          if (target === null) {
+            return failArgs(
+              "targetBranch is required: this project has no merge branch or default branch"
+            );
+          }
+        } else {
+          target = writeBranch(args.targetBranch);
+          if (target === null) return failArgs("targetBranch must be a valid branch name");
+        }
+        if (source === target) return failArgs("sourceBranch and targetBranch must differ");
+        const title = writeText(args.title, PR_TITLE_MAX);
+        if (title === null || /[\r\n]/.test(title)) {
+          return failArgs(`title is required, one line, at most ${PR_TITLE_MAX} characters`);
+        }
+        let description: string | undefined;
+        if (args.description !== undefined) {
+          const d = writeText(args.description, PR_DESCRIPTION_MAX);
+          if (d === null)
+            return failArgs(`description must be at most ${PR_DESCRIPTION_MAX} characters`);
+          description = d;
+        }
+        if (args.isDraft !== undefined && typeof args.isDraft !== "boolean") {
+          return failArgs("isDraft must be true or false");
+        }
+        const created = await provider.pullRequests!.create!(ctx, {
+          sourceBranch: source,
+          targetBranch: target,
+          title,
+          description,
+          isDraft: args.isDraft === true,
+        });
+        return {
+          kind: "json",
+          payload: { ok: true, changed: "pull request created", pullRequest: created },
+        };
+      }
+      case "kai_pr_comment": {
+        const id = positiveInt(args.id);
+        if (id === null) return failArgs("id must be a positive integer");
+        const body = writeText(args.text, WRITE_TEXT_MAX);
+        if (body === null) {
+          return failArgs(`text is required, at most ${WRITE_TEXT_MAX} characters`);
+        }
+        const threadId = args.threadId === undefined ? undefined : positiveInt(args.threadId);
+        if (threadId === null) return failArgs("threadId must be a positive integer");
+        const line = args.line === undefined ? undefined : positiveInt(args.line);
+        if (line === null) return failArgs("line must be a positive integer");
+        let filePath: string | undefined;
+        if (args.filePath !== undefined) {
+          const f = writeText(args.filePath, FILE_PATH_MAX);
+          if (f === null || /[\r\n]/.test(f) || f.split(/[\\/]/).includes("..")) {
+            return failArgs("filePath must be a repository path of at most 400 characters");
+          }
+          filePath = `/${f.replace(/\\/g, "/").replace(/^\/+/, "")}`;
+        }
+        if ((filePath === undefined) !== (line === undefined)) {
+          return failArgs("filePath and line go together: give both or neither");
+        }
+        if (threadId !== undefined && filePath !== undefined) {
+          return failArgs("a reply (threadId) cannot also start a file thread (filePath, line)");
+        }
+        const done = await provider.pullRequests!.addComment!(ctx, {
+          id,
+          text: body,
+          threadId,
+          filePath,
+          line,
+        });
+        return {
+          kind: "json",
+          payload: { ok: true, changed: "pull request comment added", ...done },
         };
       }
       case "kai_build_list": {

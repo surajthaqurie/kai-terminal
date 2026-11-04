@@ -10,7 +10,9 @@ import {
 } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { ImageAddon } from "@xterm/addon-image";
 import { SearchAddon } from "@xterm/addon-search";
+import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
 import { canFitPane, createPtySizeSync, type PtySizeSync } from "./terminalFit";
@@ -34,7 +36,8 @@ import { ShellProfile, SessionStatus, UserSettings } from "../types/terminal";
 import { SettingsService, DEFAULT_SETTINGS } from "../services/settingsService";
 import { loadCommandHistory, recordCommand, saveCommandHistory } from "../services/autocomplete";
 import { TerminalOutputBuffer } from "../services/terminalOutputBuffer";
-import { readClipboardText } from "../services/clipboardService";
+import { readAttachmentPasteText, readPasteContent } from "../services/clipboardService";
+import { isOpenLinkClick, openTerminalLink } from "../services/terminalLinks";
 import { CODE_MODE_OSC, parseCodeModeSignal } from "../core/codeModeSignal";
 import {
   CD_PROBE_DELAYS_MS,
@@ -587,8 +590,26 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
 
       term.loadAddon(fitAddon);
       term.loadAddon(searchAddon);
+      // Links in output (sign-in addresses, build logs, docs) are underlined on
+      // hover and open in the browser on Ctrl+click (Cmd+click on macOS).
+      term.loadAddon(
+        new WebLinksAddon((event, uri) => {
+          if (!isOpenLinkClick(event)) return;
+          openTerminalLink(uri).catch((e) => {
+            console.error("Could not open link:", e);
+          });
+        })
+      );
 
       term.open(containerRef.current);
+      // Inline images (iTerm2 protocol and Sixel), so `kai teams` can show the
+      // pictures people send. Guarded: if the add-on cannot start here, the
+      // terminal works exactly as before and the chat falls back to links.
+      try {
+        term.loadAddon(new ImageAddon({ storageLimit: 32 }));
+      } catch (e) {
+        console.warn("Inline images are unavailable:", e);
+      }
       try {
         fitAddon.fit();
       } catch {
@@ -621,7 +642,16 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         event.preventDefault();
         event.stopPropagation();
         const text = event.clipboardData?.getData("text/plain") ?? "";
-        if (text) pasteToPty(text);
+        if (text) {
+          pasteToPty(text);
+        } else {
+          // No text: the clipboard holds copied files or an image. A terminal
+          // only takes text, so paste their paths (an image is saved to a PNG
+          // first), which AI CLIs and `kai teams` attach as files.
+          readAttachmentPasteText()
+            .then(pasteToPty)
+            .catch(() => {});
+        }
       };
       container.addEventListener("paste", onNativePaste, true);
 
@@ -661,7 +691,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
             } else {
               clearTimeout(keyboardPasteFallback);
               keyboardPasteFallback = setTimeout(() => {
-                readClipboardText()
+                readPasteContent()
                   .then(pasteToPty)
                   .catch(() => {});
               }, 150);

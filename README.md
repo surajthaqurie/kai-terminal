@@ -10,7 +10,7 @@ Tauri 2 + Rust (`portable-pty`) + WebGL GPU terminal renderer (`xterm.js`). MIT 
 
 Live site: **https://kai-terminal.vercel.app/** · Releases: [latest](https://github.com/surajthaqurie/kai-terminal/releases/latest)
 
-> Status: v0.2.1 is an active release. If something breaks, please open an issue with OS, version and steps to reproduce.
+> Status: v0.2.2 is an active release. If something breaks, please open an issue with OS, version and steps to reproduce.
 
 <a href="https://kai-terminal.vercel.app/">
   <picture>
@@ -28,18 +28,30 @@ Live site: **https://kai-terminal.vercel.app/** · Releases: [latest](https://gi
 
 <sub>The screenshot follows your GitHub theme: dark (Settings → Appearance) shows the dark hero, light shows the light one.</sub>
 
+### See it in action
+
+Screens from the desktop app, with sample projects and people:
+
+<p align="center">
+  <img alt="Kai Terminal window: tabs and command palette in one header row, kai health, kai integration list and an AI agent session in the terminal, git branch in the status bar" src="docs/screenshot-app.png" width="860">
+</p>
+
+| Microsoft Teams in the terminal (`kai teams`) | Azure DevOps rules for agents |
+| :---: | :---: |
+| <img alt="kai teams: teams, channels and chats on the left, the conversation on the right" src="docs/screenshot-teams.png" width="420"> | <img alt="Integrations tab: Azure DevOps card with a merge branch list and a branch naming regex" src="docs/screenshot-integrations.png" width="420"> |
+
 ## Download — you pick the file
 
 No auto-detection here. All installers are published on [GitHub Releases](https://github.com/surajthaqurie/kai-terminal/releases/latest). Pick your own:
 
 | OS                  | File                                | Install                                            |
 | ------------------- | ----------------------------------- | -------------------------------------------------- |
-| macOS 12+ (M1–M4)   | `kai_0.2.1_aarch64.dmg`             | Open the `.dmg`, drag `Kai.app` to `/Applications` |
-| Linux x64           | `kai_0.2.1_amd64.deb`               | `sudo dpkg -i kai_0.2.1_amd64.deb`                 |
-| Linux (any distro)  | `kai_0.2.1_amd64.AppImage`          | `chmod +x kai_*.AppImage && ./kai_*.AppImage`      |
-| Linux ARM64         | `kai_0.2.1_arm64.deb` / `.AppImage` | Same as above, ARM build                           |
-| Windows 10/11 x64   | `kai_0.2.1_x64-setup.exe`           | Download and run                                   |
-| Windows x64 (admin) | `kai_0.2.1_x64_en-US.msi`           | For silent/admin installs                          |
+| macOS 12+ (M1–M4)   | `kai_0.2.2_aarch64.dmg`             | Open the `.dmg`, drag `Kai.app` to `/Applications` |
+| Linux x64           | `kai_0.2.2_amd64.deb`               | `sudo dpkg -i kai_0.2.2_amd64.deb`                 |
+| Linux (any distro)  | `kai_0.2.2_amd64.AppImage`          | `chmod +x kai_*.AppImage && ./kai_*.AppImage`      |
+| Linux ARM64         | `kai_0.2.2_arm64.deb` / `.AppImage` | Same as above, ARM build                           |
+| Windows 10/11 x64   | `kai_0.2.2_x64-setup.exe`           | Download and run                                   |
+| Windows x64 (admin) | `kai_0.2.2_x64_en-US.msi`           | For silent/admin installs                          |
 
 The website lists the same files and does not choose for you. If your browser guessed wrong, just click another tab — nothing is locked in.
 
@@ -73,7 +85,7 @@ kai open [path]              # launch or focus Kai Terminal desktop app (default
 kai health                   # check system readiness and health
 kai doctor                   # run environment, PATH, and desktop diagnostics
 kai list [-a|-m|-i|-s|-c]    # look up tools (-a), MCP (-m), projects (-i), sessions (-s), config (-c)
-kai integration [list|azure] # inspect or connect service integrations (Azure DevOps)
+kai integration [list|azure|teams] # inspect or connect integrations (Azure DevOps, Microsoft Teams)
 kai azure [list|active|remove] # list projects, switch active project, or disconnect folder
 kai remove [-m|-a|-i|-s]     # un-wire tools (-m/-a <name>) or delete index (-i)/session (-s) data
 kai remove --name <id>       # remove an integration account everywhere (token + every folder)
@@ -83,6 +95,7 @@ kai close                    # close active Kai Terminal instances
 ### Inside Kai Terminal
 
 ```bash
+kai teams                 # Microsoft Teams chat in this tab (sign in first: kai integration teams)
 kai <agent> [path]        # run an AI tool: auto-wires MCP, enters Code Mode, builds & syncs graph
 kai agent add <agent|all> # wire tool(s) to Kai MCP (aliases: kai setup, kai mcp)
 kai agent remove <agent>  # un-wire tool from Kai MCP (or kai remove -a/-m)
@@ -174,10 +187,36 @@ kai remove --name contoso  # remove the account everywhere: token and every fold
 - **Tokens stay safe:** the Azure CLI is used when installed (with in-flight request deduplication), so Kai stores nothing; otherwise (and always for Azure DevOps Server) an access token goes to the OS secret store (Windows DPAPI, macOS Keychain piped via stdin without argv exposure, Linux Secret Service), never to a repository or an agent config. Work item searches are strictly scoped to the active project boundary.
 - **Merge branch:** pick the branch new work starts from and pull requests target, from the repository's real branches, per folder. Agents read it through `kai_workflow_rules`; with none set they use the repository's default branch. It guides the agent; Kai never validates or blocks a commit or push. In the desktop app it sits behind **More** on the Azure DevOps card.
 - **Branch naming (regex):** an optional regular expression new branch names should match, for example `^(feature|bugfix)/\d+-[a-z0-9-]+$`. It is checked when you save (a broken pattern gets a plain error, an unanchored one a tip) and agents read it through `kai_workflow_rules`. Both rules have a **Remove** button. Kai never checks a branch name or blocks a commit or push.
-- **Read-only tools, added only where connected:** `kai_integration_status`, `kai_workflow_rules`, `kai_work_item_search`, `kai_work_item_get`, `kai_pr_list`, `kai_pr_get`, `kai_build_list`, `kai_build_log`. A folder that is not connected sees exactly the tools listed above. Text from Azure is returned as untrusted data. A running agent is told when the tool list changes, so one that honors MCP `tools/list_changed` picks the tools up on its own; restart any that does not.
+- **Read-only tools, added only where connected:** `kai_integration_status`, `kai_workflow_rules`, `kai_work_item_search`, `kai_work_item_get`, `kai_pr_list`, `kai_pr_get`, `kai_build_list`, `kai_build_log`. A folder that is not connected sees exactly the tools listed above.
+- **Write tools, off by default:** `kai integration azure --allow-writes` (you, in a terminal; it asks first and refuses inside an AI agent's session) adds `kai_work_item_comment`, `kai_work_item_set_state`, `kai_pr_create` and `kai_pr_comment` for that folder. They never create branches, merge or delete; `--no-writes` removes them. See `MCP.md`.
+- **Branch rules from the command line:** `kai integration azure --merge-branch main --branch-pattern "^feature/[0-9]+$"` (and `--clear-merge-branch`, `--clear-branch-pattern`) set the same guidance as the desktop card. Text from Azure is returned as untrusted data. A running agent is told when the tool list changes, so one that honors MCP `tools/list_changed` picks the tools up on its own; restart any that does not.
 - **Desktop app:** the **Integrations** tab of the AI CLI providers panel (robot icon) offers the same actions, including switching the project.
 
+![The Integrations tab: Azure DevOps card with a merge branch list and a branch naming pattern](docs/screenshot-integrations.png)
+
 Details: [MCP.md](MCP.md) · [USER_MANUAL.md](USER_MANUAL.md).
+
+### Microsoft Teams chat
+
+Read and answer your Teams chats without leaving the terminal. It is your own account, shared by every terminal, and not tied to a folder or an AI agent.
+
+![Kai Terminal running kai teams: teams, channels and chats on the left, the open conversation on the right, a message box below](docs/screenshot-teams.png)
+
+```bash
+kai integration teams              # sign in with your Microsoft account in the browser, check access
+kai integration teams --channels   # also ask to read channel messages (most organizations need admin approval)
+kai teams                          # open the chat in this tab
+kai integration teams remove       # sign out and forget the account
+```
+
+- **Everything is clickable and works from the keyboard.** Teams, channels and chats on the left, the conversation on the right, a message box at the bottom. `Enter` sends, `Ctrl+J` starts a new line, `Up` / `Down` switch conversation, `PageUp` / `PageDown` scroll, `Esc` leaves.
+- **Pictures and files.** Images show inline where the terminal draws them (iTerm2, WezTerm, mintty, Kai Terminal) and open in your image viewer elsewhere. Paste a copied image or file with `Ctrl+V`, or click **Attach**; images go inline, other files are uploaded to your OneDrive and shared as a link. Up to 4 items, 250 MB in total.
+- **It keeps itself up to date.** The open conversation refreshes every few seconds, the chat list every 20 seconds, and a **●** marks chats with messages you have not seen.
+- **You see only what you could see in Teams.** Kai uses Microsoft Graph with your own permissions. The sign-in token goes to the OS secret store, never to a repository or an agent config.
+- **For you, not your AI agents.** Teams is not an MCP integration: no agent tool exists for it, the sign-in is never handed to an agent, and both Teams commands refuse to run inside an agent's session.
+- **Needs an app registration.** Sign-in works in builds that carry Kai's Microsoft Entra client ID. Without one, `kai integration teams` says so and opens nothing. Maintainers: see [docs/teams-sign-in.md](docs/teams-sign-in.md).
+
+Details: [USER_MANUAL.md](USER_MANUAL.md).
 
 ### The window
 
@@ -190,6 +229,8 @@ One header row holds everything you use all the time:
 - **Window buttons** (minimize, maximize, close) on Windows and Linux; on macOS the usual traffic lights stay at the left. Drag the empty part of the tab row to move the window; double-click it to maximize.
 
 The status bar at the bottom only reports: mode, git branch (click to review changes), the working directory (click to copy), the music mini-player while one plays, and an update chip when there is one. The version number and a manual update check are in **Settings → Updates**.
+
+**Links and pasted files.** Web addresses in the output (sign-in links, build logs, docs) are underlined when you point at them; `Ctrl+click` (`Cmd+click` on macOS) opens them in your browser. Copy files in Explorer, Finder or a file manager and paste: their paths are pasted, quoted when they contain spaces, ready for a command or an AI CLI.
 
 Kai ships its own fonts, Inter for the interface and JetBrains Mono for the terminal, so it looks the same on every OS. Pick another terminal font in **Settings → Font & Display**: the list shows the bundled font, the clean monospace fonts installed on your PC and a custom field. A font you chose is never replaced.
 
@@ -235,9 +276,9 @@ Hover any music button (in the player or the status bar) to see the key for it, 
 - Retrieval checks file hashes and warns on stale indexes.
 - Indexes live in `~/.kai/`; `kai remove` deletes them.
 - Local diagnostics go to `~/.kai/metrics.jsonl`. No account, no telemetry in the app.
-- The code-map tools never touch the network. Integrations are opt-in per folder: `kai integration azure` is the only thing that contacts an outside service, only with the sign-in you give it, and `kai remove --name <id>` deletes that sign-in and its stored token.
+- The code-map tools never touch the network. Integrations are opt-in: `kai integration azure` (per folder) and `kai integration teams` (your own account) are the only things that contact an outside service, only with the sign-in you give them. `kai remove --name <id>` deletes an Azure DevOps sign-in and its stored token, and `kai integration teams remove` does the same for Teams.
 
-See [KNOWN_LIMITATIONS](KNOWN_LIMITATIONS.md) for what v0.2.1 does not do yet.
+See [KNOWN_LIMITATIONS](KNOWN_LIMITATIONS.md) for what v0.2.2 does not do yet.
 
 ## Docs
 

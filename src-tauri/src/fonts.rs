@@ -6,7 +6,10 @@
 //! ones by measuring glyph widths.
 //! - Windows: the `Fonts` registry keys (`reg query`, no console window).
 //! - Linux: `fc-list : family`.
-//! - macOS: font file names under the system / user font folders.
+//! - macOS: the real family names from `NSFontManager` (through `osascript`,
+//!   so no Objective-C bindings), topped up with font file names under the
+//!   system / user font folders, plus SF Mono, which ships inside Terminal.app
+//!   and is not registered as an installed family.
 //!
 //! No new crates, same approach as `clipboard.rs`.
 
@@ -107,6 +110,44 @@ fn family_from_file_name(file_name: &str) -> Option<String> {
     (!family.is_empty()).then_some(family)
 }
 
+/// Families from the output of the macOS `NSFontManager` query: one name per
+/// line. Tolerant of what `osascript` may add (CRLF, blank lines, a pair of
+/// quotes around the whole result, a trailing comma) and drops the hidden
+/// system families whose names start with a dot (`.SF NS`).
+#[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
+fn families_from_osascript(out: &str) -> Vec<String> {
+    out.lines()
+        .map(|line| {
+            line.trim()
+                .trim_matches(|c| matches!(c, '"' | '\'' | ','))
+                .trim()
+        })
+        .filter(|name| !name.is_empty() && !name.starts_with('.'))
+        .map(str::to_string)
+        .collect()
+}
+
+/// Folders that hold SF Mono: Terminal.app's bundled copy, and the one the
+/// user installs from Apple's SF Mono download into `/Library/Fonts`.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+const SF_MONO_DIRS: &[&str] = &[
+    "/System/Applications/Utilities/Terminal.app/Contents/Resources/Fonts",
+    "/Library/Fonts",
+];
+
+/// True when `dir` holds an SF Mono font file (`SFMono-Regular.otf`, ...).
+#[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
+fn dir_has_sf_mono(dir: &std::path::Path) -> bool {
+    std::fs::read_dir(dir)
+        .map(|entries| {
+            entries.flatten().any(|e| {
+                let name = e.file_name().to_string_lossy().to_ascii_lowercase();
+                name.starts_with("sfmono") && family_from_file_name(&name).is_some()
+            })
+        })
+        .unwrap_or(false)
+}
+
 /// `AndaleMono` -> `Andale Mono`. File names carry no spaces, so the frontend
 /// is offered both spellings and keeps whichever one is a real family.
 #[cfg_attr(not(any(unix, test)), allow(dead_code))]
@@ -173,8 +214,34 @@ fn raw_families() -> Vec<String> {
     out
 }
 
+/// Asks AppKit for the installed families. A few hundred milliseconds, run
+/// once per Settings open. `None` when `osascript` is missing or fails, so the
+/// caller falls back to the file names.
+#[cfg(target_os = "macos")]
+fn appkit_families() -> Option<Vec<String>> {
+    let out = std::process::Command::new("osascript")
+        .args([
+            "-l",
+            "JavaScript",
+            "-e",
+            r#"ObjC.import("AppKit"); ObjC.unwrap($.NSFontManager.sharedFontManager.availableFontFamilies).join("\n")"#,
+        ])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())?;
+    let families = families_from_osascript(&String::from_utf8_lossy(&out.stdout));
+    (!families.is_empty()).then_some(families)
+}
+
 #[cfg(target_os = "macos")]
 fn raw_families() -> Vec<String> {
+    let mut out = appkit_families().unwrap_or_default();
+    if SF_MONO_DIRS
+        .iter()
+        .any(|d| dir_has_sf_mono(std::path::Path::new(d)))
+    {
+        out.push("SF Mono".to_string());
+    }
     let mut dirs = vec![
         std::path::PathBuf::from("/System/Library/Fonts"),
         std::path::PathBuf::from("/Library/Fonts"),
@@ -182,9 +249,8 @@ fn raw_families() -> Vec<String> {
     if let Some(home) = std::env::var_os("HOME") {
         dirs.push(std::path::Path::new(&home).join("Library/Fonts"));
     }
-    dirs.iter()
-        .flat_map(|d| families_from_font_dir(d, 2))
-        .collect()
+    out.extend(dirs.iter().flat_map(|d| families_from_font_dir(d, 2)));
+    out
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
@@ -269,6 +335,39 @@ mod tests {
             Some("Monaco")
         );
         assert_eq!(family_from_file_name("README.txt"), None);
+    }
+
+    #[test]
+    fn appkit_output_becomes_family_names() {
+        let out = "Menlo\nSF Mono\r\n.SF NS\n\n  Courier New  \n";
+        assert_eq!(
+            families_from_osascript(out),
+            ["Menlo", "SF Mono", "Courier New"]
+        );
+    }
+
+    #[test]
+    fn appkit_output_tolerates_quotes_and_commas() {
+        assert_eq!(
+            families_from_osascript("\"Monaco\"\n'Andale Mono',\n"),
+            ["Monaco", "Andale Mono"]
+        );
+        assert!(families_from_osascript("").is_empty());
+        assert!(families_from_osascript("\n\n.Hidden\n").is_empty());
+    }
+
+    #[test]
+    fn sf_mono_is_found_by_its_font_files() {
+        let root = std::env::temp_dir().join(format!("kai-sfmono-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        assert!(!dir_has_sf_mono(&root));
+        std::fs::write(root.join("Menlo.ttc"), b"").unwrap();
+        assert!(!dir_has_sf_mono(&root));
+        std::fs::write(root.join("SFMono-Regular.otf"), b"").unwrap();
+        let found = dir_has_sf_mono(&root);
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(found);
+        assert!(!dir_has_sf_mono(std::path::Path::new("/no/such/kai/dir")));
     }
 
     #[test]

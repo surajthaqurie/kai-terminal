@@ -1,8 +1,15 @@
 {
-  "version": "0.2.1",
-  "tag": "v0.2.1",
-  "generatedAt": "2026-10-30T06:30:59.593Z",
+  "version": "0.2.2",
+  "tag": "v0.2.2",
+  "generatedAt": "2026-11-04T08:34:29.459Z",
   "releases": [
+    {
+      "tag": "v0.2.2",
+      "name": "Kai v0.2.2 — Microsoft Teams chat, clickable links and file paste, Azure DevOps branch rules",
+      "date": "2026-11-04T08:34:29.459Z",
+      "url": "https://github.com/surajthaqurie/kai-terminal/releases/tag/v0.2.2",
+      "notes": "- Website and README refresh: real screenshots of the app (the window, `kai teams`, the Azure DevOps rules), a \"See it in action\" gallery on the home page, new feature cards for Teams chat, links and file paste and the nine themes, a Teams FAQ, and a 0.2.2 hero image. `SECURITY.md` and `KNOWN_LIMITATIONS.md` now cover Microsoft Teams.\n- Azure DevOps projects can now set a merge branch and a branch naming pattern that agents use for every work item.\n- Azure DevOps sign-in no longer dead-ends when this build has no browser sign-in set up.\n- The footer **Code Mode** pill is now display-only. Clicking it used to flip the footer to \"Terminal\" while the agent was still running in Code Mode, so the footer disagreed with the terminal. Code Mode now ends only when `kai <agent>` exits or `kai stop` runs.\n- Friendlier terminal defaults, and every shortcut is easier to find on every OS.\n- Themed header, footer and font list, plus a repaint after `clear`.\n- Integrations tools appear in a running agent, and `kai` works in WSL.\n- Microsoft Teams chat in the terminal: `kai integration teams` and `kai teams`.\n- Music player: the play, pause, next, previous, mute, volume and seek buttons now control the video in the desktop app.\n- Music player at small sizes: the controls no longer get cut off.\n- Music shortcuts that are easier to find and remember, and a search box for all shortcuts.\n- New tabs open in your home folder, and the footer no longer shows a path.\n- Steadier terminals and sessions, errors you can see, and a pass over silent failures.\n- Terminal: links open from the output, and you can paste copied files and images.\n- Themes: trimmed to nine and added Rosé Pine.\n- UI refresh: new theme set, a working background-opacity slider, a cleaner header and a per-terminal shell picker.\n- Friendlier default shortcuts, in the Windows Terminal style, and a clearer Shortcuts screen."
+    },
     {
       "tag": "v0.2.1",
       "name": "Kai v0.2.1 — Azure DevOps integration",

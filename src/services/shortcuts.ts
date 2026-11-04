@@ -622,6 +622,7 @@ export function matchTerminalAction(
 /** Shortcuts that stay fixed, shown read-only in Settings (Cmd replaces Ctrl on macOS). */
 export const FIXED_SHORTCUT_HELP: ReadonlyArray<{ keys: string; label: string }> = [
   { keys: "Ctrl+Insert / Shift+Insert", label: "Copy / paste (alternate)" },
+  { keys: "Ctrl+click", label: "Open a link in the terminal" },
   { keys: "Shift+PageUp / PageDown", label: "Scroll one page" },
   { keys: REVIEW_CHANGES_BINDING, label: "Review git changes" },
   { keys: "Ctrl+T / Ctrl+Shift+T", label: "New tab (always available)" },
