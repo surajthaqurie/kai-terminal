@@ -28,6 +28,7 @@ import {
   discardGitFile,
   runGitAction,
 } from "../services/projectService";
+import { useModalBehavior } from "../hooks/useModalBehavior";
 
 interface GitChangesModalProps {
   dir: string;
@@ -265,7 +266,13 @@ export const GitChangesModal: FC<GitChangesModalProps> = ({ dir, onClose }) => {
     baseW: number;
     baseH: number;
   } | null>(null);
-  const modalRef = useRef<HTMLDivElement>(null);
+  // Shared dialog behaviour: Escape (capture phase, so it works even while the
+  // terminal behind the modal has focus), focus in/out and a Tab trap. Escape
+  // first dismisses the discard confirmation, then closes the modal.
+  const modalRef = useModalBehavior<HTMLDivElement>(true, () => {
+    if (confirmDiscardFile) setConfirmDiscardFile(null);
+    else onClose();
+  });
   // In-flight window drag listeners (sidebar + dialog resizes). A drag can
   // outlive the modal — e.g. Esc closes it mid-drag — so the cleanup is
   // tracked here and run on unmount; otherwise every aborted drag leaks two
@@ -406,21 +413,6 @@ export const GitChangesModal: FC<GitChangesModalProps> = ({ dir, onClose }) => {
       setError(err instanceof Error ? err.message : String(err));
     }
   };
-
-  // Keyboard navigation
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        if (confirmDiscardFile) {
-          setConfirmDiscardFile(null);
-        } else {
-          onClose();
-        }
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [confirmDiscardFile, onClose]);
 
   const filterMatch = (f: GitFileChange) => {
     if (!filterText.trim()) return true;

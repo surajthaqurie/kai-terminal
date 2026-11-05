@@ -95,14 +95,15 @@ describe("MusicPanel Escape layering", () => {
   it("does not take Escape from a handler that already consumed it", async () => {
     // Registered BEFORE the panel mounts, so it runs first (listeners on one
     // target fire in registration order), like another dialog owning Escape.
+    // Capture phase, as the panel's own listener is.
     const consume = (e: KeyboardEvent) => e.preventDefault();
-    window.addEventListener("keydown", consume);
+    window.addEventListener("keydown", consume, true);
     try {
       await render();
       await pressEscape();
       expect(onClose).not.toHaveBeenCalled();
     } finally {
-      window.removeEventListener("keydown", consume);
+      window.removeEventListener("keydown", consume, true);
     }
   });
 });

@@ -4,6 +4,9 @@ import { useLatest } from "./useLatest";
 /** Open modals, innermost last: only the top one reacts to Escape and Tab. */
 const openModals: symbol[] = [];
 
+/** True while any dialog using {@link useModalBehavior} is open (it owns Escape). */
+export const hasOpenModal = (): boolean => openModals.length > 0;
+
 /** A control that is using Escape itself right now (cancel recording, cancel rename). */
 export const ESCAPE_OWNER_ATTR = "data-modal-escape-own";
 

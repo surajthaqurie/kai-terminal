@@ -2,6 +2,7 @@ import { FC, useEffect, useState } from "react";
 import { ChevronUp, Terminal as TerminalIcon } from "lucide-react";
 import { sameShellPath } from "../services/paneShell";
 import type { ShellProfile } from "../types/terminal";
+import { hasOpenModal } from "../hooks/useModalBehavior";
 import { PopupMenu, type MenuEntry } from "./PopupMenu";
 
 interface ShellPickerProps {
@@ -33,11 +34,16 @@ export const ShellPicker: FC<ShellPickerProps> = ({ shells, current, onChange })
 
   useEffect(() => {
     if (!pending) return;
+    // Capture phase: the terminal consumes Escape for the shell and stops it
+    // bubbling, so a bubble listener never fired while the terminal had focus.
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setPending(null);
+      if (e.key !== "Escape" || e.defaultPrevented || hasOpenModal()) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setPending(null);
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
   }, [pending]);
 
   if (shells.length === 0 && !current) return null;

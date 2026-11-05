@@ -33,6 +33,7 @@ import {
   X,
 } from "lucide-react";
 import { useCallPause } from "../../hooks/useCallPause";
+import { hasOpenModal } from "../../hooks/useModalBehavior";
 import { isTypingTarget, withKeys, type MusicHintId } from "../../services/shortcuts";
 import { openExternalUrl } from "../../services/updateService";
 import {
@@ -884,7 +885,8 @@ export const MusicPanel: FC<MusicPanelProps> = ({
   useEffect(() => {
     if (!open) return;
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key !== "Escape" || e.defaultPrevented) return;
+      // A dialog (Settings, Git...) in front owns Escape; leave it to that one.
+      if (e.key !== "Escape" || e.defaultPrevented || hasOpenModal()) return;
       if (showDimPopover) {
         setShowDimPopover(false);
       } else if (drawerOpen) {
@@ -897,8 +899,10 @@ export const MusicPanel: FC<MusicPanelProps> = ({
       e.preventDefault();
       e.stopPropagation();
     };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    // Capture phase: the terminal stops Escape bubbling, so a bubble listener
+    // never saw it while the terminal had focus.
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
     // closeDrawer only resets state through setters and refs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, isPinned, onClose, showDimPopover, drawerOpen]);

@@ -268,16 +268,21 @@ export const TabBar: FC<TabBarProps> = ({
   useEffect(() => {
     if (!menu) return;
     const close = () => setMenu(null);
+    // Capture phase: the terminal stops Escape bubbling, so a bubble listener
+    // never saw it while the terminal had focus.
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setMenu(null);
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setMenu(null);
     };
     window.addEventListener("click", close);
     window.addEventListener("blur", close);
-    window.addEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, true);
     return () => {
       window.removeEventListener("click", close);
       window.removeEventListener("blur", close);
-      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("keydown", onKey, true);
     };
   }, [menu]);
 
