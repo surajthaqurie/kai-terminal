@@ -492,7 +492,7 @@ describe("kai azure list", () => {
             return fakeDiscovery.listProjects(account, secrets);
           },
           listRepos: fakeDiscovery.listRepos,
-          listBranches: fakeDiscovery.listBranches,
+          branchExists: fakeDiscovery.branchExists,
         },
       })
     );
@@ -750,7 +750,7 @@ describe("project auto-detection", () => {
         discovery: {
           listProjects: async () => [{ name: "Billing" }, { name: "Other" }],
           listRepos: async () => [{ name: "ledger" }],
-          listBranches: async () => ["main"],
+          branchExists: async () => true,
         },
       })
     );

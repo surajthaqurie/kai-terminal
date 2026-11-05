@@ -23,7 +23,12 @@ const BROWSER_LOGIN_TIMEOUT: Duration = Duration::from_secs(6 * 60);
 /// How long the request may run: browser sign-in waits on a person, the rest do not.
 fn timeout_for(raw: &str) -> Duration {
     match serde_json::from_str::<serde_json::Value>(raw) {
-        Ok(v) if v.get("op").and_then(|op| op.as_str()) == Some("login_browser") => {
+        Ok(v)
+            if matches!(
+                v.get("op").and_then(|op| op.as_str()),
+                Some("login_browser") | Some("teams_login")
+            ) =>
+        {
             BROWSER_LOGIN_TIMEOUT
         }
         _ => RPC_TIMEOUT,
@@ -176,6 +181,11 @@ mod tests {
             timeout_for(r#"{"op":"login_browser"}"#),
             BROWSER_LOGIN_TIMEOUT
         );
+        assert_eq!(
+            timeout_for(r#"{"op":"teams_login","channels":true}"#),
+            BROWSER_LOGIN_TIMEOUT
+        );
+        assert_eq!(timeout_for(r#"{"op":"teams_verify"}"#), RPC_TIMEOUT);
         assert_eq!(
             timeout_for(r#"{"op":"status","projectDir":"/p"}"#),
             RPC_TIMEOUT

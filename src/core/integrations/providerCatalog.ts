@@ -20,7 +20,7 @@ export const PROVIDER_CATALOG: readonly ProviderInfo[] = [
     id: "azure-devops",
     label: "Azure DevOps",
     aliases: ["azure", "ado"],
-    description: "Work items, pull requests and builds, read through Kai's MCP server.",
+    description: "Work items, pull requests and builds.",
     authMethods: ["oauth", "az", "pat"],
   },
 ];

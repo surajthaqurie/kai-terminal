@@ -160,6 +160,17 @@ export interface WorkItemStateResult {
   url: string;
 }
 
+/** What creating or updating a work item reports back. */
+export interface WorkItemWriteResult {
+  workItemId: number;
+  type?: string;
+  title?: string;
+  state?: string;
+  /** Names of the fields that were set or changed (never their values). */
+  fields: string[];
+  url: string;
+}
+
 export interface PullRequestCommentResult {
   pullRequestId: number;
   threadId?: number;
@@ -222,12 +233,50 @@ export interface PullRequestQuery {
   offset: number;
 }
 
+/** Fields an agent may set on a new work item. `assignedTo` is already an email or name. */
+export interface WorkItemCreateInput {
+  /** e.g. Task, Bug, User Story. */
+  type: string;
+  title: string;
+  description?: string;
+  assignedTo?: string;
+  /** Parent work item (must be in the same project). */
+  parentId?: number;
+  tags?: string[];
+  priority?: number;
+  /** Task hours. */
+  remainingWork?: number;
+  areaPath?: string;
+  iterationPath?: string;
+}
+
+/** Fields an agent may change on an existing work item; at least one is set. State has its own tool. */
+export interface WorkItemUpdateInput {
+  id: number;
+  title?: string;
+  description?: string;
+  assignedTo?: string;
+  tags?: string[];
+  priority?: number;
+  remainingWork?: number;
+  completedWork?: number;
+  iterationPath?: string;
+}
+
 export interface PullRequestCreateInput {
   sourceBranch: string;
   targetBranch: string;
   title: string;
   description?: string;
   isDraft?: boolean;
+  /** Work items of the project to link to the pull request. */
+  workItemIds?: number[];
+  /** People to ask for a review: an email or a display name each. */
+  reviewers?: string[];
+  /** People whose approval is required before the pull request can complete. */
+  requiredReviewers?: string[];
+  /** Labels (tags) to put on the pull request. */
+  labels?: string[];
 }
 
 export interface PullRequestCommentInput {
@@ -309,13 +358,17 @@ export interface IntegrationProvider {
       secrets: SecretStore,
       project: string
     ): Promise<RepoInfo[]>;
-    /** Branch names (without `refs/heads/`) of one repository, sorted. */
-    listBranches(
+    /**
+     * Whether one branch (name without `refs/heads/`) exists in a repository. Asks the
+     * service about that single name; the repository's branches are never listed.
+     */
+    branchExists(
       account: IntegrationAccount,
       secrets: SecretStore,
       project: string,
-      repo: string
-    ): Promise<string[]>;
+      repo: string,
+      branch: string
+    ): Promise<boolean>;
   };
   workItems?: {
     search(ctx: ProviderContext, q: WorkItemQuery): Promise<Page<WorkItemSummary>>;
@@ -326,6 +379,8 @@ export interface IntegrationProvider {
      */
     addComment?(ctx: ProviderContext, id: number, text: string): Promise<WorkItemCommentResult>;
     setState?(ctx: ProviderContext, id: number, state: string): Promise<WorkItemStateResult>;
+    create?(ctx: ProviderContext, input: WorkItemCreateInput): Promise<WorkItemWriteResult>;
+    update?(ctx: ProviderContext, input: WorkItemUpdateInput): Promise<WorkItemWriteResult>;
   };
   pullRequests?: {
     list(ctx: ProviderContext, q: PullRequestQuery): Promise<Page<PullRequestSummary>>;
@@ -348,6 +403,8 @@ export function supportsWrites(provider: IntegrationProvider): boolean {
   return Boolean(
     provider.workItems?.addComment ||
     provider.workItems?.setState ||
+    provider.workItems?.create ||
+    provider.workItems?.update ||
     provider.pullRequests?.create ||
     provider.pullRequests?.addComment
   );

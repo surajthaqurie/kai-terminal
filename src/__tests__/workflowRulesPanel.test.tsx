@@ -15,7 +15,10 @@ const svc = vi.hoisted(() => ({
   bindIntegration: vi.fn(),
   unbindIntegration: vi.fn(),
   setIntegrationRules: vi.fn(),
-  listIntegrationBranches: vi.fn(),
+  getTeamsStatus: vi.fn(),
+  teamsLogin: vi.fn(),
+  verifyTeams: vi.fn(),
+  teamsLogout: vi.fn(),
 }));
 vi.mock("../services/integrationService", () => svc);
 
@@ -23,6 +26,7 @@ import { IntegrationsPanel } from "../components/IntegrationsPanel";
 
 const activeStatus = (rules: WorkflowRules = DEFAULT_RULES): IntegrationStatusView => ({
   provider: { id: "azure-devops", label: "Azure DevOps" },
+  oauth: { available: true, source: "build" },
   accounts: [
     {
       id: "azure-devops:contoso",
@@ -65,25 +69,21 @@ describe("WorkflowRulesSection in the Integrations card", () => {
       (el as HTMLElement).click();
     });
   };
-  const select = async (value: string) => {
-    const el = q<HTMLSelectElement>("select");
+  const mergeInput = () => q<HTMLInputElement>('input[id$="-merge"]');
+  const patternInput = () => q<HTMLTextAreaElement>('textarea[id$="-pattern"]');
+  const typeInto = async (el: HTMLInputElement | HTMLTextAreaElement | null, value: string) => {
     expect(el).toBeTruthy();
     await act(async () => {
-      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!;
-      setter.call(el, value);
-      el!.dispatchEvent(new Event("change", { bubbles: true }));
-    });
-  };
-  const type = async (value: string) => {
-    const el = q<HTMLInputElement>("input[type=text]");
-    expect(el).toBeTruthy();
-    await act(async () => {
-      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement : HTMLInputElement;
+      const setter = Object.getOwnPropertyDescriptor(proto.prototype, "value")!.set!;
       setter.call(el, value);
       el!.dispatchEvent(new Event("input", { bubbles: true }));
     });
   };
-  const optionValues = () => [...container.querySelectorAll("option")].map((o) => o.value);
+  /** Types a branch into the Merge branch box. */
+  const typeBranch = (value: string) => typeInto(mergeInput(), value);
+  /** Types into the Branch naming (regex) box. */
+  const type = (value: string) => typeInto(patternInput(), value);
   const render = async () => {
     await act(async () => {
       root.render(<IntegrationsPanel projectDir="/repo" />);
@@ -95,6 +95,10 @@ describe("WorkflowRulesSection in the Integrations card", () => {
     (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
       true;
     Object.values(svc).forEach((fn) => fn.mockReset());
+    svc.getTeamsStatus.mockResolvedValue({
+      ok: true,
+      value: { configured: true, account: null, channelHistory: false },
+    });
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -105,39 +109,35 @@ describe("WorkflowRulesSection in the Integrations card", () => {
     container.remove();
   });
 
-  const BRANCHES = ["develop", "release/1.2", "trunk"];
-
-  it("keeps the merge branch behind a More link until it is opened", async () => {
+  it("keeps the merge branch behind a Branch rules toggle until it is opened", async () => {
     svc.getIntegrationStatus.mockResolvedValue({ ok: true, value: activeStatus() });
-    svc.listIntegrationBranches.mockResolvedValue({ ok: true, value: BRANCHES });
     await render();
 
-    const more = button("More");
+    const more = button("Branch rules");
     expect(more?.getAttribute("aria-expanded")).toBe("false");
     expect(q('[aria-label="Branch rules"]')).toBeNull();
-    expect(svc.listIntegrationBranches).not.toHaveBeenCalled();
 
     await click(more);
-    expect(button("Less")?.getAttribute("aria-expanded")).toBe("true");
-    expect(svc.listIntegrationBranches).toHaveBeenCalledWith("/repo");
+    expect(button("Branch rules")?.getAttribute("aria-expanded")).toBe("true");
     const group = q('[aria-label="Branch rules"]')?.textContent ?? "";
     expect(group).toContain("Merge branch");
     expect(group).toContain("Branch naming (regex)");
     // Only these two: no commit message or pull request title rules.
     expect(container.textContent).not.toMatch(/commit|pull request title/i);
 
-    await click(button("Less"));
+    await click(button("Branch rules"));
     expect(q('[aria-label="Branch rules"]')).toBeNull();
   });
 
-  it("offers the repository default first, then the real branches", async () => {
+  it("is a text box that is empty for the repository default, and loads no branches", async () => {
     svc.getIntegrationStatus.mockResolvedValue({ ok: true, value: activeStatus() });
-    svc.listIntegrationBranches.mockResolvedValue({ ok: true, value: BRANCHES });
     await render();
-    await click(button("More"));
+    await click(button("Branch rules"));
 
-    expect(optionValues()).toEqual(["", ...BRANCHES]);
-    expect(q<HTMLSelectElement>("select")?.value).toBe("");
+    expect(container.querySelector("select")).toBeNull();
+    expect(mergeInput()?.value).toBe("");
+    expect(mergeInput()?.placeholder).toContain("Repository default");
+    expect(container.textContent).not.toContain("Loading branches");
     expect(button("Save")?.disabled).toBe(true); // nothing changed yet
   });
 
@@ -146,23 +146,22 @@ describe("WorkflowRulesSection in the Integrations card", () => {
     connected.project = { ...connected.project, state: "none", binding: null };
     svc.getIntegrationStatus.mockResolvedValue({ ok: true, value: connected });
     await render();
-    expect(button("More")).toBeUndefined();
+    expect(button("Branch rules")).toBeUndefined();
   });
 
-  it("saves the picked branch and re-reads the status", async () => {
+  it("saves the typed branch and re-reads the status", async () => {
     const saved = { ...DEFAULT_RULES, mergeBranch: "develop" };
     svc.getIntegrationStatus
       .mockResolvedValueOnce({ ok: true, value: activeStatus() })
       .mockResolvedValue({ ok: true, value: activeStatus(saved) });
-    svc.listIntegrationBranches.mockResolvedValue({ ok: true, value: BRANCHES });
     svc.setIntegrationRules.mockResolvedValue({
       ok: true,
       value: activeStatus(saved).project.binding,
     });
     await render();
-    await click(button("More"));
+    await click(button("Branch rules"));
 
-    await select("develop");
+    await typeBranch("develop");
     expect(button("Save")?.disabled).toBe(false);
     await click(button("Save"));
 
@@ -175,19 +174,18 @@ describe("WorkflowRulesSection in the Integrations card", () => {
     expect(button("Save")?.disabled).toBe(true);
   });
 
-  it("goes back to the repository default by picking it", async () => {
+  it("goes back to the repository default by clearing the box", async () => {
     const custom = { ...DEFAULT_RULES, mergeBranch: "develop" };
     svc.getIntegrationStatus.mockResolvedValue({ ok: true, value: activeStatus(custom) });
-    svc.listIntegrationBranches.mockResolvedValue({ ok: true, value: BRANCHES });
     svc.setIntegrationRules.mockResolvedValue({
       ok: true,
       value: activeStatus().project.binding,
     });
     await render();
-    await click(button("More"));
-    expect(q<HTMLSelectElement>("select")?.value).toBe("develop");
+    await click(button("Branch rules"));
+    expect(mergeInput()?.value).toBe("develop");
 
-    await select("");
+    await typeBranch("");
     await click(button("Save"));
     expect(svc.setIntegrationRules).toHaveBeenCalledWith("/repo", {
       mergeBranch: "",
@@ -195,65 +193,55 @@ describe("WorkflowRulesSection in the Integrations card", () => {
     });
   });
 
-  it("keeps a saved branch selectable even when the repository no longer lists it", async () => {
+  it("shows a saved branch as it is, without asking the repository", async () => {
     const custom = { ...DEFAULT_RULES, mergeBranch: "old-branch" };
     svc.getIntegrationStatus.mockResolvedValue({ ok: true, value: activeStatus(custom) });
-    svc.listIntegrationBranches.mockResolvedValue({ ok: true, value: BRANCHES });
     await render();
-    await click(button("More"));
+    await click(button("Branch rules"));
 
-    expect(optionValues()).toEqual(["", "old-branch", ...BRANCHES]);
-    expect(q<HTMLSelectElement>("select")?.value).toBe("old-branch");
+    expect(mergeInput()?.value).toBe("old-branch");
+    expect(container.querySelector("[role=alert]")).toBeNull();
   });
 
-  it("shows why the branches could not be loaded and keeps the current choice", async () => {
-    const custom = { ...DEFAULT_RULES, mergeBranch: "develop" };
-    svc.getIntegrationStatus.mockResolvedValue({ ok: true, value: activeStatus(custom) });
-    svc.listIntegrationBranches.mockResolvedValue({
-      ok: false,
-      error: { code: "network", message: "Could not reach Azure DevOps." },
-    });
-    await render();
-    await click(button("More"));
-
-    expect(q("[role=alert]")?.textContent).toContain("Could not reach Azure DevOps.");
-    expect(optionValues()).toEqual(["", "develop"]);
-    expect(q<HTMLSelectElement>("select")?.value).toBe("develop");
-  });
-
-  it("shows the error and keeps the pick when saving fails", async () => {
+  it("says the branch does not exist when saving is refused, and keeps what was typed", async () => {
     svc.getIntegrationStatus.mockResolvedValue({ ok: true, value: activeStatus() });
-    svc.listIntegrationBranches.mockResolvedValue({ ok: true, value: BRANCHES });
     svc.setIntegrationRules.mockResolvedValue({
       ok: false,
-      error: { code: "not_found", message: 'The repository has no branch named "develop".' },
+      error: {
+        code: "not_found",
+        message: 'The repository has no branch named "develop".',
+        hint: "Check the spelling. Branch names are case-sensitive.",
+      },
     });
     await render();
-    await click(button("More"));
-    await select("develop");
+    await click(button("Branch rules"));
+    await typeBranch("develop");
     await click(button("Save"));
 
     expect(q("[role=alert]")?.textContent).toContain("has no branch named");
+    expect(q("[role=alert]")?.textContent).toContain("case-sensitive");
     expect(container.textContent).not.toContain("Saved.");
-    expect(q<HTMLSelectElement>("select")?.value).toBe("develop");
+    expect(mergeInput()?.value).toBe("develop");
+    // Editing the branch clears the old complaint.
+    await typeBranch("developer");
+    expect(container.querySelector("[role=alert]")).toBeNull();
   });
 
   describe("branch naming (regex)", () => {
     const PATTERN = String.raw`^(feature|bugfix)/d+-[a-z0-9-]+$`;
     const prepare = async (rules: WorkflowRules = DEFAULT_RULES) => {
       svc.getIntegrationStatus.mockResolvedValue({ ok: true, value: activeStatus(rules) });
-      svc.listIntegrationBranches.mockResolvedValue({ ok: true, value: BRANCHES });
       svc.setIntegrationRules.mockResolvedValue({
         ok: true,
         value: activeStatus(rules).project.binding,
       });
       await render();
-      await click(button("More"));
+      await click(button("Branch rules"));
     };
 
     it("starts empty and shows no error before it is touched", async () => {
       await prepare({ ...DEFAULT_RULES, branchPattern: "^(" }); // a bad stored value
-      expect(q<HTMLInputElement>("input[type=text]")?.value).toBe("^(");
+      expect(patternInput()?.value).toBe("^(");
       expect(container.textContent).not.toContain("Not a valid regular expression");
     });
 
@@ -261,7 +249,7 @@ describe("WorkflowRulesSection in the Integrations card", () => {
       await prepare();
       await type("^feature/(");
       expect(container.textContent).toMatch(/Not a valid regular expression: .+./);
-      expect(q("input[type=text]")?.getAttribute("aria-invalid")).toBe("true");
+      expect(patternInput()?.getAttribute("aria-invalid")).toBe("true");
       expect(button("Save")?.disabled).toBe(true);
 
       await type(".*");
@@ -269,7 +257,7 @@ describe("WorkflowRulesSection in the Integrations card", () => {
 
       await type(PATTERN);
       expect(container.textContent).not.toMatch(/Not a valid|matches an empty/);
-      expect(q("input[type=text]")?.getAttribute("aria-invalid")).toBeNull();
+      expect(patternInput()?.getAttribute("aria-invalid")).toBeNull();
       expect(button("Save")?.disabled).toBe(false);
     });
 
@@ -282,7 +270,7 @@ describe("WorkflowRulesSection in the Integrations card", () => {
 
     it("saves the pattern together with the merge branch", async () => {
       await prepare();
-      await select("develop");
+      await typeBranch("develop");
       await type(PATTERN);
       await click(button("Save"));
       expect(svc.setIntegrationRules).toHaveBeenCalledWith("/repo", {
@@ -299,8 +287,8 @@ describe("WorkflowRulesSection in the Integrations card", () => {
       );
       expect(remove?.disabled).toBe(false);
       await click(remove);
-      expect(q<HTMLInputElement>("input[type=text]")?.value).toBe("");
-      expect(q<HTMLSelectElement>("select")?.value).toBe("develop"); // the other rule stays
+      expect(patternInput()?.value).toBe("");
+      expect(mergeInput()?.value).toBe("develop"); // the other rule stays
       expect(
         container.querySelector<HTMLButtonElement>('[aria-label="Remove branch naming"]')?.disabled
       ).toBe(true);
@@ -315,8 +303,8 @@ describe("WorkflowRulesSection in the Integrations card", () => {
     it("removes the merge branch with its Remove button", async () => {
       await prepare({ ...DEFAULT_RULES, mergeBranch: "develop", branchPattern: PATTERN });
       await click(container.querySelector('[aria-label="Remove merge branch"]'));
-      expect(q<HTMLSelectElement>("select")?.value).toBe("");
-      expect(q<HTMLInputElement>("input[type=text]")?.value).toBe(PATTERN);
+      expect(mergeInput()?.value).toBe("");
+      expect(patternInput()?.value).toBe(PATTERN);
       await click(button("Save"));
       expect(svc.setIntegrationRules).toHaveBeenCalledWith("/repo", {
         mergeBranch: "",
@@ -342,8 +330,76 @@ describe("WorkflowRulesSection in the Integrations card", () => {
       await type(PATTERN);
       await click(button("Save"));
       expect(q("[role=alert]")?.textContent).toContain("too long");
-      expect(q<HTMLInputElement>("input[type=text]")?.value).toBe(PATTERN);
+      expect(patternInput()?.value).toBe(PATTERN);
       expect(container.textContent).not.toContain("Saved.");
+    });
+
+    describe("a long pattern", () => {
+      const count = () => q('[id$="-pattern-count"]');
+      const long = (n: number) => "^" + "a".repeat(n - 2) + "$";
+
+      it("is a wrapping box (not a one-line field) with a live count against the limit", async () => {
+        await prepare();
+        expect(patternInput()?.tagName).toBe("TEXTAREA");
+        expect(patternInput()?.getAttribute("wrap")).toBe("soft");
+        expect(count()?.textContent).toBe("0 / 200");
+        await type(long(80));
+        expect(count()?.textContent).toBe("80 / 200");
+        expect(count()?.className).toContain("is-ok");
+        expect(patternInput()?.getAttribute("aria-describedby")).toContain("pattern-count");
+      });
+
+      it("warns as it nears the limit and still saves right at it", async () => {
+        await prepare();
+        await type(long(190));
+        expect(count()?.className).toContain("is-near");
+        await type(long(200));
+        expect(count()?.textContent).toBe("200 / 200");
+        expect(button("Save")?.disabled).toBe(false);
+        await click(button("Save"));
+        expect(svc.setIntegrationRules).toHaveBeenCalledWith("/repo", {
+          mergeBranch: "",
+          branchPattern: long(200),
+        });
+      });
+
+      it("says how far over it is, keeps what was typed and blocks saving", async () => {
+        await prepare();
+        await type(long(230));
+        expect(count()?.textContent).toBe("230 / 200");
+        expect(count()?.className).toContain("is-over");
+        expect(container.textContent).toContain("Pattern is too long (230 of 200 characters).");
+        expect(patternInput()?.value).toBe(long(230)); // nothing is silently cut off
+        expect(patternInput()?.getAttribute("aria-invalid")).toBe("true");
+        expect(button("Save")?.disabled).toBe(true);
+        // Trimming it back under the limit clears the complaint.
+        await type(long(150));
+        expect(container.textContent).not.toContain("too long");
+        expect(button("Save")?.disabled).toBe(false);
+      });
+
+      it("never takes a line break: Enter does nothing and a paste is flattened", async () => {
+        await prepare();
+        const box = patternInput()!;
+        const enter = new KeyboardEvent("keydown", {
+          key: "Enter",
+          bubbles: true,
+          cancelable: true,
+        });
+        await act(async () => {
+          box.dispatchEvent(enter);
+        });
+        expect(enter.defaultPrevented).toBe(true);
+        await type("^feature/\r\n[a-z]+\n$");
+        expect(patternInput()?.value).toBe("^feature/[a-z]+$");
+      });
+
+      it("shows a long saved pattern in full", async () => {
+        await prepare({ ...DEFAULT_RULES, branchPattern: long(200) });
+        expect(patternInput()?.value).toBe(long(200));
+        expect(count()?.textContent).toBe("200 / 200");
+        expect(container.textContent).not.toContain("too long");
+      });
     });
   });
 });

@@ -16,6 +16,7 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
 import { canFitPane, createPtySizeSync, type PtySizeSync } from "./terminalFit";
+import { createHiddenGpuBudget } from "./gpuBudget";
 import { ptyService, PtyService } from "../services/ptyService";
 import { describeCwdFallback, isWorkingDirectoryError } from "../services/spawnRecovery";
 import {
@@ -102,8 +103,12 @@ function attachGpuRenderer(term: Terminal, slot: { current: WebglAddon | null })
   }
 }
 
-/** How long a hidden pane keeps its WebGL context before releasing it. */
-const GPU_RELEASE_DELAY_MS = 15_000;
+/**
+ * Hidden panes that may keep a WebGL context at once. Visible panes (splits)
+ * plus this stay well under the ~16 context cap; the longest-hidden go first.
+ */
+const MAX_HIDDEN_GPU_PANES = 6;
+const hiddenGpuBudget = createHiddenGpuBudget(MAX_HIDDEN_GPU_PANES);
 
 function detachGpuRenderer(slot: { current: WebglAddon | null }): void {
   const addon = slot.current;
@@ -1167,29 +1172,33 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [sessionId]);
 
-    // Hold a WebGL context only while this pane is on screen (see
-    // attachGpuRenderer): hidden tabs release it so many tabs never exhaust the
-    // browser's context cap. Idempotent with the mount-time attach above.
-    // The release is delayed: dropping the context on every hide and rebuilding
-    // it (shader compile + glyph atlas) on every show made quick tab flips
-    // visibly laggy. Re-showing within the grace period reuses the live
-    // renderer; a pane left hidden still frees its context so many tabs never
-    // exhaust the cap (context loss is handled by `attachGpuRenderer`).
+    // Hold a WebGL context while this pane is on screen (see attachGpuRenderer).
+    // Hidden panes KEEP theirs until more than MAX_HIDDEN_GPU_PANES are hidden
+    // at once, then the longest-hidden one is released (see `gpuBudget`), so
+    // many tabs never exhaust the browser's context cap. A time-based release
+    // made every switch back to a tab left for a while rebuild the renderer
+    // (shader compile + glyph atlas) on the UI thread: a stall, then a frame
+    // of stale glyphs. Idempotent with the mount-time attach above.
     //
-    // LAYOUT effect: the re-attach must land before the browser paints the
-    // re-shown tab. As a plain effect it ran after the first paint, so a tab
-    // hidden long enough to lose its WebGL context briefly flashed the DOM
-    // renderer's stale frame (old glyph rows at the pre-hide layout) before
-    // the GPU canvas replaced it — the "random text flash on tab switch".
+    // LAYOUT effect: a re-attach (for a pane that WAS released) must land before
+    // the browser paints the re-shown tab. As a plain effect it ran after the
+    // first paint, so the DOM renderer's stale frame (old glyph rows at the
+    // pre-hide layout) flashed before the GPU canvas replaced it — the "random
+    // text flash on tab switch".
+    const releaseGpuRef = useRef(() => detachGpuRenderer(webglAddonRef));
     useLayoutEffect(() => {
       const term = xtermRef.current;
       if (!term) return;
+      const release = releaseGpuRef.current;
       if (visible) {
+        hiddenGpuBudget.show(release);
         attachGpuRenderer(term, webglAddonRef);
         return;
       }
-      const timer = setTimeout(() => detachGpuRenderer(webglAddonRef), GPU_RELEASE_DELAY_MS);
-      return () => clearTimeout(timer);
+      // Only a pane that actually holds a context counts against the budget
+      // (panes that mounted hidden never attached one).
+      if (webglAddonRef.current) hiddenGpuBudget.hide(release);
+      return () => hiddenGpuBudget.show(release);
     }, [visible]);
 
     // Periodic live CWD synchronization for the visible pane (ensures footer updates on cd).

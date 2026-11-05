@@ -3,7 +3,7 @@ import { findBinding, saveAccount } from "../core/integrations/config";
 import { createAzureDevOpsProvider } from "../core/integrations/providers/azure-devops";
 import { setProviderForTests } from "../core/integrations/providers";
 import { resetDefaultSecretStore } from "../core/integrations/secretStore";
-import { bind, getStatus, handleRpc, listBranches, setRules } from "../core/integrations/service";
+import { bind, branchExists, getStatus, handleRpc, setRules } from "../core/integrations/service";
 import { DEFAULT_RULES } from "../core/integrations/workflowRules";
 import { callTool } from "./helpers/mcpCall";
 import { azAccount, fakeFetch, makeRepo, useTempKaiHome } from "./helpers/integrationsEnv";
@@ -88,7 +88,7 @@ describe("merge branch: storage", () => {
     expect(findBinding(repoDir)?.binding.rules).toBeUndefined();
   });
 
-  it("rejects a branch the repository does not have, and says which exist", async () => {
+  it("rejects a branch the repository does not have, and names it", async () => {
     useFakeAzure([BRANCHES]);
     await setRules("azure-devops", repoDir, { mergeBranch: "develop" });
     const err = await handleRpc("azure-devops", {
@@ -99,7 +99,7 @@ describe("merge branch: storage", () => {
     expect(err).toMatchObject({
       code: "not_found",
       message: expect.stringContaining('"nope"'),
-      hint: expect.stringContaining("develop"),
+      hint: expect.stringContaining("case-sensitive"),
     });
     expect(findBinding(repoDir)?.binding.rules).toEqual({ mergeBranch: "develop" });
   });
@@ -161,17 +161,39 @@ describe("merge branch: storage", () => {
   });
 });
 
-describe("merge branch: listing", () => {
-  it("lists only branches, sorted, without the refs/heads prefix", async () => {
-    useFakeAzure([BRANCHES]);
-    expect(await listBranches(repoDir)).toEqual(["develop", "release/1.2", "trunk"]);
-    const res = await handleRpc("azure-devops", { op: "branches", projectDir: repoDir });
-    expect(res).toEqual({ ok: true, branches: ["develop", "release/1.2", "trunk"] });
+describe("merge branch: checking one name", () => {
+  it("asks about the typed name only; the branch list is never requested", async () => {
+    const fake = fakeFetch([BRANCHES]);
+    setProviderForTests(
+      "azure-devops",
+      createAzureDevOpsProvider({
+        http: { fetchImpl: fake.fetchImpl, sleep: async () => {} },
+        auth: {
+          env: {},
+          run: async () => ({
+            code: 0,
+            stdout: JSON.stringify({ accessToken: "t", expires_on: 4102444800 }),
+            stderr: "",
+          }),
+        },
+      })
+    );
+    expect(await branchExists(repoDir, "release/1.2")).toBe(true);
+    expect(await branchExists(repoDir, "release")).toBe(false); // exact name, not a prefix
+    expect(await branchExists(repoDir, "refs-only")).toBe(false);
+    expect(fake.calls).toHaveLength(3);
+    expect(fake.calls[0].url).toContain("filter=heads%2Frelease%2F1.2");
+    // No "branches" request exists any more.
+    const res = await handleRpc("azure-devops", {
+      op: "branches",
+      projectDir: repoDir,
+    } as never).catch((e: unknown) => e);
+    expect(res).not.toMatchObject({ ok: true });
   });
 
   it("needs a repository", async () => {
     bind("azure-devops", repoDir, { repo: null });
-    await expect(listBranches(repoDir)).rejects.toThrow(/not bound to a repository/);
+    await expect(branchExists(repoDir, "main")).rejects.toThrow(/not bound to a repository/);
   });
 });
 

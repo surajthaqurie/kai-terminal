@@ -9,6 +9,9 @@
  */
 import type { IntegrationAuthMethod } from "./providerCatalog";
 import type { WorkflowRules } from "./workflowRules";
+import type { OAuthRegistrationView } from "./oauthRegistration";
+
+export type { OAuthRegistrationView } from "./oauthRegistration";
 
 export interface IntegrationAccountView {
   /** Stable id such as `azure-devops:contoso`. */
@@ -77,6 +80,8 @@ export interface IntegrationStatusView {
   };
   /** Whether the Azure CLI (`az`) was found on PATH. */
   azCli: boolean;
+  /** Whether browser sign-in can start (this build has a Microsoft Entra app, or an environment override). */
+  oauth: OAuthRegistrationView;
 }
 
 export type IntegrationErrorCode =
@@ -135,8 +140,6 @@ export type IntegrationRpcRequest =
       replace?: boolean;
     }
   | { op: "unbind"; projectDir: string; logout?: boolean }
-  /** Branches of the repository bound to this folder (network call). */
-  | { op: "branches"; projectDir: string }
   /**
    * Replace the project's workflow rules. Omitted fields go back to their
    * default, so `rules: {}` resets everything. Invalid values, and a merge
@@ -147,7 +150,46 @@ export type IntegrationRpcRequest =
    * Turn the project's agent WRITE tools on or off. Off by default. Turning them on is
    * refused when an AI agent's session is running the command: only a person decides.
    */
-  | { op: "set_write_tools"; projectDir: string; enabled: boolean };
+  | { op: "set_write_tools"; projectDir: string; enabled: boolean }
+  | TeamsRpcRequest;
+
+/**
+ * Microsoft Teams, from the Integrations tab. The account is the person's own, not
+ * tied to a folder, so these carry no `projectDir`. No token ever crosses this
+ * boundary in either direction.
+ */
+export type TeamsRpcRequest =
+  | { op: "teams_status" }
+  /**
+   * Open the browser and sign in. Reading channel messages is asked for by default and
+   * dropped automatically when the organization needs an administrator to approve it.
+   */
+  | { op: "teams_login" }
+  /** Call Microsoft Graph with the saved sign-in and report what it can reach. */
+  | { op: "teams_verify" }
+  | { op: "teams_logout" };
+
+export interface TeamsStatusView {
+  /** False when this build has no Microsoft Entra app to sign in with. */
+  configured: boolean;
+  account: { id: string; name: string; email?: string; signedInAt: string } | null;
+  /** Permission to read channel messages (needs administrator approval) was granted. */
+  channelHistory: boolean;
+}
+
+export interface TeamsAccessView {
+  user: IntegrationUser;
+  teams: number;
+  /** null when chats could not be read; see `chatsError`. */
+  chats: number | null;
+  chatsError?: string;
+  channelHistory: boolean;
+}
+
+export type TeamsRpcResponse =
+  | { ok: true; teams: TeamsStatusView }
+  | { ok: true; access: TeamsAccessView }
+  | { ok: false; error: IntegrationErrorBody };
 
 export interface IntegrationUser {
   name: string;
@@ -168,12 +210,13 @@ export type IntegrationRpcResponse =
   | { ok: true; status: IntegrationStatusView }
   | { ok: true; projects: IntegrationProjectView[] }
   | { ok: true; repos: IntegrationRepoView[] }
-  | { ok: true; branches: string[] }
   | { ok: true; account: IntegrationAccountView; user: IntegrationUser }
   | { ok: true; accounts: IntegrationAccountView[]; user: IntegrationUser }
   | { ok: true; user: IntegrationUser }
   | { ok: true; binding: IntegrationBindingView }
   | { ok: true; done: true }
+  | { ok: true; teams: TeamsStatusView }
+  | { ok: true; access: TeamsAccessView }
   | { ok: false; error: IntegrationErrorBody };
 
 /** Command-line spelling the app runs: `kai azure rpc`. */

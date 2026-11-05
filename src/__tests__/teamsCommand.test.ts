@@ -190,12 +190,16 @@ describe("kai teams", () => {
       const { d } = deps({ secrets, signIn });
       expect(await runTeamsSetup([], d)).toBe(0);
       expect(signIn).toHaveBeenCalledTimes(1);
-      expect(signIn.mock.calls[0][0]).toMatchObject({ channelHistory: false });
+      // Channel messages are asked for by default: nothing is passed to turn them off.
+      expect(signIn.mock.calls[0][0]).not.toHaveProperty("channelHistory");
       expect(getTeamsAccount()).toMatchObject({ id: "oid-1", name: "Alex" });
       expect(secrets.map.has(teamsSecretKey("oid-1"))).toBe(true);
       const text = out.join("\n");
       expect(text).toContain("Signed in as Alex");
       expect(text).toContain("2 teams");
+      // The signed-in scopes here have no channel permission: it says why and how to retry.
+      expect(text).toContain("Channel messages     not approved");
+      expect(text).toContain("administrator");
       expect(text).toContain("kai integration teams --channels");
     });
 
@@ -213,7 +217,7 @@ describe("kai teams", () => {
         scopes: ["User.Read", CHANNEL_READ_SCOPE],
       }));
       expect(await runTeamsSetup(["--channels"], deps({ signIn }).d)).toBe(0);
-      expect(signIn.mock.calls[0][0]).toMatchObject({ channelHistory: true });
+      expect(signIn.mock.calls[0][0]).not.toHaveProperty("channelHistory");
       expect(getTeamsAccount()?.scopes).toContain(CHANNEL_READ_SCOPE);
     });
 

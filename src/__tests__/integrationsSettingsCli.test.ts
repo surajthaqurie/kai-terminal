@@ -203,7 +203,7 @@ describe("kai integration azure: merge branch and branch naming", () => {
         discovery: {
           listProjects: async () => [],
           listRepos: async () => [],
-          listBranches: async () => {
+          branchExists: async () => {
             throw new IntegrationError("network", "offline");
           },
         },
@@ -373,7 +373,7 @@ describe("kai integration azure: a Server SSH remote", () => {
   const discoveryFor = (): IntegrationProvider["discovery"] => ({
     listProjects: async () => [{ name: "Billing" }],
     listRepos: async () => [{ name: "ledger" }],
-    listBranches: async () => ["main"],
+    branchExists: async () => true,
   });
 
   it("does not sign in to a guessed address when it cannot ask, and shows the command to run", async () => {

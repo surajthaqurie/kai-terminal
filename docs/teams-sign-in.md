@@ -36,23 +36,40 @@ Graph permissions below to it, or register a second app for Teams.
    `offline_access` is requested automatically so the sign-in lasts.
 6. Copy the **Application (client) ID** from **Overview**.
 
-## Give Kai the client ID
+## The client ID
 
-- Release builds: set `KAI_TEAMS_CLIENT_ID` in `src/core/teams/oauth.ts` (the constant is
-  empty until the app is registered). If it is empty, Kai uses the Azure DevOps client ID.
-- A developer machine or CI can override it with the `KAI_TEAMS_CLIENT_ID` environment
-  variable, which also lets you test a registration before shipping it.
+Users never enter one. Teams uses, in order: `KAI_TEAMS_CLIENT_ID` (a Teams-only app), then the
+same registration as Azure DevOps sign-in: `KAI_AZURE_CLIENT_ID` in the environment, or the app ID
+built into the build (see `azure-devops-sign-in.md`). Setting the built-in one covers both cards.
 
 Without a client ID, `kai integration teams` stops with *"Microsoft Teams sign-in is not
-set up in this build of Kai"* and opens nothing.
+set up in this build of Kai"* and opens nothing. In the desktop app, the **Microsoft Teams**
+card shows **Not set up** and keeps **Connect Microsoft Teams** disabled until a client ID is
+present in the build.
 
-## Why channel history is a separate step
+## Signing in from the desktop app
 
-`ChannelMessage.Read.All` needs an administrator's approval in most organizations. If it
-were part of the first sign-in, anyone whose administrator has not approved it would be
-blocked from signing in at all. So the first sign-in asks only for permissions a user can
-approve, and `kai integration teams --channels` asks again with the channel permission
-added. Until it is granted:
+The Integrations tab and the command line use the same code path. **Connect Microsoft
+Teams** sends `teams_login` to `kai azure rpc`; the CLI starts a listener on a free
+`127.0.0.1` port, opens the Microsoft sign-in page in the default browser (authorization
+code with PKCE and a random `state`), exchanges the code for tokens and stores them in the
+OS secret store. The window only learns who signed in, never a token. The card also offers
+**Test connection**, **Switch account** and **Sign out**. When channel messages are approved
+the card shows only the account. If the organization has not approved them it adds
+`Channel messages need admin approval.` and a **Try again** button.
+
+Each Teams request is refused when an AI agent's session is running it (the checks under
+*Your sign-in and AI agents* below), so an agent cannot use the card's channel either.
+
+## Channel messages are on by default
+
+Reading channels is part of Teams, so the sign-in asks for `ChannelMessage.Read.All` together
+with everything else: there is no extra step to turn it on. It needs an administrator's
+approval in most organizations. When Microsoft says an administrator has to approve it, Kai
+repeats the sign-in once without that one permission, so nobody is locked out of Teams
+because of it. The card then says channel messages need admin approval. Once an
+administrator has approved Kai, **Try again** (or
+`kai integration teams --channels`) signs in again with it. Until it is granted:
 
 - chats (one-to-one, group, meeting) work fully: read, send, images, files;
 - sending to a channel works;

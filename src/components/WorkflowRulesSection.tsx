@@ -1,7 +1,12 @@
-import { FC, useEffect, useId, useRef, useState } from "react";
+import { FC, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { ChevronRight } from "lucide-react";
 import type { IntegrationErrorBody } from "../core/integrations/rpcTypes";
-import { checkBranchPattern, type WorkflowRules } from "../core/integrations/workflowRules";
-import { listIntegrationBranches, setIntegrationRules } from "../services/integrationService";
+import {
+  MAX_PATTERN,
+  checkBranchPattern,
+  type WorkflowRules,
+} from "../core/integrations/workflowRules";
+import { setIntegrationRules } from "../services/integrationService";
 import { formatError } from "./integrationsViewModel";
 
 interface WorkflowRulesSectionProps {
@@ -14,14 +19,33 @@ interface WorkflowRulesSectionProps {
   onSaved: () => void;
 }
 
+/** The pattern box stops growing here and scrolls instead. */
+const PATTERN_MAX_PX = 140;
+
+/** Line breaks are never part of a branch naming pattern: a paste is flattened to one line. */
+export function oneLine(text: string): string {
+  return text.replace(/[\r\n]+/g, "");
+}
+
+/** How full the pattern is, for the counter's colour. */
+export function patternFill(length: number): "ok" | "near" | "over" {
+  if (length > MAX_PATTERN) return "over";
+  return length >= Math.ceil(MAX_PATTERN * 0.9) ? "near" : "ok";
+}
+
 /**
  * The git rules of the connected project: the merge branch (where agents start new
- * branches and which branch their pull requests target, picked from the
- * repository's real branches) and an optional branch naming pattern (a regular
- * expression). Each can be removed. Hidden behind a "More" link: most people never
- * change them, and agents read them through the `kai_workflow_rules` MCP tool when
- * they start a branch.
+ * branches and which branch their pull requests target, typed by the user and
+ * checked against the repository when saved, so no branch list is ever loaded)
+ * and an optional branch naming pattern (a regular expression). Each can be removed.
+ * Hidden behind a "Branch rules" toggle: most people never change them, and agents read them
+ * through the `kai_workflow_rules` MCP tool when they start a branch.
+ *
+ * The pattern is one logical line but can be long, so it is shown in a box that wraps
+ * and grows with the text (up to a few lines, then scrolls), with a live character
+ * count against the limit. Line breaks cannot be typed or pasted into it.
  */
+
 export const WorkflowRulesSection: FC<WorkflowRulesSectionProps> = ({
   projectDir,
   rules,
@@ -35,8 +59,6 @@ export const WorkflowRulesSection: FC<WorkflowRulesSectionProps> = ({
   // The pattern is judged live, but only once the user has edited or left the field,
   // so a stored value is never shown as an error just for opening the section.
   const [patternTouched, setPatternTouched] = useState(false);
-  const [branches, setBranches] = useState<string[] | null>(null);
-  const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<IntegrationErrorBody | null>(null);
@@ -60,26 +82,16 @@ export const WorkflowRulesSection: FC<WorkflowRulesSectionProps> = ({
     setError(null);
   }, [rules.branchPattern]);
 
-  // The branch list belongs to one repository: forget it when the folder changes.
-  useEffect(() => {
-    setBranches(null);
-  }, [projectDir]);
-
-  // Fetch the branches the first time the section is opened.
-  useEffect(() => {
-    if (!open || branches !== null) return;
-    let cancelled = false;
-    setLoading(true);
-    void listIntegrationBranches(projectDir).then((res) => {
-      if (cancelled || !mounted.current) return;
-      setLoading(false);
-      if (res.ok) setBranches(res.value);
-      else setError(res.error);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [open, branches, projectDir]);
+  // The pattern box follows its text: wrap, grow to a few lines, then scroll.
+  const patternBox = useRef<HTMLTextAreaElement>(null);
+  useLayoutEffect(() => {
+    const el = patternBox.current;
+    if (!el) return;
+    el.style.height = "auto";
+    const wanted = el.scrollHeight;
+    if (wanted > 0) el.style.height = `${Math.min(wanted, PATTERN_MAX_PX)}px`;
+    el.style.overflowY = wanted > PATTERN_MAX_PX ? "auto" : "hidden";
+  }, [patternDraft, open]);
 
   const check = checkBranchPattern(patternDraft);
   const patternError = patternTouched ? check.error : null;
@@ -87,10 +99,6 @@ export const WorkflowRulesSection: FC<WorkflowRulesSectionProps> = ({
 
   const dirty = mergeDraft !== rules.mergeBranch || patternDraft !== rules.branchPattern;
   const locked = disabled || saving;
-
-  // The saved branch stays selectable even when the list does not (or cannot) show it.
-  const options = [...(branches ?? [])];
-  if (mergeDraft && !options.includes(mergeDraft)) options.unshift(mergeDraft);
 
   const edited = () => {
     setSaved(false);
@@ -121,49 +129,49 @@ export const WorkflowRulesSection: FC<WorkflowRulesSectionProps> = ({
 
   const shown = error ? formatError(error) : null;
   const patternMsgId = `${id}-pattern-msg`;
+  const countId = `${id}-pattern-count`;
+  const fill = patternFill(patternDraft.length);
 
   return (
-    <div className="integration-more">
+    <div className="integration-section">
       <button
         type="button"
-        className="link-button"
+        className="integration-toggle"
         aria-expanded={open}
         aria-controls={`${id}-rules`}
         onClick={() => setOpen((v) => !v)}
       >
-        {open ? "Less" : "More"}
+        <ChevronRight size={12} aria-hidden="true" />
+        <span>Branch rules</span>
       </button>
 
       {open && (
         <div
           id={`${id}-rules`}
-          className="integration-switch"
+          className="integration-rules"
           role="group"
           aria-label="Branch rules"
         >
           <div className="setting-field">
             <label htmlFor={`${id}-merge`}>Merge branch</label>
             <div className="integration-field-row">
-              <select
+              <input
                 id={`${id}-merge`}
+                type="text"
                 className="text-input modal-input"
                 value={mergeDraft}
-                disabled={locked || loading}
+                placeholder="Repository default"
+                spellCheck={false}
+                autoComplete="off"
+                disabled={locked}
                 onChange={(e) => {
                   setMergeDraft(e.target.value);
                   edited();
                 }}
-              >
-                <option value="">Repository default</option>
-                {options.map((name) => (
-                  <option key={name} value={name}>
-                    {name}
-                  </option>
-                ))}
-              </select>
+              />
               <button
                 type="button"
-                className="btn btn-secondary btn-small"
+                className="btn btn-ghost btn-small"
                 disabled={locked || mergeDraft === ""}
                 aria-label="Remove merge branch"
                 onClick={() => {
@@ -178,28 +186,35 @@ export const WorkflowRulesSection: FC<WorkflowRulesSectionProps> = ({
 
           <div className="setting-field">
             <label htmlFor={`${id}-pattern`}>Branch naming (regex)</label>
-            <div className="integration-field-row">
-              <input
+            <div className="integration-field-row integration-field-row-top">
+              <textarea
                 id={`${id}-pattern`}
-                type="text"
-                className="text-input modal-input"
+                ref={patternBox}
+                rows={1}
+                wrap="soft"
+                className="text-input modal-input integration-pattern"
                 value={patternDraft}
                 placeholder="^(feature|bugfix)/\d+-[a-z0-9-]+$"
                 spellCheck={false}
                 autoComplete="off"
+                autoCapitalize="off"
                 disabled={locked}
                 aria-invalid={patternError ? true : undefined}
-                aria-describedby={patternError || patternWarning ? patternMsgId : undefined}
+                aria-describedby={`${countId}${patternError || patternWarning ? ` ${patternMsgId}` : ""}`}
                 onChange={(e) => {
-                  setPatternDraft(e.target.value);
+                  setPatternDraft(oneLine(e.target.value));
                   setPatternTouched(true);
                   edited();
+                }}
+                onKeyDown={(e) => {
+                  // Enter would add a line break; a pattern is a single line.
+                  if (e.key === "Enter") e.preventDefault();
                 }}
                 onBlur={() => setPatternTouched(true)}
               />
               <button
                 type="button"
-                className="btn btn-secondary btn-small"
+                className="btn btn-ghost btn-small"
                 disabled={locked || patternDraft === ""}
                 aria-label="Remove branch naming"
                 onClick={() => {
@@ -211,6 +226,9 @@ export const WorkflowRulesSection: FC<WorkflowRulesSectionProps> = ({
                 Remove
               </button>
             </div>
+            <span id={countId} className={`integration-count is-${fill}`}>
+              {patternDraft.length} / {MAX_PATTERN}
+            </span>
             <div id={patternMsgId} aria-live="polite" role="status">
               {patternError && <p className="error-text integration-detected">{patternError}</p>}
               {patternWarning && (
@@ -219,27 +237,27 @@ export const WorkflowRulesSection: FC<WorkflowRulesSectionProps> = ({
             </div>
           </div>
 
-          <div className="ai-provider-actions">
-            <button
-              type="button"
-              className="btn btn-primary btn-small"
-              disabled={locked || loading || !dirty || check.error !== null}
-              onClick={() => void save()}
-            >
-              {saving ? "Saving…" : "Save"}
-            </button>
-          </div>
-
-          <div aria-live="polite" role="status">
-            {loading && <p className="muted-text integration-detected">Loading branches…</p>}
-            {saved && <p className="integration-ok">Saved.</p>}
-          </div>
-          {shown && (
-            <div role="alert" className="error-text integration-error">
-              <span>{shown.message}</span>
-              {shown.hint && <code>{shown.hint}</code>}
+          <div className="integration-rules-foot">
+            <div className="integration-actions">
+              <button
+                type="button"
+                className="btn btn-primary btn-small"
+                disabled={locked || !dirty || check.error !== null}
+                onClick={() => void save()}
+              >
+                {saving ? "Saving…" : "Save"}
+              </button>
+              <div aria-live="polite" role="status">
+                {saved && <p className="integration-saved">Saved.</p>}
+              </div>
             </div>
-          )}
+            {shown && (
+              <div role="alert" className="integration-alert">
+                <span>{shown.message}</span>
+                {shown.hint && <code>{shown.hint}</code>}
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>

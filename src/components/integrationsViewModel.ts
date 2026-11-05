@@ -29,7 +29,8 @@ export function deriveCardState(status: IntegrationStatusView | null): CardState
 const BADGES: Record<CardState, BadgeView> = {
   not_connected: { label: "Not connected", tone: "muted" },
   connected: { label: "Connected", tone: "ok" },
-  active: { label: "Active for this project", tone: "ok" },
+  // The heading says "Connected" for both: which project is in use is shown on its own line.
+  active: { label: "Connected", tone: "ok" },
   signed_out: { label: "Sign-in needed", tone: "warn" },
 };
 
@@ -37,17 +38,18 @@ export function badgeFor(state: CardState): BadgeView {
   return BADGES[state];
 }
 
-/**
- * The error to show when browser sign-in fails. When this build has no
- * Microsoft app registered (a `config` error), the panel has no other way to
- * sign in, so it points at the terminal command that does.
- */
-export function explainSignInError(error: IntegrationErrorBody): IntegrationErrorBody {
-  if (error.code !== "config") return error;
-  const next =
-    'To sign in now, run "kai integration azure" in a terminal: it signs in with the Azure CLI or an access token instead.';
-  return { ...error, hint: error.hint ? `${next} (Maintainers: ${error.hint})` : next };
+// ---------------------------------------------------------------------------
+// Browser sign-in availability (the Microsoft Entra app built into Kai)
+// ---------------------------------------------------------------------------
+
+/** True when this build has no Microsoft app to sign in with, so Connect cannot work yet. */
+export function signInUnavailable(status: IntegrationStatusView | null): boolean {
+  return status !== null && status.oauth?.available === false;
 }
+
+/** What the card says when browser sign-in cannot start. Nothing for the person to fill in. */
+export const SIGN_IN_UNAVAILABLE_TEXT =
+  "Sign-in is not set up in this build yet. In a terminal, run kai integration azure --az or --pat-stdin.";
 
 export function authMethodLabel(method: IntegrationAuthMethod): string {
   return method === "oauth" ? "Browser sign-in" : method === "az" ? "Azure CLI" : "Access token";
@@ -128,6 +130,81 @@ export function describeAccount(account: IntegrationAccountView): string {
   const parts = [accountName(account), authMethodLabel(account.authMethod)];
   if (account.user) parts.push(account.user);
   return parts.join(" · ");
+}
+
+/** An account in a grouped list: the signed-in user is the group, so it is not repeated per row. */
+export function describeGroupedAccount(account: IntegrationAccountView): string {
+  return [accountName(account), authMethodLabel(account.authMethod)].join(" · ");
+}
+
+export interface AccountGroup {
+  /** Stable key: the lower-cased user, or "" for accounts with no recorded user. */
+  key: string;
+  /** What the group is called: the user's email or name. */
+  label: string;
+  accounts: IntegrationAccountView[];
+}
+
+/**
+ * Groups accounts by the person who signed in (one Microsoft account can own
+ * several organizations). Groups and the accounts inside them keep the order
+ * they were listed in, so nothing jumps around after a refresh.
+ */
+export function groupAccounts(accounts: readonly IntegrationAccountView[]): AccountGroup[] {
+  const groups = new Map<string, AccountGroup>();
+  for (const account of accounts) {
+    const user = account.user?.trim() ?? "";
+    const key = user.toLowerCase();
+    const group = groups.get(key);
+    if (group) group.accounts.push(account);
+    else groups.set(key, { key, label: user || "Unknown user", accounts: [account] });
+  }
+  return [...groups.values()];
+}
+
+/**
+ * Two letters for an avatar: "aj.chand@aitc.ai" -> "AC", "Alex Rivera" -> "AR",
+ * "contoso" -> "CO". Only the part before an "@" is used; "?" when nothing usable is left.
+ */
+export function initialsOf(label: string): string {
+  const local = label.split("@")[0] ?? "";
+  const parts = local.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+  const letters = parts.length >= 2 ? `${parts[0][0]}${parts[1][0]}` : (parts[0] ?? "").slice(0, 2);
+  return letters ? letters.toUpperCase() : "?";
+}
+
+export interface SignInSummary {
+  /** Organizations that were not listed before this sign-in. */
+  added: string[];
+  /** Organizations that were already listed under a different user and now use this one. */
+  taken: { org: string; from: string }[];
+  /** True when every organization was already signed in as this same user. */
+  alreadySignedIn: boolean;
+}
+
+/** What a browser sign-in changed compared with the accounts listed before it. */
+export function summarizeSignIn(
+  before: readonly IntegrationAccountView[],
+  signedIn: readonly IntegrationAccountView[]
+): SignInSummary {
+  const previous = new Map(before.map((a) => [a.id, a]));
+  const added: string[] = [];
+  const taken: SignInSummary["taken"] = [];
+  for (const account of signedIn) {
+    const old = previous.get(account.id);
+    if (!old) {
+      added.push(accountName(account));
+      continue;
+    }
+    const was = old.user?.trim().toLowerCase() ?? "";
+    const now = account.user?.trim().toLowerCase() ?? "";
+    if (was && now && was !== now) taken.push({ org: accountName(account), from: old.user ?? "" });
+  }
+  return {
+    added,
+    taken,
+    alreadySignedIn: signedIn.length > 0 && added.length === 0 && taken.length === 0,
+  };
 }
 
 // ---------------------------------------------------------------------------

@@ -7,6 +7,9 @@ there is no organization, token or sign-in method to type.
 
 This needs one thing from the maintainers: an Entra **app registration** for Kai.
 It is a public client, so it has no secret and nothing sensitive ships in the app.
+Its ID is a constant in the build. **Users never enter it**: there is no sign-in app form,
+no client ID and no directory to type. **Connect** generates one Microsoft sign-in
+address, opens it in the browser, and finishes on its own.
 
 ## Register the app (once)
 
@@ -26,19 +29,33 @@ It is a public client, so it has no secret and nothing sensitive ships in the ap
    No admin consent is required for it.
 7. Copy the **Application (client) ID** from **Overview**.
 
-## Give Kai the client ID
+## Put the client ID in the build (maintainers, once)
 
-- Release builds: set `KAI_AZURE_CLIENT_ID` in
-  `src/core/integrations/providers/azure-devops/oauth.ts` (the constant is empty
-  until the app is registered).
-- A developer machine or CI can override it with the `KAI_AZURE_CLIENT_ID`
-  environment variable, which also lets you test a registration before shipping it.
+Open `src/core/integrations/providers/azure-devops/oauth.ts` and set the constant:
 
-Without a client ID, **Connect** in the desktop app stops with *"Browser sign-in is not set up
-in this build of Kai"* and opens nothing; it also tells the user to run
-`kai integration azure` in a terminal. That command notices there is no client ID, says so, and
-signs in with the Azure CLI or an access token instead, so nobody is left without a way in
-while the registration is pending.
+```ts
+export const KAI_AZURE_CLIENT_ID = "<Application (client) ID from step 7>";
+```
+
+It is public, so it belongs in the source. Teams uses the same registration (or
+`KAI_TEAMS_CLIENT_ID`: see `teams-sign-in.md`). The registration must be multi-tenant (step 3),
+so the sign-in goes through the `common` directory and every user signs in from their own tenant.
+
+**Until it is set**, this build has no app to sign in with, and Kai handles that openly:
+
+- In the desktop app, **Connect Azure DevOps** is disabled. The card says browser sign-in is not
+  set up in this build and points to the terminal: `kai integration azure --az` (Azure CLI) or
+  `--pat-stdin` (access token). Nothing asks the user for an app ID.
+- `kai integration azure` falls back to the Azure CLI or an access token and says why.
+
+**Environment variables** (CI, or to test a registration before it is built in):
+`KAI_AZURE_CLIENT_ID` and, for a single-tenant app, `KAI_AZURE_TENANT_ID`. They win over the
+built-in ID, and a malformed value is reported by name instead of silently using another app.
+
+Microsoft's sign-in errors are translated into what to change: an unknown client ID
+(*AADSTS700016*), a single-tenant app (*AADSTS50194*, set `KAI_AZURE_TENANT_ID`), a missing
+`http://localhost` redirect (*AADSTS50011*), a missing consent (*AADSTS65001*) and a registration
+that is not a public client (*AADSTS7000218*).
 
 ## How it works
 
@@ -59,10 +76,11 @@ Kai's agent tools only read until you run `kai integration azure --allow-writes`
 
 ## Not handled by browser sign-in
 
-- **Azure DevOps Server** (on-premises) cannot use Entra sign-in. In the desktop
-  app, use **Azure DevOps Server…** on the card (server URL with the collection,
-  optional project, access token). From a terminal:
-  `kai integration azure --server-url <url> --pat-stdin`.
+- **Azure DevOps Server** (on-premises) cannot use Entra sign-in. The desktop
+  app has no button for it for now; sign in from a terminal:
+  `kai integration azure --server-url <url> --pat-stdin`. A server account that
+  is already signed in is listed on the card, and **Enter token** there replaces
+  an expired or missing token.
 - **Scripts and CI** can keep using `--pat-stdin` (an access token on stdin) or
   `--az` (the Azure CLI's sign-in). The desktop app offers neither for Azure
   DevOps Services; its Server form takes an access token.

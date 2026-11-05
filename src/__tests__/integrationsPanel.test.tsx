@@ -14,6 +14,10 @@ const svc = vi.hoisted(() => ({
   logoutIntegration: vi.fn(),
   bindIntegration: vi.fn(),
   unbindIntegration: vi.fn(),
+  getTeamsStatus: vi.fn(),
+  teamsLogin: vi.fn(),
+  verifyTeams: vi.fn(),
+  teamsLogout: vi.fn(),
 }));
 vi.mock("../services/integrationService", () => svc);
 
@@ -28,7 +32,9 @@ import {
   deriveCardState,
   describeAccount,
   describeDetected,
-  explainSignInError,
+  describeGroupedAccount,
+  groupAccounts,
+  initialsOf,
   isSameSelection,
   isServerAccount,
   needsRelogin,
@@ -36,6 +42,7 @@ import {
   pickSwitchProject,
   preferredAccountId,
   providerLabel,
+  summarizeSignIn,
   validateServerForm,
 } from "../components/integrationsViewModel";
 
@@ -75,25 +82,21 @@ const status = (over: Partial<IntegrationStatusView> = {}): IntegrationStatusVie
     otherProvider: null,
   },
   azCli: true,
+  oauth: { available: true, source: "build" },
   ...over,
 });
 
+const ANN_UPPER = (org: string) =>
+  account({ id: `azure-devops:${org}`, org, user: "ANN@x.com", authMethod: "oauth" });
+
 describe("integrations view model", () => {
-  it("explains a missing browser sign-in app with the terminal route, and leaves other errors alone", () => {
-    const missing = explainSignInError({
-      code: "config",
-      message: "Browser sign-in is not set up in this build of Kai.",
-      hint: "Set KAI_AZURE_CLIENT_ID.",
-    });
-    expect(missing.message).toContain("not set up");
-    expect(missing.hint).toContain("kai integration azure");
-    expect(missing.hint).toContain("KAI_AZURE_CLIENT_ID");
-    const other = {
-      code: "auth",
-      message: "Sign-in was cancelled.",
-      hint: "Connect again.",
-    } as const;
-    expect(explainSignInError(other)).toEqual(other);
+  it("makes two-letter avatar initials from a name or an address", () => {
+    expect(initialsOf("aj.chand@aitc.ai")).toBe("AC");
+    expect(initialsOf("Alex Rivera")).toBe("AR");
+    expect(initialsOf("contoso")).toBe("CO");
+    expect(initialsOf("x@y.com")).toBe("X");
+    expect(initialsOf("")).toBe("?");
+    expect(initialsOf("@y.com")).toBe("?");
   });
 
   it("derives one card state from the project binding first, then accounts", () => {
@@ -110,7 +113,8 @@ describe("integrations view model", () => {
   it("labels each state", () => {
     expect(badgeFor("not_connected").label).toBe("Not connected");
     expect(badgeFor("connected").label).toBe("Connected");
-    expect(badgeFor("active").label).toBe("Active for this project");
+    // One heading word for both: the project in use has its own line, so "Active" is not repeated.
+    expect(badgeFor("active")).toEqual({ label: "Connected", tone: "ok" });
     expect(badgeFor("signed_out")).toEqual({ label: "Sign-in needed", tone: "warn" });
   });
 
@@ -264,6 +268,40 @@ describe("integrations view model", () => {
     expect(!long.ok && long.errors.token).toContain("too long");
   });
 
+  it("groups accounts by the signed-in user, keeping order and ignoring case", () => {
+    const a = account({ id: "azure-devops:a", org: "a", user: "Ann@x.com", authMethod: "oauth" });
+    const b = account({ id: "azure-devops:b", org: "b", user: "bob@y.com", authMethod: "oauth" });
+    const c = account({ id: "azure-devops:c", org: "c", user: "ann@x.com", authMethod: "oauth" });
+    const d = account({ id: "azure-devops:d", org: "d" });
+    const groups = groupAccounts([a, b, c, d]);
+    expect(groups.map((g) => [g.label, g.accounts.map((x) => x.org)])).toEqual([
+      ["Ann@x.com", ["a", "c"]],
+      ["bob@y.com", ["b"]],
+      ["Unknown user", ["d"]],
+    ]);
+    expect(groupAccounts([])).toEqual([]);
+    // The user is the group heading, so a grouped row does not repeat it.
+    expect(describeGroupedAccount(a)).toBe("a · Browser sign-in");
+  });
+
+  it("summarizes what a sign-in changed", () => {
+    const ann = (org: string) =>
+      account({ id: `azure-devops:${org}`, org, user: "ann@x.com", authMethod: "oauth" });
+    const bob = (org: string) =>
+      account({ id: `azure-devops:${org}`, org, user: "bob@y.com", authMethod: "oauth" });
+    expect(summarizeSignIn([], [ann("a")])).toEqual({
+      added: ["a"],
+      taken: [],
+      alreadySignedIn: false,
+    });
+    expect(summarizeSignIn([ann("a")], [ann("a")]).alreadySignedIn).toBe(true);
+    expect(summarizeSignIn([ann("a")], [ANN_UPPER("a")]).alreadySignedIn).toBe(true);
+    const taken = summarizeSignIn([ann("a"), ann("b")], [bob("a"), bob("c")]);
+    expect(taken.added).toEqual(["c"]);
+    expect(taken.taken).toEqual([{ org: "a", from: "ann@x.com" }]);
+    expect(taken.alreadySignedIn).toBe(false);
+  });
+
   it("recognizes a selection that would not change the binding", () => {
     expect(isSameSelection({ project: "Payments", repo: "api" }, "Payments", "api")).toBe(true);
     expect(isSameSelection({ project: "Payments", repo: null }, "Payments", null)).toBe(true);
@@ -298,6 +336,10 @@ describe("IntegrationsPanel", () => {
     (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
       true;
     Object.values(svc).forEach((fn) => fn.mockReset());
+    svc.getTeamsStatus.mockResolvedValue({
+      ok: true,
+      value: { configured: true, account: null, channelHistory: false },
+    });
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -443,23 +485,64 @@ describe("IntegrationsPanel", () => {
     expect(container.textContent).toContain("Active for this project (Payments).");
   });
 
-  it("says what to do when this build has no browser sign-in app, instead of a dead end", async () => {
+  const notSetUp = () => status({ oauth: { available: false, source: null } });
+
+  it("has no sign-in app form: Connect just starts the browser sign-in", async () => {
+    svc.getIntegrationStatus.mockResolvedValue({ ok: true, value: status() });
+    svc.loginWithBrowser.mockResolvedValue({
+      ok: false,
+      error: { code: "auth", message: "Sign-in was cancelled." },
+    });
+    await render();
+    expect(container.textContent).not.toContain("Sign-in app");
+    expect(q("input")).toBeNull();
+    await click(button("Connect Azure DevOps"));
+    await flush();
+    expect(svc.loginWithBrowser).toHaveBeenCalledTimes(1);
+    expect(q("form")).toBeNull();
+    expect(q("[role=alert]")?.textContent).toContain("Sign-in was cancelled.");
+  });
+
+  it("turns Connect off, says why and points to the terminal when this build has no app ID", async () => {
+    svc.getIntegrationStatus.mockResolvedValue({ ok: true, value: notSetUp() });
+    await render();
+    const connect = button("Connect Azure DevOps");
+    expect(connect?.disabled).toBe(true);
+    expect(connect?.title).toContain("not set up in this build");
+    expect(q("[role=status]")?.textContent).toContain("kai integration azure --az");
+    // Nothing to type in: no client ID or directory fields exist anywhere.
+    expect(q("form")).toBeNull();
+    expect(q("input")).toBeNull();
+    await click(connect);
+    expect(svc.loginWithBrowser).not.toHaveBeenCalled();
+  });
+
+  it("keeps Connect on when an environment variable supplies the app", async () => {
+    svc.getIntegrationStatus.mockResolvedValue({
+      ok: true,
+      value: status({ oauth: { available: true, source: "env" } }),
+    });
+    await render();
+    expect(button("Connect Azure DevOps")?.disabled).toBe(false);
+    expect(container.textContent).not.toContain("not set up in this build");
+  });
+
+  it("shows Microsoft's refusal of the app as an error, without any form to fix it", async () => {
     svc.getIntegrationStatus.mockResolvedValue({ ok: true, value: status() });
     svc.loginWithBrowser.mockResolvedValue({
       ok: false,
       error: {
         code: "config",
-        message: "Browser sign-in is not set up in this build of Kai.",
-        hint: "Register the Kai app in Microsoft Entra and set KAI_AZURE_CLIENT_ID.",
+        message: "Microsoft does not recognize Kai's sign-in app.",
+        hint: "Check KAI_AZURE_CLIENT_ID (if set) and the app registration.",
       },
     });
     await render();
     await click(button("Connect Azure DevOps"));
     await flush();
-    const text = container.textContent ?? "";
-    expect(text).toContain("Browser sign-in is not set up in this build of Kai.");
-    expect(text).toContain('run "kai integration azure" in a terminal');
-    expect(text).toContain("Azure CLI or an access token");
+    expect(q("[role=alert]")?.textContent).toContain("does not recognize");
+    expect(q("form")).toBeNull();
+    expect(q("input")).toBeNull();
   });
 
   it("keeps the sign-in and asks before replacing another integration", async () => {
@@ -505,7 +588,7 @@ describe("IntegrationsPanel", () => {
   it("marks one account active and offers Make active only on the others", async () => {
     svc.getIntegrationStatus.mockResolvedValue({ ok: true, value: twoAccounts().base });
     await render();
-    expect(container.textContent).toContain("contoso · Azure CLI · this project");
+    expect(container.textContent).toContain("contoso · Azure CLI");
     expect(q("button[aria-label='Make contoso active for this project']")).toBeNull();
     expect(q("button[aria-label='Make fabrikam active for this project']")).toBeTruthy();
   });
@@ -558,22 +641,119 @@ describe("IntegrationsPanel", () => {
     expect(container.textContent).toContain("contoso is now active for this project");
   });
 
-  it("keeps the Server form closed until asked, and closes it again on Cancel", async () => {
+  /** A server account whose token is gone: the only way into the Server form now. */
+  const stale = (over: Partial<IntegrationStatusView> = {}) =>
+    status({ accounts: [serverAccount({ hasCredential: false })], ...over });
+  const openServerForm = () =>
+    click(q("button[aria-label='Enter a new token for DefaultCollection @ tfs.corp.local']"));
+
+  it("lists accounts grouped by the user who signed in, with a Sign out all for a multi-org user", async () => {
+    const ann = (org: string) =>
+      account({ id: `azure-devops:${org}`, org, user: "ann@x.com", authMethod: "oauth" });
+    const bob = account({
+      id: "azure-devops:zed",
+      org: "zed",
+      user: "bob@y.com",
+      authMethod: "oauth",
+    });
+    svc.getIntegrationStatus
+      .mockResolvedValueOnce({
+        ok: true,
+        value: status({ accounts: [ann("contoso"), ann("fabrikam"), bob] }),
+      })
+      .mockResolvedValue({ ok: true, value: status({ accounts: [bob] }) });
+    svc.logoutIntegration.mockResolvedValue({ ok: true, value: true });
+    await render();
+    const annGroup = q("section[aria-label='Signed in as ann@x.com']");
+    expect(annGroup?.textContent).toContain("2 organizations");
+    expect(annGroup?.textContent).toContain("contoso · Browser sign-in");
+    expect(annGroup?.textContent).toContain("fabrikam · Browser sign-in");
+    expect(annGroup?.textContent).not.toContain("zed");
+    const bobGroup = q("section[aria-label='Signed in as bob@y.com']");
+    expect(bobGroup?.textContent).toContain("1 organization");
+    // One organization has nothing to sign out "all" of.
+    expect(bobGroup?.querySelector("button[aria-label^='Sign out all']")).toBeNull();
+
+    await click(q("button[aria-label='Sign out all organizations of ann@x.com']"));
+    expect(svc.logoutIntegration).not.toHaveBeenCalled();
+    await click(button("Sign out all"));
+    expect(svc.logoutIntegration.mock.calls.map((c) => c[0])).toEqual([
+      "azure-devops:contoso",
+      "azure-devops:fabrikam",
+    ]);
+    expect(container.textContent).toContain("Signed out ann@x.com.");
+  });
+
+  it("says when a sign-in took an organization from another user, and when nothing changed", async () => {
+    const was = account({ user: "ann@x.com", authMethod: "oauth" });
+    const now = account({ user: "bob@y.com", authMethod: "oauth" });
+    svc.getIntegrationStatus.mockResolvedValue({ ok: true, value: status({ accounts: [was] }) });
+    svc.loginWithBrowser.mockResolvedValue({
+      ok: true,
+      value: { accounts: [now], user: { name: "Bob", email: "bob@y.com" } },
+    });
+    svc.bindIntegration.mockResolvedValue({
+      ok: true,
+      value: { account: was.id, project: "Payments", repo: "api" },
+    });
+    await render();
+    await click(button("Add account"));
+    await flush();
+    expect(container.textContent).toContain("contoso now uses bob@y.com (was ann@x.com).");
+
+    svc.loginWithBrowser.mockResolvedValue({
+      ok: true,
+      value: { accounts: [was], user: { name: "Ann", email: "ann@x.com" } },
+    });
+    await click(button("Add account"));
+    await flush();
+    expect(container.textContent).toContain("Already signed in with this account; refreshed.");
+  });
+
+  it("keeps the active account and says how to switch when another sign-in finds several organizations", async () => {
+    const { base } = twoAccounts();
+    const north = account({ id: "azure-devops:north", org: "north", authMethod: "oauth" });
+    const south = account({ id: "azure-devops:south", org: "south", authMethod: "oauth" });
+    svc.getIntegrationStatus.mockResolvedValue({
+      ok: true,
+      value: { ...base, accounts: [...base.accounts, north, south] },
+    });
+    svc.loginWithBrowser.mockResolvedValue({
+      ok: true,
+      value: { accounts: [north, south], user: { name: "Zed", email: "zed@z.com" } },
+    });
+    await render();
+    await click(button("Add account"));
+    await flush();
+    expect(container.textContent).toContain("2 organizations added");
+    expect(container.textContent).toContain('"Make active"');
+    expect(container.textContent).not.toContain("choose one for this project below");
+    expect(svc.bindIntegration).not.toHaveBeenCalled();
+    expect(svc.listProjects).not.toHaveBeenCalled();
+  });
+
+  it("has no Azure DevOps Server button; the form opens only to re-enter a token", async () => {
     svc.getIntegrationStatus.mockResolvedValue({ ok: true, value: status() });
+    await render();
+    expect(button("Azure DevOps Server…")).toBeUndefined();
+    expect(container.textContent).not.toContain("Azure DevOps Server…");
+    expect(q("form")).toBeNull();
+  });
+
+  it("keeps the Server form closed until asked, and closes it again on Cancel", async () => {
+    svc.getIntegrationStatus.mockResolvedValue({ ok: true, value: stale() });
     await render();
     expect(container.textContent).not.toContain("Server URL");
     expect(q("#azure-devops-url")).toBeNull();
-    await click(button("Azure DevOps Server…"));
+    await openServerForm();
     expect(q("form[aria-label='Azure DevOps Server']")).toBeTruthy();
     expect(q("#azure-devops-url")).toBeTruthy();
     expect(q("#azure-devops-server-project")).toBeTruthy();
     // The token is a hidden field, and the form says why a token is needed.
     expect(q<HTMLInputElement>("#azure-devops-token")?.type).toBe("password");
     expect(container.textContent).toContain("signs in with an access token");
-    expect(button("Azure DevOps Server…")).toBeUndefined();
     await click(button("Cancel"));
     expect(q("form")).toBeNull();
-    expect(button("Azure DevOps Server…")).toBeTruthy();
   });
 
   /** Types into a controlled input the way a user would. */
@@ -591,7 +771,7 @@ describe("IntegrationsPanel", () => {
       q("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     });
   const fillServer = async (project?: string) => {
-    await click(button("Azure DevOps Server…"));
+    await openServerForm();
     await type("#azure-devops-url", "https://tfs.corp.local/tfs/DefaultCollection/");
     if (project) await type("#azure-devops-server-project", project);
     await type("#azure-devops-token", "s3cret-token");
@@ -600,9 +780,9 @@ describe("IntegrationsPanel", () => {
   };
 
   it("explains a bad server address and an empty token without contacting the server", async () => {
-    svc.getIntegrationStatus.mockResolvedValue({ ok: true, value: status() });
+    svc.getIntegrationStatus.mockResolvedValue({ ok: true, value: stale() });
     await render();
-    await click(button("Azure DevOps Server…"));
+    await openServerForm();
     await type("#azure-devops-url", "https://tfs.corp.local");
     await submit();
     expect(svc.loginWithToken).not.toHaveBeenCalled();
@@ -615,7 +795,7 @@ describe("IntegrationsPanel", () => {
   it("signs in to a Server with a token and activates the project typed in the form", async () => {
     const srv = serverAccount();
     svc.getIntegrationStatus
-      .mockResolvedValueOnce({ ok: true, value: status() })
+      .mockResolvedValueOnce({ ok: true, value: stale() })
       .mockResolvedValue({ ok: true, value: status({ accounts: [srv] }) });
     svc.loginWithToken.mockResolvedValue({
       ok: true,
@@ -653,7 +833,7 @@ describe("IntegrationsPanel", () => {
   it("opens the project picker after a Server sign-in when no project is typed and the remote is elsewhere", async () => {
     const srv = serverAccount();
     svc.getIntegrationStatus
-      .mockResolvedValueOnce({ ok: true, value: status() })
+      .mockResolvedValueOnce({ ok: true, value: stale() })
       .mockResolvedValue({ ok: true, value: status({ accounts: [srv] }) });
     svc.loginWithToken.mockResolvedValue({
       ok: true,
@@ -684,7 +864,10 @@ describe("IntegrationsPanel", () => {
       },
     });
     svc.getIntegrationStatus
-      .mockResolvedValueOnce({ ok: true, value: onServer })
+      .mockResolvedValueOnce({
+        ok: true,
+        value: { ...onServer, accounts: [serverAccount({ hasCredential: false })] },
+      })
       .mockResolvedValue({ ok: true, value: { ...onServer, accounts: [srv] } });
     svc.loginWithToken.mockResolvedValue({
       ok: true,
@@ -702,7 +885,7 @@ describe("IntegrationsPanel", () => {
   });
 
   it("shows the server's rejection, keeps the form open and saves nothing", async () => {
-    svc.getIntegrationStatus.mockResolvedValue({ ok: true, value: status() });
+    svc.getIntegrationStatus.mockResolvedValue({ ok: true, value: stale() });
     svc.loginWithToken.mockResolvedValue({
       ok: false,
       error: { code: "auth", message: "The server rejected the token.", hint: "Create a new one." },
@@ -718,12 +901,10 @@ describe("IntegrationsPanel", () => {
 
   it("re-sends the typed project with Replace when another integration is active", async () => {
     const srv = serverAccount();
-    svc.getIntegrationStatus
-      .mockResolvedValueOnce({ ok: true, value: status() })
-      .mockResolvedValue({
-        ok: true,
-        value: status({ accounts: [srv], project: { ...status().project, otherProvider: "jira" } }),
-      });
+    svc.getIntegrationStatus.mockResolvedValueOnce({ ok: true, value: stale() }).mockResolvedValue({
+      ok: true,
+      value: status({ accounts: [srv], project: { ...status().project, otherProvider: "jira" } }),
+    });
     svc.loginWithToken.mockResolvedValue({
       ok: true,
       value: { account: srv, user: { name: "S" } },
@@ -956,33 +1137,55 @@ describe("IntegrationsPanel", () => {
   });
 });
 
-describe("IntegrationsPanel: switch project", () => {
+describe("IntegrationsPanel: simple card", () => {
   let container: HTMLDivElement;
   let root: Root;
-
   const flush = () => act(async () => {});
-  const q = <T extends Element>(sel: string) => container.querySelector<T>(sel);
-  const button = (text: string) =>
-    [...container.querySelectorAll("button")].find((b) => b.textContent?.trim() === text) as
-      HTMLButtonElement | undefined;
-  const click = async (el: Element | undefined | null) => {
-    expect(el).toBeTruthy();
-    await act(async () => {
-      (el as HTMLElement).click();
-    });
-  };
-  const choose = async (el: HTMLSelectElement, value: string) => {
-    await act(async () => {
-      el.value = value;
-      el.dispatchEvent(new Event("change", { bubbles: true }));
-    });
-  };
-  const options = (el: HTMLSelectElement | null) =>
-    [...(el?.options ?? [])].map((o) => o.textContent);
+  const text = () => container.textContent ?? "";
+  const buttons = () => [...container.querySelectorAll("button")].map((b) => b.textContent?.trim());
 
-  const active = (over: Partial<IntegrationStatusView["project"]> = {}) =>
+  beforeEach(() => {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
+      true;
+    Object.values(svc).forEach((fn) => fn.mockReset());
+    svc.getTeamsStatus.mockResolvedValue({
+      ok: true,
+      value: { configured: true, account: null, channelHistory: false },
+    });
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  const render = async (value: IntegrationStatusView) => {
+    svc.getIntegrationStatus.mockResolvedValue({ ok: true, value });
+    await act(async () => {
+      root.render(<IntegrationsPanel projectDir="/repo" />);
+    });
+    await flush();
+  };
+
+  const twoOrgs = (): IntegrationStatusView =>
     status({
-      accounts: [account({ usedByThisProject: true })],
+      accounts: [
+        account({
+          id: "azure-devops:contoso",
+          org: "contoso",
+          user: "ann@x.com",
+          authMethod: "oauth",
+          usedByThisProject: true,
+        }),
+        account({
+          id: "azure-devops:fabrikam",
+          org: "fabrikam",
+          user: "ann@x.com",
+          authMethod: "oauth",
+        }),
+      ],
       project: {
         ...status().project,
         state: "ready",
@@ -994,241 +1197,40 @@ describe("IntegrationsPanel: switch project", () => {
           boundAt: "2026-10-29T00:00:00Z",
           rules: DEFAULT_RULES,
         },
-        ...over,
       },
     });
-  const PROJECTS = [{ name: "Web" }, { name: "Payments" }, { name: "Data" }];
-  const REPOS: Record<string, { name: string }[]> = {
-    Payments: [{ name: "api" }, { name: "ledger" }],
-    Web: [{ name: "site" }],
-    Data: [{ name: "API" }],
-  };
 
-  const render = async () => {
-    await act(async () => {
-      root.render(<IntegrationsPanel projectDir="/repo" />);
-    });
-    await flush();
-  };
-
-  beforeEach(() => {
-    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
-      true;
-    Object.values(svc).forEach((fn) => fn.mockReset());
-    svc.getIntegrationStatus.mockResolvedValue({ ok: true, value: active() });
-    svc.listProjects.mockResolvedValue({ ok: true, value: PROJECTS });
-    svc.listRepos.mockImplementation(async (_account: string, project: string) => ({
-      ok: true,
-      value: REPOS[project] ?? [],
-    }));
-    container = document.createElement("div");
-    document.body.appendChild(container);
-    root = createRoot(container);
-  });
-
-  afterEach(() => {
-    act(() => root.unmount());
-    container.remove();
-  });
-
-  it("offers the control only on an active project and never loads on tab open", async () => {
-    await render();
-    expect(button("Switch project")).toBeTruthy();
+  it("has no Switch project button and no loose explanations", async () => {
+    await render(twoOrgs());
+    expect(buttons()).not.toContain("Switch project");
     expect(svc.listProjects).not.toHaveBeenCalled();
-    expect(svc.listRepos).not.toHaveBeenCalled();
-
-    svc.getIntegrationStatus.mockResolvedValue({
-      ok: true,
-      value: status({ accounts: [account()] }),
-    });
-    await render();
-    await click(
-      button("Refresh Azure DevOps status") ?? q('[aria-label="Refresh Azure DevOps status"]')
-    );
-    expect(button("Switch project")).toBeUndefined();
+    expect(text()).toContain("Connect a service once, then choose it for each project.");
+    expect(text()).not.toMatch(/Scoped to|nothing is contacted|from git remote|read through Kai/);
   });
 
-  it("loads projects on demand, preselects the active one and its repo", async () => {
-    let release!: () => void;
-    svc.listProjects.mockReturnValue(
-      new Promise((resolve) => {
-        release = () => resolve({ ok: true, value: PROJECTS });
-      })
-    );
-    await render();
-    await click(button("Switch project"));
-    expect(svc.listProjects).toHaveBeenCalledWith("azure-devops:contoso");
-    expect(container.textContent).toContain("Loading projects…");
-    expect(button("Cancel")).toBeTruthy();
-
-    await act(async () => release());
-    await flush();
-    const project = q<HTMLSelectElement>("#azure-devops-switch-project");
-    const repo = q<HTMLSelectElement>("#azure-devops-switch-repo");
-    expect(options(project)).toEqual(["Web", "Payments", "Data"]);
-    expect(project?.value).toBe("Payments");
-    expect(svc.listRepos).toHaveBeenCalledWith("azure-devops:contoso", "Payments");
-    expect(options(repo)).toEqual(["(none)", "api", "ledger"]);
-    expect(repo?.value).toBe("api");
-    // Nothing changed yet, so there is nothing to apply.
-    expect(button("Apply")?.disabled).toBe(true);
-    expect(svc.bindIntegration).not.toHaveBeenCalled();
+  it("marks exactly one account Active, and offers Make active on the other", async () => {
+    await render(twoOrgs());
+    const rows = [...container.querySelectorAll("[aria-label='Organizations of ann@x.com'] li")];
+    expect(rows).toHaveLength(2);
+    expect(rows[0].textContent).toContain("Active");
+    expect(rows[1].textContent).not.toContain("Active");
+    expect(rows[1].textContent).toContain("Make active");
+    expect(rows[0].textContent).not.toContain("Make active");
+    // The heading says Connected; "Active" appears once, on the account.
+    expect(container.querySelector("[data-state]")?.textContent).toBe("Connected");
+    expect((text().match(/Active/g) ?? []).length).toBe(1);
   });
 
-  it("reloads repos when the project changes: keeps a matching repo, else (none)", async () => {
-    await render();
-    await click(button("Switch project"));
-
-    await choose(q<HTMLSelectElement>("#azure-devops-switch-project")!, "Web");
-    expect(svc.listRepos).toHaveBeenLastCalledWith("azure-devops:contoso", "Web");
-    expect(q<HTMLSelectElement>("#azure-devops-switch-repo")?.value).toBe("");
-
-    // "api" exists in Data as "API": the canonical spelling is selected.
-    await choose(q<HTMLSelectElement>("#azure-devops-switch-project")!, "Data");
-    expect(q<HTMLSelectElement>("#azure-devops-switch-repo")?.value).toBe("API");
+  it("offers one way to add another account, named for what it does", async () => {
+    await render(twoOrgs());
+    expect(buttons()).toContain("Add account");
+    expect(buttons()).not.toContain("Sign in with another account");
   });
 
-  it("applies the chosen project and repo to this project's account, then refreshes", async () => {
-    const switched = active({
-      binding: {
-        account: "azure-devops:contoso",
-        provider: "azure-devops",
-        project: "Web",
-        repo: "site",
-        boundAt: "",
-        rules: DEFAULT_RULES,
-      },
-    });
-    svc.getIntegrationStatus
-      .mockResolvedValueOnce({ ok: true, value: active() })
-      .mockResolvedValue({ ok: true, value: switched });
-    svc.bindIntegration.mockResolvedValue({ ok: true, value: switched.project.binding });
-    await render();
-    await click(button("Switch project"));
-    await choose(q<HTMLSelectElement>("#azure-devops-switch-project")!, "Web");
-    await choose(q<HTMLSelectElement>("#azure-devops-switch-repo")!, "site");
-
-    await click(button("Apply"));
-    expect(svc.bindIntegration).toHaveBeenCalledWith({
-      projectDir: "/repo",
-      account: "azure-devops:contoso",
-      project: "Web",
-      repo: "site",
-    });
-    expect(q('[role="group"][aria-label="Switch project"]')).toBeNull();
-    expect(q("[role=status]")?.textContent).toContain("Switched to Web / site.");
-    expect(container.textContent).toContain("Web / site");
-    expect(q("[data-state]")?.getAttribute("data-state")).toBe("active");
-  });
-
-  it("sends repo null when (none) is chosen", async () => {
-    svc.bindIntegration.mockResolvedValue({
-      ok: true,
-      value: {
-        account: "a",
-        provider: "azure-devops",
-        project: "Payments",
-        repo: null,
-        boundAt: "",
-      },
-    });
-    await render();
-    await click(button("Switch project"));
-    await choose(q<HTMLSelectElement>("#azure-devops-switch-repo")!, "");
-    await click(button("Apply"));
-    expect(svc.bindIntegration).toHaveBeenCalledWith({
-      projectDir: "/repo",
-      account: "azure-devops:contoso",
-      project: "Payments",
-      repo: null,
-    });
-  });
-
-  it("shows a failed project list inline and leaves the binding untouched", async () => {
-    svc.listProjects.mockResolvedValue({
-      ok: false,
-      error: { code: "network", message: "Could not reach dev.azure.com.", hint: "Check your VPN" },
-    });
-    await render();
-    await click(button("Switch project"));
-    const alert = q("[role=alert]");
-    expect(alert?.textContent).toContain("Could not reach dev.azure.com.");
-    expect(alert?.textContent).toContain("Check your VPN");
-    expect(q('[role="group"][aria-label="Switch project"]')).toBeNull();
-    expect(svc.bindIntegration).not.toHaveBeenCalled();
-    expect(q("[data-state]")?.getAttribute("data-state")).toBe("active");
-    expect(button("Switch project")?.disabled).toBe(false);
-  });
-
-  it("keeps the picker open and shows the error when applying fails", async () => {
-    svc.bindIntegration.mockResolvedValue({
-      ok: false,
-      error: { code: "not_found", message: 'Project "Web" was not found.', hint: "Pick another" },
-    });
-    await render();
-    await click(button("Switch project"));
-    await choose(q<HTMLSelectElement>("#azure-devops-switch-project")!, "Web");
-    await click(button("Apply"));
-    expect(q("[role=alert]")?.textContent).toContain('Project "Web" was not found.');
-    expect(q('[role="group"][aria-label="Switch project"]')).not.toBeNull();
-  });
-
-  it("surfaces a repo list failure and leaves only (none) to choose", async () => {
-    svc.listRepos.mockResolvedValue({
-      ok: false,
-      error: { code: "forbidden", message: "No access to repositories." },
-    });
-    await render();
-    await click(button("Switch project"));
-    expect(q("[role=alert]")?.textContent).toContain("No access to repositories.");
-    expect(options(q<HTMLSelectElement>("#azure-devops-switch-repo"))).toEqual(["(none)"]);
-  });
-
-  it("disables the controls while a request is in flight", async () => {
-    let release!: () => void;
-    await render();
-    await click(button("Switch project"));
-    svc.listRepos.mockReturnValue(
-      new Promise((resolve) => {
-        release = () => resolve({ ok: true, value: REPOS.Web });
-      })
-    );
-    await choose(q<HTMLSelectElement>("#azure-devops-switch-project")!, "Web");
-    expect(q<HTMLSelectElement>("#azure-devops-switch-project")?.disabled).toBe(true);
-    expect(container.textContent).toContain("Loading repositories…");
-    expect(button("Apply")?.disabled).toBe(true);
-    expect(button("Remove from this project")?.disabled).toBe(true);
-
-    await act(async () => release());
-    await flush();
-    expect(q<HTMLSelectElement>("#azure-devops-switch-project")?.disabled).toBe(false);
-  });
-
-  it("cancel closes the picker and drops a project list that arrives late", async () => {
-    let release!: () => void;
-    svc.listProjects.mockReturnValue(
-      new Promise((resolve) => {
-        release = () => resolve({ ok: true, value: PROJECTS });
-      })
-    );
-    await render();
-    await click(button("Switch project"));
-    await click(button("Cancel"));
-    expect(q('[role="group"][aria-label="Switch project"]')).toBeNull();
-    expect(button("Switch project")?.disabled).toBe(false);
-
-    await act(async () => release());
-    await flush();
-    expect(q('[role="group"][aria-label="Switch project"]')).toBeNull();
-    expect(svc.listRepos).not.toHaveBeenCalled();
-    expect(svc.bindIntegration).not.toHaveBeenCalled();
-  });
-
-  it("never offers a second active integration while switching", async () => {
-    await render();
-    await click(button("Switch project"));
-    expect(button("Use for this project")).toBeUndefined();
-    expect(container.querySelectorAll("[data-state]").length).toBe(1);
+  it("says Connect Azure DevOps when nobody is signed in yet", async () => {
+    await render(status());
+    expect(buttons()).toContain("Connect Azure DevOps");
+    expect(buttons()).not.toContain("Add account");
   });
 });
 
@@ -1240,6 +1242,10 @@ describe("AiCliPanel tabs", () => {
     (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
       true;
     Object.values(svc).forEach((fn) => fn.mockReset());
+    svc.getTeamsStatus.mockResolvedValue({
+      ok: true,
+      value: { configured: true, account: null, channelHistory: false },
+    });
     svc.getIntegrationStatus.mockResolvedValue({ ok: true, value: status() });
     container = document.createElement("div");
     document.body.appendChild(container);

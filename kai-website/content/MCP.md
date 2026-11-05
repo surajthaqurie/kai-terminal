@@ -78,7 +78,7 @@ These tools only read. Text from the service (work item bodies, comments, PR thr
 
 #### Write tools (off by default)
 
-Four more tools change data in the service. They are **not listed and cannot run** until the person who owns the machine turns them on for one folder:
+Six more tools change data in the service. They are **not listed and cannot run** until the person who owns the machine turns them on for one folder:
 
 ```bash
 kai integration azure --allow-writes     # asks first; -y/--yes skips the question
@@ -89,7 +89,9 @@ kai integration azure --no-writes        # read-only again
 | :--- | :--- |
 | `kai_work_item_comment` | Adds a comment to a work item of this project (plain text, up to 8,000 characters) |
 | `kai_work_item_set_state` | Changes a work item's state (e.g. `Resolved`); refused if the item changed since Kai read it |
-| `kai_pr_create` | Opens a pull request between two branches that already exist (`sourceBranch`, `targetBranch` — default: the merge branch from `kai_workflow_rules`, else the repository default —, `title` up to 400 characters, `description` up to 4,000, `isDraft`). It never creates a branch |
+| `kai_work_item_create` | Creates a work item in this project (default type `Task`): `title` (up to 255 characters), `description`, `assignedTo` (`me`, an email or a name), `parentId` (must be in this project), `tags`, `priority` 1-4, `remainingWork` hours, `areaPath`, `iterationPath` |
+| `kai_work_item_update` | Changes fields of a work item of this project: `title`, `description`, `assignedTo`, `tags` (replaces them), `priority`, `remainingWork`, `completedWork`, `iterationPath`. Only the fields you give change; refused if the item changed since Kai read it. The state has its own tool above |
+| `kai_pr_create` | Opens a pull request between two branches that already exist (`sourceBranch`, `targetBranch` — default: the merge branch from `kai_workflow_rules`, else the repository default —, `title` up to 400 characters, `description` up to 4,000, `isDraft`, `workItemIds` to link up to 20 work items of this project, `reviewers` and `requiredReviewers` by email or name, `labels`). Reviewers are looked up first: a name that matches nobody, or several people, stops the call before the pull request exists. The answer lists what was attached. It never creates a branch and never merges |
 | `kai_pr_comment` | Comments on a pull request of this project: a new thread (optionally on a `filePath` and `line`) or a reply (`threadId`) |
 
 - **Only a person turns them on.** `--allow-writes` refuses to run inside an AI agent's session (process-tree and environment checks, the same ones `kai teams` uses), and no MCP tool can change the setting. Turning writes off always works. The setting is stored per folder in the private file under `~/.kai/projects/<id>/`, never in the repository, and it is dropped when the folder is connected to a different account or project.

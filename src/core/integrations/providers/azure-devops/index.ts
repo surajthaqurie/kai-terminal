@@ -20,10 +20,13 @@ import {
   type PullRequestSummary,
   type RepoInfo,
   type WorkItemCommentResult,
+  type WorkItemCreateInput,
   type WorkItemDetail,
   type WorkItemQuery,
   type WorkItemStateResult,
   type WorkItemSummary,
+  type WorkItemUpdateInput,
+  type WorkItemWriteResult,
 } from "../../types";
 import { findProvider } from "../../providerCatalog";
 import type { SecretStore } from "../../secretStore";
@@ -165,12 +168,16 @@ class AzureCall {
     return (await this.send(url, { method: "POST", body })).json<T>();
   }
 
-  /** A JSON Patch (work item fields). */
-  async patch<T>(path: string, operations: unknown[]): Promise<T> {
+  /** A JSON Patch (work item fields). `POST` creates a work item, `PATCH` changes one. */
+  async patch<T>(
+    path: string,
+    operations: unknown[],
+    method: "PATCH" | "POST" = "PATCH"
+  ): Promise<T> {
     const url = withQuery(`${this.base}/${path}`, { "api-version": apiVersionOf(this.account) });
     return (
       await this.send(url, {
-        method: "PATCH",
+        method,
         body: operations,
         contentType: "application/json-patch+json",
       })
@@ -263,6 +270,109 @@ async function requireProjectWorkItem(
     state: typeof state === "string" ? state : undefined,
     rev: typeof raw.rev === "number" ? raw.rev : undefined,
   };
+}
+
+/** Reference names of the fields the write tools set; the result lists names, never values. */
+const FIELD = {
+  title: "System.Title",
+  description: "System.Description",
+  assignedTo: "System.AssignedTo",
+  tags: "System.Tags",
+  areaPath: "System.AreaPath",
+  iterationPath: "System.IterationPath",
+  priority: "Microsoft.VSTS.Common.Priority",
+  remainingWork: "Microsoft.VSTS.Scheduling.RemainingWork",
+  completedWork: "Microsoft.VSTS.Scheduling.CompletedWork",
+} as const;
+
+/** One `add` operation per field that was given (`add` also replaces an existing value). */
+type PatchOp = { op: "add" | "test"; path: string; value: unknown };
+
+function fieldOperations(input: Partial<Record<keyof typeof FIELD, unknown>>): {
+  operations: PatchOp[];
+  fields: string[];
+} {
+  const operations: PatchOp[] = [];
+  const fields: string[] = [];
+  for (const key of Object.keys(FIELD) as Array<keyof typeof FIELD>) {
+    const raw = input[key];
+    if (raw === undefined) continue;
+    let value = raw;
+    // Rich text fields are HTML on the wire: show what the agent wrote as text.
+    if (key === "description" && typeof raw === "string") value = commentHtml(raw);
+    if (key === "tags" && Array.isArray(raw)) value = raw.join("; ");
+    operations.push({ op: "add", path: `/fields/${FIELD[key]}`, value });
+    fields.push(FIELD[key]);
+  }
+  return { operations, fields };
+}
+
+/**
+ * One person for an email or display name, as the id a pull request reviewer needs. Exactly one
+ * match is accepted: none, or several, is refused so the review is never asked of the wrong person.
+ */
+async function resolveReviewer(c: AzureCall, who: string): Promise<string> {
+  const raw = await c.get<Json>("_apis/identities", {
+    searchFilter: "General",
+    filterValue: who,
+    queryMembership: "None",
+  });
+  const people = list(raw).filter(
+    (p) => typeof (p as Json).id === "string" && (p as Json).isContainer !== true
+  ) as Json[];
+  // An exact email or name wins over looser matches.
+  const same = (p: Json) =>
+    [p.providerDisplayName, p.customDisplayName, (p.properties as Json | undefined)?.Mail]
+      .map((v) => (v && typeof v === "object" ? (v as Json).$value : v))
+      .some((v) => typeof v === "string" && v.toLowerCase() === who.toLowerCase());
+  const exact = people.filter(same);
+  const found = exact.length > 0 ? exact : people;
+  if (found.length === 0) {
+    throw new IntegrationError("not_found", `No person matches reviewer "${who}".`);
+  }
+  if (found.length > 1) {
+    throw new IntegrationError(
+      "bad_request",
+      `Several people match reviewer "${who}".`,
+      "Use the person's full email address."
+    );
+  }
+  return found[0].id as string;
+}
+
+/**
+ * True when `refs/heads/<branch>` exists. The service filters refs by prefix, so the
+ * answer is the exact match among the few rows that come back: no branch list is read.
+ */
+async function refExists(
+  c: AzureCall,
+  project: string,
+  repo: string,
+  branch: string
+): Promise<boolean> {
+  const raw = await c.get<Json>(`${enc(project)}/_apis/git/repositories/${enc(repo)}/refs`, {
+    filter: `heads/${branch}`,
+    $top: 25,
+  });
+  return list(raw).some((row) => (row as Json).name === `refs/heads/${branch}`);
+}
+
+/** Stops before anything is written when a branch of the pull request is not in the repository. */
+async function requireBranch(
+  c: AzureCall,
+  project: string,
+  repo: string,
+  branch: string,
+  role: "source" | "target"
+): Promise<void> {
+  if (await refExists(c, project, repo, branch)) return;
+  throw new IntegrationError(
+    "not_found",
+    `The ${role} branch "${branch}" does not exist in ${repo}.`,
+    role === "source"
+      ? "Push the branch first, then open the pull request."
+      : "Check the spelling, or change the merge branch in the Integrations tab."
+  );
 }
 
 /** The pull request, but only when its repository is in the bound project (fails closed). */
@@ -406,20 +516,8 @@ export function createAzureDevOpsProvider(deps: AzureDeps = {}): IntegrationProv
         return out.sort((a, b) => a.name.localeCompare(b.name));
       },
 
-      async listBranches(account, secrets, project, repo) {
-        const c = new AzureCall(account, secrets, deps);
-        const raw = await c.get<Json>(`${enc(project)}/_apis/git/repositories/${enc(repo)}/refs`, {
-          filter: "heads/",
-          $top: MAX_DISCOVERY_ROWS,
-        });
-        const out: string[] = [];
-        for (const row of list(raw)) {
-          const name = (row as Json).name;
-          if (typeof name === "string" && name.startsWith("refs/heads/")) {
-            out.push(name.slice("refs/heads/".length));
-          }
-        }
-        return out.sort((a, b) => a.localeCompare(b));
+      async branchExists(account, secrets, project, repo, branch) {
+        return refExists(new AzureCall(account, secrets, deps), project, repo, branch);
       },
     },
 
@@ -539,6 +637,78 @@ export function createAzureDevOpsProvider(deps: AzureDeps = {}): IntegrationProv
           };
         });
       },
+
+      async create(ctx, input: WorkItemCreateInput): Promise<WorkItemWriteResult> {
+        const c = call(ctx, deps);
+        const project = ctx.binding.project;
+        return writing(ctx.account, async () => {
+          const { operations, fields } = fieldOperations(input);
+          if (input.parentId !== undefined) {
+            // The parent must be in this project; checked before anything is created.
+            await requireProjectWorkItem(c, project, input.parentId);
+            operations.push({
+              op: "add",
+              path: "/relations/-",
+              value: {
+                rel: "System.LinkTypes.Hierarchy-Reverse",
+                url: `${c.base}/_apis/wit/workItems/${input.parentId}`,
+              },
+            });
+          }
+          const raw = await c.patch<Json>(
+            `${enc(project)}/_apis/wit/workitems/$${enc(input.type)}`,
+            operations,
+            "POST"
+          );
+          const id = typeof raw.id === "number" ? raw.id : 0;
+          if (!id) {
+            throw new IntegrationError(
+              "bad_request",
+              "The service did not return the new work item."
+            );
+          }
+          const made = (raw.fields ?? {}) as Json;
+          return {
+            workItemId: id,
+            type:
+              typeof made["System.WorkItemType"] === "string"
+                ? made["System.WorkItemType"]
+                : input.type,
+            title: typeof made["System.Title"] === "string" ? made["System.Title"] : input.title,
+            ...(typeof made["System.State"] === "string" ? { state: made["System.State"] } : {}),
+            fields: input.parentId !== undefined ? [...fields, "parent"] : fields,
+            url: workItemUrl(c.base, project, id),
+          };
+        });
+      },
+
+      async update(ctx, input: WorkItemUpdateInput): Promise<WorkItemWriteResult> {
+        const c = call(ctx, deps);
+        const project = ctx.binding.project;
+        return writing(ctx.account, async () => {
+          const before = await requireProjectWorkItem(c, project, input.id);
+          const { operations, fields } = fieldOperations(input);
+          // Refuse to overwrite a change made since the item was read.
+          if (before.rev !== undefined) {
+            operations.unshift({ op: "test", path: "/rev", value: before.rev });
+          }
+          const raw = await c.patch<Json>(
+            `${enc(project)}/_apis/wit/workitems/${input.id}`,
+            operations
+          );
+          const now = (raw.fields ?? {}) as Json;
+          return {
+            workItemId: input.id,
+            ...(typeof now["System.WorkItemType"] === "string"
+              ? { type: now["System.WorkItemType"] }
+              : {}),
+            ...(typeof now["System.Title"] === "string" ? { title: now["System.Title"] } : {}),
+            ...(typeof now["System.State"] === "string" ? { state: now["System.State"] } : {}),
+            fields,
+            url: workItemUrl(c.base, project, input.id),
+          };
+        });
+      },
     },
 
     pullRequests: {
@@ -620,6 +790,33 @@ export function createAzureDevOpsProvider(deps: AzureDeps = {}): IntegrationProv
           );
         }
         return writing(ctx.account, async () => {
+          // Linked work items must be in this project; checked before the pull request exists.
+          for (const id of input.workItemIds ?? []) await requireProjectWorkItem(c, project, id);
+          // Both branches must exist: a clear message here beats the service's generic refusal.
+          await requireBranch(c, project, repo, input.sourceBranch, "source");
+          await requireBranch(c, project, repo, input.targetBranch, "target");
+          // Reviewers are looked up now, so one nobody matches stops everything before it exists.
+          const reviewers: Array<{ id: string; isRequired?: true }> = [];
+          const looked = new Map<string, string>();
+          for (const [group, required] of [
+            [input.reviewers, false],
+            [input.requiredReviewers, true],
+          ] as const) {
+            for (const who of group ?? []) {
+              const key = who.toLowerCase();
+              let id = looked.get(key);
+              if (id === undefined) {
+                id = await resolveReviewer(c, who);
+                looked.set(key, id);
+              }
+              const seen = reviewers.find((r) => r.id === id);
+              if (seen) {
+                if (required) seen.isRequired = true;
+              } else {
+                reviewers.push({ id, ...(required ? { isRequired: true as const } : {}) });
+              }
+            }
+          }
           // Opens a pull request between two existing branches. It never creates a branch.
           const raw = await c.post<Json>(
             `${enc(project)}/_apis/git/repositories/${enc(repo)}/pullrequests`,
@@ -629,6 +826,11 @@ export function createAzureDevOpsProvider(deps: AzureDeps = {}): IntegrationProv
               title: input.title,
               ...(input.description ? { description: input.description } : {}),
               ...(input.isDraft ? { isDraft: true } : {}),
+              ...(reviewers.length ? { reviewers } : {}),
+              ...(input.labels?.length ? { labels: input.labels.map((name) => ({ name })) } : {}),
+              ...(input.workItemIds?.length
+                ? { workItemRefs: input.workItemIds.map((id) => ({ id: String(id) })) }
+                : {}),
             }
           );
           return mapPullRequest(raw, c.base, project);

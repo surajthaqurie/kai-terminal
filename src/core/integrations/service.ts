@@ -14,6 +14,7 @@ import {
 } from "./config";
 import { getProvider } from "./providers";
 import { azCliOnPath } from "./providers/azure-devops/auth";
+import { registrationView } from "./providers/azure-devops/oauth";
 import type {
   DetectedCoordinates,
   IntegrationAccountView,
@@ -31,6 +32,7 @@ import {
   type SecretStore,
 } from "./secretStore";
 import { assertNotAgentSessionFor } from "../teams/guard";
+import { handleTeamsRpc } from "../teams/rpc";
 import { compactRules, effectiveRules, RulesError, type WorkflowRules } from "./workflowRules";
 import {
   asIntegrationError,
@@ -205,6 +207,7 @@ export async function getStatus(
       otherProvider: found && !mine ? found.binding.provider : null,
     },
     azCli: azCliOnPath(),
+    oauth: registrationView(),
   };
 }
 
@@ -645,8 +648,12 @@ export function bind(
   return binding;
 }
 
-/** Branches of the repository this folder is bound to. A network call. */
-export async function listBranches(projectDir: string, deps: ServiceDeps = {}): Promise<string[]> {
+/** Whether one branch exists in the repository this folder is bound to. A network call for that name only. */
+export async function branchExists(
+  projectDir: string,
+  branch: string,
+  deps: ServiceDeps = {}
+): Promise<boolean> {
   const { provider, ctx } = await resolveReady(projectDir, deps);
   const repo = ctx.binding.repo;
   if (!repo || !provider.discovery) {
@@ -656,7 +663,13 @@ export async function listBranches(projectDir: string, deps: ServiceDeps = {}): 
       "Pick a repository on the integration card first."
     );
   }
-  return provider.discovery.listBranches(ctx.account, ctx.secrets, ctx.binding.project, repo);
+  return provider.discovery.branchExists(
+    ctx.account,
+    ctx.secrets,
+    ctx.binding.project,
+    repo,
+    branch
+  );
 }
 
 /**
@@ -691,19 +704,17 @@ export async function setRules(
     throw err;
   }
   if (rules.mergeBranch) {
-    let branches: string[] | null = null;
+    let exists: boolean | null = null;
     try {
-      branches = await listBranches(projectDir, deps);
+      exists = await branchExists(projectDir, rules.mergeBranch, deps);
     } catch {
-      branches = null;
+      exists = null;
     }
-    if (branches && !branches.includes(rules.mergeBranch)) {
+    if (exists === false) {
       throw new IntegrationError(
         "not_found",
         `The repository has no branch named "${rules.mergeBranch}".`,
-        branches.length > 0
-          ? `Available: ${branches.slice(0, 8).join(", ")}${branches.length > 8 ? ", …" : ""}`
-          : undefined
+        "Check the spelling. Branch names are case-sensitive."
       );
     }
   }
@@ -714,12 +725,15 @@ export async function setRules(
 }
 
 /** Refuses when an AI agent is running the command: only a person decides what agents may write. */
-async function assertPersonSession(deps: ServiceDeps): Promise<void> {
-  if (deps.agentGuard) return deps.agentGuard();
-  return assertNotAgentSessionFor({
+async function assertPersonSession(
+  deps: ServiceDeps,
+  text: { what: string; hint: string } = {
     what: "Turning on write tools",
     hint: "Only you can let agents change data. Open a normal terminal tab and run `kai integration azure --allow-writes` yourself, or use the Integrations tab.",
-  });
+  }
+): Promise<void> {
+  if (deps.agentGuard) return deps.agentGuard();
+  return assertNotAgentSessionFor(text);
 }
 
 /**
@@ -887,8 +901,6 @@ export async function handleRpc(
     case "unbind":
       await unbind(providerId, request.projectDir, { logout: request.logout }, deps);
       return { ok: true, done: true };
-    case "branches":
-      return { ok: true, branches: await listBranches(request.projectDir, deps) };
     case "set_rules":
       return {
         ok: true,
@@ -904,6 +916,12 @@ export async function handleRpc(
           await setWriteTools(providerId, request.projectDir, request.enabled, deps)
         ),
       };
+    case "teams_status":
+    case "teams_login":
+    case "teams_verify":
+    case "teams_logout":
+      // Microsoft Teams is the person's own account, not a project integration.
+      return await handleTeamsRpc(request, { secrets: deps.secrets, agentGuard: deps.agentGuard });
     default:
       throw new IntegrationError("bad_request", "Unknown operation.");
   }

@@ -1,5 +1,5 @@
 import crypto from "crypto";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { authHeaderFor, resetAzTokenCache } from "../core/integrations/providers/azure-devops/auth";
 import {
   browserSignInAvailable,
@@ -12,10 +12,18 @@ import {
 } from "../core/integrations/providers/azure-devops/oauth";
 import type { SecretStore } from "../core/integrations/secretStore";
 import { IntegrationError, type IntegrationAccount } from "../core/integrations/types";
+import { useTempKaiHome } from "./helpers/integrationsEnv";
 
 const CLIENT_ID = "11111111-2222-3333-4444-555555555555";
 const env = { KAI_AZURE_CLIENT_ID: CLIENT_ID } as NodeJS.ProcessEnv;
 const realFetch = globalThis.fetch;
+
+// Registration lookups read Kai's config: keep the developer's own out of these tests.
+let kaiHome: ReturnType<typeof useTempKaiHome>;
+beforeEach(() => {
+  kaiHome = useTempKaiHome();
+});
+afterEach(() => kaiHome.restore());
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -60,12 +68,21 @@ const browserReturning =
 
 describe("clientIdFrom", () => {
   it("explains how to set the app registration when none is configured", () => {
-    expect(() => clientIdFrom({} as NodeJS.ProcessEnv)).toThrowError(IntegrationError);
     try {
-      clientIdFrom({ KAI_AZURE_CLIENT_ID: "not-a-guid" } as NodeJS.ProcessEnv);
+      clientIdFrom({} as NodeJS.ProcessEnv);
+      expect.unreachable();
     } catch (err) {
       expect((err as IntegrationError).code).toBe("config");
+      // Nothing to type into a form: the build's app ID, or the environment variable to try one.
+      expect((err as IntegrationError).hint).not.toContain("Sign-in settings");
       expect((err as IntegrationError).hint).toContain("KAI_AZURE_CLIENT_ID");
+    }
+    try {
+      clientIdFrom({ KAI_AZURE_CLIENT_ID: "not-a-guid" } as NodeJS.ProcessEnv);
+      expect.unreachable();
+    } catch (err) {
+      expect((err as IntegrationError).code).toBe("config");
+      expect((err as IntegrationError).message).toContain("KAI_AZURE_CLIENT_ID");
     }
   });
 
@@ -104,6 +121,9 @@ describe("signInWithBrowser", () => {
     );
     expect(url.searchParams.get("client_id")).toBe(CLIENT_ID);
     expect(url.searchParams.get("code_challenge_method")).toBe("S256");
+    // Every sign-in shows Microsoft's account picker, so a second sign-in can be a
+    // different account instead of silently reusing the browser's current one.
+    expect(url.searchParams.get("prompt")).toBe("select_account");
     expect(url.searchParams.get("scope")).toContain("499b84ac-1321-427f-aa17-267ca6975798");
     expect(url.searchParams.get("scope")).toContain("offline_access");
     expect(url.searchParams.get("redirect_uri")).toMatch(/^http:\/\/localhost:\d+\/$/);

@@ -10,6 +10,8 @@ import type {
   IntegrationRpcResponse,
   IntegrationStatusView,
   IntegrationUser,
+  TeamsAccessView,
+  TeamsStatusView,
 } from "../core/integrations/rpcTypes";
 import type { WorkflowRules } from "../core/integrations/workflowRules";
 
@@ -197,16 +199,6 @@ export async function bindIntegration(input: {
   );
 }
 
-/** Branches of the repository bound to the folder (a network call). */
-export async function listIntegrationBranches(projectDir: string): Promise<RpcResult<string[]>> {
-  const res = await integrationRpc({ op: "branches", projectDir });
-  return pick(
-    res,
-    (r) => Array.isArray(r.branches),
-    (r) => r.branches as string[]
-  );
-}
-
 /** Saves the project's workflow rules (omitted fields reset to their defaults). */
 export async function setIntegrationRules(
   projectDir: string,
@@ -218,6 +210,43 @@ export async function setIntegrationRules(
     (r) => typeof r.binding === "object" && r.binding !== null,
     (r) => r.binding as IntegrationBindingView
   );
+}
+
+// ---------------------------------------------------------------------------
+// Microsoft Teams: the person's own account, not tied to a folder.
+// ---------------------------------------------------------------------------
+
+const isTeamsStatus = (r: Record<string, unknown>) =>
+  typeof r.teams === "object" && r.teams !== null;
+
+export async function getTeamsStatus(): Promise<RpcResult<TeamsStatusView>> {
+  const res = await integrationRpc({ op: "teams_status" });
+  return pick(res, isTeamsStatus, (r) => r.teams as TeamsStatusView);
+}
+
+/**
+ * Sign in to Microsoft Teams through the browser. The CLI opens the sign-in page,
+ * waits for the redirect and keeps the token in the OS secret store; this call
+ * returns once the person has finished (or gave up). Permission to read channel
+ * messages is asked for too; the returned status says whether it was granted.
+ */
+export async function teamsLogin(): Promise<RpcResult<TeamsStatusView>> {
+  const res = await integrationRpc({ op: "teams_login" });
+  return pick(res, isTeamsStatus, (r) => r.teams as TeamsStatusView);
+}
+
+export async function verifyTeams(): Promise<RpcResult<TeamsAccessView>> {
+  const res = await integrationRpc({ op: "teams_verify" });
+  return pick(
+    res,
+    (r) => typeof r.access === "object" && r.access !== null,
+    (r) => r.access as TeamsAccessView
+  );
+}
+
+export async function teamsLogout(): Promise<RpcResult<TeamsStatusView>> {
+  const res = await integrationRpc({ op: "teams_logout" });
+  return pick(res, isTeamsStatus, (r) => r.teams as TeamsStatusView);
 }
 
 export async function unbindIntegration(

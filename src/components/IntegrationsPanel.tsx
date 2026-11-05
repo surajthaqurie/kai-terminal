@@ -1,5 +1,5 @@
 import { FC, useCallback, useEffect, useRef, useState } from "react";
-import { CheckCircle, Plug, RefreshCw } from "lucide-react";
+import { CheckCircle, Plug, Plus } from "lucide-react";
 import { PROVIDER_CATALOG, type ProviderInfo } from "../core/integrations/providerCatalog";
 import type {
   IntegrationAccountView,
@@ -22,12 +22,13 @@ import {
 import {
   accountMatchesRemote,
   accountName,
+  authMethodLabel,
   badgeFor,
   deriveCardState,
-  describeAccount,
   describeDetected,
-  explainSignInError,
   formatError,
+  groupAccounts,
+  initialsOf,
   isSameSelection,
   isServerAccount,
   needsRelogin,
@@ -35,12 +36,17 @@ import {
   pickSwitchProject,
   preferredAccountId,
   providerLabel,
+  SIGN_IN_UNAVAILABLE_TEXT,
+  signInUnavailable,
+  summarizeSignIn,
   validateServerForm,
+  type AccountGroup,
   type ServerFormErrors,
   type ServerFormInput,
 } from "./integrationsViewModel";
 import { effectiveRules } from "../core/integrations/workflowRules";
 import { WorkflowRulesSection } from "./WorkflowRulesSection";
+import { TeamsIntegrationCard } from "./TeamsIntegrationCard";
 
 interface IntegrationsPanelProps {
   projectDir: string;
@@ -59,14 +65,13 @@ export const IntegrationsPanel: FC<IntegrationsPanelProps> = ({ projectDir }) =>
     style={{ gap: "12px" }}
   >
     <p className="muted-text" style={{ margin: 0 }}>
-      Connect a service once, then choose it for each project. Agents reach it through Kai&apos;s
-      MCP server; nothing is contacted until a project is bound. Scoped to{" "}
-      <code>{projectDir || "no project folder"}</code>.
+      Connect a service once, then choose it for each project.
     </p>
     <div className="ai-provider-list">
       {PROVIDER_CATALOG.map((provider) => (
         <ProviderCard key={provider.id} provider={provider} projectDir={projectDir} />
       ))}
+      <TeamsIntegrationCard />
     </div>
   </div>
 );
@@ -151,6 +156,18 @@ const ProviderCard: FC<ProviderCardProps> = ({ provider, projectDir }) => {
     });
   }, [refresh]);
 
+  // No refresh button: the card re-reads itself whenever the window regains focus, so a
+  // sign-in or change made from a terminal shows up as soon as you come back.
+  const busyNow = useRef(busy);
+  busyNow.current = busy;
+  useEffect(() => {
+    const onFocus = () => {
+      if (busyNow.current === null) void refresh();
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [refresh]);
+
   const run = async (kind: Exclude<Busy, null>, work: () => Promise<void>) => {
     setBusy(kind);
     setNotice(null);
@@ -172,26 +189,47 @@ const ProviderCard: FC<ProviderCardProps> = ({ provider, projectDir }) => {
   const selectedAccount = accountChoice ?? preferredAccountId(status);
   const disabled = busy !== null;
 
-  const handleConnect = () => {
+  /** True when this build has no Microsoft app to sign in with: Connect stays off and says why. */
+  const signInOff = signInUnavailable(status);
+
+  const startBrowserSignIn = () => {
     let chooseProjectFor: string | null = null;
     void run("connect", async () => {
       const res = await loginWithBrowser();
       if (!res.ok) {
-        setError(explainSignInError(res.error));
+        setError(res.error);
         return;
       }
       const who = res.value.user.email ?? res.value.user.name;
       const signedIn = res.value.accounts;
+      // Organizations are shared between sign-ins: say when this one took over an
+      // organization from another user, or when nothing changed at all.
+      const summary = summarizeSignIn(accounts, signedIn);
+      const extra = [
+        ...summary.taken.map((t) => `${t.org} now uses ${who} (was ${t.from}).`),
+        ...(summary.alreadySignedIn ? ["Already signed in with this account; refreshed."] : []),
+      ].join(" ");
+      const withExtra = (text: string) => (extra ? `${text} ${extra}` : text);
       // The folder's own organization, else the only one: nothing to choose.
       const account =
         (detected ? signedIn.find((a) => accountMatchesRemote(a, detected)) : undefined) ??
         (signedIn.length === 1 ? signedIn[0] : null);
       if (!account) {
-        setAccountChoice(signedIn[0]?.id ?? null);
         await refresh();
-        if (mounted.current) {
+        if (!mounted.current) return;
+        if (binding) {
+          // Another account is active here: keep it, and say how to switch.
           setNotice(
-            `Signed in as ${who}. ${signedIn.length} organizations found: choose one for this project below.`
+            withExtra(
+              `Signed in as ${who}. ${signedIn.length} organizations added: use "Make active" on one to switch this project.`
+            )
+          );
+        } else {
+          setAccountChoice(signedIn[0]?.id ?? null);
+          setNotice(
+            withExtra(
+              `Signed in as ${who}. ${signedIn.length} organizations found: choose one for this project below.`
+            )
           );
         }
         return;
@@ -207,9 +245,11 @@ const ProviderCard: FC<ProviderCardProps> = ({ provider, projectDir }) => {
           await refresh();
           if (mounted.current) {
             setNotice(
-              `Connected to ${account.org} as ${who}. Active for this project (${bound.value.project}${
-                bound.value.repo ? ` / ${bound.value.repo}` : ""
-              }).`
+              withExtra(
+                `Connected to ${account.org} as ${who}. Active for this project (${bound.value.project}${
+                  bound.value.repo ? ` / ${bound.value.repo}` : ""
+                }).`
+              )
             );
           }
           return;
@@ -219,12 +259,12 @@ const ProviderCard: FC<ProviderCardProps> = ({ provider, projectDir }) => {
         if (!mounted.current) return;
         if (bound.error.code === "needs_confirmation") setConfirmReplace(true);
         else setError(bound.error);
-        setNotice(`Connected to ${account.org} as ${who}.`);
+        setNotice(withExtra(`Connected to ${account.org} as ${who}.`));
         return;
       }
       await refresh();
       if (!mounted.current) return;
-      setNotice(`Connected to ${account.org} as ${who}.`);
+      setNotice(withExtra(`Connected to ${account.org} as ${who}.`));
       // No usable remote for this account: let the user pick the project instead.
       if (!binding) chooseProjectFor = account.id;
     }).then(() => {
@@ -500,59 +540,79 @@ const ProviderCard: FC<ProviderCardProps> = ({ provider, projectDir }) => {
     });
   };
 
+  /** Signs out every organization of one signed-in user. Stops at the first failure and says so. */
+  const handleLogoutGroup = (group: AccountGroup) => {
+    setConfirmLogout(null);
+    closeSwitch();
+    void run("logout", async () => {
+      for (const member of group.accounts) {
+        const res = await logoutIntegration(member.id);
+        if (!res.ok) {
+          await refresh();
+          if (mounted.current) setError(res.error);
+          return;
+        }
+      }
+      await refresh();
+      if (!mounted.current) return;
+      setAccountChoice(null);
+      setNotice(`Signed out ${group.label}.`);
+    });
+  };
+
   const shownError = error ? formatError(error) : null;
+  const addAccountLabel = busy === "connect" ? "Waiting for browser…" : "Add account";
 
   return (
-    <div
-      className={`ai-provider-card integration-card${state === "active" ? " is-available" : ""}`}
+    <section
+      className={`integration-card${state === "active" ? " is-live" : ""}`}
       aria-label={provider.label}
     >
-      <div className="ai-provider-head">
-        <span className="ai-provider-name" style={{ fontWeight: 600 }}>
-          <Plug size={14} style={{ marginRight: "6px", verticalAlign: "-2px" }} />
-          {provider.label}
+      <div className="integration-card-head">
+        <span className="integration-tile" aria-hidden="true">
+          <Plug size={16} />
         </span>
-        <span
-          className={`ai-provider-badge${badge.tone === "ok" ? " found" : ""}${
-            badge.tone === "warn" ? " integration-badge-warn" : ""
-          }`}
-          data-state={state}
-        >
-          {busy === "load" ? "Checking…" : badge.label}
-        </span>
+        <div className="integration-titles">
+          <h3>{provider.label}</h3>
+          <p>{provider.description}</p>
+        </div>
+        <div className="integration-head-end">
+          <span
+            className={`integration-pill${badge.tone === "ok" ? " is-ok" : ""}${
+              badge.tone === "warn" ? " is-warn" : ""
+            }`}
+            data-state={state}
+          >
+            {busy === "load" ? "Checking…" : badge.label}
+          </span>
+          {accounts.length > 0 && (
+            <button
+              type="button"
+              className="integration-icon-btn"
+              data-tip={addAccountLabel}
+              disabled={disabled || signInOff}
+              onClick={startBrowserSignIn}
+            >
+              <Plus size={14} aria-hidden="true" />
+              <span className="sr-only">{addAccountLabel}</span>
+            </button>
+          )}
+        </div>
       </div>
-      <p className="muted-text" style={{ margin: 0, fontSize: "12px" }}>
-        {provider.description}
-      </p>
 
       {status && (
-        <>
-          <div className="ai-provider-meta integration-meta">
-            <span>
-              This project:{" "}
-              {state === "active" && binding ? (
-                <strong>
-                  {binding.project}
-                  {binding.repo ? ` / ${binding.repo}` : ""}
-                </strong>
-              ) : detectedText ? (
-                <strong>{detectedText}</strong>
-              ) : (
-                <span className="muted-text">No Azure DevOps remote found in this folder</span>
-              )}
-            </span>
-            {state !== "active" && detectedText && (
-              <span className="muted-text">(from git remote)</span>
-            )}
-            {state === "active" && binding && !switching && (
-              <button
-                type="button"
-                className="btn btn-secondary btn-small"
-                disabled={disabled}
-                onClick={() => binding && void openPicker(binding.account, binding)}
-              >
-                Switch project
-              </button>
+        <div className="integration-section">
+          <div className="integration-kv">
+            <span>This project:</span>
+            {state === "active" && binding ? (
+              <strong>
+                {binding.project}
+                {binding.repo ? ` / ${binding.repo}` : ""}
+              </strong>
+            ) : detectedText ? (
+              <strong>{detectedText}</strong>
+            ) : (
+              <span>No Azure DevOps remote found in this folder</span>
             )}
           </div>
 
@@ -620,7 +680,7 @@ const ProviderCard: FC<ProviderCardProps> = ({ provider, projectDir }) => {
                   </div>
                 </>
               )}
-              <div className="ai-provider-actions">
+              <div className="integration-actions">
                 {switching.projects !== null && (
                   <button
                     type="button"
@@ -644,90 +704,163 @@ const ProviderCard: FC<ProviderCardProps> = ({ provider, projectDir }) => {
             </div>
           )}
           {state === "signed_out" && (
-            <p className="integration-warn" style={{ margin: 0, fontSize: "12px" }}>
+            <p className="integration-warn integration-detected">
               This project is bound to an account that needs to sign in again. Connect it below.
             </p>
           )}
 
           {accounts.length > 0 && (
-            <ul className="integration-accounts" aria-label="Accounts">
-              {accounts.map((account) => (
-                <li key={account.id}>
-                  <span>
-                    {describeAccount(account)}
-                    {needsRelogin(account) && (
-                      <span className="integration-warn"> · token missing, connect again</span>
-                    )}
-                    {account.usedByThisProject && (
-                      <span className="muted-text"> · this project</span>
-                    )}
-                  </span>
-                  {confirmLogout === account.id ? (
-                    <span
-                      className="integration-confirm"
-                      role="group"
-                      aria-label="Confirm sign out"
-                    >
-                      <span className="muted-text">
-                        Other projects using this account will need to sign in again.
+            <div className="integration-account-groups" role="group" aria-label="Accounts">
+              {groupAccounts(accounts).map((group) => {
+                const groupToken = `group:${group.key}`;
+                return (
+                  <section
+                    key={group.key}
+                    className="integration-account-group"
+                    aria-label={`Signed in as ${group.label}`}
+                  >
+                    <div className="integration-who">
+                      <span className="integration-avatar" aria-hidden="true">
+                        {initialsOf(group.label)}
                       </span>
-                      <button
-                        type="button"
-                        className="btn btn-secondary btn-small"
-                        disabled={disabled}
-                        onClick={() => handleLogout(account.id)}
-                      >
-                        Sign out
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-secondary btn-small"
-                        onClick={() => setConfirmLogout(null)}
-                      >
-                        Cancel
-                      </button>
-                    </span>
-                  ) : (
-                    <span className="integration-row-actions">
-                      {needsRelogin(account) && isServerAccount(account) && (
-                        <button
-                          type="button"
-                          className="btn btn-secondary btn-small"
-                          disabled={disabled}
-                          onClick={() => openServerForm(account.baseUrl)}
-                          aria-label={`Enter a new token for ${accountName(account)}`}
-                        >
-                          Enter token
-                        </button>
-                      )}
-                      {!account.usedByThisProject && !needsRelogin(account) && (
-                        <button
-                          type="button"
-                          className="btn btn-secondary btn-small"
-                          disabled={disabled}
-                          onClick={() => activateAccount(account)}
-                          aria-label={`Make ${accountName(account)} active for this project`}
-                        >
-                          Make active
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        className="btn btn-secondary btn-small"
-                        disabled={disabled}
-                        onClick={() => setConfirmLogout(account.id)}
-                        aria-label={`Sign out ${accountName(account)}`}
-                      >
-                        Sign out
-                      </button>
-                    </span>
-                  )}
-                </li>
-              ))}
-            </ul>
+                      <strong className="name">{group.label}</strong>
+                      <span className="meta">
+                        {group.accounts.length === 1
+                          ? "1 organization"
+                          : `${group.accounts.length} organizations`}
+                      </span>
+                      <span className="spacer" />
+                      {group.accounts.length > 1 &&
+                        (confirmLogout === groupToken ? (
+                          <span
+                            className="integration-confirm"
+                            role="group"
+                            aria-label="Confirm sign out all"
+                          >
+                            <span className="muted-text">
+                              Signs out all {group.accounts.length} organizations. Other projects
+                              using them will need to sign in again.
+                            </span>
+                            <button
+                              type="button"
+                              className="btn btn-secondary btn-small"
+                              disabled={disabled}
+                              onClick={() => handleLogoutGroup(group)}
+                            >
+                              Sign out all
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn-secondary btn-small"
+                              onClick={() => setConfirmLogout(null)}
+                            >
+                              Cancel
+                            </button>
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-small"
+                            disabled={disabled}
+                            onClick={() => setConfirmLogout(groupToken)}
+                            aria-label={`Sign out all organizations of ${group.label}`}
+                          >
+                            Sign out all
+                          </button>
+                        ))}
+                    </div>
+                    <ul className="integration-orgs" aria-label={`Organizations of ${group.label}`}>
+                      {group.accounts.map((account) => (
+                        <li key={account.id}>
+                          <span>
+                            <span className="org">{accountName(account)}</span>
+                            <span className="how">{` · ${authMethodLabel(account.authMethod)}`}</span>
+                            {needsRelogin(account) && (
+                              <span className="integration-warn">
+                                {" "}
+                                · token missing, connect again
+                              </span>
+                            )}
+                            {account.usedByThisProject && (
+                              <span className="integration-chip">Active</span>
+                            )}
+                          </span>
+                          {confirmLogout === account.id ? (
+                            <span
+                              className="integration-confirm"
+                              role="group"
+                              aria-label="Confirm sign out"
+                            >
+                              <span className="muted-text">
+                                Other projects using this account will need to sign in again.
+                              </span>
+                              <button
+                                type="button"
+                                className="btn btn-secondary btn-small"
+                                disabled={disabled}
+                                onClick={() => handleLogout(account.id)}
+                              >
+                                Sign out
+                              </button>
+                              <button
+                                type="button"
+                                className="btn btn-secondary btn-small"
+                                onClick={() => setConfirmLogout(null)}
+                              >
+                                Cancel
+                              </button>
+                            </span>
+                          ) : (
+                            <span className="integration-row-actions">
+                              {needsRelogin(account) && isServerAccount(account) && (
+                                <button
+                                  type="button"
+                                  className="btn btn-secondary btn-small"
+                                  disabled={disabled}
+                                  onClick={() => openServerForm(account.baseUrl)}
+                                  aria-label={`Enter a new token for ${accountName(account)}`}
+                                >
+                                  Enter token
+                                </button>
+                              )}
+                              {!account.usedByThisProject && !needsRelogin(account) && (
+                                <button
+                                  type="button"
+                                  className="btn btn-secondary btn-small"
+                                  disabled={disabled}
+                                  onClick={() => activateAccount(account)}
+                                  aria-label={`Make ${accountName(account)} active for this project`}
+                                >
+                                  Make active
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                className="btn btn-ghost btn-small"
+                                disabled={disabled}
+                                onClick={() => setConfirmLogout(account.id)}
+                                aria-label={`Sign out ${accountName(account)}`}
+                              >
+                                Sign out
+                              </button>
+                            </span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                );
+              })}
+            </div>
           )}
 
-          <div className="ai-provider-actions">
+          {signInOff && (
+            <p className="integration-note" role="status">
+              {SIGN_IN_UNAVAILABLE_TEXT}
+            </p>
+          )}
+
+          <div className="integration-actions">
             {state !== "active" && accounts.length > 1 && (
               <select
                 className="text-input modal-input select-input"
@@ -762,6 +895,21 @@ const ProviderCard: FC<ProviderCardProps> = ({ provider, projectDir }) => {
                 {detected ? "Use for this project" : "Choose project"}
               </button>
             )}
+            {accounts.length === 0 && (
+              <button
+                type="button"
+                className="btn btn-primary btn-small"
+                disabled={disabled || signInOff}
+                onClick={startBrowserSignIn}
+                title={
+                  signInOff
+                    ? SIGN_IN_UNAVAILABLE_TEXT
+                    : "Opens Azure DevOps sign-in in your browser"
+                }
+              >
+                {busy === "connect" ? "Waiting for browser…" : `Connect ${provider.label}`}
+              </button>
+            )}
             {(state === "active" || accounts.length > 0) && (
               <button
                 type="button"
@@ -776,52 +924,13 @@ const ProviderCard: FC<ProviderCardProps> = ({ provider, projectDir }) => {
             {binding && (
               <button
                 type="button"
-                className="btn btn-secondary btn-small"
+                className="btn btn-ghost btn-small is-end"
                 disabled={disabled}
                 onClick={handleUnbind}
               >
                 Remove from this project
               </button>
             )}
-            <button
-              type="button"
-              className={`btn ${accounts.length > 0 ? "btn-secondary" : "btn-primary"} btn-small`}
-              disabled={disabled}
-              onClick={handleConnect}
-              title="Opens Azure DevOps sign-in in your browser"
-            >
-              {busy === "connect"
-                ? "Waiting for browser…"
-                : accounts.length > 0
-                  ? "Sign in with another account"
-                  : `Connect ${provider.label}`}
-            </button>
-            {!serverForm && (
-              <button
-                type="button"
-                className="btn btn-secondary btn-small"
-                disabled={disabled}
-                onClick={() => openServerForm()}
-                title="For an on-premises server: sign in with an access token"
-              >
-                Azure DevOps Server…
-              </button>
-            )}
-            <button
-              type="button"
-              className="btn btn-secondary btn-small"
-              disabled={disabled}
-              onClick={() => {
-                setBusy("load");
-                void refresh().then(() => {
-                  if (mounted.current) setBusy(null);
-                });
-              }}
-              title="Re-read status"
-              aria-label={`Refresh ${provider.label} status`}
-            >
-              <RefreshCw size={13} className={busy === "load" ? "spin" : ""} />
-            </button>
           </div>
 
           {serverForm && (
@@ -905,7 +1014,7 @@ const ProviderCard: FC<ProviderCardProps> = ({ provider, projectDir }) => {
                   </span>
                 )}
               </div>
-              <div className="ai-provider-actions">
+              <div className="integration-actions">
                 <button type="submit" className="btn btn-primary btn-small" disabled={disabled}>
                   {busy === "server" ? "Connecting…" : "Connect Server"}
                 </button>
@@ -919,15 +1028,6 @@ const ProviderCard: FC<ProviderCardProps> = ({ provider, projectDir }) => {
                 </button>
               </div>
             </form>
-          )}
-
-          {state === "active" && binding && (
-            <WorkflowRulesSection
-              projectDir={projectDir}
-              rules={effectiveRules(binding.rules)}
-              disabled={disabled}
-              onSaved={() => void refresh()}
-            />
           )}
 
           {confirmReplace && (
@@ -958,30 +1058,40 @@ const ProviderCard: FC<ProviderCardProps> = ({ provider, projectDir }) => {
           )}
 
           {busy === "connect" ? (
-            <p className="muted-text" style={{ margin: 0, fontSize: "12px" }} role="status">
-              Finish signing in in your browser. Kai continues on its own once you are done, and
-              finds your organizations for you.
+            <p className="integration-note" role="status">
+              Finish signing in in your browser.
             </p>
           ) : (
             accounts.length === 0 && (
-              <p className="muted-text" style={{ margin: 0, fontSize: "12px" }}>
+              <p className="integration-note">
                 Kai opens your browser to sign in to {provider.label} with your Microsoft account.
                 There is no organization or token to type.
               </p>
             )
           )}
-        </>
+        </div>
       )}
 
-      <div aria-live="polite" role="status">
+      {status && state === "active" && binding && (
+        <WorkflowRulesSection
+          projectDir={projectDir}
+          rules={effectiveRules(binding.rules)}
+          disabled={disabled}
+          onSaved={() => void refresh()}
+        />
+      )}
+
+      <div className="integration-feedback" aria-live="polite" role="status">
         {notice && <p className="integration-ok">{notice}</p>}
       </div>
       {shownError && (
-        <div role="alert" className="error-text integration-error">
-          <span>{shownError.message}</span>
-          {shownError.hint && <code>{shownError.hint}</code>}
+        <div className="integration-feedback" role="alert">
+          <div className="integration-alert">
+            <span>{shownError.message}</span>
+            {shownError.hint && <code>{shownError.hint}</code>}
+          </div>
         </div>
       )}
-    </div>
+    </section>
   );
 };

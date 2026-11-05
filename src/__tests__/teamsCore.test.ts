@@ -471,7 +471,7 @@ describe("Teams sign-in", () => {
     expect(teamsClientId({ KAI_AZURE_CLIENT_ID: CLIENT_ID } as NodeJS.ProcessEnv)).toBe(CLIENT_ID);
   });
 
-  it("keeps the admin-only permission out of the default scopes", () => {
+  it("keeps channel reading as its own scope, so it can be dropped on its own", () => {
     expect(scopesFor(false)).not.toContain(CHANNEL_READ_SCOPE);
     expect(scopesFor(true)).toContain(CHANNEL_READ_SCOPE);
     const app = teamsApp(false).scope;
@@ -532,6 +532,83 @@ describe("Teams sign-in", () => {
     expect(result.user).toEqual({ id: "oid-1", name: "Alex", email: "alex@contoso.com" });
     expect(result.scopes).toEqual(["User.Read", "Chat.ReadWrite"]);
     expect(JSON.parse(result.secret).refreshToken).toBe("r1");
+  });
+
+  describe("channel messages by default", () => {
+    const tokenFetch = (scp: string) =>
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/oauth2/v2.0/token")) {
+          return json({ access_token: jwt({ scp }), refresh_token: "r1", expires_in: 3600 });
+        }
+        if (url.endsWith("/me")) return json({ id: "oid-1", displayName: "Alex" });
+        return new Response("nope", { status: 404 });
+      }) as unknown as typeof fetch;
+
+    /** Answers each opened sign-in page with the next reply: a code, or a Microsoft error. */
+    const browser = (replies: string[]) => {
+      const scopes: string[] = [];
+      return {
+        scopes,
+        openUrl: (authUrl: string) => {
+          const u = new URL(authUrl);
+          scopes.push(u.searchParams.get("scope") ?? "");
+          const reply = replies[scopes.length - 1] ?? "code=the-code";
+          void realFetch(
+            `${u.searchParams.get("redirect_uri")}?${reply}&state=${u.searchParams.get("state")}`
+          ).catch(() => undefined);
+        },
+      };
+    };
+    const env = { KAI_TEAMS_CLIENT_ID: CLIENT_ID } as NodeJS.ProcessEnv;
+
+    it("asks to read channel messages without being told to", async () => {
+      const fetchImpl = tokenFetch("User.Read ChannelMessage.Read.All");
+      const b = browser(["code=the-code"]);
+      const result = await signInToTeams(
+        {},
+        { env, fetchImpl, graph: { fetchImpl }, openUrl: b.openUrl }
+      );
+      expect(b.scopes).toHaveLength(1);
+      expect(b.scopes[0]).toContain("https://graph.microsoft.com/ChannelMessage.Read.All");
+      expect(result.scopes).toContain(CHANNEL_READ_SCOPE);
+    });
+
+    it("signs in once more without it when an administrator has to approve it", async () => {
+      const fetchImpl = tokenFetch("User.Read Chat.ReadWrite");
+      const b = browser([
+        "error=access_denied&error_description=AADSTS90094%3A+The+grant+requires+admin+permission",
+        "code=the-code",
+      ]);
+      const result = await signInToTeams(
+        {},
+        { env, fetchImpl, graph: { fetchImpl }, openUrl: b.openUrl }
+      );
+      expect(b.scopes).toHaveLength(2);
+      expect(b.scopes[0]).toContain("ChannelMessage.Read.All");
+      expect(b.scopes[1]).not.toContain("ChannelMessage.Read.All");
+      expect(result.scopes).not.toContain(CHANNEL_READ_SCOPE);
+      expect(result.user.name).toBe("Alex");
+    });
+
+    it("does not ask again when the person simply cancels", async () => {
+      const fetchImpl = tokenFetch("User.Read");
+      const b = browser(["error=access_denied&error_description=The+user+cancelled"]);
+      await expect(
+        signInToTeams({}, { env, fetchImpl, graph: { fetchImpl }, openUrl: b.openUrl })
+      ).rejects.toMatchObject({ message: "Sign-in was cancelled." });
+      expect(b.scopes).toHaveLength(1);
+    });
+
+    it("skips channel messages entirely when told to", async () => {
+      const fetchImpl = tokenFetch("User.Read");
+      const b = browser(["code=the-code"]);
+      await signInToTeams(
+        { channelHistory: false },
+        { env, fetchImpl, graph: { fetchImpl }, openUrl: b.openUrl }
+      );
+      expect(b.scopes[0]).not.toContain("ChannelMessage.Read.All");
+    });
   });
 });
 

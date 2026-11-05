@@ -4,6 +4,17 @@ import type { AddressInfo } from "net";
 import { spawn } from "child_process";
 import { httpRequest, redactSecrets, type HttpDeps } from "../../http";
 import { IntegrationError, type IntegrationUser } from "../../types";
+import {
+  ADMIN_APPROVAL_MESSAGE,
+  DEFAULT_TENANT,
+  checkTenant,
+  explainMicrosoftError,
+  needsAdminApproval,
+  isGuid,
+  normalizeTenant,
+  type OAuthRegistrationView,
+  type RegistrationSource,
+} from "../../oauthRegistration";
 
 /**
  * Browser sign-in for Azure DevOps: OAuth 2.0 authorization code + PKCE against
@@ -16,16 +27,16 @@ import { IntegrationError, type IntegrationUser } from "../../types";
 const ADO_RESOURCE_ID = "499b84ac-1321-427f-aa17-267ca6975798";
 
 /**
- * Kai's Entra app registration (a public client). Set at release time; a build or
- * a developer machine can override it with `KAI_AZURE_CLIENT_ID`.
- * See docs/azure-devops-sign-in.md.
+ * Kai's Entra app registration (a public client, so its ID is not a secret). Fill it
+ * in once the app is registered and every build signs people in with no setup; until
+ * then Connect is disabled ("not set up in this build"). `KAI_AZURE_CLIENT_ID`
+ * overrides it for CI and for testing. See docs/azure-devops-sign-in.md.
  */
 export const KAI_AZURE_CLIENT_ID = "";
 
-const AUTHORITY = "https://login.microsoftonline.com/common/oauth2/v2.0";
+const LOGIN_HOST = "https://login.microsoftonline.com";
 const SCOPE = `${ADO_RESOURCE_ID}/user_impersonation offline_access`;
 const VSSPS = "https://app.vssps.visualstudio.com";
-const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const DEFAULT_SIGN_IN_TIMEOUT_MS = 5 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 20_000;
@@ -62,26 +73,91 @@ export interface BrowserLoginResult {
   orgs: string[];
 }
 
-export function clientIdFrom(env: NodeJS.ProcessEnv = process.env): string {
-  const id = (env.KAI_AZURE_CLIENT_ID?.trim() || KAI_AZURE_CLIENT_ID).trim();
-  if (!GUID.test(id)) {
-    throw new IntegrationError(
-      "config",
-      "Browser sign-in is not set up in this build of Kai.",
-      "Register the Kai app in Microsoft Entra and set KAI_AZURE_CLIENT_ID (see docs/azure-devops-sign-in.md)."
-    );
-  }
-  return id;
+export interface Registration {
+  clientId: string;
+  /** `common`, an audience, a tenant GUID or a domain. */
+  tenant: string;
+  source: RegistrationSource;
 }
 
-/** True when this build has an Entra app registration to sign in with. */
+function notSetUp(): IntegrationError {
+  return new IntegrationError(
+    "config",
+    "Browser sign-in is not set up in this build of Kai.",
+    "This build has no Microsoft Entra app ID yet. A maintainer sets KAI_AZURE_CLIENT_ID in src/core/integrations/providers/azure-devops/oauth.ts (docs/azure-devops-sign-in.md); to try a registration now, set the KAI_AZURE_CLIENT_ID environment variable."
+  );
+}
+
+/**
+ * The app registration in force: `KAI_AZURE_CLIENT_ID` from the environment, else the
+ * one built into Kai. A malformed environment value is an error rather than a silent
+ * fall-through to another registration.
+ */
+export function registrationFrom(env: NodeJS.ProcessEnv = process.env): Registration {
+  const envId = env.KAI_AZURE_CLIENT_ID?.trim();
+  if (envId && !isGuid(envId)) {
+    throw new IntegrationError(
+      "config",
+      "KAI_AZURE_CLIENT_ID is not a valid client ID.",
+      "Set it to the Application (client) ID (a GUID), or remove it to use the app built into Kai."
+    );
+  }
+  const envTenantRaw = env.KAI_AZURE_TENANT_ID?.trim();
+  if (envTenantRaw) {
+    const problem = checkTenant(envTenantRaw);
+    if (problem) {
+      throw new IntegrationError(
+        "config",
+        "KAI_AZURE_TENANT_ID is not a valid directory.",
+        problem
+      );
+    }
+  }
+  let clientId = "";
+  let source: RegistrationSource | null = null;
+  if (envId) {
+    clientId = envId;
+    source = "env";
+  } else if (isGuid(KAI_AZURE_CLIENT_ID.trim())) {
+    clientId = KAI_AZURE_CLIENT_ID.trim();
+    source = "build";
+  }
+  if (!source) throw notSetUp();
+  return { clientId, tenant: normalizeTenant(envTenantRaw), source };
+}
+
+export function clientIdFrom(env: NodeJS.ProcessEnv = process.env): string {
+  return registrationFrom(env).clientId;
+}
+
+/** True when this build (or this environment) has an Entra app registration to sign in with. */
 export function browserSignInAvailable(env: NodeJS.ProcessEnv = process.env): boolean {
   try {
-    clientIdFrom(env);
+    registrationFrom(env);
     return true;
   } catch {
     return false;
   }
+}
+
+/** What the Integrations tab needs to know. Never throws: a bad setting reads as "not available". */
+export function registrationView(env: NodeJS.ProcessEnv = process.env): OAuthRegistrationView {
+  try {
+    return { available: true, source: registrationFrom(env).source };
+  } catch {
+    return { available: false, source: env.KAI_AZURE_CLIENT_ID?.trim() ? "env" : null };
+  }
+}
+
+/** The Microsoft sign-in endpoint for the directory in force. */
+export function authorityFrom(env: NodeJS.ProcessEnv = process.env): string {
+  let tenant = DEFAULT_TENANT;
+  try {
+    tenant = registrationFrom(env).tenant;
+  } catch {
+    // Not set up: the caller reports that; the default keeps this total.
+  }
+  return `${LOGIN_HOST}/${encodeURIComponent(tenant)}/oauth2/v2.0`;
 }
 
 const b64url = (buf: Buffer): string => buf.toString("base64url");
@@ -214,9 +290,11 @@ export async function authorizeInBrowser(
           return;
         }
         if (error || !code) {
-          const detail = redactSecrets(
+          const described = redactSecrets(
             (url.searchParams.get("error_description") ?? error ?? "").replace(/\s+/g, " ")
-          ).slice(0, 300);
+          );
+          const detail = described.slice(0, 300);
+          const adminOnly = needsAdminApproval(described);
           res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
           res.end(
             PAGE("Sign-in was not completed", "You can close this tab and try again in Kai.")
@@ -224,10 +302,14 @@ export async function authorizeInBrowser(
           finish(
             new IntegrationError(
               "auth",
-              error === "access_denied"
-                ? "Sign-in was cancelled."
-                : `Microsoft did not complete the sign-in${detail ? `: ${detail}` : "."}`,
-              "Connect again."
+              adminOnly
+                ? ADMIN_APPROVAL_MESSAGE
+                : error === "access_denied"
+                  ? "Sign-in was cancelled."
+                  : `Microsoft did not complete the sign-in${detail ? `: ${detail}` : "."}`,
+              adminOnly
+                ? "Ask an administrator to approve Kai in Microsoft Entra, then connect again."
+                : (explainMicrosoftError(described) ?? "Connect again.")
             )
           );
           return;
@@ -237,7 +319,7 @@ export async function authorizeInBrowser(
         finish(null, { code, redirectUri, verifier });
       });
 
-      const authUrl = new URL(`${AUTHORITY}/authorize`);
+      const authUrl = new URL(`${authorityFrom(deps.env)}/authorize`);
       authUrl.search = new URLSearchParams({
         client_id: clientId,
         response_type: "code",
@@ -284,7 +366,7 @@ export async function requestToken(
   let res: Response;
   let text: string;
   try {
-    res = await doFetch(`${AUTHORITY}/token`, {
+    res = await doFetch(`${authorityFrom(deps.env)}/token`, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
       body: new URLSearchParams({ client_id: clientId, scope: app.scope, ...form }).toString(),
@@ -318,17 +400,19 @@ export async function requestToken(
     if (code === "invalid_grant" || code === "interaction_required") {
       throw new IntegrationError("auth", `Your ${app.product} sign-in has expired.`, app.reconnect);
     }
+    const explained = explainMicrosoftError(detail);
     if (code === "invalid_client" || code === "unauthorized_client") {
       throw new IntegrationError(
         "config",
         "Microsoft does not recognize Kai's sign-in app.",
-        `Check KAI_AZURE_CLIENT_ID and the app registration (docs/azure-devops-sign-in.md).${detail ? ` ${detail}` : ""}`
+        explained ??
+          `Check KAI_AZURE_CLIENT_ID (if set) and the app registration (docs/azure-devops-sign-in.md).${detail ? ` ${detail}` : ""}`
       );
     }
     throw new IntegrationError(
       "auth",
       `Microsoft did not accept the sign-in${detail ? `: ${detail}` : "."}`,
-      "Connect again."
+      explained ?? "Connect again."
     );
   }
   const refreshToken =

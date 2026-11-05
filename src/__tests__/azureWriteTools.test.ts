@@ -26,6 +26,8 @@ const REMOTE = "https://dev.azure.com/Contoso/Payments/_git/api";
 const WRITE_TOOLS = [
   "kai_work_item_comment",
   "kai_work_item_set_state",
+  "kai_work_item_create",
+  "kai_work_item_update",
   "kai_pr_create",
   "kai_pr_comment",
 ];
@@ -66,7 +68,55 @@ const WRITE_ROUTES: FakeRoute[] = [
   },
   {
     match: "PATCH https://dev.azure.com/Contoso/Payments/_apis/wit/workitems/7",
-    body: { id: 7, fields: { "System.State": "Resolved" } },
+    body: {
+      id: 7,
+      fields: { "System.State": "Resolved", "System.WorkItemType": "Task", "System.Title": "New" },
+    },
+  },
+  {
+    match:
+      "GET https://dev.azure.com/Contoso/_apis/identities?searchFilter=General&filterValue=ann@contoso.com",
+    body: { value: [{ id: "guid-ann", providerDisplayName: "Ann Lee" }] },
+  },
+  {
+    match:
+      "GET https://dev.azure.com/Contoso/_apis/identities?searchFilter=General&filterValue=bob@contoso.com",
+    body: { value: [{ id: "guid-bob", providerDisplayName: "Bob Ray" }] },
+  },
+  {
+    match:
+      "GET https://dev.azure.com/Contoso/_apis/identities?searchFilter=General&filterValue=Sam",
+    body: {
+      value: [
+        { id: "guid-s1", providerDisplayName: "Sam A" },
+        { id: "guid-s2", providerDisplayName: "Sam B" },
+      ],
+    },
+  },
+  {
+    match:
+      "GET https://dev.azure.com/Contoso/_apis/identities?searchFilter=General&filterValue=nobody",
+    body: { value: [] },
+  },
+  {
+    match: "POST https://dev.azure.com/Contoso/Payments/_apis/wit/workitems/$Task",
+    body: {
+      id: 21,
+      fields: {
+        "System.WorkItemType": "Task",
+        "System.Title": "Add retry",
+        "System.State": "To Do",
+      },
+    },
+  },
+  {
+    // The branches that exist. The provider asks for one name and picks the exact match.
+    match: "GET https://dev.azure.com/Contoso/Payments/_apis/git/repositories/api/refs?",
+    body: {
+      value: ["main", "trunk", "feature/login", "feature/x", "release/1.0"].map((name) => ({
+        name: `refs/heads/${name}`,
+      })),
+    },
   },
   {
     match: "POST https://dev.azure.com/Contoso/Payments/_apis/git/repositories/api/pullrequests?",
@@ -213,18 +263,64 @@ describe("azure write methods", () => {
       isDraft: true,
     });
     expect(pr).toMatchObject({ id: 12, sourceBranch: "feature/login", targetBranch: "main" });
-    expect(calls).toHaveLength(1);
-    expect(calls[0].method).toBe("POST");
-    expect(calls[0].url).toContain("/Payments/_apis/git/repositories/api/pullrequests?");
-    expect(calls[0].body).toEqual({
+    // Each branch is looked up by its own name (never listed), then the pull request is opened.
+    expect(calls.map((c) => c.method)).toEqual(["GET", "GET", "POST"]);
+    expect(calls[0].url).toContain("filter=heads%2Ffeature%2Flogin");
+    expect(calls[1].url).toContain("filter=heads%2Fmain");
+    const post = calls[2];
+    expect(post.url).toContain("/Payments/_apis/git/repositories/api/pullrequests?");
+    expect(post.body).toEqual({
       sourceRefName: "refs/heads/feature/login",
       targetRefName: "refs/heads/main",
       title: "Add login",
       description: "Why",
       isDraft: true,
     });
-    // Nothing in the code can reach the refs endpoint.
-    expect(calls.some((c) => c.url.includes("/refs"))).toBe(false);
+    // The refs endpoint is only ever read: no branch is created.
+    expect(calls.filter((c) => c.url.includes("/refs")).every((c) => c.method === "GET")).toBe(
+      true
+    );
+  });
+
+  it("refuses a source branch that does not exist, by name, and opens nothing", async () => {
+    const { provider, ctx, calls } = providerSetup();
+    await expect(
+      provider.pullRequests!.create!(ctx, {
+        sourceBranch: "feature/typo",
+        targetBranch: "main",
+        title: "Add login",
+      })
+    ).rejects.toMatchObject({
+      code: "not_found",
+      message: 'The source branch "feature/typo" does not exist in api.',
+      hint: expect.stringContaining("Push the branch"),
+    });
+    expect(calls.filter((c) => c.method === "POST")).toHaveLength(0);
+  });
+
+  it("refuses a target branch that does not exist, by name, and opens nothing", async () => {
+    const { provider, ctx, calls } = providerSetup();
+    await expect(
+      provider.pullRequests!.create!(ctx, {
+        sourceBranch: "feature/login",
+        targetBranch: "develop",
+        title: "Add login",
+      })
+    ).rejects.toMatchObject({
+      code: "not_found",
+      message: 'The target branch "develop" does not exist in api.',
+    });
+    expect(calls.filter((c) => c.method === "POST")).toHaveLength(0);
+  });
+
+  it("checks a single branch by its exact name, not by prefix", async () => {
+    const { provider, ctx } = providerSetup();
+    const exists = (branch: string) =>
+      provider.discovery!.branchExists(ctx.account, ctx.secrets, "Payments", "api", branch);
+    expect(await exists("main")).toBe(true);
+    expect(await exists("feature/login")).toBe(true);
+    expect(await exists("feature")).toBe(false); // a prefix of one is not a branch
+    expect(await exists("Main")).toBe(false); // names are case-sensitive
   });
 
   it("needs a bound repository to open a pull request", async () => {
@@ -236,6 +332,167 @@ describe("azure write methods", () => {
       )
     ).rejects.toMatchObject({ code: "bad_request" });
     expect(calls).toHaveLength(0);
+  });
+
+  it("creates a task with escaped description, a joined tag list and a parent link", async () => {
+    const { provider, ctx, calls } = providerSetup();
+    const made = await provider.workItems!.create!(ctx, {
+      type: "Task",
+      title: "Add retry",
+      description: "Use <b>backoff</b>\nthen stop",
+      assignedTo: "dev@contoso.com",
+      parentId: 7,
+      tags: ["api", "retry"],
+      priority: 2,
+      remainingWork: 3,
+      iterationPath: "Payments\\Sprint 4",
+    });
+    expect(made).toEqual({
+      workItemId: 21,
+      type: "Task",
+      title: "Add retry",
+      state: "To Do",
+      fields: [
+        "System.Title",
+        "System.Description",
+        "System.AssignedTo",
+        "System.Tags",
+        "System.IterationPath",
+        "Microsoft.VSTS.Common.Priority",
+        "Microsoft.VSTS.Scheduling.RemainingWork",
+        "parent",
+      ],
+      url: "https://dev.azure.com/Contoso/Payments/_workitems/edit/21",
+    });
+    // The parent is read first (project check), then the item is created.
+    expect(calls.map((c) => c.method)).toEqual(["GET", "POST"]);
+    const post = calls[1];
+    expect(post.url).toContain("/Payments/_apis/wit/workitems/$Task?");
+    expect(post.headers["content-type"]).toBe("application/json-patch+json");
+    expect(post.body).toEqual([
+      { op: "add", path: "/fields/System.Title", value: "Add retry" },
+      {
+        op: "add",
+        path: "/fields/System.Description",
+        value: "Use &lt;b&gt;backoff&lt;/b&gt;<br>then stop",
+      },
+      { op: "add", path: "/fields/System.AssignedTo", value: "dev@contoso.com" },
+      { op: "add", path: "/fields/System.Tags", value: "api; retry" },
+      { op: "add", path: "/fields/System.IterationPath", value: "Payments\\Sprint 4" },
+      { op: "add", path: "/fields/Microsoft.VSTS.Common.Priority", value: 2 },
+      { op: "add", path: "/fields/Microsoft.VSTS.Scheduling.RemainingWork", value: 3 },
+      {
+        op: "add",
+        path: "/relations/-",
+        value: {
+          rel: "System.LinkTypes.Hierarchy-Reverse",
+          url: "https://dev.azure.com/Contoso/_apis/wit/workItems/7",
+        },
+      },
+    ]);
+  });
+
+  it("does not create anything when the parent is in another project", async () => {
+    const { provider, ctx, calls } = providerSetup();
+    await expect(
+      provider.workItems!.create!(ctx, { type: "Task", title: "x", parentId: 9 })
+    ).rejects.toMatchObject({ code: "not_found" });
+    expect(calls.every((c) => c.method === "GET")).toBe(true);
+  });
+
+  it("updates only the fields given, with a patch that tests the revision it read", async () => {
+    const { provider, ctx, calls } = providerSetup();
+    const done = await provider.workItems!.update!(ctx, {
+      id: 7,
+      title: "New",
+      remainingWork: 0,
+      completedWork: 5,
+    });
+    expect(done).toMatchObject({
+      workItemId: 7,
+      type: "Task",
+      title: "New",
+      fields: [
+        "System.Title",
+        "Microsoft.VSTS.Scheduling.RemainingWork",
+        "Microsoft.VSTS.Scheduling.CompletedWork",
+      ],
+    });
+    expect(calls[1].method).toBe("PATCH");
+    expect(calls[1].body).toEqual([
+      { op: "test", path: "/rev", value: 4 },
+      { op: "add", path: "/fields/System.Title", value: "New" },
+      { op: "add", path: "/fields/Microsoft.VSTS.Scheduling.RemainingWork", value: 0 },
+      { op: "add", path: "/fields/Microsoft.VSTS.Scheduling.CompletedWork", value: 5 },
+    ]);
+  });
+
+  it("fails closed when updating a work item of another project", async () => {
+    const { provider, ctx, calls } = providerSetup();
+    await expect(provider.workItems!.update!(ctx, { id: 9, title: "x" })).rejects.toMatchObject({
+      code: "not_found",
+    });
+    expect(calls.every((c) => c.method === "GET")).toBe(true);
+  });
+
+  it("links work items when opening a pull request, after checking each is in the project", async () => {
+    const { provider, ctx, calls } = providerSetup();
+    await provider.pullRequests!.create!(ctx, {
+      sourceBranch: "feature/login",
+      targetBranch: "main",
+      title: "Add login",
+      workItemIds: [7],
+    });
+    // The work item, then the two branches, then the pull request.
+    expect(calls.map((c) => c.method)).toEqual(["GET", "GET", "GET", "POST"]);
+    expect((calls[3].body as { workItemRefs: unknown }).workItemRefs).toEqual([{ id: "7" }]);
+
+    const other = providerSetup();
+    await expect(
+      other.provider.pullRequests!.create!(other.ctx, {
+        sourceBranch: "a",
+        targetBranch: "b",
+        title: "t",
+        workItemIds: [7, 9],
+      })
+    ).rejects.toMatchObject({ code: "not_found" });
+    expect(other.calls.some((c) => c.method === "POST")).toBe(false);
+  });
+
+  it("asks for reviews and labels when opening a pull request", async () => {
+    const { provider, ctx, calls } = providerSetup();
+    await provider.pullRequests!.create!(ctx, {
+      sourceBranch: "feature/login",
+      targetBranch: "main",
+      title: "Add login",
+      reviewers: ["ann@contoso.com"],
+      requiredReviewers: ["bob@contoso.com", "ann@contoso.com"],
+      labels: ["backend"],
+    });
+    // Two branch checks, two reviewer lookups, then the pull request.
+    expect(calls.map((c) => c.method)).toEqual(["GET", "GET", "GET", "GET", "POST"]);
+    const body = calls[4].body as { reviewers: unknown; labels: unknown };
+    // Ann is asked once, and required because she is also listed as required.
+    expect(body.reviewers).toEqual([
+      { id: "guid-ann", isRequired: true },
+      { id: "guid-bob", isRequired: true },
+    ]);
+    expect(body.labels).toEqual([{ name: "backend" }]);
+  });
+
+  it("opens no pull request when a reviewer matches nobody or several people", async () => {
+    for (const who of ["nobody", "Sam"]) {
+      const { provider, ctx, calls } = providerSetup();
+      await expect(
+        provider.pullRequests!.create!(ctx, {
+          sourceBranch: "feature/login",
+          targetBranch: "main",
+          title: "t",
+          reviewers: [who],
+        })
+      ).rejects.toMatchObject({ code: who === "nobody" ? "not_found" : "bad_request" });
+      expect(calls.some((c) => c.method === "POST")).toBe(false);
+    }
   });
 
   it("starts a pull request thread, optionally on a file line", async () => {
@@ -608,6 +865,112 @@ describe("write tools over MCP", () => {
       ).toBe("/src/a.ts");
     });
 
+    it("creates a task, defaulting the type", async () => {
+      const res = await callTool(repoDir, "kai_work_item_create", {
+        title: "Add retry",
+        assignedTo: "dev@contoso.com",
+        parentId: 7,
+        tags: ["api", "API", "retry"],
+        priority: 2,
+      });
+      expect(res.json).toMatchObject({ ok: true, workItemId: 21, type: "Task", state: "To Do" });
+      expect(res.json!.changed).toContain("created");
+      const post = calls.find((c) => c.method === "POST")!;
+      expect(post.url).toContain("/workitems/$Task?");
+      const ops = post.body as Array<{ path: string; value: unknown }>;
+      expect(ops.find((o) => o.path === "/fields/System.Tags")!.value).toBe("api; retry");
+    });
+
+    it("assigns me to the signed-in user, and refuses when that user is unknown", async () => {
+      const unknown = await callTool(repoDir, "kai_work_item_create", {
+        title: "t",
+        assignedTo: "me",
+      });
+      expect(unknown.error?.message).toContain('"me" is not known');
+      expect(calls).toHaveLength(0);
+
+      saveAccount({ ...azAccount("Contoso", "az"), user: "Dev User" });
+      const known = await callTool(repoDir, "kai_work_item_update", { id: 7, assignedTo: "Me" });
+      expect(known.error).toBeUndefined();
+      const patch = calls.find((c) => c.method === "PATCH")!;
+      expect(patch.body).toContainEqual({
+        op: "add",
+        path: "/fields/System.AssignedTo",
+        value: "Dev User",
+      });
+    });
+
+    it("updates a task and says which fields changed, never their values", async () => {
+      const res = await callTool(repoDir, "kai_work_item_update", {
+        id: 7,
+        title: "New",
+        description: "secret-ish body",
+      });
+      expect(res.json).toMatchObject({
+        ok: true,
+        workItemId: 7,
+        fields: ["System.Title", "System.Description"],
+      });
+      expect(JSON.stringify(res.json)).not.toContain("secret-ish body");
+    });
+
+    it("links work items when opening a pull request", async () => {
+      const res = await callTool(repoDir, "kai_pr_create", {
+        sourceBranch: "feature/login",
+        targetBranch: "main",
+        title: "Add login",
+        workItemIds: [7, 7],
+      });
+      expect(res.error).toBeUndefined();
+      const post = calls.find((c) => c.method === "POST")!;
+      expect((post.body as { workItemRefs: unknown }).workItemRefs).toEqual([{ id: "7" }]);
+    });
+
+    it("answers a pull request link to a work item of another project with not_found", async () => {
+      const res = await callTool(repoDir, "kai_pr_create", {
+        sourceBranch: "feature/login",
+        targetBranch: "main",
+        title: "Add login",
+        workItemIds: [9],
+      });
+      expect(res.error?.message).toContain("not found");
+      expect(calls.filter((c) => c.method === "POST")).toHaveLength(0);
+    });
+
+    it("answers a work item update of another project with not_found and writes nothing", async () => {
+      const res = await callTool(repoDir, "kai_work_item_update", { id: 9, title: "x" });
+      expect(res.error?.message).toContain("not found");
+      expect(calls.filter((c) => c.method === "PATCH")).toHaveLength(0);
+    });
+
+    it("opens a pull request that links the task, asks for reviews and labels it", async () => {
+      const res = await callTool(repoDir, "kai_pr_create", {
+        sourceBranch: "feature/login",
+        targetBranch: "main",
+        title: "Add login",
+        workItemIds: [7],
+        reviewers: ["ann@contoso.com"],
+        requiredReviewers: ["bob@contoso.com"],
+        labels: ["backend", "Backend"],
+      });
+      expect(res.error).toBeUndefined();
+      expect(res.json).toMatchObject({
+        ok: true,
+        attached: {
+          workItemIds: [7],
+          reviewers: ["ann@contoso.com"],
+          requiredReviewers: ["bob@contoso.com"],
+          labels: ["backend"],
+        },
+      });
+      const post = calls.find((c) => c.method === "POST")!;
+      expect(post.body).toMatchObject({
+        workItemRefs: [{ id: "7" }],
+        reviewers: [{ id: "guid-ann" }, { id: "guid-bob", isRequired: true }],
+        labels: [{ name: "backend" }],
+      });
+    });
+
     it("answers a pull request of another project with not_found", async () => {
       const res = await callTool(repoDir, "kai_pr_comment", { id: 13, text: "leak" });
       expect(res.error?.message).toContain("not found");
@@ -650,6 +1013,52 @@ describe("write tools over MCP", () => {
         "kai_pr_create",
         { sourceBranch: "a", targetBranch: "b", title: "t", isDraft: "yes" },
         "isDraft",
+      ],
+      ["kai_work_item_create", {}, "title is required"],
+      ["kai_work_item_create", { title: "a\nb" }, "one line"],
+      ["kai_work_item_create", { title: "t".repeat(256) }, "at most 255"],
+      ["kai_work_item_create", { title: "t", type: "Task/../x" }, "type must be"],
+      ["kai_work_item_create", { title: "t", parentId: 0 }, "parentId"],
+      ["kai_work_item_create", { title: "t", priority: 5 }, "priority"],
+      ["kai_work_item_create", { title: "t", priority: 1.5 }, "priority"],
+      ["kai_work_item_create", { title: "t", tags: ["a;b"] }, "each tag"],
+      ["kai_work_item_create", { title: "t", tags: "api" }, "tags must be"],
+      ["kai_work_item_create", { title: "t", remainingWork: -1 }, "remainingWork"],
+      ["kai_work_item_create", { title: "t", description: "d".repeat(8001) }, "description"],
+      ["kai_work_item_create", { title: "t", assignedTo: "a\nb" }, "assignedTo"],
+      ["kai_work_item_update", { id: 0, title: "t" }, "id must be a positive integer"],
+      ["kai_work_item_update", { id: 7 }, "give at least one field"],
+      ["kai_work_item_update", { id: 7, title: "" }, "title must be"],
+      ["kai_work_item_update", { id: 7, completedWork: "3" }, "completedWork"],
+      [
+        "kai_pr_create",
+        { sourceBranch: "a", targetBranch: "b", title: "t", workItemIds: ["x"] },
+        "workItemIds",
+      ],
+      [
+        "kai_pr_create",
+        { sourceBranch: "a", targetBranch: "b", title: "t", workItemIds: 7 },
+        "workItemIds",
+      ],
+      [
+        "kai_pr_create",
+        { sourceBranch: "a", targetBranch: "b", title: "t", reviewers: "ann@contoso.com" },
+        "reviewers",
+      ],
+      [
+        "kai_pr_create",
+        { sourceBranch: "a", targetBranch: "b", title: "t", requiredReviewers: [1] },
+        "reviewers",
+      ],
+      [
+        "kai_pr_create",
+        { sourceBranch: "a", targetBranch: "b", title: "t", labels: ["a\nb"] },
+        "labels",
+      ],
+      [
+        "kai_pr_create",
+        { sourceBranch: "a", targetBranch: "b", title: "t", labels: Array(11).fill("x") },
+        "labels",
       ],
       ["kai_pr_comment", { id: 12, text: "x", filePath: "/a.ts" }, "give both or neither"],
       ["kai_pr_comment", { id: 12, text: "x", line: 3 }, "give both or neither"],

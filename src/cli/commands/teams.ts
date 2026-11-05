@@ -58,8 +58,10 @@ Usage:
   kai integration teams remove     Sign out and forget this account
 
 Option:
-  --channels    Also ask for permission to read channel messages
-                (most organizations need an administrator to approve it)
+  --channels    Sign in again to add permission to read channel messages, for an account
+                that was signed in without it (it is asked for by default; if your
+                organization needs an administrator to approve it, Kai signs in without it
+                and says so)
 
 Then run: kai teams
 `);
@@ -112,7 +114,6 @@ export async function runTeamsSetup(args: string[], deps: TeamsDeps = {}): Promi
       console.log(`  Opening your browser to sign in to Microsoft...`);
       const signedIn = await (deps.signIn ?? signInToTeams)(
         {
-          channelHistory: wantChannels,
           onUrl: (url) => console.log(`  If it does not open, visit this address:\n    ${url}`),
         },
         { env }
@@ -140,9 +141,9 @@ export async function runTeamsSetup(args: string[], deps: TeamsDeps = {}): Promi
     if (session.canReadChannels) {
       console.log(`  ✔ Channel messages     can be read`);
     } else {
-      console.log(`  – Channel messages     not enabled (sending to channels works)`);
-      console.log(`      To read them too: kai integration teams --channels`);
-      console.log(`      Most organizations need an administrator to approve this.`);
+      console.log(`  – Channel messages     not approved (chats and sending to channels work)`);
+      console.log(`      Your organization needs an administrator to approve Kai for this.`);
+      console.log(`      After it is approved, run: kai integration teams --channels`);
     }
     console.log(`\nDone. Run \`kai teams\` to chat.\n`);
     return 0;

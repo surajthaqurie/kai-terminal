@@ -18,8 +18,8 @@ const SHOTS = [
   {
     src: '/screens/integrations.png',
     title: 'Azure DevOps rules for agents',
-    body: 'Pick the merge branch and a branch naming pattern. Agents follow them for every work item; nothing is blocked.',
-    alt: 'The Integrations tab with the Azure DevOps card showing a merge branch list and a branch naming regex field',
+    body: 'Type the merge branch and a branch naming pattern. Kai checks the branch exists when you save. Agents follow them for every work item; nothing is blocked.',
+    alt: 'The Integrations tab with the Azure DevOps card showing a merge branch field and a branch naming regex field',
   },
 ];
 

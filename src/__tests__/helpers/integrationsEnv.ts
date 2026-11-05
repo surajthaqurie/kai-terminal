@@ -71,8 +71,8 @@ export const fakeDiscovery: NonNullable<IntegrationProvider["discovery"]> = {
     if (!repos) throw new IntegrationError("not_found", `No project ${project}.`);
     return repos.map((name) => ({ name }));
   },
-  async listBranches() {
-    return ["main"];
+  async branchExists(_account, _secrets, _project, _repo, branch) {
+    return branch === "main";
   },
 };
 

@@ -10,6 +10,8 @@ import {
   type IntegrationProvider,
   type Page,
   type ProviderContext,
+  type WorkItemCreateInput,
+  type WorkItemUpdateInput,
 } from "./types";
 import { effectiveRules, isValidBranchName, normalizeBranch } from "./workflowRules";
 import type { ToolOutcome } from "../mcpTools";
@@ -40,6 +42,15 @@ const PR_TITLE_MAX = 400;
 const PR_DESCRIPTION_MAX = 4000;
 const STATE_MAX = 60;
 const FILE_PATH_MAX = 400;
+const WORK_ITEM_TITLE_MAX = 255;
+const WORK_ITEM_TYPE_MAX = 60;
+const PERSON_MAX = 120;
+const TAG_MAX = 40;
+const TAGS_MAX = 10;
+const HOURS_MAX = 10_000;
+const PR_WORK_ITEMS_MAX = 20;
+const PR_PEOPLE_MAX = 10;
+const PR_LABELS_MAX = 10;
 
 const PAGE_PROPS = {
   limit: { type: "number", description: "Page size (default 20, max 50)." },
@@ -172,6 +183,67 @@ const TOOL_DEFS: ToolDef[] = [
     },
   },
   {
+    name: "kai_work_item_create",
+    description:
+      "WRITES to the remote service: creates a work item (default type Task) in this project, optionally under a parent item. Only when the user asked for it.",
+    capability: "work-items",
+    write: true,
+    inputSchema: {
+      type: "object",
+      properties: {
+        title: {
+          type: "string",
+          description: `One line, up to ${WORK_ITEM_TITLE_MAX} characters.`,
+        },
+        type: { type: "string", description: "Task (default), Bug, User Story, ..." },
+        description: {
+          type: "string",
+          description: `Plain text, up to ${WRITE_TEXT_MAX} characters.`,
+        },
+        assignedTo: { type: "string", description: '"me", an email or a display name.' },
+        parentId: { type: "number", description: "Id of the parent work item." },
+        tags: { type: "array", items: { type: "string" }, description: `Up to ${TAGS_MAX} tags.` },
+        priority: { type: "number", description: "1 (highest) to 4." },
+        remainingWork: { type: "number", description: "Remaining hours (Task)." },
+        areaPath: { type: "string", description: "Area path, e.g. Project\\Team." },
+        iterationPath: { type: "string", description: "Sprint, e.g. Project\\Sprint 4." },
+      },
+      required: ["title"],
+    },
+  },
+  {
+    name: "kai_work_item_update",
+    description:
+      "WRITES to the remote service: changes fields of a work item in this project (give only what changes). Refused if the item changed since it was read. Use kai_work_item_set_state for the state.",
+    capability: "work-items",
+    write: true,
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "number", description: "Work item id." },
+        title: {
+          type: "string",
+          description: `One line, up to ${WORK_ITEM_TITLE_MAX} characters.`,
+        },
+        description: {
+          type: "string",
+          description: `Plain text, up to ${WRITE_TEXT_MAX} characters.`,
+        },
+        assignedTo: { type: "string", description: '"me", an email or a display name.' },
+        tags: {
+          type: "array",
+          items: { type: "string" },
+          description: `Replaces all tags (up to ${TAGS_MAX}).`,
+        },
+        priority: { type: "number", description: "1 (highest) to 4." },
+        remainingWork: { type: "number", description: "Remaining hours (Task)." },
+        completedWork: { type: "number", description: "Completed hours (Task)." },
+        iterationPath: { type: "string", description: "Sprint, e.g. Project\\Sprint 4." },
+      },
+      required: ["id"],
+    },
+  },
+  {
     name: "kai_pr_create",
     description:
       "WRITES to the remote service: opens a pull request between two branches that already exist and are pushed. Never creates a branch. targetBranch defaults to the project's merge branch.",
@@ -188,6 +260,26 @@ const TOOL_DEFS: ToolDef[] = [
         title: { type: "string", description: `Up to ${PR_TITLE_MAX} characters.` },
         description: { type: "string", description: `Up to ${PR_DESCRIPTION_MAX} characters.` },
         isDraft: { type: "boolean", description: "Open as a draft." },
+        workItemIds: {
+          type: "array",
+          items: { type: "number" },
+          description: `Work items of this project to link (up to ${PR_WORK_ITEMS_MAX}).`,
+        },
+        reviewers: {
+          type: "array",
+          items: { type: "string" },
+          description: `Emails or names to request a review from (up to ${PR_PEOPLE_MAX}).`,
+        },
+        requiredReviewers: {
+          type: "array",
+          items: { type: "string" },
+          description: `Emails or names whose approval is required (up to ${PR_PEOPLE_MAX}).`,
+        },
+        labels: {
+          type: "array",
+          items: { type: "string" },
+          description: `Labels to add (up to ${PR_LABELS_MAX}).`,
+        },
       },
       required: ["sourceBranch", "title"],
     },
@@ -227,6 +319,10 @@ function providerCanWrite(provider: IntegrationProvider, name: string): boolean 
       return Boolean(provider.workItems?.addComment);
     case "kai_work_item_set_state":
       return Boolean(provider.workItems?.setState);
+    case "kai_work_item_create":
+      return Boolean(provider.workItems?.create);
+    case "kai_work_item_update":
+      return Boolean(provider.workItems?.update);
     case "kai_pr_create":
       return Boolean(provider.pullRequests?.create);
     case "kai_pr_comment":
@@ -284,6 +380,127 @@ function writeBranch(v: unknown): string | null {
   if (typeof v !== "string") return null;
   const name = normalizeBranch(v);
   return isValidBranchName(name) ? name : null;
+}
+
+/** A one-line value for a write: trimmed, non-empty, at most `max` characters, no line breaks. */
+function writeLine(v: unknown, max: number): string | null {
+  const t = writeText(v, max);
+  return t === null || /[\r\n\t]/.test(t) ? null : t;
+}
+
+/**
+ * An optional list of one-line strings, de-duplicated ignoring case. Undefined when not given,
+ * null when it is not a list, is too long, or an entry is not acceptable.
+ */
+function stringList(v: unknown, maxItems: number, maxLen: number): string[] | undefined | null {
+  if (v === undefined) return undefined;
+  if (!Array.isArray(v) || v.length > maxItems) return null;
+  const out: string[] = [];
+  for (const raw of v) {
+    const t = writeLine(raw, maxLen);
+    if (t === null || t.includes(";")) return null;
+    if (!out.some((x) => x.toLowerCase() === t.toLowerCase())) out.push(t);
+  }
+  return out;
+}
+
+/** A finite number in [min, max], or null. */
+function boundedNumber(v: unknown, min: number, max: number): number | null {
+  return typeof v === "number" && Number.isFinite(v) && v >= min && v <= max ? v : null;
+}
+
+type FieldArgs = Omit<WorkItemUpdateInput, "id"> & Pick<WorkItemCreateInput, "areaPath">;
+
+/**
+ * The fields common to creating and updating a work item, validated. Only keys that were
+ * given appear in the result; an error is a message for the agent.
+ */
+function parseWorkItemFields(
+  args: Record<string, unknown>,
+  ctx: ProviderContext,
+  allowed: readonly string[]
+): { ok: true; value: FieldArgs } | { ok: false; message: string } {
+  const out: FieldArgs = {};
+  const fail = (message: string) => ({ ok: false as const, message });
+  for (const key of allowed) {
+    const v = args[key];
+    if (v === undefined) continue;
+    switch (key) {
+      case "title": {
+        const t = writeLine(v, WORK_ITEM_TITLE_MAX);
+        if (t === null) {
+          return fail(`title must be one line of at most ${WORK_ITEM_TITLE_MAX} characters`);
+        }
+        out.title = t;
+        break;
+      }
+      case "description": {
+        const d = writeText(v, WRITE_TEXT_MAX);
+        if (d === null) {
+          return fail(`description must be plain text of at most ${WRITE_TEXT_MAX} characters`);
+        }
+        out.description = d;
+        break;
+      }
+      case "assignedTo": {
+        const a = writeLine(v, PERSON_MAX);
+        if (a === null) {
+          return fail(
+            `assignedTo must be "me", an email or a name of at most ${PERSON_MAX} characters`
+          );
+        }
+        if (a.toLowerCase() === "me") {
+          const me = ctx.account.user?.trim();
+          if (!me)
+            return fail('"me" is not known for this sign-in: pass an email or a display name');
+          out.assignedTo = me;
+        } else {
+          out.assignedTo = a;
+        }
+        break;
+      }
+      case "tags": {
+        if (!Array.isArray(v) || v.length > TAGS_MAX) {
+          return fail(`tags must be a list of at most ${TAGS_MAX} strings`);
+        }
+        const tags: string[] = [];
+        for (const raw of v) {
+          const t = writeLine(raw, TAG_MAX);
+          if (t === null || t.includes(";")) {
+            return fail(`each tag must be one line of at most ${TAG_MAX} characters without ";"`);
+          }
+          if (!tags.some((x) => x.toLowerCase() === t.toLowerCase())) tags.push(t);
+        }
+        out.tags = tags;
+        break;
+      }
+      case "priority": {
+        const p = boundedNumber(v, 1, 4);
+        if (p === null || !Number.isInteger(p)) {
+          return fail("priority must be a whole number from 1 to 4");
+        }
+        out.priority = p;
+        break;
+      }
+      case "remainingWork":
+      case "completedWork": {
+        const h = boundedNumber(v, 0, HOURS_MAX);
+        if (h === null) return fail(`${key} must be a number of hours from 0 to ${HOURS_MAX}`);
+        out[key] = h;
+        break;
+      }
+      case "areaPath":
+      case "iterationPath": {
+        const path = writeLine(v, FILE_PATH_MAX);
+        if (path === null) {
+          return fail(`${key} must be one line of at most ${FILE_PATH_MAX} characters`);
+        }
+        out[key] = path;
+        break;
+      }
+    }
+  }
+  return { ok: true, value: out };
 }
 
 function positiveInt(v: unknown): number | null {
@@ -502,6 +719,61 @@ export async function runIntegrationTool(
         const done = await provider.workItems!.setState!(ctx, id, state);
         return { kind: "json", payload: { ok: true, changed: "work item state changed", ...done } };
       }
+      case "kai_work_item_create": {
+        const parsed = parseWorkItemFields(args, ctx, [
+          "title",
+          "description",
+          "assignedTo",
+          "tags",
+          "priority",
+          "remainingWork",
+          "areaPath",
+          "iterationPath",
+        ]);
+        if (!parsed.ok) return failArgs(parsed.message);
+        if (parsed.value.title === undefined) return failArgs("title is required");
+        let type = "Task";
+        if (args.type !== undefined) {
+          const t = writeLine(args.type, WORK_ITEM_TYPE_MAX);
+          if (t === null || /[/\\?#%$]/.test(t)) {
+            return failArgs(
+              `type must be a work item type name of at most ${WORK_ITEM_TYPE_MAX} characters`
+            );
+          }
+          type = t;
+        }
+        const parentId = args.parentId === undefined ? undefined : positiveInt(args.parentId);
+        if (parentId === null) return failArgs("parentId must be a positive integer");
+        const made = await provider.workItems!.create!(ctx, {
+          ...parsed.value,
+          title: parsed.value.title,
+          type,
+          ...(parentId !== undefined ? { parentId } : {}),
+        });
+        return { kind: "json", payload: { ok: true, changed: "work item created", ...made } };
+      }
+      case "kai_work_item_update": {
+        const id = positiveInt(args.id);
+        if (id === null) return failArgs("id must be a positive integer");
+        const parsed = parseWorkItemFields(args, ctx, [
+          "title",
+          "description",
+          "assignedTo",
+          "tags",
+          "priority",
+          "remainingWork",
+          "completedWork",
+          "iterationPath",
+        ]);
+        if (!parsed.ok) return failArgs(parsed.message);
+        if (Object.keys(parsed.value).length === 0) {
+          return failArgs(
+            "give at least one field to change: title, description, assignedTo, tags, priority, remainingWork, completedWork or iterationPath"
+          );
+        }
+        const done = await provider.workItems!.update!(ctx, { id, ...parsed.value });
+        return { kind: "json", payload: { ok: true, changed: "work item updated", ...done } };
+      }
       case "kai_pr_create": {
         const source = writeBranch(args.sourceBranch);
         if (source === null) return failArgs("sourceBranch must be a valid branch name");
@@ -534,16 +806,66 @@ export async function runIntegrationTool(
         if (args.isDraft !== undefined && typeof args.isDraft !== "boolean") {
           return failArgs("isDraft must be true or false");
         }
+        let workItemIds: number[] | undefined;
+        if (args.workItemIds !== undefined) {
+          const raw = args.workItemIds;
+          const ids = Array.isArray(raw) ? raw.map(positiveInt) : [];
+          if (
+            !Array.isArray(raw) ||
+            raw.length > PR_WORK_ITEMS_MAX ||
+            ids.some((n) => n === null)
+          ) {
+            return failArgs(
+              `workItemIds must be a list of at most ${PR_WORK_ITEMS_MAX} positive integers`
+            );
+          }
+          workItemIds = [...new Set(ids as number[])];
+        }
+        const reviewers = stringList(args.reviewers, PR_PEOPLE_MAX, PERSON_MAX);
+        const requiredReviewers = stringList(args.requiredReviewers, PR_PEOPLE_MAX, PERSON_MAX);
+        const labels = stringList(args.labels, PR_LABELS_MAX, TAG_MAX);
+        if (reviewers === null || requiredReviewers === null) {
+          return failArgs(
+            `reviewers and requiredReviewers must each be a list of at most ${PR_PEOPLE_MAX} emails or names`
+          );
+        }
+        if (labels === null) {
+          return failArgs(
+            `labels must be a list of at most ${PR_LABELS_MAX} one-line names of at most ${TAG_MAX} characters`
+          );
+        }
         const created = await provider.pullRequests!.create!(ctx, {
           sourceBranch: source,
           targetBranch: target,
           title,
           description,
           isDraft: args.isDraft === true,
+          ...(workItemIds?.length ? { workItemIds } : {}),
+          ...(reviewers?.length ? { reviewers } : {}),
+          ...(requiredReviewers?.length ? { requiredReviewers } : {}),
+          ...(labels?.length ? { labels } : {}),
         });
         return {
           kind: "json",
-          payload: { ok: true, changed: "pull request created", pullRequest: created },
+          payload: {
+            ok: true,
+            changed: "pull request created",
+            pullRequest: created,
+            // What was attached, so the agent can confirm the links without another call.
+            ...(workItemIds?.length ||
+            reviewers?.length ||
+            requiredReviewers?.length ||
+            labels?.length
+              ? {
+                  attached: {
+                    ...(workItemIds?.length ? { workItemIds } : {}),
+                    ...(reviewers?.length ? { reviewers } : {}),
+                    ...(requiredReviewers?.length ? { requiredReviewers } : {}),
+                    ...(labels?.length ? { labels } : {}),
+                  },
+                }
+              : {}),
+          },
         };
       }
       case "kai_pr_comment": {

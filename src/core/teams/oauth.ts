@@ -1,5 +1,6 @@
 import {
   authorizeInBrowser,
+  clientIdFrom,
   requestToken,
   serializeTokenSet,
   type BrowserLoginOptions,
@@ -7,6 +8,7 @@ import {
   type OAuthDeps,
   type TokenSet,
 } from "../integrations/providers/azure-devops/oauth";
+import { ADMIN_APPROVAL_MESSAGE, isGuid } from "../integrations/oauthRegistration";
 import { IntegrationError } from "../integrations/types";
 import { GRAPH_BASE, graphRequest, type GraphDeps } from "./graph";
 
@@ -22,10 +24,8 @@ import { GRAPH_BASE, graphRequest, type GraphDeps } from "./graph";
  * user passes `--channels`.
  */
 
-/** Kai's Entra app registration for Teams; empty until one is registered. */
+/** A Teams-only client ID baked into a build. Empty on purpose; see `teamsClientId`. */
 export const KAI_TEAMS_CLIENT_ID = "";
-
-const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export const BASE_SCOPES = [
   "User.Read",
@@ -54,22 +54,31 @@ export function teamsApp(withChannelHistory: boolean): OAuthApp {
   };
 }
 
-/** The Entra app id: `KAI_TEAMS_CLIENT_ID`, else the one Azure DevOps sign-in uses. */
+/**
+ * The Entra app id: `KAI_TEAMS_CLIENT_ID`, else the registration Azure DevOps sign-in
+ * uses (`KAI_AZURE_CLIENT_ID`, or the app built into Kai).
+ */
 export function teamsClientId(env: NodeJS.ProcessEnv = process.env): string {
-  const id = (
-    env.KAI_TEAMS_CLIENT_ID?.trim() ||
-    KAI_TEAMS_CLIENT_ID ||
-    env.KAI_AZURE_CLIENT_ID?.trim() ||
-    ""
-  ).trim();
-  if (!GUID.test(id)) {
+  const own = (env.KAI_TEAMS_CLIENT_ID?.trim() || KAI_TEAMS_CLIENT_ID).trim();
+  if (own) {
+    if (isGuid(own)) return own;
+    throw new IntegrationError(
+      "config",
+      "KAI_TEAMS_CLIENT_ID is not a valid client ID.",
+      "Set it to the Application (client) ID (a GUID), or remove it to use the Azure DevOps registration."
+    );
+  }
+  try {
+    return clientIdFrom(env);
+  } catch (err) {
+    // A malformed KAI_AZURE_* value is its own problem; do not hide it as "not set up".
+    if (err instanceof IntegrationError && /^KAI_AZURE_/.test(err.message)) throw err;
     throw new IntegrationError(
       "config",
       "Microsoft Teams sign-in is not set up in this build of Kai.",
-      "Register Kai in Microsoft Entra and set KAI_TEAMS_CLIENT_ID (see docs/teams-sign-in.md)."
+      "This build has no Microsoft Entra app ID yet. Set KAI_TEAMS_CLIENT_ID (or KAI_AZURE_CLIENT_ID) to try one now (see docs/teams-sign-in.md)."
     );
   }
-  return id;
 }
 
 /** The `scp` (granted permissions) claim of an access token; [] when unreadable. */
@@ -97,13 +106,37 @@ export interface TeamsSignInDeps extends OAuthDeps {
   graph?: GraphDeps;
 }
 
-/** Open the browser, wait for the redirect, and read who signed in. */
+/**
+ * Open the browser, wait for the redirect, and read who signed in.
+ *
+ * Reading channel messages is asked for by default: it is part of Teams, so nobody
+ * should have to turn it on. Most organizations need an administrator to approve that
+ * one permission. When Microsoft says so, the sign-in is repeated once without it, so
+ * chats and sending to channels still work; the account then reads as "channel
+ * messages: no" until an administrator approves and the person connects again.
+ * `channelHistory: false` skips asking for it at all.
+ */
 export async function signInToTeams(
   opts: BrowserLoginOptions & { channelHistory?: boolean } = {},
   deps: TeamsSignInDeps = {}
 ): Promise<TeamsSignIn> {
+  const asked = opts.channelHistory !== false;
+  try {
+    return await signInWith(asked, opts, deps);
+  } catch (err) {
+    const adminOnly = err instanceof IntegrationError && err.message === ADMIN_APPROVAL_MESSAGE;
+    if (!asked || !adminOnly) throw err;
+    return signInWith(false, opts, deps);
+  }
+}
+
+async function signInWith(
+  withChannelHistory: boolean,
+  opts: BrowserLoginOptions,
+  deps: TeamsSignInDeps
+): Promise<TeamsSignIn> {
   const clientId = teamsClientId(deps.env);
-  const app = teamsApp(Boolean(opts.channelHistory));
+  const app = teamsApp(withChannelHistory);
   const callback = await authorizeInBrowser(clientId, deps, opts, app.scope);
   const tokens: TokenSet = await requestToken(
     clientId,
