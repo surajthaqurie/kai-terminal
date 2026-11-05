@@ -169,10 +169,43 @@ jobs:
         run: npm ci
 
       - name: Build Tauri bundles (${{ matrix.bundles }})
+        id: tauri_build
         uses: tauri-apps/tauri-action@v0
+        # macOS DMG creation intermittently fails on GitHub runners with
+        # `hdiutil: couldn't eject "diskN" - Resource busy`. Let macOS fall
+        # through to the retry steps below; other platforms still fail fast.
+        continue-on-error: ${{ startsWith(matrix.os, 'macos') }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Tauri updater signing key (optional; only from secrets, never committed).
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
+        with:
+          projectPath: .
+          args: --bundles ${{ matrix.bundles }}
+
+      - name: Release stale macOS disk images before retry
+        if: startsWith(matrix.os, 'macos') && steps.tauri_build.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "DMG bundling failed; detaching leftover disk images and retrying."
+          hdiutil info || true
+          for dev in $(hdiutil info | awk '/^\/dev\/disk[0-9]+/ {print $1}' | sed 's/s[0-9]*$//' | sort -u); do
+            # Only touch images created by the bundler (rw.*.dmg / dmg.* volumes).
+            if hdiutil info | grep -A20 "$dev" | grep -qE 'rw\..*\.dmg|/Volumes/(dmg\.|kai)'; then
+              hdiutil detach "$dev" -force || true
+            fi
+          done
+          rm -f src-tauri/target/release/bundle/macos/rw.*.dmg
+          rm -rf src-tauri/target/release/bundle/dmg
+          sleep 10
+
+      - name: Retry Tauri bundles (macOS DMG flake)
+        id: tauri_retry
+        if: startsWith(matrix.os, 'macos') && steps.tauri_build.outcome == 'failure'
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
         with:
