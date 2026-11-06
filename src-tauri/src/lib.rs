@@ -5,6 +5,7 @@ pub mod call_watch;
 pub mod cli_guard;
 pub mod clipboard;
 pub mod diagnostics;
+pub mod editor_terminal;
 pub mod error;
 pub mod fonts;
 pub mod git;
@@ -484,6 +485,9 @@ pub fn run() {
             std::thread::spawn(move || {
                 let resource_dir = handle.path().resource_dir().ok();
                 let _ = kai_cli::ensure_kai_cli(resource_dir);
+                // List "Kai Terminal" in VS Code / Cursor / … terminal dropdowns
+                // (once per editor; a deleted entry stays deleted).
+                let _ = editor_terminal::ensure_editor_terminal_profiles();
                 // Sweep leftover update installers (>24h old) off the UI
                 // thread: a Windows file lock can block the immediate
                 // post-install delete, so the next start finishes the job.

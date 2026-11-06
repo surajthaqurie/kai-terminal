@@ -62,7 +62,7 @@ export function explainMicrosoftError(text: string): string | undefined {
     return "Kai's sign-in app is single-tenant. Set KAI_AZURE_TENANT_ID to your Directory (tenant) ID, or change the app registration to accept accounts in any organizational directory.";
   }
   if (/AADSTS700016|application with identifier .* was not found/i.test(text)) {
-    return "Microsoft does not know Kai's sign-in app in this directory. If KAI_AZURE_CLIENT_ID is set, check it; otherwise this build of Kai has the wrong app ID (docs/azure-devops-sign-in.md).";
+    return "Microsoft does not know Kai's sign-in app in this directory. If KAI_AZURE_CLIENT_ID is set, check it; otherwise this build of Kai has the wrong app ID (docs/microsoft-sign-in-setup.md).";
   }
   if (/AADSTS50011|redirect uri|reply url/i.test(text)) {
     return "Add http://localhost as a redirect URI under Mobile and desktop applications in the app registration.";

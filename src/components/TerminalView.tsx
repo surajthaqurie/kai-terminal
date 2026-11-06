@@ -12,6 +12,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { ImageAddon } from "@xterm/addon-image";
 import { SearchAddon } from "@xterm/addon-search";
+import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
@@ -595,6 +596,16 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
 
       term.loadAddon(fitAddon);
       term.loadAddon(searchAddon);
+      // xterm defaults to Unicode 6 cell widths, which count emoji and many
+      // symbols as one cell. Shells, ConPTY and modern TUIs (AI CLIs) lay text
+      // out with Unicode 11+ widths (two cells), so every such character
+      // shifted the rest of the line and neighbouring glyphs overlapped.
+      try {
+        term.loadAddon(new Unicode11Addon());
+        term.unicode.activeVersion = "11";
+      } catch (e) {
+        console.warn("Unicode 11 widths are unavailable:", e);
+      }
       // Links in output (sign-in addresses, build logs, docs) are underlined on
       // hover and open in the browser on Ctrl+click (Cmd+click on macOS).
       term.loadAddon(

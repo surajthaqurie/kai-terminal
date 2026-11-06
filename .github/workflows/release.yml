@@ -23,6 +23,13 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  # Microsoft Entra app (client) IDs baked into the CLI bundle so Azure DevOps and Teams
+  # sign-in work with no setup. Public client IDs, not secrets: set them as repository
+  # *variables* (Settings > Secrets and variables > Actions > Variables). Unset = a build
+  # with no built-in app (a warning). Set KAI_REQUIRE_SIGNIN_APP=1 to fail such a build.
+  KAI_BUILD_AZURE_CLIENT_ID: ${{ vars.KAI_AZURE_CLIENT_ID }}
+  KAI_BUILD_TEAMS_CLIENT_ID: ${{ vars.KAI_TEAMS_CLIENT_ID }}
+  KAI_REQUIRE_SIGNIN_APP: ${{ vars.KAI_REQUIRE_SIGNIN_APP }}
 
 jobs:
   # ------------------------------------------------------------------

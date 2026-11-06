@@ -166,8 +166,9 @@ export const TeamsIntegrationCard: FC = () => {
         <div className="integration-section">
           {state === "not_configured" && (
             <p className="integration-warn integration-detected" role="status">
-              Sign-in is not set up in this build of Kai: no Microsoft Entra app is registered for
-              it. Maintainers: see docs/teams-sign-in.md.
+              Kai has no Microsoft Entra app ID yet. Register an app (see docs/teams-sign-in.md),
+              then run <code>kai integration teams --client-id &lt;ID&gt;</code> in a terminal tab.
+              It is saved on this computer; reopen this tab afterwards.
             </p>
           )}
 

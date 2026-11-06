@@ -10,6 +10,7 @@ import {
 } from "../integrations/providers/azure-devops/oauth";
 import { ADMIN_APPROVAL_MESSAGE, isGuid } from "../integrations/oauthRegistration";
 import { IntegrationError } from "../integrations/types";
+import { getSavedTeamsClientId } from "./config";
 import { GRAPH_BASE, graphRequest, type GraphDeps } from "./graph";
 
 /**
@@ -24,8 +25,12 @@ import { GRAPH_BASE, graphRequest, type GraphDeps } from "./graph";
  * user passes `--channels`.
  */
 
-/** A Teams-only client ID baked into a build. Empty on purpose; see `teamsClientId`. */
-export const KAI_TEAMS_CLIENT_ID = "";
+/**
+ * A Teams-only client ID baked into a build from `KAI_BUILD_TEAMS_CLIENT_ID`. Empty unless
+ * the build sets it: Teams then shares the Azure DevOps app. See `teamsClientId`.
+ */
+export const KAI_TEAMS_CLIENT_ID: string =
+  typeof __KAI_BUILD_TEAMS_CLIENT_ID__ === "string" ? __KAI_BUILD_TEAMS_CLIENT_ID__ : "";
 
 export const BASE_SCOPES = [
   "User.Read",
@@ -54,19 +59,35 @@ export function teamsApp(withChannelHistory: boolean): OAuthApp {
   };
 }
 
+/** What to do when no Microsoft app is known: one place, so every surface says the same thing. */
+export const TEAMS_SETUP_HINT =
+  "Register a Microsoft Entra app (docs/teams-sign-in.md), then run: kai integration teams --client-id <Application (client) ID>";
+
 /**
- * The Entra app id: `KAI_TEAMS_CLIENT_ID`, else the registration Azure DevOps sign-in
- * uses (`KAI_AZURE_CLIENT_ID`, or the app built into Kai).
+ * The Entra app id, first match wins:
+ *  1. `KAI_TEAMS_CLIENT_ID` in the environment (CI, testing);
+ *  2. the ID saved on this computer by `kai integration teams --client-id`;
+ *  3. a Teams-only ID built into Kai;
+ *  4. the registration Azure DevOps sign-in uses (`KAI_AZURE_CLIENT_ID`, or built in).
  */
 export function teamsClientId(env: NodeJS.ProcessEnv = process.env): string {
-  const own = (env.KAI_TEAMS_CLIENT_ID?.trim() || KAI_TEAMS_CLIENT_ID).trim();
-  if (own) {
-    if (isGuid(own)) return own;
+  const envId = env.KAI_TEAMS_CLIENT_ID?.trim();
+  if (envId && !isGuid(envId)) {
     throw new IntegrationError(
       "config",
       "KAI_TEAMS_CLIENT_ID is not a valid client ID.",
-      "Set it to the Application (client) ID (a GUID), or remove it to use the Azure DevOps registration."
+      "Set it to the Application (client) ID (a GUID), or remove it to use the saved or built-in app."
     );
+  }
+  if (envId) return envId;
+
+  const saved = readSavedClientId();
+  if (saved) return saved;
+
+  const built = KAI_TEAMS_CLIENT_ID.trim();
+  if (built) {
+    if (isGuid(built)) return built;
+    throw new IntegrationError("config", "The Teams client ID built into Kai is not valid.");
   }
   try {
     return clientIdFrom(env);
@@ -75,9 +96,19 @@ export function teamsClientId(env: NodeJS.ProcessEnv = process.env): string {
     if (err instanceof IntegrationError && /^KAI_AZURE_/.test(err.message)) throw err;
     throw new IntegrationError(
       "config",
-      "Microsoft Teams sign-in is not set up in this build of Kai.",
-      "This build has no Microsoft Entra app ID yet. Set KAI_TEAMS_CLIENT_ID (or KAI_AZURE_CLIENT_ID) to try one now (see docs/teams-sign-in.md)."
+      "Microsoft Teams sign-in is not set up yet: Kai has no Microsoft Entra app ID.",
+      TEAMS_SETUP_HINT
     );
+  }
+}
+
+/** The saved ID when it is valid; a damaged or malformed value reads as "none saved". */
+function readSavedClientId(): string | null {
+  try {
+    const saved = getSavedTeamsClientId();
+    return saved && isGuid(saved) ? saved : null;
+  } catch {
+    return null;
   }
 }
 

@@ -43,7 +43,7 @@ import { SettingsService } from "./services/settingsService";
 import { resolveEffectiveProjectDir } from "./services/projectService";
 import { isMacPlatform, musicShortcutHints, platformLabel } from "./services/shortcuts";
 import { RELEASES_PAGE_URL } from "./services/updateService";
-import type { ShellProfile, TerminalTab } from "./types/terminal";
+import type { ShellProfile, SplitDirection, TerminalTab } from "./types/terminal";
 import "./App.css";
 
 /**
@@ -155,6 +155,15 @@ function App() {
       focusActiveTerminalSoon();
     },
     [tabsState.newTab, focusActiveTerminalSoon]
+  );
+
+  /** A split makes the new pane active, so type-ahead must land in it, not the pane it came from. */
+  const splitPaneAndFocus = useCallback(
+    (direction: SplitDirection) => {
+      tabsState.splitPane(direction);
+      focusActiveTerminalSoon();
+    },
+    [tabsState.splitPane, focusActiveTerminalSoon]
   );
 
   /** "+ ▾" menu: the chosen shell becomes the default for new tabs and opens one now. */
@@ -311,7 +320,7 @@ function App() {
     toggleCommandPalette: () => setIsCommandPaletteOpen((prev) => !prev),
     toggleSearch,
     toggleSettings: () => setIsSettingsOpen((prev) => !prev),
-    splitPane: tabsState.splitPane,
+    splitPane: splitPaneAndFocus,
     closeActivePane: tabsState.closeActivePane,
     cycleTab: tabsState.cycleTab,
     focusNextPane: tabsState.focusNextPane,
@@ -343,7 +352,7 @@ function App() {
     focusNextPane: tabsState.focusNextPane,
     focusPrevPane: tabsState.focusPrevPane,
     openWorkspaces: () => setIsWorkspaceOpen(true),
-    splitPane: tabsState.splitPane,
+    splitPane: splitPaneAndFocus,
     closeActivePane: tabsState.closeActivePane,
     toggleMusic: toggleMusicPanel,
     musicCommand,

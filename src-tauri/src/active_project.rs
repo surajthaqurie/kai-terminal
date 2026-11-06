@@ -27,7 +27,7 @@ struct ActiveProjectFile {
 /// Previously the backend skipped `XDG_DATA_HOME`, so on Linux systems with
 /// `XDG_DATA_HOME` set, `kai code .` wrote one location while the desktop
 /// app read another — Code Mode never activated.
-fn candidate_home_dirs() -> Vec<PathBuf> {
+pub(crate) fn candidate_home_dirs() -> Vec<PathBuf> {
     let mut out = Vec::new();
     if let Ok(h) = std::env::var("KAI_HOME") {
         if !h.trim().is_empty() {

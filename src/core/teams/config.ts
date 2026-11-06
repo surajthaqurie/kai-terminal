@@ -48,14 +48,39 @@ export function getTeamsAccount(): TeamsAccount | null {
 
 export function saveTeamsAccount(account: TeamsAccount): void {
   const config = readConfigFile();
-  atomicWriteJson(configPath(), { ...config, teams: { account } });
+  // Keep the saved app registration: signing in again must not make people re-enter it.
+  atomicWriteJson(configPath(), { ...config, teams: { ...block(config), account } });
 }
 
+/** Sign out. The saved Microsoft app ID stays: it belongs to this computer, not to the account. */
 export function clearTeamsAccount(): void {
   const config = readConfigFile();
   if (!("teams" in config)) return;
+  const { account: _account, ...kept } = block(config);
   const { teams: _teams, ...rest } = config;
-  atomicWriteJson(configPath(), rest);
+  atomicWriteJson(configPath(), Object.keys(kept).length > 0 ? { ...rest, teams: kept } : rest);
+}
+
+/**
+ * The Microsoft Entra app (client) ID saved on this computer with
+ * `kai integration teams --client-id`, or null. It is a public client ID, not a secret.
+ */
+export function getSavedTeamsClientId(): string | null {
+  const id = block(readConfigFile()).clientId;
+  return typeof id === "string" && id.trim() ? id.trim() : null;
+}
+
+export function saveTeamsClientId(clientId: string): void {
+  const config = readConfigFile();
+  atomicWriteJson(configPath(), { ...config, teams: { ...block(config), clientId } });
+}
+
+/** Forget the saved app ID (and nothing else). */
+export function clearSavedTeamsClientId(): void {
+  const config = readConfigFile();
+  const { clientId: _clientId, ...kept } = block(config);
+  const { teams: _teams, ...rest } = config;
+  atomicWriteJson(configPath(), Object.keys(kept).length > 0 ? { ...rest, teams: kept } : rest);
 }
 
 /** The secret-store key the account's token set is kept under. */

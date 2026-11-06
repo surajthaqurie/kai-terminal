@@ -1,5 +1,7 @@
 # Azure DevOps browser sign-in
 
+> Maintainers: the one-time setup for Azure DevOps and Teams sign-in is in [microsoft-sign-in-setup.md](microsoft-sign-in-setup.md).
+
 Kai signs users in to Azure DevOps through their browser (OAuth 2.0 authorization
 code with PKCE, against Microsoft Entra). The user clicks **Connect Azure DevOps**,
 signs in with their Microsoft account, and Kai finds their organizations on its own:
@@ -31,13 +33,19 @@ address, opens it in the browser, and finishes on its own.
 
 ## Put the client ID in the build (maintainers, once)
 
-Open `src/core/integrations/providers/azure-devops/oauth.ts` and set the constant:
+Set the ID when the CLI is built; nothing is edited in source. In GitHub, add a repository
+**variable** (Settings > Secrets and variables > Actions > **Variables**) named
+`KAI_AZURE_CLIENT_ID` with the ID from step 7. `release.yml` passes it to the build as
+`KAI_BUILD_AZURE_CLIENT_ID`, and `vite.cli.config.ts` bakes it into the CLI bundle. For a local
+build or `npm publish`, export `KAI_BUILD_AZURE_CLIENT_ID` first (`prepack` runs the build).
 
-```ts
-export const KAI_AZURE_CLIENT_ID = "<Application (client) ID from step 7>";
-```
+- A value that is not a GUID **fails the build**, so a typo never ships.
+- With no value the build still succeeds with a warning and has no built-in app. Add the repository
+  variable `KAI_REQUIRE_SIGNIN_APP` = `1` (or export `KAI_REQUIRE_SIGNIN_APP=1`) to fail such a
+  build instead, once the ID is set up.
 
-It is public, so it belongs in the source. Teams uses the same registration (or
+It is public (a variable, not a secret). Teams uses the same registration (or
+`KAI_BUILD_TEAMS_CLIENT_ID` / the `KAI_TEAMS_CLIENT_ID` variable for a Teams-only app; or
 `KAI_TEAMS_CLIENT_ID`: see `teams-sign-in.md`). The registration must be multi-tenant (step 3),
 so the sign-in goes through the `common` directory and every user signs in from their own tenant.
 

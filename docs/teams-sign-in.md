@@ -1,5 +1,7 @@
 # Microsoft Teams sign-in
 
+> Maintainers: the one-time setup for Azure DevOps and Teams sign-in is in [microsoft-sign-in-setup.md](microsoft-sign-in-setup.md).
+
 `kai teams` chats in Microsoft Teams from the terminal. Kai signs the user in through
 their browser (OAuth 2.0 authorization code with PKCE, against Microsoft Entra) and
 talks to Microsoft Graph with their own permissions: they only ever see and send what
@@ -38,14 +40,28 @@ Graph permissions below to it, or register a second app for Teams.
 
 ## The client ID
 
-Users never enter one. Teams uses, in order: `KAI_TEAMS_CLIENT_ID` (a Teams-only app), then the
-same registration as Azure DevOps sign-in: `KAI_AZURE_CLIENT_ID` in the environment, or the app ID
-built into the build (see `azure-devops-sign-in.md`). Setting the built-in one covers both cards.
+Teams uses the first of these that is set:
 
-Without a client ID, `kai integration teams` stops with *"Microsoft Teams sign-in is not
-set up in this build of Kai"* and opens nothing. In the desktop app, the **Microsoft Teams**
-card shows **Not set up** and keeps **Connect Microsoft Teams** disabled until a client ID is
-present in the build.
+1. `KAI_TEAMS_CLIENT_ID` in the environment (CI, testing).
+2. The ID **saved on this computer** with `kai integration teams --client-id <ID>` (stored as
+   `teams.clientId` in `~/.kai/config.json`). Enter it once; it survives sign-out.
+3. A Teams-only ID built into the build (`KAI_TEAMS_CLIENT_ID` in `src/core/teams/oauth.ts`).
+4. The Azure DevOps registration: `KAI_AZURE_CLIENT_ID` in the environment, or the app ID built
+   into the build (see `azure-devops-sign-in.md`). Setting that built-in one covers both cards.
+
+The ID is a public client ID, not a secret. A saved or environment ID must be an
+Application (client) ID in GUID form; the Directory (tenant) ID and Object ID look the same but
+will not work. The app must be multi-tenant (step 2 above): Kai signs in through the `common`
+endpoint.
+
+Without any client ID:
+
+- `kai integration teams` in a terminal explains the one-time step and asks you to paste the
+  Application (client) ID, then saves it and continues to sign-in. With no keyboard (a script),
+  it stops with *"Microsoft Teams sign-in is not set up yet"* and the exact command to run.
+- The desktop **Microsoft Teams** card shows **Not set up**, keeps **Connect Microsoft Teams**
+  disabled, and tells you to run `kai integration teams --client-id <ID>` in a terminal tab.
+  Reopen the tab afterwards.
 
 ## Signing in from the desktop app
 

@@ -27,12 +27,14 @@ import {
 const ADO_RESOURCE_ID = "499b84ac-1321-427f-aa17-267ca6975798";
 
 /**
- * Kai's Entra app registration (a public client, so its ID is not a secret). Fill it
- * in once the app is registered and every build signs people in with no setup; until
- * then Connect is disabled ("not set up in this build"). `KAI_AZURE_CLIENT_ID`
- * overrides it for CI and for testing. See docs/azure-devops-sign-in.md.
+ * Kai's Entra app registration (a public client, so its ID is not a secret). Release
+ * builds get it from `KAI_BUILD_AZURE_CLIENT_ID` at build time (`vite.cli.config.ts`), so
+ * every user signs in with no setup. A source build without it has no built-in app and
+ * Connect is disabled ("not set up in this build"). `KAI_AZURE_CLIENT_ID` in the
+ * environment overrides it for CI and for testing. See docs/azure-devops-sign-in.md.
  */
-export const KAI_AZURE_CLIENT_ID = "";
+export const KAI_AZURE_CLIENT_ID: string =
+  typeof __KAI_BUILD_AZURE_CLIENT_ID__ === "string" ? __KAI_BUILD_AZURE_CLIENT_ID__ : "";
 
 const LOGIN_HOST = "https://login.microsoftonline.com";
 const SCOPE = `${ADO_RESOURCE_ID}/user_impersonation offline_access`;
@@ -84,7 +86,7 @@ function notSetUp(): IntegrationError {
   return new IntegrationError(
     "config",
     "Browser sign-in is not set up in this build of Kai.",
-    "This build has no Microsoft Entra app ID yet. A maintainer sets KAI_AZURE_CLIENT_ID in src/core/integrations/providers/azure-devops/oauth.ts (docs/azure-devops-sign-in.md); to try a registration now, set the KAI_AZURE_CLIENT_ID environment variable."
+    "This build has no Microsoft Entra app ID yet. A maintainer sets the KAI_AZURE_CLIENT_ID repository variable and rebuilds (docs/microsoft-sign-in-setup.md); to try a registration now, set the KAI_AZURE_CLIENT_ID environment variable."
   );
 }
 

@@ -214,7 +214,7 @@ kai integration teams remove       # sign out and forget the account
 - **It keeps itself up to date.** The open conversation refreshes every few seconds, the chat list every 20 seconds, and a **●** marks chats with messages you have not seen.
 - **You see only what you could see in Teams.** Kai uses Microsoft Graph with your own permissions. The sign-in token goes to the OS secret store, never to a repository or an agent config.
 - **For you, not your AI agents.** Teams is not an MCP integration: no agent tool exists for it, the sign-in is never handed to an agent, and both Teams commands refuse to run inside an agent's session.
-- **Needs an app registration.** Sign-in works in builds that carry Kai's Microsoft Entra client ID. Without one, `kai integration teams` says so and opens nothing. Maintainers: see [docs/teams-sign-in.md](docs/teams-sign-in.md).
+- **Needs an app registration.** Sign-in works in builds that carry Kai's Microsoft Entra client ID. Without one, `kai integration teams` says so and opens nothing. Maintainers: see [docs/microsoft-sign-in-setup.md](docs/microsoft-sign-in-setup.md).
 
 Details: [USER_MANUAL.md](USER_MANUAL.md).
 

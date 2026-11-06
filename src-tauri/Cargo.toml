@@ -20,6 +20,7 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 futures-util = { version = "0.3", optional = true }
 tauri = { version = "2.1.0", features = [], optional = true }
 tauri-plugin-single-instance = { version = "2", optional = true }
+jsonc-parser = { version = "0.34.0", features = ["cst"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [

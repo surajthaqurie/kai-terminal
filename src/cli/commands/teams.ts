@@ -1,17 +1,24 @@
 import { defaultSecretStore, type SecretStore } from "../../core/integrations/secretStore";
 import { IntegrationError, asIntegrationError } from "../../core/integrations/types";
+import { isGuid } from "../../core/integrations/oauthRegistration";
 import {
   clearTeamsAccount,
   getTeamsAccount,
+  saveTeamsClientId,
   teamsSecretKey,
   type TeamsAccount,
 } from "../../core/teams/config";
 import { GraphClient } from "../../core/teams/graph";
 import { assertNotAgentSession, type GuardDeps } from "../../core/teams/guard";
-import { CHANNEL_READ_SCOPE, signInToTeams, teamsClientId } from "../../core/teams/oauth";
+import {
+  CHANNEL_READ_SCOPE,
+  signInToTeams,
+  TEAMS_SETUP_HINT,
+  teamsClientId,
+} from "../../core/teams/oauth";
 import { storeTeamsSignIn, TeamsSession } from "../../core/teams/session";
 import { runChat } from "../teams/app";
-import { confirm, isInteractive } from "../prompt";
+import { ask, confirm, isInteractive } from "../prompt";
 
 /**
  * `kai integration teams` (sign in, check access, sign out) and `kai teams`
@@ -57,7 +64,10 @@ Usage:
   kai integration teams            Sign in with Microsoft and check access
   kai integration teams remove     Sign out and forget this account
 
-Option:
+Options:
+  --client-id <ID>  The Microsoft Entra Application (client) ID Kai signs in with. Saved on
+                    this computer, so you enter it once. Needed only when this build of Kai
+                    has none (see docs/teams-sign-in.md). It is not a secret.
   --channels    Sign in again to add permission to read channel messages, for an account
                 that was signed in without it (it is asked for by default; if your
                 organization needs an administrator to approve it, Kai signs in without it
@@ -70,8 +80,9 @@ Then run: kai teams
 export async function runTeamsSetup(args: string[], deps: TeamsDeps = {}): Promise<number> {
   try {
     const env = deps.env ?? process.env;
-    const flags = new Set(args.filter((a) => a.startsWith("-")));
-    const words = args.filter((a) => !a.startsWith("-"));
+    const { rest, clientId } = takeClientIdOption(args);
+    const flags = new Set(rest.filter((a) => a.startsWith("-")));
+    const words = rest.filter((a) => !a.startsWith("-"));
     if (flags.has("--help") || flags.has("-h")) {
       printSetupHelp();
       return 0;
@@ -86,6 +97,8 @@ export async function runTeamsSetup(args: string[], deps: TeamsDeps = {}): Promi
       );
     }
     if (words[0] === "remove") return await runRemove(deps);
+
+    if (clientId !== undefined) saveClientId(clientId);
 
     const connect = deps.connect ?? connectDefault;
     const wantChannels = flags.has("--channels");
@@ -109,8 +122,9 @@ export async function runTeamsSetup(args: string[], deps: TeamsDeps = {}): Promi
       console.log(`  Not signed in yet.`);
     }
     if (!account) {
-      // Fail before opening a browser when no Microsoft app is registered for this build.
-      if (!deps.signIn) teamsClientId(env);
+      // Fail before opening a browser when Kai has no Microsoft app to sign in with. At a
+      // keyboard, offer to take the ID now instead of sending the person away.
+      if (!deps.signIn) await ensureClientId(env, deps);
       console.log(`  Opening your browser to sign in to Microsoft...`);
       const signedIn = await (deps.signIn ?? signInToTeams)(
         {
@@ -150,6 +164,65 @@ export async function runTeamsSetup(args: string[], deps: TeamsDeps = {}): Promi
   } catch (err) {
     return fail(err);
   }
+}
+
+/** Pull `--client-id <ID>` / `--client-id=<ID>` out of the arguments. */
+function takeClientIdOption(args: string[]): { rest: string[]; clientId?: string } {
+  const rest: string[] = [];
+  let clientId: string | undefined;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
+    if (a === "--client-id") {
+      const value = args[i + 1];
+      if (value === undefined || value.startsWith("-")) {
+        throw new IntegrationError(
+          "bad_request",
+          "--client-id needs the Application (client) ID.",
+          "Example: kai integration teams --client-id 00000000-0000-0000-0000-000000000000"
+        );
+      }
+      clientId = value;
+      i++;
+    } else if (a.startsWith("--client-id=")) {
+      clientId = a.slice("--client-id=".length);
+    } else {
+      rest.push(a);
+    }
+  }
+  return { rest, ...(clientId !== undefined ? { clientId } : {}) };
+}
+
+function saveClientId(raw: string): string {
+  const id = raw.trim();
+  if (!isGuid(id)) {
+    throw new IntegrationError(
+      "bad_request",
+      "That is not a valid Application (client) ID.",
+      "It is a GUID like 00000000-0000-0000-0000-000000000000: copy it from Overview in your app registration (not the Directory or Object ID)."
+    );
+  }
+  saveTeamsClientId(id);
+  console.log(`  ✔ Saved the Microsoft app ID on this computer.`);
+  return id;
+}
+
+/** Make sure a Microsoft app ID is known; at a keyboard, ask for it and keep it. */
+async function ensureClientId(env: NodeJS.ProcessEnv, deps: TeamsDeps): Promise<void> {
+  try {
+    teamsClientId(env);
+    return;
+  } catch (err) {
+    const notSetUp = err instanceof IntegrationError && err.code === "config";
+    const malformedEnv = notSetUp && /^KAI_/.test(err.message);
+    if (!notSetUp || malformedEnv || !(deps.interactive ?? isInteractive)()) throw err;
+  }
+  console.log(`  Kai needs a Microsoft Entra app ID to sign you in (a one-time step).`);
+  console.log(`  Register an app as described in docs/teams-sign-in.md, then paste its`);
+  console.log(`  "Application (client) ID" from the app's Overview page.`);
+  const answer = (await ask(`  Application (client) ID (Enter to cancel): `)).trim();
+  if (!answer)
+    throw new IntegrationError("config", "No Microsoft app ID entered.", TEAMS_SETUP_HINT);
+  saveClientId(answer);
 }
 
 async function runRemove(deps: TeamsDeps): Promise<number> {

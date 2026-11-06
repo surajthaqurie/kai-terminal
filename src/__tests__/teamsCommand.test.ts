@@ -19,7 +19,15 @@ import { MCP_TOOLS } from "../core/mcp";
 import { serializeTokenSet } from "../core/integrations/providers/azure-devops/oauth";
 import type { SecretStore } from "../core/integrations/secretStore";
 import { IntegrationError } from "../core/integrations/types";
-import { getTeamsAccount, saveTeamsAccount, teamsSecretKey } from "../core/teams/config";
+import {
+  clearSavedTeamsClientId,
+  clearTeamsAccount,
+  getSavedTeamsClientId,
+  getTeamsAccount,
+  saveTeamsAccount,
+  saveTeamsClientId,
+  teamsSecretKey,
+} from "../core/teams/config";
 import type { GraphClient } from "../core/teams/graph";
 import { agentEnv, agentSessionMarker } from "../core/teams/guard";
 import { CHANNEL_READ_SCOPE } from "../core/teams/oauth";
@@ -201,6 +209,57 @@ describe("kai teams", () => {
       expect(text).toContain("Channel messages     not approved");
       expect(text).toContain("administrator");
       expect(text).toContain("kai integration teams --channels");
+    });
+
+    describe("the Microsoft app ID", () => {
+      const ID = "11111111-2222-4333-8444-555555555555";
+
+      it("--client-id saves it on this computer, in both spellings, then signs in", async () => {
+        for (const args of [["--client-id", ID], [`--client-id=${ID.toUpperCase()}`]]) {
+          const signIn = signInMock();
+          expect(await runTeamsSetup(args, deps({ signIn }).d)).toBe(0);
+          expect(signIn).toHaveBeenCalledTimes(1);
+          expect(getSavedTeamsClientId()?.toLowerCase()).toBe(ID);
+          expect(out.join("\n")).toContain("Saved the Microsoft app ID");
+          clearTeamsAccount();
+          clearSavedTeamsClientId();
+        }
+      });
+
+      it("rejects an ID that is not a GUID and saves nothing", async () => {
+        const signIn = signInMock();
+        expect(await runTeamsSetup(["--client-id", "not-an-id"], deps({ signIn }).d)).toBe(1);
+        expect(err.join("\n")).toContain("not a valid Application (client) ID");
+        expect(getSavedTeamsClientId()).toBeNull();
+        expect(signIn).not.toHaveBeenCalled();
+      });
+
+      it("--client-id without a value says what to pass", async () => {
+        expect(await runTeamsSetup(["--client-id"], deps().d)).toBe(1);
+        expect(err.join("\n")).toContain("--client-id needs the Application (client) ID");
+      });
+
+      it("without an ID and without a keyboard, stops and says how to set it", async () => {
+        expect(await runTeamsSetup([], deps({ interactive: () => false }).d)).toBe(1);
+        const text = err.join("\n");
+        expect(text).toContain("not set up yet");
+        expect(text).toContain("kai integration teams --client-id");
+      });
+
+      it("at a keyboard, asks for the ID and stops cleanly when none is given", async () => {
+        expect(await runTeamsSetup([], deps({ interactive: () => true }).d)).toBe(1);
+        expect(out.join("\n")).toContain("Application (client) ID");
+        expect(err.join("\n")).toContain("No Microsoft app ID entered");
+        expect(getSavedTeamsClientId()).toBeNull();
+      });
+
+      it("sign out keeps the saved ID", async () => {
+        saveTeamsClientId(ID);
+        saveTeamsAccount(account);
+        expect(await runTeamsSetup(["remove"], deps().d)).toBe(0);
+        expect(getTeamsAccount()).toBeNull();
+        expect(getSavedTeamsClientId()).toBe(ID);
+      });
     });
 
     it("does not sign in again when the saved sign-in works", async () => {

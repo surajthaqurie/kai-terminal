@@ -9,9 +9,12 @@ import {
 import type { SecretStore } from "../core/integrations/secretStore";
 import { IntegrationError } from "../core/integrations/types";
 import {
+  clearSavedTeamsClientId,
   clearTeamsAccount,
+  getSavedTeamsClientId,
   getTeamsAccount,
   saveTeamsAccount,
+  saveTeamsClientId,
   teamsSecretKey,
 } from "../core/teams/config";
 import {
@@ -464,11 +467,52 @@ describe("GraphClient", () => {
 });
 
 describe("Teams sign-in", () => {
+  let home: string;
+  const savedHome = process.env.KAI_HOME;
+  beforeEach(() => {
+    // The saved app ID lives in config.json: never read the developer's real one.
+    home = fs.mkdtempSync(path.join(os.tmpdir(), "kai-teams-id-"));
+    process.env.KAI_HOME = home;
+  });
+  afterEach(() => {
+    if (savedHome === undefined) delete process.env.KAI_HOME;
+    else process.env.KAI_HOME = savedHome;
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+
   it("needs an app registration and explains how to set it", () => {
     expect(() => teamsClientId({} as NodeJS.ProcessEnv)).toThrowError(IntegrationError);
     expect(teamsClientId({ KAI_TEAMS_CLIENT_ID: CLIENT_ID } as NodeJS.ProcessEnv)).toBe(CLIENT_ID);
     // Falls back to the app Azure DevOps sign-in uses.
     expect(teamsClientId({ KAI_AZURE_CLIENT_ID: CLIENT_ID } as NodeJS.ProcessEnv)).toBe(CLIENT_ID);
+  });
+
+  it("uses the app ID saved on this computer, and the environment still wins", () => {
+    const OTHER = "99999999-9999-4999-8999-999999999999";
+    saveTeamsClientId(CLIENT_ID);
+    expect(teamsClientId({} as NodeJS.ProcessEnv)).toBe(CLIENT_ID);
+    expect(teamsClientId({ KAI_TEAMS_CLIENT_ID: OTHER } as NodeJS.ProcessEnv)).toBe(OTHER);
+    // The saved ID beats the Azure DevOps registration.
+    expect(teamsClientId({ KAI_AZURE_CLIENT_ID: OTHER } as NodeJS.ProcessEnv)).toBe(CLIENT_ID);
+  });
+
+  it("ignores a damaged saved ID instead of signing in with it", () => {
+    fs.writeFileSync(
+      path.join(home, "config.json"),
+      JSON.stringify({ teams: { clientId: "not-a-guid" } })
+    );
+    expect(() => teamsClientId({} as NodeJS.ProcessEnv)).toThrowError(IntegrationError);
+  });
+
+  it("keeps the saved app ID when the account signs out and in again", () => {
+    saveTeamsClientId(CLIENT_ID);
+    saveTeamsAccount({ id: "o", name: "Alex", scopes: [], signedInAt: "now" });
+    expect(getSavedTeamsClientId()).toBe(CLIENT_ID);
+    clearTeamsAccount();
+    expect(getTeamsAccount()).toBeNull();
+    expect(getSavedTeamsClientId()).toBe(CLIENT_ID);
+    clearSavedTeamsClientId();
+    expect(getSavedTeamsClientId()).toBeNull();
   });
 
   it("keeps channel reading as its own scope, so it can be dropped on its own", () => {
