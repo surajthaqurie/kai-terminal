@@ -136,7 +136,7 @@ jobs:
             target-name: windows-aarch64
             artifact-suffix: windows-aarch64
             bundles: nsis
-          - os: macos-14
+          - os: macos-15
             target-name: macos-aarch64
             artifact-suffix: macos-aarch64
             bundles: dmg,app

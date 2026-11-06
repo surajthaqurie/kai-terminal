@@ -38,7 +38,7 @@ jobs:
           - os: windows-latest
             target-name: windows-x86_64
             binary-ext: ".exe"
-          - os: macos-14
+          - os: macos-15
             target-name: macos-aarch64
             binary-ext: ""
           - os: macos-15-intel
