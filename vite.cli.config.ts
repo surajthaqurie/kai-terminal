@@ -2,6 +2,11 @@ import { defineConfig } from "vite";
 import path from "path";
 
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** Example IDs (see `isPlaceholderClientId`): well-formed, but no tenant has such an app. */
+const PLACEHOLDERS = new Set([
+  "00000000-0000-0000-0000-000000000000",
+  "f81d4fae-7dec-11d0-a765-00a0c91e6bf6",
+]);
 
 /**
  * A Microsoft Entra Application (client) ID to bake into this build, from the
@@ -14,6 +19,11 @@ function buildClientId(name: string): string {
   if (value && !GUID.test(value)) {
     throw new Error(
       `${name} is not a valid Application (client) ID: expected a GUID, got "${value}".`
+    );
+  }
+  if (PLACEHOLDERS.has(value.toLowerCase())) {
+    throw new Error(
+      `${name} is an example ID, not a real app registration: use the Application (client) ID from your Entra app.`
     );
   }
   return value;

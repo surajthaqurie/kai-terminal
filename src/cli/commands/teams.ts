@@ -1,6 +1,6 @@
 import { defaultSecretStore, type SecretStore } from "../../core/integrations/secretStore";
 import { IntegrationError, asIntegrationError } from "../../core/integrations/types";
-import { isGuid } from "../../core/integrations/oauthRegistration";
+import { checkClientId, isGuid } from "../../core/integrations/oauthRegistration";
 import {
   clearTeamsAccount,
   getTeamsAccount,
@@ -178,7 +178,7 @@ function takeClientIdOption(args: string[]): { rest: string[]; clientId?: string
         throw new IntegrationError(
           "bad_request",
           "--client-id needs the Application (client) ID.",
-          "Example: kai integration teams --client-id 00000000-0000-0000-0000-000000000000"
+          "Example: kai integration teams --client-id <Application (client) ID from your Entra app>"
         );
       }
       clientId = value;
@@ -194,11 +194,14 @@ function takeClientIdOption(args: string[]): { rest: string[]; clientId?: string
 
 function saveClientId(raw: string): string {
   const id = raw.trim();
-  if (!isGuid(id)) {
+  const problem = checkClientId(id);
+  if (problem) {
     throw new IntegrationError(
       "bad_request",
-      "That is not a valid Application (client) ID.",
-      "It is a GUID like 00000000-0000-0000-0000-000000000000: copy it from Overview in your app registration (not the Directory or Object ID)."
+      isGuid(id)
+        ? "That is not a real Application (client) ID."
+        : "That is not a valid Application (client) ID.",
+      problem
     );
   }
   saveTeamsClientId(id);
@@ -217,8 +220,14 @@ async function ensureClientId(env: NodeJS.ProcessEnv, deps: TeamsDeps): Promise<
     if (!notSetUp || malformedEnv || !(deps.interactive ?? isInteractive)()) throw err;
   }
   console.log(`  Kai needs a Microsoft Entra app ID to sign you in (a one-time step).`);
-  console.log(`  Register an app as described in docs/teams-sign-in.md, then paste its`);
-  console.log(`  "Application (client) ID" from the app's Overview page.`);
+  console.log(`  Where to find it: https://entra.microsoft.com > Identity > Applications >`);
+  console.log(`  App registrations > your Kai app > Overview > "Application (client) ID".`);
+  console.log(
+    `  No app yet? Register one (multi-tenant, public client, redirect http://localhost):`
+  );
+  console.log(
+    `  see docs/teams-sign-in.md. Use the Application ID, not the Directory or Object ID.`
+  );
   const answer = (await ask(`  Application (client) ID (Enter to cancel): `)).trim();
   if (!answer)
     throw new IntegrationError("config", "No Microsoft app ID entered.", TEAMS_SETUP_HINT);

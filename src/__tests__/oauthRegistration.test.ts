@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  checkClientId,
   checkTenant,
   explainMicrosoftError,
+  isUsableClientId,
   normalizeTenant,
 } from "../core/integrations/oauthRegistration";
 import {
@@ -28,6 +30,26 @@ beforeEach(() => {
   home = useTempKaiHome();
 });
 afterEach(() => home.restore());
+
+describe("client ID rules", () => {
+  it("accepts a real-looking GUID and refuses malformed and example IDs", () => {
+    expect(isUsableClientId(ID)).toBe(true);
+    expect(checkClientId(` ${ID} `)).toBeNull();
+    expect(checkClientId("not-an-id")).toContain("Overview");
+    expect(checkClientId("f81d4fae-7dec-11d0-a765-00a0c91e6bf6")).toContain("example ID");
+    expect(checkClientId("F81D4FAE-7DEC-11D0-A765-00A0C91E6BF6")).toContain("example ID");
+    expect(checkClientId("00000000-0000-0000-0000-000000000000")).toContain("example ID");
+    expect(isUsableClientId("f81d4fae-7dec-11d0-a765-00a0c91e6bf6")).toBe(false);
+  });
+
+  it("points a 'not found' error at the saved and environment IDs too", () => {
+    const text = explainMicrosoftError(
+      "AADSTS700016: Application with identifier 'x' was not found"
+    );
+    expect(text).toContain("kai integration teams --client-id");
+    expect(text).toContain("multi-tenant");
+  });
+});
 
 describe("directory rules", () => {
   it("accepts a tenant GUID, a domain or an audience, and treats empty as common", () => {

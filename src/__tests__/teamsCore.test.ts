@@ -504,6 +504,24 @@ describe("Teams sign-in", () => {
     expect(() => teamsClientId({} as NodeJS.ProcessEnv)).toThrowError(IntegrationError);
   });
 
+  it("treats an example ID (RFC 4122 / all zeros) as no app, from every source", () => {
+    const RFC = "f81d4fae-7dec-11d0-a765-00a0c91e6bf6";
+    const NIL = "00000000-0000-0000-0000-000000000000";
+    // Saved by an older Kai: ignored, so the person is asked again (the Azure ID still applies).
+    fs.writeFileSync(path.join(home, "config.json"), JSON.stringify({ teams: { clientId: RFC } }));
+    expect(() => teamsClientId({} as NodeJS.ProcessEnv)).toThrowError(/not set up yet/);
+    expect(teamsClientId({ KAI_AZURE_CLIENT_ID: CLIENT_ID } as NodeJS.ProcessEnv)).toBe(CLIENT_ID);
+    // From the environment: refused loudly, never used for a sign-in.
+    for (const id of [RFC, NIL, RFC.toUpperCase()]) {
+      expect(() => teamsClientId({ KAI_TEAMS_CLIENT_ID: id } as NodeJS.ProcessEnv)).toThrowError(
+        /KAI_TEAMS_CLIENT_ID is not a valid client ID/
+      );
+      expect(() => teamsClientId({ KAI_AZURE_CLIENT_ID: id } as NodeJS.ProcessEnv)).toThrowError(
+        /KAI_AZURE_CLIENT_ID is not a valid client ID/
+      );
+    }
+  });
+
   it("keeps the saved app ID when the account signs out and in again", () => {
     saveTeamsClientId(CLIENT_ID);
     saveTeamsAccount({ id: "o", name: "Alex", scopes: [], signedInAt: "now" });

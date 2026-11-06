@@ -10,7 +10,7 @@ import {
   checkTenant,
   explainMicrosoftError,
   needsAdminApproval,
-  isGuid,
+  isUsableClientId,
   normalizeTenant,
   type OAuthRegistrationView,
   type RegistrationSource,
@@ -97,11 +97,11 @@ function notSetUp(): IntegrationError {
  */
 export function registrationFrom(env: NodeJS.ProcessEnv = process.env): Registration {
   const envId = env.KAI_AZURE_CLIENT_ID?.trim();
-  if (envId && !isGuid(envId)) {
+  if (envId && !isUsableClientId(envId)) {
     throw new IntegrationError(
       "config",
       "KAI_AZURE_CLIENT_ID is not a valid client ID.",
-      "Set it to the Application (client) ID (a GUID), or remove it to use the app built into Kai."
+      "Set it to the Application (client) ID of your Entra app (a GUID, not an example value), or remove it to use the app built into Kai."
     );
   }
   const envTenantRaw = env.KAI_AZURE_TENANT_ID?.trim();
@@ -120,7 +120,7 @@ export function registrationFrom(env: NodeJS.ProcessEnv = process.env): Registra
   if (envId) {
     clientId = envId;
     source = "env";
-  } else if (isGuid(KAI_AZURE_CLIENT_ID.trim())) {
+  } else if (isUsableClientId(KAI_AZURE_CLIENT_ID.trim())) {
     clientId = KAI_AZURE_CLIENT_ID.trim();
     source = "build";
   }

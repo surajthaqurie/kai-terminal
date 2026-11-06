@@ -234,6 +234,22 @@ describe("kai teams", () => {
         expect(signIn).not.toHaveBeenCalled();
       });
 
+      it("rejects an example ID from documentation, says so, and saves nothing", async () => {
+        for (const example of [
+          "f81d4fae-7dec-11d0-a765-00a0c91e6bf6",
+          "00000000-0000-0000-0000-000000000000",
+        ]) {
+          err.length = 0;
+          const signIn = signInMock();
+          expect(await runTeamsSetup(["--client-id", example], deps({ signIn }).d)).toBe(1);
+          const text = err.join("\n");
+          expect(text).toContain("not a real Application (client) ID");
+          expect(text).toContain("example ID");
+          expect(getSavedTeamsClientId()).toBeNull();
+          expect(signIn).not.toHaveBeenCalled();
+        }
+      });
+
       it("--client-id without a value says what to pass", async () => {
         expect(await runTeamsSetup(["--client-id"], deps().d)).toBe(1);
         expect(err.join("\n")).toContain("--client-id needs the Application (client) ID");

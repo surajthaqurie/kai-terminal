@@ -8,7 +8,7 @@ import {
   type OAuthDeps,
   type TokenSet,
 } from "../integrations/providers/azure-devops/oauth";
-import { ADMIN_APPROVAL_MESSAGE, isGuid } from "../integrations/oauthRegistration";
+import { ADMIN_APPROVAL_MESSAGE, isUsableClientId } from "../integrations/oauthRegistration";
 import { IntegrationError } from "../integrations/types";
 import { getSavedTeamsClientId } from "./config";
 import { GRAPH_BASE, graphRequest, type GraphDeps } from "./graph";
@@ -72,11 +72,11 @@ export const TEAMS_SETUP_HINT =
  */
 export function teamsClientId(env: NodeJS.ProcessEnv = process.env): string {
   const envId = env.KAI_TEAMS_CLIENT_ID?.trim();
-  if (envId && !isGuid(envId)) {
+  if (envId && !isUsableClientId(envId)) {
     throw new IntegrationError(
       "config",
       "KAI_TEAMS_CLIENT_ID is not a valid client ID.",
-      "Set it to the Application (client) ID (a GUID), or remove it to use the saved or built-in app."
+      "Set it to the Application (client) ID of your Entra app (a GUID, not an example value), or remove it to use the saved or built-in app."
     );
   }
   if (envId) return envId;
@@ -86,7 +86,7 @@ export function teamsClientId(env: NodeJS.ProcessEnv = process.env): string {
 
   const built = KAI_TEAMS_CLIENT_ID.trim();
   if (built) {
-    if (isGuid(built)) return built;
+    if (isUsableClientId(built)) return built;
     throw new IntegrationError("config", "The Teams client ID built into Kai is not valid.");
   }
   try {
@@ -102,11 +102,15 @@ export function teamsClientId(env: NodeJS.ProcessEnv = process.env): string {
   }
 }
 
-/** The saved ID when it is valid; a damaged or malformed value reads as "none saved". */
+/**
+ * The saved ID when it is usable; a damaged, malformed or example value (an older Kai saved
+ * whatever was typed) reads as "none saved", so the person is asked again instead of being
+ * sent to a Microsoft error page.
+ */
 function readSavedClientId(): string | null {
   try {
     const saved = getSavedTeamsClientId();
-    return saved && isGuid(saved) ? saved : null;
+    return saved && isUsableClientId(saved) ? saved : null;
   } catch {
     return null;
   }

@@ -51,7 +51,12 @@ Teams uses the first of these that is set:
 
 The ID is a public client ID, not a secret. A saved or environment ID must be an
 Application (client) ID in GUID form; the Directory (tenant) ID and Object ID look the same but
-will not work. The app must be multi-tenant (step 2 above): Kai signs in through the `common`
+will not work. Example IDs from documentation (the RFC 4122 `f81d4fae-7dec-11d0-a765-00a0c91e6bf6`
+and the all-zero ID) are refused: no tenant has an app with them, and Microsoft would answer
+`AADSTS700016` ("application not found") on its own page. A saved one is ignored, so Kai asks again.
+**Not sure which ID?** Entra admin center > App registrations > your app > **Overview** >
+**Application (client) ID**. A Teams app package's own `id` is not it: use the registration's.
+The app must be multi-tenant (step 2 above): Kai signs in through the `common`
 endpoint.
 
 Without any client ID:

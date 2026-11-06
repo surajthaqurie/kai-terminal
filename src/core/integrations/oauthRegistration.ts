@@ -29,6 +29,38 @@ export function isGuid(value: string): boolean {
   return GUID.test(value);
 }
 
+/**
+ * GUIDs that are well-formed but never an app registration: the all-zero example used in
+ * help text, and the example UUID printed in RFC 4122 (it turns up in copied snippets).
+ * Microsoft answers either with AADSTS700016 on its own page, which Kai never sees, so
+ * they are refused up front instead.
+ */
+const PLACEHOLDER_CLIENT_IDS: ReadonlySet<string> = new Set([
+  "00000000-0000-0000-0000-000000000000",
+  "f81d4fae-7dec-11d0-a765-00a0c91e6bf6",
+]);
+
+export function isPlaceholderClientId(value: string): boolean {
+  return PLACEHOLDER_CLIENT_IDS.has(value.trim().toLowerCase());
+}
+
+/** A GUID that could be a real Application (client) ID: not malformed, not an example. */
+export function isUsableClientId(value: string): boolean {
+  return GUID.test(value) && !isPlaceholderClientId(value);
+}
+
+/** Why `raw` cannot be an Application (client) ID, or null when it can. */
+export function checkClientId(raw: string): string | null {
+  const id = raw.trim();
+  if (!GUID.test(id)) {
+    return "It is a GUID like 11111111-2222-3333-4444-555555555555: copy it from Overview in your app registration (not the Directory or Object ID).";
+  }
+  if (isPlaceholderClientId(id)) {
+    return "That is an example ID from documentation, not a real app registration. Register Kai's app in Microsoft Entra and copy its Application (client) ID from Overview (docs/teams-sign-in.md).";
+  }
+  return null;
+}
+
 /** The tenant as used: lower-cased, and empty/`common` both mean the default. */
 export function normalizeTenant(raw: string | undefined | null): string {
   const tenant = (raw ?? "").trim().toLowerCase();
@@ -62,7 +94,7 @@ export function explainMicrosoftError(text: string): string | undefined {
     return "Kai's sign-in app is single-tenant. Set KAI_AZURE_TENANT_ID to your Directory (tenant) ID, or change the app registration to accept accounts in any organizational directory.";
   }
   if (/AADSTS700016|application with identifier .* was not found/i.test(text)) {
-    return "Microsoft does not know Kai's sign-in app in this directory. If KAI_AZURE_CLIENT_ID is set, check it; otherwise this build of Kai has the wrong app ID (docs/microsoft-sign-in-setup.md).";
+    return "Microsoft does not know Kai's sign-in app in this directory. If KAI_AZURE_CLIENT_ID or KAI_TEAMS_CLIENT_ID is set, or you ran `kai integration teams --client-id`, check that ID is the Application (client) ID of a multi-tenant app (replace it by running that command again); otherwise this build of Kai has the wrong app ID (docs/microsoft-sign-in-setup.md).";
   }
   if (/AADSTS50011|redirect uri|reply url/i.test(text)) {
     return "Add http://localhost as a redirect URI under Mobile and desktop applications in the app registration.";
