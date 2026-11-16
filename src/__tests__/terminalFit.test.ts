@@ -93,6 +93,37 @@ describe("TerminalView keeps the PTY grid in sync with xterm", () => {
     expect(body).not.toContain("resizePty");
   });
 
+  it("repaints when a GPU context is lost, so an idle tab does not stay blank", () => {
+    const start = source.indexOf("addon.onContextLoss(");
+    const body = source.slice(start, source.indexOf("term.loadAddon(addon)", start));
+    expect(start).toBeGreaterThan(-1);
+    expect(body).toContain("requestAnimationFrame");
+    expect(body).toContain("term.refresh(0, Math.max(0, term.rows - 1))");
+  });
+
+  it("rebuilds the glyph atlas of a tab that was hidden for a while, before it paints", () => {
+    const start = source.indexOf("const hiddenAt = hiddenAtRef.current;");
+    const body = source.slice(start, source.indexOf("fitAddonRef.current?.fit();", start));
+    expect(start).toBeGreaterThan(-1);
+    expect(body).toContain("ATLAS_REBUILD_AFTER_HIDDEN_MS");
+    expect(body).toContain("clearTextureAtlas()");
+    // Consumed before the first-show early return, so a pane that mounted hidden is not "idle".
+    expect(body.indexOf("hiddenAtRef.current = null")).toBeLessThan(body.indexOf("initPtySession"));
+  });
+
+  it("re-fits and repaints once more after the first paint of a re-shown tab", () => {
+    const start = source.indexOf("// Safety pass after the first paint");
+    const body = source.slice(start, source.indexOf("}, [visible]);", start));
+    expect(start).toBeGreaterThan(-1);
+    expect(body).toContain("requestAnimationFrame");
+    expect(body).toContain("if (fitWhenShown()) pushPtySize(term)");
+    expect(body).toContain("cancelAnimationFrame(settle)");
+    // Quick tab flips must not pay for a second full repaint.
+    expect(body.indexOf("if (!wasIdle) return;")).toBeLessThan(
+      body.indexOf("requestAnimationFrame")
+    );
+  });
+
   it("refits after fonts load and removes its listener on unmount", () => {
     expect(source).toContain('fontSet?.addEventListener?.("loadingdone", refitAfterFonts)');
     expect(source).toContain('fontSet?.removeEventListener?.("loadingdone", refitAfterFonts)');

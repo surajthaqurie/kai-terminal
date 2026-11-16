@@ -94,6 +94,18 @@ function attachGpuRenderer(term: Terminal, slot: { current: WebglAddon | null })
         // Already disposed with the terminal.
       }
       if (slot.current === addon) slot.current = null;
+      // A WebView drops the GPU context of a canvas that sat hidden for a while
+      // (and may report it only after the tab is shown again). Disposing the
+      // addon hands the screen back to the DOM renderer, whose rows were never
+      // painted while the canvas drove the display, so the pane stays blank
+      // until something dirties it. Repaint every row right away.
+      requestAnimationFrame(() => {
+        try {
+          term.refresh(0, Math.max(0, term.rows - 1));
+        } catch {
+          // Terminal already disposed.
+        }
+      });
     });
     term.loadAddon(addon);
     slot.current = addon;
@@ -110,6 +122,9 @@ function attachGpuRenderer(term: Terminal, slot: { current: WebglAddon | null })
  */
 const MAX_HIDDEN_GPU_PANES = 6;
 const hiddenGpuBudget = createHiddenGpuBudget(MAX_HIDDEN_GPU_PANES);
+
+/** A pane hidden longer than this rebuilds its WebGL glyph atlas when shown again. */
+const ATLAS_REBUILD_AFTER_HIDDEN_MS = 5_000;
 
 function detachGpuRenderer(slot: { current: WebglAddon | null }): void {
   const addon = slot.current;
@@ -1197,6 +1212,9 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
     // pre-hide layout) flashed before the GPU canvas replaced it — the "random
     // text flash on tab switch".
     const releaseGpuRef = useRef(() => detachGpuRenderer(webglAddonRef));
+    // When this pane last went hidden (null while visible / never hidden): a tab
+    // idle for a while gets its glyph atlas rebuilt on return (see below).
+    const hiddenAtRef = useRef<number | null>(null);
     useLayoutEffect(() => {
       const term = xtermRef.current;
       if (!term) return;
@@ -1206,6 +1224,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         attachGpuRenderer(term, webglAddonRef);
         return;
       }
+      hiddenAtRef.current = Date.now();
       // Only a pane that actually holds a context counts against the budget
       // (panes that mounted hidden never attached one).
       if (webglAddonRef.current) hiddenGpuBudget.hide(release);
@@ -1249,16 +1268,33 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       if (!visible) return;
       const term = xtermRef.current;
       if (!term) return;
+      // Consumed on every show (even the first one) so a pane that mounted
+      // hidden is never mistaken for one that sat idle after being visible.
+      const hiddenAt = hiddenAtRef.current;
+      hiddenAtRef.current = null;
       if (!initialLaunchScheduledRef.current && !backendPtyIdRef.current) {
         initialLaunchScheduledRef.current = true;
         void initPtySession();
         return;
       }
+      const wasIdle = hiddenAt !== null && Date.now() - hiddenAt > ATLAS_REBUILD_AFTER_HIDDEN_MS;
       try {
         // Output that arrived while the tab was hidden sits in the mount
         // effect's pending buffer (rAF stalls for hidden tabs). Drain it
         // synchronously so the first paint includes the newest lines.
         flushPendingRef.current();
+        // A kept WebGL renderer that sat hidden for a while can return with a
+        // glyph atlas that no longer matches its canvas (the GPU/WebView
+        // reclaimed memory): rows then paint as random symbols. Rebuild the
+        // atlas for tabs idle past the threshold; quick flips between tabs keep
+        // theirs, so they stay instant.
+        if (wasIdle) {
+          try {
+            webglAddonRef.current?.clearTextureAtlas();
+          } catch {
+            // Addon already disposed (context loss); the DOM renderer has no atlas.
+          }
+        }
         fitAddonRef.current?.fit();
         pushPtySize(term);
         // A tab that was hidden (display:none) never repainted while output
@@ -1271,6 +1307,22 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       } catch {
         // ignore hidden-tab layout errors
       }
+      // Safety pass after the first paint, ONLY for a tab that sat idle: it can
+      // come back with a discarded GPU canvas or a container that is only
+      // measured one frame later, which the pre-paint pass above cannot see.
+      // Re-fit and repaint once more so the pane never stays blank until the
+      // next switch. Quick flips skip it: a second full-screen repaint on every
+      // switch would only add lag.
+      if (!wasIdle) return;
+      const settle = requestAnimationFrame(() => {
+        try {
+          if (fitWhenShown()) pushPtySize(term);
+          term.refresh(0, Math.max(0, term.rows - 1));
+        } catch {
+          // ignore hidden-tab layout errors
+        }
+      });
+      return () => cancelAnimationFrame(settle);
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [visible]);
 
