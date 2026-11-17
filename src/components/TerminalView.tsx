@@ -594,6 +594,18 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
 
       // 1. Initialize xterm.js instance with optimal terminal options for AI CLIs and TUIs
       const term = new Terminal({
+        // Explicit hyperlinks (OSC 8, e.g. from git or CLIs) otherwise go through
+        // xterm's default handler, which pops a "could potentially be dangerous"
+        // confirm() dialog. Open them like every other terminal link instead;
+        // the backend still validates the URL (http/https only).
+        linkHandler: {
+          activate: (event, uri) => {
+            if (!isOpenLinkClick(event)) return;
+            openTerminalLink(uri).catch((e) => {
+              console.error("Could not open link:", e);
+            });
+          },
+        },
         allowTransparency: true,
         cursorBlink: settings.cursorBlink,
         cursorStyle: settings.cursorStyle || "block",
