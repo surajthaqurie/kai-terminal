@@ -54,6 +54,18 @@ describe("music input resolution", () => {
     expect(embedSrcForTrack(pl)).toContain("listType=playlist&list=PLabcdefghijkl");
   });
 
+  it("loop-one drops list= for a YouTube Music link so the song repeats, not the mix", () => {
+    const ytm = resolveInputToTrack(
+      "https://music.youtube.com/watch?v=dQw4w9WgXcQ&list=RDAMVMdQw4w9WgXcQ"
+    )!;
+    expect(ytm.videoId).toBe("dQw4w9WgXcQ");
+    expect(ytm.playlistId).toBe("RDAMVMdQw4w9WgXcQ");
+    expect(embedSrcForTrack(ytm)).toContain("list=RDAMVMdQw4w9WgXcQ");
+    const looped = embedSrcForTrack(ytm, false, true)!;
+    expect(looped).toContain("loop=1&playlist=dQw4w9WgXcQ");
+    expect(looped).not.toContain("list=RDAMVM");
+  });
+
   describe("embed origin", () => {
     const t = resolveInputToTrack("dQw4w9WgXcQ")!;
     const originalLocation = window.location;

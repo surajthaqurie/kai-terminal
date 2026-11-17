@@ -202,7 +202,9 @@ export function embedSrcForTrack(
   const controls = origin ? 0 : 1;
   const tail = `autoplay=1&rel=0&controls=${controls}&enablejsapi=1${originParam}${muted ? "&mute=1" : ""}${loopParam}${startParam}`;
   if (track.videoId) {
-    const list = track.playlistId ? `&list=${track.playlistId}` : "";
+    // Loop-one wins over the mix: a YouTube Music link carries `list=RDAMVM…`,
+    // and `loop=1` next to `list=` repeats the whole list, not this song.
+    const list = track.playlistId && !loopParam ? `&list=${track.playlistId}` : "";
     return `https://www.youtube-nocookie.com/embed/${track.videoId}?${tail}${list}`;
   }
   if (track.playlistId) {

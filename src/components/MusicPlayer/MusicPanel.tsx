@@ -205,7 +205,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
   // Track whether the live embed carries native loop, so switching loop off
   // knows it must rebuild (commands cannot cancel YouTube's own looping).
   useEffect(() => {
-    nativeLoopRef.current = Boolean(src && loopRef.current && track?.videoId && !track?.playlistId);
+    nativeLoopRef.current = Boolean(src && loopRef.current && track?.videoId);
   }, [src, track?.videoId, track?.playlistId]);
 
   const sendCommand = useCallback((func: YouTubeCommand | string, args: unknown = "") => {
@@ -610,8 +610,13 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     // Switching loop OFF on an embed that carries native loop needs a
     // position-preserving rebuild; everything else is command/event driven
     // and never touches the iframe.
-    if (!next && nativeLoopRef.current) {
-      nativeLoopRef.current = false;
+    // Switching loop ON for a song that sits inside a list (YouTube Music
+    // links carry `list=`) also rebuilds: the list embed would advance to the
+    // next song instead of ever reporting "ended", so the single-video embed
+    // with native loop takes over from the current position.
+    const leavesList = next && Boolean(track?.videoId && track?.playlistId);
+    if ((!next && nativeLoopRef.current) || leavesList) {
+      nativeLoopRef.current = next;
       rebuildStartRef.current = Math.max(0, Math.floor(currentTime));
       setEmbedReloadNonce((n) => n + 1);
     }

@@ -101,12 +101,13 @@ describe("TerminalView keeps the PTY grid in sync with xterm", () => {
     expect(body).toContain("term.refresh(0, Math.max(0, term.rows - 1))");
   });
 
-  it("rebuilds the glyph atlas of a tab that was hidden for a while, before it paints", () => {
+  it("rebuilds the glyph atlas on every tab show, before it paints", () => {
     const start = source.indexOf("const hiddenAt = hiddenAtRef.current;");
     const body = source.slice(start, source.indexOf("fitAddonRef.current?.fit();", start));
     expect(start).toBeGreaterThan(-1);
-    expect(body).toContain("ATLAS_REBUILD_AFTER_HIDDEN_MS");
     expect(body).toContain("clearTextureAtlas()");
+    // Not gated on idle time: a quick flip can also return a stale atlas.
+    expect(body).not.toContain("if (wasIdle)");
     // Consumed before the first-show early return, so a pane that mounted hidden is not "idle".
     expect(body.indexOf("hiddenAtRef.current = null")).toBeLessThan(body.indexOf("initPtySession"));
   });

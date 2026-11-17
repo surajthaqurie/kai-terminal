@@ -123,7 +123,7 @@ function attachGpuRenderer(term: Terminal, slot: { current: WebglAddon | null })
 const MAX_HIDDEN_GPU_PANES = 6;
 const hiddenGpuBudget = createHiddenGpuBudget(MAX_HIDDEN_GPU_PANES);
 
-/** A pane hidden longer than this rebuilds its WebGL glyph atlas when shown again. */
+/** A pane hidden longer than this gets an extra re-fit + repaint after it is shown again. */
 const ATLAS_REBUILD_AFTER_HIDDEN_MS = 5_000;
 
 function detachGpuRenderer(slot: { current: WebglAddon | null }): void {
@@ -1213,7 +1213,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
     // text flash on tab switch".
     const releaseGpuRef = useRef(() => detachGpuRenderer(webglAddonRef));
     // When this pane last went hidden (null while visible / never hidden): a tab
-    // idle for a while gets its glyph atlas rebuilt on return (see below).
+    // idle for a while gets an extra post-paint re-fit + repaint on return.
     const hiddenAtRef = useRef<number | null>(null);
     useLayoutEffect(() => {
       const term = xtermRef.current;
@@ -1283,17 +1283,16 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         // effect's pending buffer (rAF stalls for hidden tabs). Drain it
         // synchronously so the first paint includes the newest lines.
         flushPendingRef.current();
-        // A kept WebGL renderer that sat hidden for a while can return with a
-        // glyph atlas that no longer matches its canvas (the GPU/WebView
-        // reclaimed memory): rows then paint as random symbols. Rebuild the
-        // atlas for tabs idle past the threshold; quick flips between tabs keep
-        // theirs, so they stay instant.
-        if (wasIdle) {
-          try {
-            webglAddonRef.current?.clearTextureAtlas();
-          } catch {
-            // Addon already disposed (context loss); the DOM renderer has no atlas.
-          }
+        // A kept WebGL renderer can return from display:none with a glyph atlas
+        // that no longer matches its canvas (the canvas is resized from 0 and the
+        // WebView may reclaim GPU memory at any time, not only after a long
+        // idle): rows then paint as scrambled glyph fragments. Rebuild the atlas
+        // on EVERY show, before the first paint. It only re-rasterizes the
+        // glyphs on screen, so it is cheap next to showing garbage.
+        try {
+          webglAddonRef.current?.clearTextureAtlas();
+        } catch {
+          // Addon already disposed (context loss); the DOM renderer has no atlas.
         }
         fitAddonRef.current?.fit();
         pushPtySize(term);
