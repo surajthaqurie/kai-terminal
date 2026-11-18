@@ -254,9 +254,11 @@ describe("adaptive context assembly", { timeout: 120_000 }, () => {
 
   describe("a tight budget shortens the best source instead of dropping everything", () => {
     it("returns one shortened source with a range that matches the text and says so", () => {
+      // Tight enough that trimming the omission list alone cannot make it fit, whatever the
+      // length of the project path in the prompt (it differs by operating system).
       const r = assembleContext(index, {
         task,
-        tokenBudget: 1500,
+        tokenBudget: 1000,
         categoryOverride: "debug",
         fileBudget: 1,
       });
@@ -273,7 +275,7 @@ describe("adaptive context assembly", { timeout: 120_000 }, () => {
         fileLines.slice((ref.startLine as number) - 1, ref.endLine)
       );
       expect(r.contextPackage.knownLimitations.join(" ")).toContain("was shortened");
-      expect(r.contextPackage.tokenMetrics.estimatedTokens).toBeLessThanOrEqual(1500);
+      expect(r.contextPackage.tokenMetrics.estimatedTokens).toBeLessThanOrEqual(1000);
     });
 
     it("does not claim a reduction when nothing was cut", () => {
