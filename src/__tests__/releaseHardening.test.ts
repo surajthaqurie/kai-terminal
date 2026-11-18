@@ -27,6 +27,7 @@ import {
   quoteCmdShimArg,
   resolveSpawnTarget,
 } from "../core/codeModeWorkflow";
+import { sweepSupported } from "../core/processSweep";
 
 let tmpHome = "";
 let tmpRoot = "";
@@ -296,7 +297,9 @@ describe("external-agent process lifecycle outcomes", () => {
     expect(r.outcome).toBe("timeout");
     expect(r.timedOut).toBe(true);
     expect(r.treeKillAttempted).toBe(true);
-    expect(r.descendantsMaySurvive).toBe(true);
+    // Windows cannot find escapees, so it always says they may survive; elsewhere the sweep
+    // found and stopped everything of the run.
+    expect(r.descendantsMaySurvive).toBe(!sweepSupported());
     if (process.platform === "win32") {
       // Windows has no POSIX signals: taskkill /T /F reaps the child
       // without a signal code in the `close` event, and it kills
@@ -366,7 +369,9 @@ describe("external-agent process lifecycle outcomes", () => {
     expect(pending.length).toBe(1);
     expect(["timeout", "aborted"]).toContain(r.outcome);
     expect(r.treeKillAttempted).toBe(true);
-    expect(r.descendantsMaySurvive).toBe(true);
+    // Windows cannot find escapees, so it always says they may survive; elsewhere the sweep
+    // found and stopped everything of the run.
+    expect(r.descendantsMaySurvive).toBe(!sweepSupported());
     expect(Date.now() - start).toBeLessThan(15000);
   });
 

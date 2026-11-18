@@ -75,7 +75,9 @@ describe("Step 9: truncateToTokenBudget guarantees", () => {
   it("keeps the golden boundary on the reference sample", () => {
     const { text, wasTruncated, metrics } = truncateToTokenBudget(big, 4000);
     expect(wasTruncated).toBe(true);
-    expect(text.length).toBe(5200);
+    // Golden: where a 4000-token budget cuts this sample under the calibrated heuristic
+    // (whitespace follows BPE: a lone space is free, a line break and its indent are one token).
+    expect(text.length).toBe(7428);
     expect(metrics.estimatedTokens).toBeLessThanOrEqual(4000);
   });
 

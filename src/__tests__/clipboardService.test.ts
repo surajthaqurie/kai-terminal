@@ -7,12 +7,40 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: (...a: unknown[]) => invoke(...
 vi.mock("../services/ptyService", () => ({ isTauriAvailable: () => tauri }));
 
 import {
+  CLIPBOARD_PIECE_BYTES,
   formatPastedPaths,
   quotePathForShell,
   readClipboardAttachments,
   readClipboardText,
   readPasteContent,
 } from "../services/clipboardService";
+
+/** A fake backend that holds `text` and returns it `pieceChars` characters at a time. */
+function fakeBackend(text: string, attachments: string[] = [], pieceChars = 4) {
+  const chars = [...text];
+  const enc = new TextEncoder();
+  const byteOffsets: number[] = [0];
+  for (const c of chars)
+    byteOffsets.push(byteOffsets[byteOffsets.length - 1] + enc.encode(c).length);
+  const state = { ended: [] as number[], maxAsked: [] as number[] };
+  invoke.mockImplementation((cmd: string, args?: Record<string, number>) => {
+    if (cmd === "clipboard_text_begin_cmd")
+      return Promise.resolve({ id: 7, len: byteOffsets[chars.length] });
+    if (cmd === "clipboard_text_chunk_cmd") {
+      state.maxAsked.push(args!.max);
+      const from = byteOffsets.indexOf(args!.offset);
+      const to = Math.min(from + pieceChars, chars.length);
+      return Promise.resolve({ text: chars.slice(from, to).join(""), next: byteOffsets[to] });
+    }
+    if (cmd === "clipboard_text_end_cmd") {
+      state.ended.push(args!.id);
+      return Promise.resolve();
+    }
+    if (cmd === "read_clipboard_attachments_cmd") return Promise.resolve(attachments);
+    return Promise.reject(new Error(`unexpected ${cmd}`));
+  });
+  return state;
+}
 
 describe("readClipboardText", () => {
   const readText = vi.fn();
@@ -28,10 +56,53 @@ describe("readClipboardText", () => {
   });
 
   it("reads through the backend so the WebView never prompts for permission", async () => {
-    invoke.mockResolvedValue("from os");
+    fakeBackend("from os");
     await expect(readClipboardText()).resolves.toBe("from os");
-    expect(invoke).toHaveBeenCalledWith("read_clipboard_text_cmd");
+    expect(invoke).toHaveBeenCalledWith("clipboard_text_begin_cmd");
     expect(readText).not.toHaveBeenCalled();
+  });
+
+  it("stitches pieces back into the exact text, multi-byte characters included", async () => {
+    const text = "héllo 世界 😀 end\r\n".repeat(20);
+    const state = fakeBackend(text, [], 5);
+    await expect(readClipboardText()).resolves.toBe(text);
+    expect(state.maxAsked.every((m) => m === CLIPBOARD_PIECE_BYTES)).toBe(true);
+    expect(state.maxAsked.length).toBeGreaterThan(10);
+  });
+
+  it("is not cut off at any size (a paste past the old 32 MB cap)", async () => {
+    // ASCII only, so byte offsets equal character offsets and no per-character tables are needed.
+    const text = "x".repeat(40 * 1024 * 1024);
+    invoke.mockImplementation((cmd: string, args?: Record<string, number>) => {
+      if (cmd === "clipboard_text_begin_cmd") return Promise.resolve({ id: 1, len: text.length });
+      if (cmd === "clipboard_text_chunk_cmd") {
+        const next = Math.min(args!.offset + args!.max, text.length);
+        return Promise.resolve({ text: text.slice(args!.offset, next), next });
+      }
+      return Promise.resolve();
+    });
+    const out = await readClipboardText();
+    expect(out.length).toBe(text.length);
+    const chunkCalls = invoke.mock.calls.filter(([c]) => c === "clipboard_text_chunk_cmd");
+    expect(chunkCalls.length).toBe(10); // 40 MB in 4 MB pieces
+  });
+
+  it("releases the held text, even when a piece fails", async () => {
+    const state = fakeBackend("abcdefgh");
+    const base = invoke.getMockImplementation()!;
+    let calls = 0;
+    invoke.mockImplementation((cmd: string, args?: Record<string, number>) => {
+      if (cmd === "clipboard_text_chunk_cmd" && ++calls === 2) return Promise.reject("gone");
+      return base(cmd, args);
+    });
+    readText.mockResolvedValue("from webview");
+    await expect(readClipboardText()).resolves.toBe("from webview");
+    expect(state.ended).toEqual([7]);
+  });
+
+  it("reads an empty clipboard as an empty string", async () => {
+    fakeBackend("");
+    await expect(readClipboardText()).resolves.toBe("");
   });
 
   it("falls back to the WebView API when the backend cannot read it", async () => {
@@ -78,25 +149,19 @@ describe("pasting files and images", () => {
   });
 
   it("pastes text when there is text, never the file paths", async () => {
-    invoke.mockImplementation((cmd: string) =>
-      Promise.resolve(cmd === "read_clipboard_text_cmd" ? "hello" : [String.raw`C:\a.png`])
-    );
+    fakeBackend("hello", [String.raw`C:\a.png`]);
     await expect(readPasteContent()).resolves.toBe("hello");
     expect(invoke).not.toHaveBeenCalledWith("read_clipboard_attachments_cmd");
   });
 
   it("pastes the paths when the clipboard has no text (a copied image or file)", async () => {
     const png = String.raw`C:\Temp\kai paste\p.png`;
-    invoke.mockImplementation((cmd: string) =>
-      Promise.resolve(cmd === "read_clipboard_text_cmd" ? "" : [png])
-    );
+    fakeBackend("", [png]);
     await expect(readPasteContent()).resolves.toBe(`"${png}" `);
   });
 
   it("pastes nothing when the clipboard is empty", async () => {
-    invoke.mockImplementation((cmd: string) =>
-      Promise.resolve(cmd === "read_clipboard_text_cmd" ? "" : [])
-    );
+    fakeBackend("", []);
     await expect(readPasteContent()).resolves.toBe("");
   });
 });

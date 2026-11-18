@@ -12,22 +12,14 @@
 
 use crate::error::TerminalError;
 
-/// Largest clipboard text handed to the frontend. Pastes above the PTY's
-/// 1 MB per-call bound are delivered in chunks by the frontend, so this is
-/// only a sanity bound on one IPC response, well above real pastes.
-const MAX_CLIPBOARD_BYTES: usize = 32 * 1024 * 1024;
+/// Clipboard text is handed to the frontend in pieces of at most this many
+/// bytes, so one IPC response stays small however big the paste is. There is
+/// no cap on the total.
+pub const CLIPBOARD_CHUNK_MAX: usize = 4 * 1024 * 1024;
 
 fn decode(bytes: &[u8]) -> String {
     let text = String::from_utf8_lossy(bytes);
-    let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
-    if text.len() <= MAX_CLIPBOARD_BYTES {
-        return text.to_string();
-    }
-    let mut end = MAX_CLIPBOARD_BYTES;
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    text[..end].to_string()
+    text.strip_prefix('\u{feff}').unwrap_or(&text).to_string()
 }
 
 #[cfg_attr(not(any(unix, test)), allow(dead_code))]
@@ -84,6 +76,91 @@ pub fn read_clipboard_text() -> Result<String, TerminalError> {
         Err(TerminalError::IoError(
             "Clipboard is not supported on this platform".into(),
         ))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Text handed over in pieces
+// ---------------------------------------------------------------------------
+//
+// A paste can be hundreds of megabytes. Instead of one giant IPC response the
+// frontend opens a session (the backend reads the clipboard once and holds the
+// text), pulls it piece by piece, then closes it. A session id stops a second
+// paste from mixing its text into a read that is still in progress.
+
+#[derive(serde::Serialize)]
+pub struct ClipboardSession {
+    pub id: u64,
+    /// Total size in bytes.
+    pub len: usize,
+}
+
+#[derive(serde::Serialize, Debug, PartialEq, Eq)]
+pub struct ClipboardChunk {
+    pub text: String,
+    /// Byte offset to ask for next; equals the total length when finished.
+    pub next: usize,
+}
+
+static CLIPBOARD_SESSION: std::sync::Mutex<Option<(u64, String)>> = std::sync::Mutex::new(None);
+static CLIPBOARD_SESSION_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// One piece of `text` starting at byte `offset` (moved forward to a character
+/// boundary), at most `max` bytes (cut back to a boundary, but never empty
+/// while text remains).
+fn chunk_of(text: &str, offset: usize, max: usize) -> ClipboardChunk {
+    let mut start = offset.min(text.len());
+    while !text.is_char_boundary(start) {
+        start += 1;
+    }
+    let mut end = start.saturating_add(max.max(1)).min(text.len());
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    if end == start && start < text.len() {
+        // `max` is smaller than one character: take that character whole.
+        end = start + 1;
+        while !text.is_char_boundary(end) {
+            end += 1;
+        }
+    }
+    ClipboardChunk {
+        text: text[start..end].to_string(),
+        next: end,
+    }
+}
+
+/// Read the clipboard text once and hold it for `clipboard_text_chunk`.
+pub fn clipboard_text_begin() -> Result<ClipboardSession, TerminalError> {
+    let text = read_clipboard_text()?;
+    let id = CLIPBOARD_SESSION_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    let len = text.len();
+    *CLIPBOARD_SESSION.lock().unwrap_or_else(|e| e.into_inner()) = Some((id, text));
+    Ok(ClipboardSession { id, len })
+}
+
+/// The next piece of the held clipboard text for session `id`.
+pub fn clipboard_text_chunk(
+    id: u64,
+    offset: usize,
+    max: usize,
+) -> Result<ClipboardChunk, TerminalError> {
+    let guard = CLIPBOARD_SESSION.lock().unwrap_or_else(|e| e.into_inner());
+    match guard.as_ref() {
+        Some((held, text)) if *held == id => {
+            Ok(chunk_of(text, offset, max.min(CLIPBOARD_CHUNK_MAX)))
+        }
+        _ => Err(TerminalError::IoError(
+            "Clipboard read was replaced by a newer one".into(),
+        )),
+    }
+}
+
+/// Drop the held text (only if it still belongs to session `id`).
+pub fn clipboard_text_end(id: u64) {
+    let mut guard = CLIPBOARD_SESSION.lock().unwrap_or_else(|e| e.into_inner());
+    if guard.as_ref().is_some_and(|(held, _)| *held == id) {
+        *guard = None;
     }
 }
 
@@ -418,12 +495,53 @@ mod tests {
     }
 
     #[test]
-    fn decode_caps_size_on_a_char_boundary() {
-        // Just over the cap, with the cut landing mid-character.
-        let big = "世".repeat(MAX_CLIPBOARD_BYTES / 3 + 1);
-        let out = decode(big.as_bytes());
-        assert!(out.len() <= MAX_CLIPBOARD_BYTES);
-        assert!(out.chars().all(|c| c == '世'));
+    fn decode_has_no_size_cap() {
+        let big = "世".repeat(12 * 1024 * 1024 / 3);
+        assert_eq!(decode(big.as_bytes()).len(), big.len());
+    }
+
+    #[test]
+    fn chunks_reassemble_to_the_exact_text() {
+        let text = "héllo 世界 😀 end\r\n".repeat(50);
+        for max in [1, 2, 3, 4, 5, 7, 64, 1000] {
+            let mut out = String::new();
+            let mut offset = 0;
+            while offset < text.len() {
+                let c = chunk_of(&text, offset, max);
+                assert!(!c.text.is_empty(), "must always make progress (max {max})");
+                assert!(c.next > offset);
+                out.push_str(&c.text);
+                offset = c.next;
+            }
+            assert_eq!(out, text, "max {max}");
+        }
+    }
+
+    #[test]
+    fn chunk_past_the_end_is_empty() {
+        let c = chunk_of("abc", 99, 10);
+        assert_eq!(
+            c,
+            ClipboardChunk {
+                text: String::new(),
+                next: 3
+            }
+        );
+        assert_eq!(chunk_of("", 0, 10).next, 0);
+    }
+
+    #[test]
+    fn a_newer_session_invalidates_an_older_one() {
+        *CLIPBOARD_SESSION.lock().unwrap() = Some((7, "old".into()));
+        assert_eq!(clipboard_text_chunk(7, 0, 10).unwrap().text, "old");
+        assert!(clipboard_text_chunk(6, 0, 10).is_err());
+        clipboard_text_end(6);
+        assert!(
+            clipboard_text_chunk(7, 0, 10).is_ok(),
+            "wrong id must not close it"
+        );
+        clipboard_text_end(7);
+        assert!(clipboard_text_chunk(7, 0, 10).is_err());
     }
 
     #[test]

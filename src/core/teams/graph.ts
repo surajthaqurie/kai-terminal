@@ -20,10 +20,33 @@ export const MAX_IMAGE_BYTES = 12 * 1024 * 1024;
  */
 export const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
 /**
- * The most Kai uploads for one file (OneDrive upload session). Graph allows far more, but the
- * file is held in memory while it is sent.
+ * The most Kai uploads for one file (OneDrive upload session). A file is read from disk one chunk
+ * at a time, so its size does not decide how much memory the upload takes. Graph allows far more;
+ * this is a sanity bound, not a memory bound.
  */
-export const MAX_FILE_BYTES = 250 * 1024 * 1024;
+export const MAX_FILE_BYTES = 2 * 1024 * 1024 * 1024;
+
+/** "250 MB" or "2 GB": a size as people read it. */
+export function describeBytes(n: number): string {
+  const gb = n / (1024 * 1024 * 1024);
+  if (gb >= 1) return `${Number.isInteger(gb) ? gb : gb.toFixed(1)} GB`;
+  return `${Math.round(n / (1024 * 1024))} MB`;
+}
+
+/**
+ * Something an upload reads from: its size, and any stretch of it on request. A file on disk is
+ * read a chunk at a time (see `fileUploadSource`); bytes already in memory are sliced.
+ */
+export interface UploadSource {
+  readonly size: number;
+  /** Bytes `start` up to (not including) `end`. Fewer than asked for means the source changed. */
+  read(start: number, end: number): Promise<Uint8Array>;
+}
+
+/** An upload source over bytes that are already in memory. */
+export function bytesUploadSource(bytes: Uint8Array): UploadSource {
+  return { size: bytes.byteLength, read: async (start, end) => bytes.subarray(start, end) };
+}
 /** Upload-session chunks must be a multiple of 320 KiB; 16 x 320 KiB = 5 MiB. */
 export const UPLOAD_CHUNK_BYTES = 16 * 320 * 1024;
 const CHUNK_TIMEOUT_MS = 120_000;
@@ -218,6 +241,18 @@ interface SessionReply {
   /** HTTP status, or 0 when the request never got an answer. */
   status: number;
   text: string;
+}
+
+/** One stretch of a source; a source that returns less than asked for has changed since it was measured. */
+async function readExactly(source: UploadSource, start: number, end: number): Promise<Uint8Array> {
+  const piece = await source.read(start, end);
+  if (piece.byteLength !== end - start) {
+    throw new IntegrationError(
+      "bad_request",
+      "The file changed while it was being uploaded. Send it again."
+    );
+  }
+  return piece;
 }
 
 /**
@@ -550,19 +585,20 @@ export class GraphClient {
    */
   async uploadFile(
     name: string,
-    bytes: Uint8Array,
+    content: Uint8Array | UploadSource,
     onProgress?: (sent: number, total: number) => void
   ): Promise<string> {
-    if (bytes.byteLength > MAX_FILE_BYTES) {
+    const source = content instanceof Uint8Array ? bytesUploadSource(content) : content;
+    if (source.size > MAX_FILE_BYTES) {
       throw new IntegrationError(
         "bad_request",
-        `${name} is larger than ${MAX_FILE_BYTES / (1024 * 1024)} MB, which is the most Kai can upload.`
+        `${name} is larger than ${describeBytes(MAX_FILE_BYTES)}, which is the most Kai can upload.`
       );
     }
     const token = await this.token();
     const safe = encodeURIComponent(name.replace(/[\\/:*?"<>|#%]/g, "_"));
     const item =
-      bytes.byteLength <= MAX_UPLOAD_BYTES
+      source.size <= MAX_UPLOAD_BYTES
         ? obj(
             await graphRequest<unknown>(
               token,
@@ -570,10 +606,10 @@ export class GraphClient {
               `${GRAPH_BASE}/me/drive/root:/Kai%20Teams/${safe}:/content`,
               undefined,
               this.deps,
-              { raw: bytes }
+              { raw: await readExactly(source, 0, source.size) }
             )
           )
-        : await this.uploadInChunks(token, safe, bytes, onProgress);
+        : await this.uploadInChunks(token, safe, source, onProgress);
     const id = str(item.id);
     if (!id)
       throw new IntegrationError("bad_request", "OneDrive did not return the uploaded file.");
@@ -595,11 +631,11 @@ export class GraphClient {
   private async uploadInChunks(
     token: string,
     safeName: string,
-    bytes: Uint8Array,
+    source: UploadSource,
     onProgress?: (sent: number, total: number) => void
   ): Promise<Json> {
     const sleep = this.deps.sleep ?? defaultSleep;
-    const total = bytes.byteLength;
+    const total = source.size;
     const session = obj(
       await graphRequest<unknown>(
         token,
@@ -623,8 +659,18 @@ export class GraphClient {
     onProgress?.(0, total);
     while (true) {
       const end = Math.min(offset + UPLOAD_CHUNK_BYTES, total);
+      let piece: Uint8Array;
+      try {
+        piece = await readExactly(source, offset, end);
+      } catch (e) {
+        return fail(
+          e instanceof IntegrationError
+            ? e
+            : new IntegrationError("bad_request", "The file could not be read while uploading it.")
+        );
+      }
       const reply = await sessionRequest("PUT", uploadUrl, this.deps, {
-        bytes: bytes.subarray(offset, end),
+        bytes: piece,
         start: offset,
         total,
       });

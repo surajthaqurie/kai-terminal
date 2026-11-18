@@ -210,7 +210,7 @@ kai integration teams remove       # sign out and forget the account
 ```
 
 - **Everything is clickable and works from the keyboard.** Teams, channels and chats on the left, the conversation on the right, a message box at the bottom. `Enter` sends, `Ctrl+J` starts a new line, `Up` / `Down` switch conversation, `PageUp` / `PageDown` scroll, `Esc` leaves.
-- **Pictures and files.** Images show inline where the terminal draws them (iTerm2, WezTerm, mintty, Kai Terminal) and open in your image viewer elsewhere. Paste a copied image or file with `Ctrl+V`, or click **Attach**; images go inline, other files are uploaded to your OneDrive and shared as a link. Up to 4 items, 250 MB in total.
+- **Pictures and files.** Images show inline where the terminal draws them (iTerm2, WezTerm, mintty, Kai Terminal) and open in your image viewer elsewhere. Paste a copied image or file with `Ctrl+V`, or click **Attach**; images go inline, other files are uploaded to your OneDrive and shared as a link. Up to 4 items, each file up to 2 GB.
 - **It keeps itself up to date.** The open conversation refreshes every few seconds, the chat list every 20 seconds, and a **●** marks chats with messages you have not seen.
 - **You see only what you could see in Teams.** Kai uses Microsoft Graph with your own permissions. The sign-in token goes to the OS secret store, never to a repository or an agent config.
 - **For you, not your AI agents.** Teams is not an MCP integration: no agent tool exists for it, the sign-in is never handed to an agent, and both Teams commands refuse to run inside an agent's session.

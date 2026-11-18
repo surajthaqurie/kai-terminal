@@ -145,7 +145,8 @@ describe("anchored relevance floor", () => {
 });
 
 /** formatMoney is defined once; `callers` files import it, `bystanders` import the file but never use it. */
-function writeCallerProject(callers: number, bystanders = 0, tests = 0): void {
+/** `padding` repeats a phrase in a comment on every caller's usage line, to make each one cost real budget. */
+function writeCallerProject(callers: number, bystanders = 0, tests = 0, padding = 0): void {
   write("src/utils/money.ts", "export function formatMoney(c: number) {\n  return c / 100;\n}\n");
   for (let i = 0; i < callers; i++) {
     write(
@@ -153,7 +154,8 @@ function writeCallerProject(callers: number, bystanders = 0, tests = 0): void {
       [
         'import { formatMoney } from "../utils/money";',
         `export function show${i}(c: number) {`,
-        "  return formatMoney(c);",
+        // Each excerpt is the usage line and a few after it, so the padding rides on that line.
+        `  return formatMoney(c);${padding > 0 ? ` // ${"shows a money amount for the user ".repeat(padding)}` : ""}`,
         "}",
       ].join("\n")
     );
@@ -289,7 +291,7 @@ describe("bounded neighbour expansion", () => {
   });
 
   it("stops at the token budget and says what it left out", async () => {
-    writeCallerProject(6);
+    writeCallerProject(6, 0, 0, 6);
     const index = await build();
     const r = retrieveContext(index, "rename formatMoney to formatCurrency", {
       expand: { callers: true },

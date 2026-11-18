@@ -9,6 +9,7 @@ import {
 import { getProvider } from "../../core/integrations/providers";
 import { azCliOnPath, isCloudBaseUrl } from "../../core/integrations/providers/azure-devops/auth";
 import { browserSignInAvailable } from "../../core/integrations/providers/azure-devops/oauth";
+import { verifyServerGuess } from "../../core/integrations/providers/azure-devops/probe";
 import type { DetectedCoordinates, IntegrationStatusView } from "../../core/integrations/rpcTypes";
 import {
   accountIdFor,
@@ -554,11 +555,19 @@ async function chooseRemote(
   return Number.isInteger(n) && n >= 1 && n <= all.length ? all[n - 1] : all[0];
 }
 
+/** Replaceable so tests never touch the network. */
+let serverProbe: typeof verifyServerGuess = verifyServerGuess;
+export function setServerProbeForTests(fn: typeof verifyServerGuess | null): void {
+  serverProbe = fn ?? verifyServerGuess;
+}
+
 /**
- * A Server SSH remote does not say the server's web address, so Kai only has a guess.
- * Nothing signs in to a guessed host unasked: confirm it (or take the typed address), or
- * stop with the exact command to run. Skipped when the person already named the address
- * (`--server-url`, `--org`) or is already signed in to exactly that address.
+ * A Server SSH remote does not say the server's web address, so Kai starts from a guess and
+ * asks the likely addresses (http and https, with and without `/tfs`, the classic port 8080)
+ * whether an Azure DevOps Server answers there, without credentials. Nothing signs in to a
+ * host unasked either way: confirm the address (or take the typed one), or stop with the exact
+ * command to run. Skipped when the person already named the address (`--server-url`, `--org`)
+ * or is already signed in to exactly that address.
  */
 async function confirmSuggestedRemote(
   provider: IntegrationProvider,
@@ -568,20 +577,31 @@ async function confirmSuggestedRemote(
 ): Promise<DetectedCoordinates | null> {
   if (!detected?.needsConfirmation) return detected;
   if (flagValue(flags, "--server-url", "--org")) return detected;
-  const guess = detected.baseUrl;
   if (getAccount(accountIdFor(provider, detected))) {
     console.log(
-      `  Azure DevOps Server SSH remote: using ${guess} (you are already signed in there).`
+      `  Azure DevOps Server SSH remote: using ${detected.baseUrl} (you are already signed in there).`
     );
     return detected;
   }
-  const rerun = `kai integration azure --server-url ${guess} --project "${detected.project}"${
-    detected.repo ? ` --repo "${detected.repo}"` : ""
+  const probed = await serverProbe(detected);
+  const suggestion = probed.detected;
+  const found = probed.verified;
+  const guess = suggestion.baseUrl;
+  if (found && getAccount(accountIdFor(provider, suggestion))) {
+    console.log(
+      `  Azure DevOps Server SSH remote: found it at ${guess} (you are already signed in there).`
+    );
+    return suggestion;
+  }
+  const rerun = `kai integration azure --server-url ${guess} --project "${suggestion.project}"${
+    suggestion.repo ? ` --repo "${suggestion.repo}"` : ""
   } --pat-stdin`;
   if (!interactive) {
     throw new IntegrationError(
       "needs_confirmation",
-      `This folder's remote is an Azure DevOps Server SSH address. SSH does not say the web address, so ${guess} is only a guess (its port and any virtual directory like /tfs can differ).`,
+      found
+        ? `This folder's remote is an Azure DevOps Server SSH address. SSH does not say the web address; an Azure DevOps Server answers at ${guess}.`
+        : `This folder's remote is an Azure DevOps Server SSH address. SSH does not say the web address, so ${guess} is only a guess (its port and any virtual directory like /tfs can differ).`,
       `If that is the address you open in a browser, run: ${rerun}`
     );
   }
@@ -589,9 +609,11 @@ async function confirmSuggestedRemote(
     `  The remote is an Azure DevOps Server over SSH, which does not give its web address.`
   );
   console.log(
-    `  Kai's guess: ${guess}  (project ${detected.project}${detected.repo ? `, repository ${detected.repo}` : ""})`
+    found
+      ? `  Found: ${guess}  (an Azure DevOps Server answers there; project ${suggestion.project}${suggestion.repo ? `, repository ${suggestion.repo}` : ""})`
+      : `  Kai's guess: ${guess}  (project ${suggestion.project}${suggestion.repo ? `, repository ${suggestion.repo}` : ""})`
   );
-  if (await confirm(`  Is that the address you open in your browser?`, true)) return detected;
+  if (await confirm(`  Is that the address you open in your browser?`, true)) return suggestion;
   const typed = (
     await ask(`  Web address (https://<host>[/virtual dir]/<collection>), Enter to cancel: `)
   ).trim();
@@ -599,8 +621,8 @@ async function confirmSuggestedRemote(
   const account = provider.buildAccount({ baseUrl: typed, authMethod: "az" });
   return {
     org: account.org,
-    project: detected.project,
-    repo: detected.repo,
+    project: suggestion.project,
+    repo: suggestion.repo,
     baseUrl: account.baseUrl,
   };
 }

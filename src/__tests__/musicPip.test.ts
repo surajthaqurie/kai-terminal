@@ -96,15 +96,17 @@ describe("music picture-in-picture", () => {
     expect(pipOpacity(true, 100)).toBe(1);
   });
 
-  it("uses the same WebView2 arguments for both windows, with autoplay allowed", () => {
+  it("keeps the WebView2 arguments in one place, with autoplay allowed", () => {
     const rs = fs.readFileSync(path.resolve(__dirname, "../../src-tauri/src/lib.rs"), "utf-8");
     const conf = JSON.parse(
       fs.readFileSync(path.resolve(__dirname, "../../src-tauri/tauri.windows.conf.json"), "utf-8")
     );
     const args: string = conf.app.windows[0].additionalBrowserArgs;
     expect(args).toContain("--autoplay-policy=no-user-gesture-required");
-    // WebView2 refuses a second window whose arguments differ from the first.
-    expect(rs).toContain(`"${args}"`);
-    expect(rs).toContain(".additional_browser_args(WEBVIEW2_BROWSER_ARGS)");
+    // WebView2 refuses a second window whose arguments differ from the first, so the
+    // music window reads the very same string instead of keeping a copy that can drift.
+    expect(rs).toContain('include_str!("../tauri.windows.conf.json")');
+    expect(rs).toContain(".additional_browser_args(&args)");
+    expect(rs).not.toContain("--disable-features");
   });
 });

@@ -175,6 +175,12 @@ jobs:
       - name: Install Frontend Dependencies
         run: npm ci
 
+      # Ship Node.js inside the app so the bundled kai CLI (Integrations tab,
+      # `kai` launcher) runs on machines with no Node installed. Checksum-verified;
+      # see scripts/fetch-node.mjs. The matching Tauri config adds it to resources.
+      - name: Fetch Node.js for the bundle
+        run: node scripts/fetch-node.mjs
+
       - name: Build Tauri bundles (${{ matrix.bundles }})
         id: tauri_build
         uses: tauri-apps/tauri-action@v0
@@ -189,7 +195,7 @@ jobs:
           TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
         with:
           projectPath: .
-          args: --bundles ${{ matrix.bundles }}
+          args: --bundles ${{ matrix.bundles }} --config src-tauri/tauri.bundled-node.conf.json
 
       - name: Release stale macOS disk images before retry
         if: startsWith(matrix.os, 'macos') && steps.tauri_build.outcome == 'failure'
@@ -217,7 +223,7 @@ jobs:
           TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
         with:
           projectPath: .
-          args: --bundles ${{ matrix.bundles }}
+          args: --bundles ${{ matrix.bundles }} --config src-tauri/tauri.bundled-node.conf.json
 
       - name: Optional Windows Authenticode signing (only when secrets exist)
         if: runner.os == 'Windows'
@@ -267,7 +273,22 @@ jobs:
           DMG=$(find src-tauri/target/release/bundle/dmg -maxdepth 1 -name "*.dmg" | head -n 1)
           test -n "${APP_BUNDLE:-}" || { echo "No .app bundle found"; exit 1; }
           test -n "${DMG:-}" || { echo "No .dmg found"; exit 1; }
-          codesign --deep --force --options runtime --sign "$APPLE_SIGNING_IDENTITY" "$APP_BUNDLE"
+          # The bundled Node.js runs a JIT, which the hardened runtime blocks unless
+          # the binary is signed with these entitlements. Sign it first (not --deep,
+          # which would re-sign it without them), then seal the app around it.
+          cat > "$RUNNER_TEMP/node.entitlements" <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+          <key>com.apple.security.cs.allow-jit</key><true/>
+          <key>com.apple.security.cs.allow-unsigned-executable-memory</key><true/>
+          </dict></plist>
+          PLIST
+          NODE_BIN=$(find "$APP_BUNDLE" -type f -name node -path "*resources/node/*" | head -n 1)
+          if [ -n "${NODE_BIN:-}" ]; then
+            codesign --force --options runtime --entitlements "$RUNNER_TEMP/node.entitlements" --sign "$APPLE_SIGNING_IDENTITY" "$NODE_BIN"
+          fi
+          codesign --force --options runtime --sign "$APPLE_SIGNING_IDENTITY" "$APP_BUNDLE"
           xcrun notarytool submit "$DMG" --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
           xcrun stapler staple "$DMG"
 

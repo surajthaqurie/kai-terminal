@@ -201,15 +201,15 @@ describe("Context Retrieval and Prompt Assembly Hardening", () => {
         {
           "src/large1.ts":
             "export const v1 = " +
-            JSON.stringify(Array.from({ length: 80 }, (_, i) => `item_${i}`)) +
+            JSON.stringify(Array.from({ length: 300 }, (_, i) => `item_${i}`)) +
             ";\n",
           "src/large2.ts":
             "export const v2 = " +
-            JSON.stringify(Array.from({ length: 80 }, (_, i) => `item_${i}`)) +
+            JSON.stringify(Array.from({ length: 300 }, (_, i) => `item_${i}`)) +
             ";\n",
           "src/large3.ts":
             "export const v3 = " +
-            JSON.stringify(Array.from({ length: 80 }, (_, i) => `item_${i}`)) +
+            JSON.stringify(Array.from({ length: 300 }, (_, i) => `item_${i}`)) +
             ";\n",
         },
         ["Important rule A: preserve invariants.", "Important rule B: verify errors."]
@@ -218,7 +218,7 @@ describe("Context Retrieval and Prompt Assembly Hardening", () => {
       const meta = registerProject(repo);
       const index = await indexProject(meta);
 
-      const tightBudget = 600;
+      const tightBudget = 250;
       const { contextPackage, renderedPrompt } = assembleContext(index, {
         task: "explain item collections",
         tokenBudget: tightBudget,

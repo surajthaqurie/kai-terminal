@@ -2,9 +2,11 @@ import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import { readClipboardAttachments, splitPastedPaths } from "../../core/teams/clipboard";
+import { fileUploadSource } from "../../core/teams/fileSource";
 import {
   MAX_FILE_BYTES,
   MAX_UPLOAD_BYTES,
+  describeBytes,
   type ChannelInfo,
   type ChatInfo,
   type GraphClient,
@@ -76,7 +78,11 @@ export interface ChatOptions {
 
 interface Attachment {
   name: string;
-  bytes: Uint8Array;
+  /** Where it came from; a large file is read from here, a piece at a time, when it is sent. */
+  path: string;
+  size: number;
+  /** The content, held only for a small file (4 MB or less); null for a large one. */
+  bytes: Uint8Array | null;
   mime: string;
   image: boolean;
 }
@@ -127,7 +133,7 @@ interface TeamNode {
 }
 
 const MAX_ATTACHMENTS = 4;
-const MAX_FILE_MB = MAX_FILE_BYTES / (1024 * 1024);
+const MAX_FILE_TEXT = describeBytes(MAX_FILE_BYTES);
 const MAX_INLINE_PREFETCH = 8;
 const WATCH_FETCH = 5;
 const LOCAL_MISS_LIMIT = 3;
@@ -783,7 +789,7 @@ export class ChatApp {
       cursor: this.cursor,
       pending: this.pending.map((p) => ({
         name: p.name,
-        size: formatSize(p.bytes.byteLength),
+        size: formatSize(p.size),
         image: p.image,
       })),
       notice: this.notice,
@@ -1031,29 +1037,36 @@ export class ChatApp {
         }
         if (st.size > MAX_FILE_BYTES) {
           this.setNotice(
-            `${name} is larger than ${MAX_FILE_MB} MB, which is the most Kai can send.`,
+            `${name} is larger than ${MAX_FILE_TEXT}, which is the most Kai can send.`,
             "error"
           );
           continue;
         }
-        // Everything attached is held in memory until it is sent.
-        const held = this.pending.reduce((n, a) => n + a.bytes.byteLength, 0);
-        if (held + st.size > MAX_FILE_BYTES) {
-          this.setNotice(
-            `${name} would take this message past ${MAX_FILE_MB} MB in total. Send what is attached first.`,
-            "error"
-          );
-          continue;
+        // Only a small file is read now (it may be a picture that goes inside the message). A
+        // larger one is read from disk a piece at a time while it uploads, so what is attached
+        // never takes memory in proportion to its size.
+        if (st.size <= MAX_UPLOAD_BYTES) {
+          const bytes = fs.readFileSync(p);
+          const info = sniffImage(bytes);
+          this.pending.push({
+            name,
+            path: p,
+            size: bytes.byteLength,
+            bytes,
+            mime: info?.mime ?? "application/octet-stream",
+            image: info !== null,
+          });
+        } else {
+          // A picture over 4 MB cannot ride inside the message; it is uploaded and sent as a link like any file.
+          this.pending.push({
+            name,
+            path: p,
+            size: st.size,
+            bytes: null,
+            mime: "application/octet-stream",
+            image: false,
+          });
         }
-        const bytes = fs.readFileSync(p);
-        const info = sniffImage(bytes);
-        this.pending.push({
-          name,
-          bytes,
-          mime: info?.mime ?? "application/octet-stream",
-          // A picture rides inside the message only up to 4 MB; a bigger one is uploaded and sent as a link.
-          image: info !== null && bytes.byteLength <= MAX_UPLOAD_BYTES,
-        });
         added++;
       } catch {
         this.setNotice(`Could not read ${name}.`, "error");
@@ -1108,7 +1121,8 @@ export class ChatApp {
       for (const f of files) {
         this.setNotice(`Uploading ${f.name}...`, "info", 0);
         let shown = -1;
-        const url = await this.opts.graph.uploadFile(f.name, f.bytes, (sent, total) => {
+        const content = f.bytes ?? fileUploadSource(f.path, f.size);
+        const url = await this.opts.graph.uploadFile(f.name, content, (sent, total) => {
           const pct = total > 0 ? Math.floor((sent / total) * 100) : 100;
           if (total <= MAX_UPLOAD_BYTES || pct === shown || pct >= 100) return;
           shown = pct;
@@ -1119,7 +1133,9 @@ export class ChatApp {
       this.setNotice("Sending...", "info", 0);
       await this.opts.graph.send(conv.target, {
         text,
-        images: images.map((a) => ({ name: a.name, bytes: a.bytes, contentType: a.mime })),
+        images: images.flatMap((a) =>
+          a.bytes ? [{ name: a.name, bytes: a.bytes, contentType: a.mime }] : []
+        ),
         links,
       });
       local.sent = true;

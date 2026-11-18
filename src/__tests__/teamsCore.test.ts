@@ -17,6 +17,7 @@ import {
   saveTeamsClientId,
   teamsSecretKey,
 } from "../core/teams/config";
+import { fileUploadSource } from "../core/teams/fileSource";
 import {
   GraphClient,
   isGraphUrl,
@@ -301,10 +302,11 @@ describe("GraphClient", () => {
 
   it("refuses a file over the upload limit before calling Graph", async () => {
     const { graph, fetchImpl } = make(() => json({}));
-    await expect(graph.uploadFile("huge.bin", new Uint8Array(MAX_FILE_BYTES + 1))).rejects.toThrow(
-      /larger than 250 MB/
-    );
+    // A source that only reports a size: nothing near 2 GB is ever allocated.
+    const huge = { size: MAX_FILE_BYTES + 1, read: vi.fn(async () => new Uint8Array(0)) };
+    await expect(graph.uploadFile("huge.bin", huge)).rejects.toThrow(/larger than 2 GB/);
     expect(fetchImpl).not.toHaveBeenCalled();
+    expect(huge.read).not.toHaveBeenCalled();
   });
 
   describe("upload sessions (files over 4 MB)", () => {
@@ -424,6 +426,87 @@ describe("GraphClient", () => {
       await expect(
         graph.uploadFile("big.bin", new Uint8Array(MAX_UPLOAD_BYTES + 1))
       ).rejects.toThrow(/usable upload address/);
+    });
+
+    it("reads the source one chunk at a time, never all of it at once", async () => {
+      const d = drive();
+      const reads: Array<[number, number]> = [];
+      const source = {
+        size,
+        read: async (start: number, end: number) => {
+          reads.push([start, end]);
+          return new Uint8Array(end - start);
+        },
+      };
+      expect(await d.graph.uploadFile("big.bin", source)).toBe(LINK);
+      expect(reads).toEqual([
+        [0, UPLOAD_CHUNK_BYTES],
+        [UPLOAD_CHUNK_BYTES, UPLOAD_CHUNK_BYTES * 2],
+        [UPLOAD_CHUNK_BYTES * 2, size],
+      ]);
+    });
+
+    it("stops and frees the session when the source changed or cannot be read", async () => {
+      const d = drive();
+      const shrunk = {
+        size,
+        read: async (start: number, end: number) => new Uint8Array(Math.max(0, end - start - 1)),
+      };
+      await expect(d.graph.uploadFile("big.bin", shrunk)).rejects.toThrow(/changed while/);
+      expect(d.calls.some((c) => c.method === "DELETE")).toBe(true);
+      expect(d.puts()).toBe(0);
+
+      const d2 = drive();
+      const broken = {
+        size,
+        read: async () => {
+          throw new Error("EIO");
+        },
+      };
+      await expect(d2.graph.uploadFile("big.bin", broken)).rejects.toThrow(/could not be read/);
+      expect(d2.calls.some((c) => c.method === "DELETE")).toBe(true);
+    });
+
+    it("uploads a file straight from disk, only reading the chunk it sends", async () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kai-src-"));
+      try {
+        const file = path.join(dir, "big.bin");
+        const content = Buffer.alloc(size);
+        for (let i = 0; i < size; i += 4099) content[i] = (i / 4099) % 251;
+        fs.writeFileSync(file, content);
+        const d = drive();
+        expect(await d.graph.uploadFile("big.bin", fileUploadSource(file, size))).toBe(LINK);
+        expect(d.puts()).toBe(3);
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  });
+
+  describe("fileUploadSource", () => {
+    let dir: string;
+    beforeEach(() => {
+      dir = fs.mkdtempSync(path.join(os.tmpdir(), "kai-src-"));
+    });
+    afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+    it("returns exactly the requested stretch of the file", async () => {
+      const file = path.join(dir, "f.bin");
+      fs.writeFileSync(file, Buffer.from("0123456789"));
+      const src = fileUploadSource(file, 10);
+      expect(src.size).toBe(10);
+      expect(Buffer.from(await src.read(2, 6)).toString()).toBe("2345");
+      expect(Buffer.from(await src.read(0, 10)).toString()).toBe("0123456789");
+    });
+
+    it("returns less than asked for when the file got shorter, and errors when it is gone", async () => {
+      const file = path.join(dir, "f.bin");
+      fs.writeFileSync(file, Buffer.from("0123456789"));
+      const src = fileUploadSource(file, 10);
+      fs.truncateSync(file, 4);
+      expect((await src.read(0, 10)).byteLength).toBe(4);
+      fs.rmSync(file);
+      await expect(src.read(0, 4)).rejects.toThrow(/could not be read/);
     });
   });
 

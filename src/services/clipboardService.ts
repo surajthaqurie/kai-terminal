@@ -10,13 +10,42 @@ import { isTauriAvailable } from "./ptyService";
 export async function readClipboardText(): Promise<string> {
   if (isTauriAvailable()) {
     try {
-      const { invoke } = await import("@tauri-apps/api/core");
-      return await invoke<string>("read_clipboard_text_cmd");
+      return await readClipboardTextInPieces();
     } catch {
       // fall through to the WebView API
     }
   }
   return navigator.clipboard.readText();
+}
+
+/** Largest piece asked of the backend per call (bytes); the backend may send less. */
+export const CLIPBOARD_PIECE_BYTES = 4 * 1024 * 1024;
+
+/**
+ * The backend reads the clipboard once and hands it over in pieces, so a paste
+ * of any size never travels as one huge IPC message (and is never cut off).
+ */
+async function readClipboardTextInPieces(): Promise<string> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  const { id, len } = await invoke<{ id: number; len: number }>("clipboard_text_begin_cmd");
+  try {
+    const parts: string[] = [];
+    let offset = 0;
+    while (offset < len) {
+      const piece = await invoke<{ text: string; next: number }>("clipboard_text_chunk_cmd", {
+        id,
+        offset,
+        max: CLIPBOARD_PIECE_BYTES,
+      });
+      if (piece.next <= offset) break;
+      parts.push(piece.text);
+      offset = piece.next;
+    }
+    return parts.join("");
+  } finally {
+    // Free the held text; a failure here must not hide the paste.
+    await invoke("clipboard_text_end_cmd", { id }).catch(() => {});
+  }
 }
 
 /**

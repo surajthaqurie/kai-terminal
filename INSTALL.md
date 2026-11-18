@@ -105,9 +105,9 @@ Manifests for non-Debian formats are located in the `packaging/` folder. Snap an
    ```powershell
    kai --version
    ```
-   The launcher needs Node.js 20+ at call time. If `kai --version` reports
-   Node is missing, install Node LTS from https://nodejs.org, then run
-   `kai --version` again in a new terminal.
+   Installers ship their own Node.js for the launcher, so nothing else needs
+   installing. (A build from source needs Node.js 20+ on PATH; if `kai --version`
+   reports Node is missing, install Node LTS from https://nodejs.org.)
 5. Windows 11 includes the required WebView2 runtime by default. On Windows 10, if prompted, install Microsoft WebView2 Runtime.
 
 ---

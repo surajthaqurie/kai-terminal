@@ -1,0 +1,5 @@
+{
+  "bundle": {
+    "resources": ["../dist/cli/index.js", "../dist/cli/chunks/*.js", "resources/node/*"]
+  }
+}

@@ -215,14 +215,31 @@ export async function estimateChatTokensAsync(
   };
 }
 
+/** Tokens a run of whitespace adds: see the heuristic in `estimateTokens`. */
+function whitespaceTokens(run: string): number {
+  const lastNewline = run.lastIndexOf("\n");
+  if (lastNewline === -1) {
+    const extra = run.length - 1; // one leading space is part of the next token
+    return extra > 0 ? Math.ceil(extra / WHITESPACE_RUN_TOKEN_CHARS) : 0;
+  }
+  let newlines = 0;
+  for (let i = run.indexOf("\n"); i !== -1; i = run.indexOf("\n", i + 1)) newlines++;
+  const indent = run.length - lastNewline - 1;
+  return newlines + Math.floor(indent / WHITESPACE_RUN_TOKEN_CHARS);
+}
+
+/** Spaces that fit in one token when a run is long (indentation): vocabularies merge runs of up to ~16. */
+const WHITESPACE_RUN_TOKEN_CHARS = 16;
+
 /**
  * Deterministic token count that distinguishes measured counts from estimates.
  *
  * Without a tokenizer the result is a character-class HEURISTIC (word, symbol
  * and whitespace runs), not a model tokenizer. Measured against the bundled
- * o200k and cl100k vocabularies on this repository's source and Markdown it
- * counts about 1.7 to 1.9 times as many tokens: deliberately conservative, so
- * a budget sized with it is not overrun, but not a size to quote. Use it for
+ * o200k and cl100k vocabularies on this repository's source and Markdown files
+ * it counts about 1.3 to 1.4 times as many tokens, and not one file came out
+ * lower than the tokenizer's count: deliberately conservative, so a budget
+ * sized with it is not overrun, but not a size to quote. Use it for
  * budgeting and relative sizes only; `isEstimate` is true for it and false only
  * when a tokenizer (a registered one, or `estimateModelTokens` for an OpenAI
  * model whose bundled vocabulary is loaded) produced the number.
@@ -269,16 +286,18 @@ export function estimateTokens(
   }
 
   // Heuristic: runs of word characters, punctuation and whitespace are counted
-  // with fixed per-run weights (long words are split at ~3.8 chars, whitespace
-  // at 4). The constants are rules of thumb, not measured against a tokenizer.
+  // with fixed per-run weights (long words are split at ~3.8 chars). Whitespace
+  // follows how BPE vocabularies treat it, which is what the calibration above
+  // measured: a single space rides on the next token for free, a newline and the
+  // indentation after it merge into about one token per line (very deep
+  // indentation costs a little more).
   const tokens = text.match(/\w+|[^\w\s]+|\s+/g);
   let estimated = 0;
 
   if (tokens) {
     for (const chunk of tokens) {
       if (/^\s+$/.test(chunk)) {
-        // Repeated spaces/newlines (common in code indentation)
-        estimated += Math.ceil(chunk.length / 4);
+        estimated += whitespaceTokens(chunk);
       } else if (chunk.length > 4) {
         // Longer words or tokens are subword-tokenized
         estimated += Math.ceil(chunk.length / 3.8);

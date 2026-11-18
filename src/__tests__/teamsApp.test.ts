@@ -245,15 +245,57 @@ describe("ChatApp", () => {
     await t.stop();
   });
 
-  it("inserts pasted text that is not a file, and refuses files over 250 MB", async () => {
+  it("inserts pasted text that is not a file, and refuses files over 2 GB", async () => {
     const big = path.join(dir, "big.bin");
-    fs.writeFileSync(big, "");
-    fs.truncateSync(big, 250 * 1024 * 1024 + 1); // sparse: never read, only measured
+    fs.writeFileSync(big, "x");
+    // Only measured, never read, so report a size instead of making a 2 GB file.
+    const realStat = fs.statSync.bind(fs);
+    const stat = vi.spyOn(fs, "statSync").mockImplementation(((p: fs.PathLike, o?: unknown) => {
+      const st = realStat(p, o as never) as fs.Stats;
+      return String(p) === big ? Object.assign(Object.create(st), { size: 2 * 1024 ** 3 + 1 }) : st;
+    }) as typeof fs.statSync);
+    try {
+      const t = await start();
+      t.app.handleEvent({ type: "paste", text: "just some words" });
+      await waitFor(() => expect(t.screen.text).toContain("just some words"));
+      t.app.handleEvent({ type: "paste", text: big });
+      await waitFor(() => expect(t.screen.text).toContain("larger than 2 GB"));
+      await t.stop();
+    } finally {
+      stat.mockRestore();
+    }
+  });
+
+  it("reads a large file from disk while it uploads instead of holding it in memory", async () => {
+    const big = path.join(dir, "movie.bin");
+    const content = Buffer.alloc(5 * 1024 * 1024 + 7, 7);
+    fs.writeFileSync(big, content);
     const t = await start();
-    t.app.handleEvent({ type: "paste", text: "just some words" });
-    await waitFor(() => expect(t.screen.text).toContain("just some words"));
     t.app.handleEvent({ type: "paste", text: big });
-    await waitFor(() => expect(t.screen.text).toContain("larger than 250 MB"));
+    await waitFor(() => expect(t.screen.text).toContain("movie.bin"));
+    key(t.app, "enter");
+    await waitFor(() => expect(t.graph.send).toHaveBeenCalled());
+    const source = (t.graph.uploadFile.mock.calls as unknown[][])[0][1] as {
+      size: number;
+      read(start: number, end: number): Promise<Uint8Array>;
+    };
+    expect(source).not.toBeInstanceOf(Uint8Array); // not the file's bytes: a way to read them
+    expect(source.size).toBe(content.length);
+    expect(Buffer.from(await source.read(content.length - 7, content.length))).toEqual(
+      content.subarray(content.length - 7)
+    );
+    await t.stop();
+  });
+
+  it("lets several large files go in one message (nothing is held in memory)", async () => {
+    const a = path.join(dir, "a.bin");
+    const b = path.join(dir, "b.bin");
+    fs.writeFileSync(a, Buffer.alloc(5 * 1024 * 1024));
+    fs.writeFileSync(b, Buffer.alloc(5 * 1024 * 1024));
+    const t = await start();
+    t.app.handleEvent({ type: "paste", text: `"${a}" "${b}"` });
+    await waitFor(() => expect(t.screen.text).toContain("b.bin"));
+    expect(t.screen.text).not.toContain("in total");
     await t.stop();
   });
 

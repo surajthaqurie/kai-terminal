@@ -17,8 +17,10 @@
 //! (callers must run it on a background thread), and never panics (release
 //! builds use `panic = "abort"`).
 //!
-//! The launcher still needs Node.js 20+ at *call* time; when Node is missing
-//! the shim prints where to get it instead of failing cryptically.
+//! The launcher needs Node.js 20+ at *call* time. Release builds ship their own
+//! Node.js (see [`register_bundled_node`]) and use it first; a build without one
+//! falls back to the Node on `PATH`, and when that is missing the shim prints
+//! where to get it instead of failing cryptically.
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -85,6 +87,38 @@ fn is_file(p: &Path) -> bool {
     std::fs::metadata(p).map(|m| m.is_file()).unwrap_or(false)
 }
 
+/// Node.js binary shipped inside release builds of the app (`scripts/fetch-node.mjs`
+/// puts it in `src-tauri/resources/node/` and `tauri.bundled-node.conf.json` adds it
+/// to the bundle's resources). Dev checkouts and source builds do not have one.
+static BUNDLED_NODE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// Where the bundled Node.js sits inside the Tauri resource dir, probing the
+/// layouts Tauri may use (see [`find_bundled_cli`] for why several).
+pub fn find_bundled_node(resource_dir: &Path) -> Option<PathBuf> {
+    let exe = if cfg!(target_os = "windows") {
+        "node.exe"
+    } else {
+        "node"
+    };
+    for rel in ["resources/node", "_up_/resources/node", "node"] {
+        let p = resource_dir.join(rel).join(exe);
+        if is_file(&p) {
+            return Some(p);
+        }
+    }
+    None
+}
+
+/// Remembers the app's bundled Node.js (when it ships one) so that
+/// [`find_node_exe`] prefers it: the CLI is built for that exact version, and a
+/// machine without Node needs no install. Returns whether one was found.
+pub fn register_bundled_node(resource_dir: &Path) -> bool {
+    match find_bundled_node(resource_dir) {
+        Some(p) => BUNDLED_NODE.set(p).is_ok() || BUNDLED_NODE.get().is_some(),
+        None => false,
+    }
+}
+
 /// Well-known Node.js locations probed when `PATH` misses (desktop GUI
 /// launches inherit a minimal PATH).
 fn node_search_dirs() -> Vec<PathBuf> {
@@ -122,8 +156,12 @@ fn node_search_dirs() -> Vec<PathBuf> {
     dirs
 }
 
-/// Resolve a `node` executable: live `PATH` first, then well-known spots.
+/// Resolve a `node` executable: the app's bundled one, then live `PATH`, then
+/// well-known spots.
 pub fn find_node_exe() -> Option<String> {
+    if let Some(p) = BUNDLED_NODE.get().filter(|p| is_file(p)) {
+        return Some(p.to_string_lossy().to_string());
+    }
     if let Some(p) = find_on_path("node") {
         return Some(p);
     }
@@ -733,6 +771,29 @@ mod tests {
         std::fs::write(nested.join("index.js"), "cli").unwrap();
         let found = find_bundled_cli(&base).expect("layout dist/cli/index.js");
         assert!(found.ends_with("index.js"));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn test_find_bundled_node_probes_layouts() {
+        let base = std::env::temp_dir().join(format!("kai-node-res-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        assert!(find_bundled_node(&base).is_none());
+        assert!(!register_bundled_node(&base));
+        let exe = if cfg!(target_os = "windows") {
+            "node.exe"
+        } else {
+            "node"
+        };
+        let dir = base.join("resources").join("node");
+        std::fs::create_dir_all(&dir).unwrap();
+        // A directory named like the binary is not a binary.
+        std::fs::create_dir_all(dir.join(exe)).unwrap();
+        assert!(find_bundled_node(&base).is_none());
+        std::fs::remove_dir_all(dir.join(exe)).unwrap();
+        std::fs::write(dir.join(exe), "node").unwrap();
+        let found = find_bundled_node(&base).expect("layout resources/node");
+        assert!(found.ends_with(exe));
         let _ = std::fs::remove_dir_all(&base);
     }
 

@@ -12,6 +12,7 @@ pub mod git;
 pub mod integrations;
 pub mod intelligence;
 pub mod kai_cli;
+pub mod login_path;
 pub mod pty;
 pub mod shell;
 pub mod shutdown;
@@ -114,15 +115,24 @@ const MUSIC_PIP_LABEL: &str = "music-pip";
 #[cfg(feature = "tauri")]
 const MUSIC_PIP_CLOSED_EVENT: &str = "kai-pip:closed";
 
-/// WebView2 browser arguments. Every window in the app shares one WebView2
-/// environment, and WebView2 refuses to create a window whose arguments differ
-/// from the environment's, so this MUST stay identical to `additionalBrowserArgs`
-/// in `tauri.windows.conf.json`. Wry's defaults plus autoplay: the music window
-/// is a fresh page nobody has clicked in yet, and without this the YouTube embed
+/// The Windows window configuration, the single place the WebView2 arguments are
+/// written down (`app.windows[0].additionalBrowserArgs`).
+#[cfg(any(all(feature = "tauri", target_os = "windows"), test))]
+const WINDOWS_CONF: &str = include_str!("../tauri.windows.conf.json");
+
+/// WebView2 browser arguments, read from `tauri.windows.conf.json`. Every window
+/// in the app shares one WebView2 environment, and WebView2 refuses to create a
+/// window whose arguments differ from the environment's, so the music window
+/// takes them from the same file the main window is configured from instead of
+/// keeping a copy. They are wry's defaults plus autoplay: the music window is a
+/// fresh page nobody has clicked in yet, and without autoplay the YouTube embed
 /// it loads (with sound) would be blocked and the song would stop.
-#[cfg(all(feature = "tauri", target_os = "windows"))]
-const WEBVIEW2_BROWSER_ARGS: &str =
-    "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required";
+#[cfg(any(all(feature = "tauri", target_os = "windows"), test))]
+fn webview2_browser_args() -> Option<String> {
+    let conf: serde_json::Value = serde_json::from_str(WINDOWS_CONF).ok()?;
+    let args = conf["app"]["windows"][0]["additionalBrowserArgs"].as_str()?;
+    (!args.trim().is_empty()).then(|| args.to_string())
+}
 
 /// Smallest size of the music window (logical pixels).
 #[cfg(any(feature = "tauri", test))]
@@ -189,15 +199,16 @@ async fn open_music_pip(
     .visible(false)
     .focused(true);
     // A see-through window lets the player's Dim Opacity show the desktop
-    // behind the video (macOS would need Tauri's private API).
-    #[cfg(not(target_os = "macos"))]
+    // behind the video. On macOS this needs Tauri's `macos-private-api`
+    // feature (enabled in Cargo.toml and `tauri.macos.conf.json`).
     let builder = builder
         .transparent(true)
         .background_color(tauri::window::Color(0, 0, 0, 0));
-    #[cfg(target_os = "macos")]
-    let builder = builder.background_color(tauri::window::Color(11, 13, 16, 255));
     #[cfg(target_os = "windows")]
-    let builder = builder.additional_browser_args(WEBVIEW2_BROWSER_ARGS);
+    let builder = match webview2_browser_args() {
+        Some(args) => builder.additional_browser_args(&args),
+        None => builder,
+    };
     let window = builder.build().map_err(|e| e.to_string())?;
 
     let saved = match (x, y) {
@@ -466,8 +477,26 @@ fn open_project_in_editor(
 
 #[cfg(feature = "tauri")]
 #[tauri::command(async)]
-fn read_clipboard_text_cmd() -> Result<String, error::TerminalError> {
-    clipboard::read_clipboard_text()
+fn clipboard_text_begin_cmd() -> Result<clipboard::ClipboardSession, error::TerminalError> {
+    clipboard::clipboard_text_begin()
+}
+
+/// Next piece of the clipboard text held for session `id` (see `clipboard.rs`).
+#[cfg(feature = "tauri")]
+#[tauri::command(async)]
+fn clipboard_text_chunk_cmd(
+    id: u64,
+    offset: usize,
+    max: usize,
+) -> Result<clipboard::ClipboardChunk, error::TerminalError> {
+    clipboard::clipboard_text_chunk(id, offset, max)
+}
+
+/// Release the clipboard text held for session `id`.
+#[cfg(feature = "tauri")]
+#[tauri::command]
+fn clipboard_text_end_cmd(id: u64) {
+    clipboard::clipboard_text_end(id);
 }
 
 /// Paths of files on the clipboard, or of a PNG saved from a copied image.
@@ -600,6 +629,11 @@ fn list_sessions(state: State<'_, PtyManager>) -> Vec<PtySessionInfo> {
 
 #[cfg(feature = "tauri")]
 pub fn run() {
+    // A menu/Dock launch has a short PATH; take the login shell's so `az`,
+    // `node` and `git` are found as in a terminal. Before any other thread starts.
+    #[cfg(unix)]
+    login_path::apply_login_shell_path();
+
     let pty_manager = PtyManager::new();
 
     // Warm the Windows build-number cache off the UI thread so the first
@@ -640,6 +674,11 @@ pub fn run() {
             }
         }))
         .setup(|app| {
+            // Release builds carry their own Node.js for the bundled CLI; use it
+            // before anything looks for `node` (cheap: a few `stat` calls).
+            if let Ok(resource_dir) = app.path().resource_dir() {
+                kai_cli::register_bundled_node(&resource_dir);
+            }
             call_watch::spawn_call_watcher(app.handle().clone());
             // First-run repair: installer-only users have no `kai` on PATH.
             // Off the UI thread so a slow PowerShell cold start can never
@@ -694,7 +733,9 @@ pub fn run() {
             open_project_in_editor,
             detect_installed_editors_cmd,
             is_call_active_cmd,
-            read_clipboard_text_cmd,
+            clipboard_text_begin_cmd,
+            clipboard_text_chunk_cmd,
+            clipboard_text_end_cmd,
             read_clipboard_attachments_cmd,
             open_terminal_link_cmd,
             list_system_fonts_cmd,
@@ -766,5 +807,17 @@ mod music_pip_size_tests {
             music_pip_size(Some(4000.0), Some(3000.0), Some((1920.0, 1080.0))),
             (1920.0, 1080.0)
         );
+    }
+}
+
+#[cfg(test)]
+mod webview2_args_tests {
+    use super::webview2_browser_args;
+
+    #[test]
+    fn come_from_the_windows_config_with_autoplay_allowed() {
+        let args =
+            webview2_browser_args().expect("tauri.windows.conf.json sets additionalBrowserArgs");
+        assert!(args.contains("--autoplay-policy=no-user-gesture-required"));
     }
 }

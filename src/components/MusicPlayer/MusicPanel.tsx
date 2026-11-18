@@ -96,6 +96,10 @@ function isOnline(): boolean {
 
 /** Songs shown per page in the playlist drawer before "Load more". */
 const PLAYLIST_PAGE_SIZE = 12;
+/** Longest a rebuilt embed may show "buffering" while waiting for its first report. */
+const RESUME_GAP_MAX_MS = 5000;
+/** How long a paused embed stays muted while it is nudged to its exact fraction. */
+const PAUSED_SEEK_RESTORE_MS = 1500;
 
 /**
  * Music Time drawer (272px): one search box, the YouTube video, and four
@@ -159,6 +163,12 @@ export const MusicPanel: FC<MusicPanelProps> = ({
   // The embed URL takes whole seconds; `resumeExactRef` keeps the fraction.
   const rebuildStartRef = useRef(0);
   const resumeExactRef = useRef<number | null>(null);
+  // True while a rebuilt embed that resumes a playing song has not reported
+  // yet: the gap between the old embed going away and the new one answering.
+  const resumingRef = useRef(false);
+  // Set while a paused embed is being nudged to its exact fraction: it is
+  // muted for the moment the seek may start it, and this undoes that.
+  const restoreAfterPausedSeekRef = useRef<(() => void) | null>(null);
   // Favorite songs, persisted in localStorage; the heart button in the
   // controls and the Favorites tab in the drawer both drive this list.
   const [favorites, setFavorites] = useState<MusicTrack[]>(() => loadFavorites());
@@ -229,6 +239,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     // A rebuild that resumes mid-song (loop-off, moving the video to or from
     // the picture-in-picture window) must not start a paused song playing.
     const autoplay = start > 0 ? playingRef.current : true;
+    resumingRef.current = start > 0 && autoplay;
     return embedSrcForTrack(track, mutedRef.current, loopRef.current, start, autoplay);
     // Only the track's identity reloads the embed; a title update must not.
     // Moving the video between windows rebuilds it too (`pipActive`).
@@ -304,11 +315,24 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     // separate messages: remember both to compute progress from either.
     let knownTime = 0;
     let knownDuration = 0;
+    // A rebuilt embed that resumes a playing song shows "buffering" until it
+    // answers (the mini window's bar holds still instead of running ahead of a
+    // video that has not started). The timer ends it if no answer ever comes.
+    let resumeGap = Boolean(src) && resumingRef.current;
+    resumingRef.current = false;
+    let resumeGapTimer: number | undefined;
     setPlaybackError(null);
-    setBuffering(false);
+    setBuffering(resumeGap);
     if (!src) {
       report(0);
       return;
+    }
+    if (resumeGap) {
+      resumeGapTimer = window.setTimeout(() => {
+        if (!resumeGap) return;
+        resumeGap = false;
+        setBuffering(false);
+      }, RESUME_GAP_MAX_MS);
     }
     if (!canControlEmbed()) {
       // The embed ignores commands from this page's origin (macOS / Linux
@@ -328,6 +352,11 @@ export const MusicPanel: FC<MusicPanelProps> = ({
       const t = parseYouTubePlayerMessage(data);
       if (!t) return;
       received = true;
+      if (resumeGap && (t.playerState !== undefined || t.currentTime !== undefined)) {
+        resumeGap = false;
+        window.clearTimeout(resumeGapTimer);
+        setBuffering(false);
+      }
       if (t.error !== undefined) {
         // The embed refused to play (e.g. embedding disabled by the owner).
         // Never leave the UI claiming playback that cannot happen.
@@ -339,13 +368,28 @@ export const MusicPanel: FC<MusicPanelProps> = ({
         return;
       }
       if (t.currentTime !== undefined) {
-        // Catch up the dropped fraction once; only while playing (seeking a cued embed starts it).
+        // Catch up the dropped fraction once.
         const target = resumeExactRef.current;
         if (target !== null) {
           resumeExactRef.current = null;
           const behind = target - t.currentTime;
-          if (playingRef.current && behind > 0.2 && behind < 1.5) {
-            sendCommand("seekTo", [target, true]);
+          if (behind > 0.2 && behind < 1.5) {
+            if (playingRef.current) {
+              sendCommand("seekTo", [target, true]);
+            } else {
+              // Seeking a cued embed starts it, so: mute, seek, pause at once,
+              // and give the sound back when the pause lands (or after a moment).
+              sendCommand("mute");
+              sendCommand("seekTo", [target, true]);
+              sendCommand("pauseVideo");
+              const restore = () => {
+                restoreAfterPausedSeekRef.current = null;
+                window.clearTimeout(restoreTimer);
+                if (!mutedRef.current) sendCommand("unMute");
+              };
+              const restoreTimer = window.setTimeout(restore, PAUSED_SEEK_RESTORE_MS);
+              restoreAfterPausedSeekRef.current = restore;
+            }
           }
         }
         setCurrentTime(t.currentTime);
@@ -353,8 +397,10 @@ export const MusicPanel: FC<MusicPanelProps> = ({
       if (t.duration !== undefined) setDuration(t.duration);
       if (t.playerState !== undefined) setBuffering(t.playerState === 3);
       if (t.playerState === 1) setPlaying(true);
-      else if (t.playerState === 2) setPlaying(false);
-      else if (t.playerState === 0) {
+      else if (t.playerState === 2) {
+        setPlaying(false);
+        restoreAfterPausedSeekRef.current?.();
+      } else if (t.playerState === 0) {
         setPlaying(false);
         report(100);
         if (loopRef.current) {
@@ -419,6 +465,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
       unlistenPip?.();
       window.removeEventListener("message", onMessage);
       window.clearInterval(timer);
+      window.clearTimeout(resumeGapTimer);
       report(0);
     };
     // `pipActive`: re-arm the handshake when the video returns to this panel.

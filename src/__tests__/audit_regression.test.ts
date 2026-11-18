@@ -47,6 +47,16 @@ describe("audit regression: indexer security & correctness", () => {
     expect(isSensitiveContent("token = ghp_abcdefghijklmnopqrstuvwxyz123456")).toBe(true);
   });
 
+  it("still flags the AWS secret key setting name, and the detector's own source is not flagged", () => {
+    const keyName = ["aws", "secret", "access", "key"].join("_");
+    expect(isSensitiveContent(`${keyName} = abc`)).toBe(true);
+    expect(isSensitiveContent(`${keyName.toUpperCase()}=abc`)).toBe(true);
+    // The file that defines the secret patterns must be indexable and readable
+    // through the MCP tools, so it must not match its own patterns.
+    const source = fs.readFileSync(path.resolve(__dirname, "../core/indexer.ts"), "utf8");
+    expect(isSensitiveContent(source)).toBe(false);
+  });
+
   it("does not treat package-lock.json as binary and indexes it", async () => {
     const dir = makeTempProject({ "package-lock.json": '{"name":"x"}\n' });
     const meta = registerProject(dir);

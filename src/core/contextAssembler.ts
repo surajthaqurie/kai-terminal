@@ -477,14 +477,19 @@ export function assembleContext(
           : cannotTruncateNote
       );
     } else if (omissions.length > 0 || sourcesShortened) {
-      contextPackage.knownLimitations.push(
+      const reducedNote = (): string =>
         `Context was reduced to fit the ${budgetLabel}; ` +
-          `${omissions.length} item(s) omitted (see Omissions section)` +
-          (sourcesShortened
-            ? "; the best-matching source was shortened (see its line range)."
-            : ".")
-      );
+        `${omissions.length} item(s) omitted (see Omissions section)` +
+        (sourcesShortened ? "; the best-matching source was shortened (see its line range)." : ".");
+      const noteIndex = contextPackage.knownLimitations.push(reducedNote()) - 1;
       renderedPrompt = render();
+      // The caveat above and the omission lines were not part of what was measured, so a
+      // prompt that fit exactly can now be a few tokens over. Give up another optional item
+      // before cutting text, which could sever the metrics footer.
+      while (over() && dropOne()) {
+        contextPackage.knownLimitations[noteIndex] = reducedNote();
+        renderedPrompt = render();
+      }
       if (over()) {
         const applied = hardTruncate();
         contextPackage.knownLimitations.push(

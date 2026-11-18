@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runCli } from "../cli/index";
+import { setServerProbeForTests } from "../cli/commands/integration";
 import { findBinding, listAccounts, saveAccount } from "../core/integrations/config";
 import { setProviderForTests } from "../core/integrations/providers";
 import { bind } from "../core/integrations/service";
@@ -101,6 +102,8 @@ beforeEach(() => {
   vi.spyOn(console, "log").mockImplementation((...a) => void out.push(a.join(" ")));
   vi.spyOn(console, "error").mockImplementation((...a) => void err.push(a.join(" ")));
   setProviderForTests("azure-devops", writableAzure());
+  // No test reaches for the network: by default nothing answers, so the guess stays a guess.
+  setServerProbeForTests(async (detected) => ({ detected, verified: false }));
   hoisted.agent.refuse = false;
   hoisted.term.interactive = false;
   hoisted.term.answers = [];
@@ -112,6 +115,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
   setProviderForTests("azure-devops", null);
+  setServerProbeForTests(null);
   cleanups.splice(0).forEach((c) => c());
   agents.restore();
   env.restore();
@@ -447,6 +451,41 @@ describe("kai integration azure: a Server SSH remote", () => {
     expect(res.out).toContain("Azure DevOps Server signs in with an access token");
     expect(res.err).toContain("Cancelled.");
     expect(listAccounts("azure-devops").map((a) => a.id)).toEqual(["azure-devops:contoso"]);
+  });
+
+  it("offers the address an Azure DevOps Server answers at instead of the guess, and says it found it", async () => {
+    setServerProbeForTests(async (detected) => ({
+      detected: { ...detected, baseUrl: "http://tfs.corp.local:8080/tfs/DefaultCollection" },
+      verified: true,
+    }));
+    const dir = repo(SSH_REMOTE);
+    hoisted.term.interactive = true;
+    hoisted.term.answers = [true];
+    hoisted.term.hidden = null;
+    const res = await kai("integration", "azure", dir, "--no-agents");
+    expect(res.out).toContain(
+      "Found: http://tfs.corp.local:8080/tfs/DefaultCollection  (an Azure DevOps Server answers there"
+    );
+    expect(res.out).not.toContain("Kai's guess");
+    expect(res.out).toContain("Azure DevOps Server signs in with an access token");
+  });
+
+  it("names the address it found in the command to run when it cannot ask", async () => {
+    setServerProbeForTests(async (detected) => ({
+      detected: { ...detected, baseUrl: "http://tfs.corp.local:8080/tfs/DefaultCollection" },
+      verified: true,
+    }));
+    const dir = repo(SSH_REMOTE);
+    const res = await kai("integration", "azure", dir, "--yes", "--no-agents");
+    expect(res.code).toBe(1);
+    expect(res.err).toContain(
+      "an Azure DevOps Server answers at http://tfs.corp.local:8080/tfs/DefaultCollection"
+    );
+    expect(res.err).not.toContain("only a guess");
+    expect(res.err).toContain(
+      "--server-url http://tfs.corp.local:8080/tfs/DefaultCollection --project"
+    );
+    expect(findBinding(dir)).toBeNull(); // still nothing signed in to
   });
 
   it("takes a typed address when the guess is declined, and stops when none is given", async () => {

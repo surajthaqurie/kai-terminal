@@ -35,3 +35,6 @@ packaging/build/
 *.snap
 build-dir/
 .flatpak-builder/
+
+# Node.js binary fetched by scripts/fetch-node.mjs for release builds
+src-tauri/resources/node/

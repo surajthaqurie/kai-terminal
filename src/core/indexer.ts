@@ -211,6 +211,8 @@ export function isBinaryFile(filename: string, sampleBuffer?: Buffer): boolean {
   return false;
 }
 
+const AWS_SECRET_KEY_NAME = new RegExp("aws_secret_access_" + "key", "i");
+
 /**
  * Best-effort detection of high-confidence secret material inside file
  * content. Filename filtering alone is insufficient: an `app.ts` containing
@@ -231,7 +233,10 @@ export function isSensitiveContent(content: string): boolean {
     return true;
   }
   if (/AKIA[0-9A-Z]{16}/.test(content)) return true; // AWS access key id
-  if (/aws_secret_access_key/i.test(content)) return true;
+  // Built at runtime, like the key headers above, so this source file does not
+  // contain the literal it searches for and stays readable through the index and
+  // `kai_read_range`.
+  if (AWS_SECRET_KEY_NAME.test(content)) return true;
   if (/xox[bap]-/.test(content)) return true; // Slack tokens
   if (/ghp_[A-Za-z0-9]{30,}/.test(content)) return true; // GitHub PAT
   if (/github_pat_[A-Za-z0-9_]{50,}/.test(content)) return true; // GitHub fine-grained PAT

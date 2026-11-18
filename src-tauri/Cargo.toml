@@ -32,6 +32,11 @@ windows-sys = { version = "0.61", features = [
   "Win32_UI_WindowsAndMessaging",
 ] }
 
+# Lets the music mini window be see-through on macOS (Dim Opacity). It also
+# requires `"macOSPrivateApi": true` in `tauri.macos.conf.json`.
+[target.'cfg(target_os = "macos")'.dependencies]
+tauri = { version = "2.1.0", features = ["macos-private-api"], optional = true }
+
 [features]
 default = ["tauri"]
 tauri = ["dep:tauri", "dep:tauri-build", "dep:tauri-plugin-single-instance", "dep:reqwest", "dep:futures-util"]

@@ -145,7 +145,7 @@ not a sandbox. Run agents in a sandbox or container if they must not be able to 
 
 ## Limits
 
-- A file Kai sends can be at most **250 MB**: up to 4 MB goes in one request, larger files are uploaded to your OneDrive in chunks (and resumed if the connection drops). A picture is shown inline in the message only up to 4 MB; a larger picture is sent as a link like any other file. Everything attached to one message counts toward the 250 MB, because it is held in memory while it is sent.
+- A file Kai sends can be at most **2 GB**: up to 4 MB goes in one request, larger files are uploaded to your OneDrive in chunks (and resumed if the connection drops). A picture is shown inline in the message only up to 4 MB; a larger picture is sent as a link like any other file. A large file is read from disk a piece (5 MiB) at a time while it uploads, so what you attach does not take memory in proportion to its size.
 - Images appear inline in terminals that draw them (iTerm2, WezTerm, mintty, Kai Terminal).
   Everywhere else they are a clickable line that opens the picture in the system viewer.
   Set `KAI_TEAMS_IMAGES=inline` or `off` to override the guess.

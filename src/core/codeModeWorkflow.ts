@@ -23,6 +23,13 @@ import {
   saveProjectIndex,
 } from "./registry";
 import { rankCandidates, isPotentialSecretPath } from "./retrieval";
+import {
+  findRunProcesses,
+  newRunToken,
+  RUN_TOKEN_ENV,
+  signalRunProcesses,
+  sweepSupported,
+} from "./processSweep";
 import { getReverseImports } from "./indexDerived";
 import { dependencyTargets } from "./importResolver";
 import { AGENT_EXIT_CLEANUP_SEQ, TERMINAL_MODE_RESET_SEQ } from "../services/terminalModes";
@@ -1555,12 +1562,13 @@ export interface ExternalCommandResult {
   /** True once process-tree termination was attempted (timeout/abort). */
   treeKillAttempted: boolean;
   /**
-   * True after timeout/abort termination was attempted. Termination is
-   * attempted, not guaranteed: a detached descendant that escaped its
-   * process group/session may still be running and modifying files, so
-   * callers must treat freshness after such an outcome as point-in-time
-   * and force a broader, follow-up refresh rather than trusting an
-   * immediately-fresh graph.
+   * True when, after timeout/abort termination, a descendant of the command may
+   * still be running and modifying files. On Linux and macOS the run's escapees
+   * (those that detached from its process group or session) are found by their
+   * environment and stopped, so this is true only if one could not be. Windows
+   * cannot find them, so there it is true after every termination. Callers
+   * must treat freshness after a true outcome as point-in-time and force a
+   * broader, follow-up refresh rather than trusting an immediately-fresh graph.
    */
   descendantsMaySurvive: boolean;
   durationMs: number;
@@ -1674,11 +1682,17 @@ export function resolveSpawnTarget(
  * distinct, correctly reported outcomes. All timers and listeners are
  * cleaned up on every exit path.
  *
- * Guarantee limit (documented, not eliminated): a descendant that
- * detaches into its own session/group (double-fork, `setsid`, Windows
- * `DETACHED_PROCESS`) escapes tree termination and cannot be reaped
- * here. Such outcomes set `descendantsMaySurvive` and callers must treat
- * freshness as point-in-time with a follow-up refresh (see `kai run`).
+ * Escapees: a descendant that detached into its own session/group
+ * (double-fork, `setsid`) is still found on Linux and macOS, because every
+ * process of the run carries a random token in its environment; on timeout
+ * or abort they are signalled too, and any still alive when the command is
+ * reaped are force-killed (see `processSweep.ts`). `descendantsMaySurvive`
+ * is then true only if one could not be stopped. Windows has no way to read
+ * another process's environment, so there a descendant that detached
+ * (`DETACHED_PROCESS`, or one whose parent already exited) escapes
+ * `taskkill /T`, and a termination outcome always sets
+ * `descendantsMaySurvive`: callers must treat freshness as point-in-time
+ * with a follow-up refresh (see `kai run`).
  */
 
 /**
@@ -1747,10 +1761,15 @@ export function runExternalAgentCommand(
       resolve({ ...base, ...patch, durationMs: Date.now() - started });
     };
     let child: ReturnType<typeof spawn>;
+    // Every process of this run carries the token in its environment, so one that detached from
+    // the process group can still be found (see `processSweep.ts`). Empty where that cannot work.
+    const runToken = sweepSupported() ? newRunToken() : "";
     try {
       child = spawn(command, args, {
         cwd: opts.cwd,
-        env: opts.env ?? process.env,
+        env: runToken
+          ? { ...(opts.env ?? process.env), [RUN_TOKEN_ENV]: runToken }
+          : (opts.env ?? process.env),
         windowsVerbatimArguments: opts.windowsVerbatimArguments,
         stdio: "inherit",
         windowsHide: true,
@@ -1779,6 +1798,11 @@ export function runExternalAgentCommand(
     let escalateTimer: NodeJS.Timeout | null = null;
     let abortFallback: NodeJS.Timeout | null = null;
     const groupSignal = (sig: NodeJS.Signals): void => {
+      groupSignalOnly(sig);
+      // Then whatever left the group: it still has the token.
+      if (runToken) signalRunProcesses(runToken, sig);
+    };
+    const groupSignalOnly = (sig: NodeJS.Signals): void => {
       const pid = typeof child.pid === "number" ? child.pid : undefined;
       if (process.platform === "win32") {
         if (pid !== undefined) {
@@ -1829,6 +1853,28 @@ export function runExternalAgentCommand(
         (escalateTimer as unknown as { unref: () => void }).unref();
       }
     };
+    /**
+     * After a timeout or abort: force-stop anything of this run that is still alive and report
+     * whether something may survive. Where escapees cannot be found (Windows) that is assumed.
+     */
+    const descendantsSurvive = async (): Promise<boolean> => {
+      if (!treeKillAttempted) return false;
+      if (!runToken) return true;
+      if (findRunProcesses(runToken).length === 0) return false;
+      groupSignalOnly("SIGKILL");
+      signalRunProcesses(runToken, "SIGKILL");
+      for (let i = 0; i < 10; i++) {
+        await new Promise((r) => setTimeout(r, 50));
+        if (findRunProcesses(runToken).length === 0) return false;
+      }
+      return true;
+    };
+    const settle = (patch: Partial<ExternalCommandResult>): void => {
+      void descendantsSurvive().then(
+        (survive) => finish({ ...patch, treeKillAttempted, descendantsMaySurvive: survive }),
+        () => finish({ ...patch, treeKillAttempted, descendantsMaySurvive: treeKillAttempted })
+      );
+    };
     const cleanup = (): void => {
       if (timeout) {
         clearTimeout(timeout);
@@ -1855,14 +1901,12 @@ export function runExternalAgentCommand(
       if (abortFallback) clearTimeout(abortFallback);
       abortFallback = setTimeout(() => {
         abortFallback = null;
-        finish({
+        settle({
           timedOut,
           aborted,
           spawnFailed,
           spawnError,
           outcome: spawnFailed ? "spawn-error" : timedOut ? "timeout" : "aborted",
-          treeKillAttempted,
-          descendantsMaySurvive: treeKillAttempted,
         });
       }, 2500);
       if (typeof (abortFallback as unknown as { unref?: () => void }).unref === "function") {
@@ -1887,18 +1931,16 @@ export function runExternalAgentCommand(
       // `close` may still follow — the settled guard keeps this single.
       spawnFailed = true;
       spawnError = err instanceof Error ? err.message : String(err);
-      finish({
+      settle({
         timedOut,
         aborted,
         spawnFailed,
         spawnError,
         outcome: timedOut ? "timeout" : aborted ? "aborted" : "spawn-error",
-        treeKillAttempted,
-        descendantsMaySurvive: treeKillAttempted,
       });
     });
     child.on("close", (code, sig) => {
-      finish({
+      settle({
         exitCode: code,
         signal: typeof sig === "string" ? sig : sig ? String(sig) : null,
         timedOut,
@@ -1912,8 +1954,6 @@ export function runExternalAgentCommand(
             : aborted
               ? "aborted"
               : "exited",
-        treeKillAttempted,
-        descendantsMaySurvive: treeKillAttempted,
       });
     });
   });

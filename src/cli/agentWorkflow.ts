@@ -229,6 +229,7 @@ export async function executeAgentWorkflow(
   let agentExitCode: number | null = 0;
   let agentTimedOut = false;
   let agentSignal: string | null = null;
+  let agentDescendantsMaySurvive = true;
   try {
     const outcome = await runCodeTaskWithAutoSync(
       meta,
@@ -254,6 +255,7 @@ export async function executeAgentWorkflow(
         agentExitCode = result.exitCode;
         agentTimedOut = result.timedOut;
         agentSignal = result.signal;
+        agentDescendantsMaySurvive = result.descendantsMaySurvive;
         const changedOnDisk = detectChangedFilesFromDisk(loadProjectIndex(meta.id));
         const uncertainOutcome =
           changedOnDisk.length === 0 ||
@@ -288,7 +290,11 @@ export async function executeAgentWorkflow(
         `[kai] Task ${outcome.taskOutcome}${outcome.taskError ? `: ${outcome.taskError}` : ""}.`
       );
     }
-    if (agentTimedOut) {
+    if (agentTimedOut && !agentDescendantsMaySurvive) {
+      console.log(
+        `[kai] Note: the timed-out command was stopped (SIGTERM, then SIGKILL) together with everything it started, including processes that had detached from it.`
+      );
+    } else if (agentTimedOut) {
       console.log(
         `[kai] Note: the timed-out command was signalled (SIGTERM, then SIGKILL after 2 s; process tree on Windows). A detached grandchild may still be writing; freshness above is point-in-time — rerun 'kai graph status' or 'kai graph update' if it keeps changing.`
       );
