@@ -64,16 +64,41 @@ try {
   const file = path.join(work, archive);
   fs.writeFileSync(file, bytes);
   if (isWin) {
-    // `tar` on a Windows runner may be GNU tar (no zip support); PowerShell always can.
-    execFileSync(
-      "powershell",
-      ["-NoProfile", "-NonInteractive", "-Command", `Expand-Archive -LiteralPath '${file}' -DestinationPath '${work}' -Force`],
-      { stdio: "inherit" }
-    );
+    // A bare `tar` on a Windows runner may be GNU tar (no zip support), so use the
+    // bsdtar that ships with Windows (System32\tar.exe), which reads zips. If that
+    // is missing or fails, fall back to .NET's ZipFile. `Expand-Archive` is avoided:
+    // on the windows-arm64 runner it hits a .NET overload error that it reports as a
+    // non-terminating error, so the process still exits 0 with nothing extracted.
+    const sysTar = path.join(process.env.SystemRoot || "C:\\Windows", "System32", "tar.exe");
+    let extracted = false;
+    if (fs.existsSync(sysTar)) {
+      try {
+        execFileSync(sysTar, ["-xf", file, "-C", work], { stdio: "inherit" });
+        extracted = true;
+      } catch (err) {
+        console.warn(`System32 tar could not unpack the zip (${err.message}); falling back to .NET`);
+      }
+    }
+    if (!extracted) {
+      execFileSync(
+        "powershell",
+        [
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          `$ErrorActionPreference = 'Stop'; Add-Type -AssemblyName System.IO.Compression.FileSystem; ` +
+            `[System.IO.Compression.ZipFile]::ExtractToDirectory('${file}', '${work}')`,
+        ],
+        { stdio: "inherit" }
+      );
+    }
   } else {
     execFileSync("tar", ["-xzf", file, "-C", work, `${base}/bin/node`], { stdio: "inherit" });
   }
   const unpacked = path.join(work, base, isWin ? exeName : path.join("bin", exeName));
+  if (!fs.existsSync(unpacked)) {
+    throw new Error(`${exeName} was not found after unpacking ${archive} (expected ${unpacked})`);
+  }
   fs.rmSync(outDir, { recursive: true, force: true });
   fs.mkdirSync(outDir, { recursive: true });
   const target = path.join(outDir, exeName);
