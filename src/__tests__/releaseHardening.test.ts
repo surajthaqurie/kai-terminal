@@ -38,6 +38,17 @@ function write(rel: string, content: string, root: string = tmpRoot): void {
   fs.writeFileSync(full, content);
 }
 
+// Windows can briefly hold a killed child process's cwd (or a file handle)
+// after it exits, making rmSync fail with EPERM/EBUSY. Retry with backoff,
+// and never let cleanup failure fail an otherwise-passing test.
+function rmTree(p: string): void {
+  try {
+    fs.rmSync(p, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  } catch {
+    /* best-effort temp cleanup */
+  }
+}
+
 function readJson(p: string): Record<string, unknown> {
   return JSON.parse(fs.readFileSync(p, "utf-8")) as Record<string, unknown>;
 }
@@ -69,8 +80,8 @@ beforeEach(() => {
 
 afterEach(() => {
   process.env.KAI_HOME = prevHome;
-  fs.rmSync(tmpHome, { recursive: true, force: true });
-  fs.rmSync(tmpRoot, { recursive: true, force: true });
+  rmTree(tmpHome);
+  rmTree(tmpRoot);
 });
 
 describe("project incarnation identity", () => {
@@ -154,7 +165,7 @@ describe("project incarnation identity", () => {
       expect(fresh.taskOutcome).toBe("completed");
       expect(fresh.syncReport.graphResult).toBe("synced");
     } finally {
-      fs.rmSync(rootB, { recursive: true, force: true });
+      rmTree(rootB);
     }
   });
 
@@ -187,8 +198,8 @@ describe("project incarnation identity", () => {
       expect(loadProjectIndex(metaB.id)!.generatedAt).toBe(genB);
       expect(loadProjectIndex(metaB.id)!.files["only-a.ts"]).toBeUndefined();
     } finally {
-      fs.rmSync(parentA, { recursive: true, force: true });
-      fs.rmSync(parentB, { recursive: true, force: true });
+      rmTree(parentA);
+      rmTree(parentB);
     }
   });
 
