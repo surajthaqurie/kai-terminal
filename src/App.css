@@ -5505,7 +5505,9 @@ button.status-git-btn-clickable:focus-visible {
   min-width: 3px;
   background: linear-gradient(90deg, var(--accent-primary), var(--accent-hover, #8b5cf6));
   box-shadow: 0 0 5px var(--accent-glow, rgba(99, 102, 241, 0.6));
-  transition: width 0.3s ease;
+  /* Linear and a little longer than the ~0.5 s between position updates, so
+     the bar glides instead of stepping. */
+  transition: width 0.6s linear;
 }
 
 /* =========================================================================
@@ -6244,4 +6246,153 @@ button.status-git-btn-clickable:focus-visible {
 
 .shell-confirm-btn.is-primary:hover {
   background-color: var(--accent-hover);
+}
+
+/* ——— Music picture-in-picture (detached always-on-top window) ———
+   Only the video shows until the pointer is over the window; then the title
+   strip and the controls fade in over it. */
+.music-pip {
+  position: fixed;
+  inset: 0;
+  background: #000;
+  color: var(--text-primary);
+  border: 1px solid var(--border-default);
+  overflow: hidden;
+}
+.music-pip-video {
+  position: absolute;
+  inset: 0;
+  background: #000;
+}
+.music-pip-frame {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  /* The embed's own controls are hidden; the overlay strips drive it. */
+  pointer-events: none;
+}
+.music-pip-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+.music-pip-head,
+.music-pip-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 1;
+  opacity: 0;
+  transition: opacity 0.18s ease;
+}
+/* Shown on hover or keyboard focus, and always while nothing is playing so
+   the window can still be dragged and closed. */
+.music-pip:hover .music-pip-head,
+.music-pip:hover .music-pip-bar,
+.music-pip:focus-within .music-pip-head,
+.music-pip:focus-within .music-pip-bar,
+.music-pip.music-pip-idle .music-pip-head,
+.music-pip.music-pip-idle .music-pip-bar {
+  opacity: 1;
+}
+.music-pip-head {
+  top: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 6px 0 10px;
+  cursor: grab;
+  background: linear-gradient(rgba(0, 0, 0, 0.78), rgba(0, 0, 0, 0));
+}
+.music-pip-head-icon {
+  flex-shrink: 0;
+  color: var(--accent-primary);
+  pointer-events: none;
+}
+.music-pip-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: var(--text-xs);
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+}
+.music-pip-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: #fff;
+  cursor: pointer;
+}
+.music-pip-icon-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+.music-pip-bar {
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 18px 10px 6px;
+  background: linear-gradient(rgba(0, 0, 0, 0), rgba(0, 0, 0, 0.82));
+}
+.music-pip-progress {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.music-pip-progress .music-progress-slider {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.music-pip-bar .music-time-label {
+  color: #fff;
+}
+.music-pip-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.music-pip-controls .music-ctrl-btn {
+  color: #fff;
+}
+.music-pip-controls button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* Docked player while its video plays in the picture-in-picture window. */
+.music-pip-placeholder {
+  text-align: center;
+  padding: 10px;
+}
+.music-pip-return {
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-overlay);
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  padding: 4px 10px;
+  cursor: pointer;
+}
+.music-pip-return:hover {
+  background: var(--accent-primary);
+  color: var(--text-inverse);
 }

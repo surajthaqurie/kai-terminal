@@ -105,6 +105,69 @@ fn close_app_window(app_handle: AppHandle) {
     shutdown_app(&app_handle);
 }
 
+/// Label of the detached music picture-in-picture window.
+#[cfg(feature = "tauri")]
+const MUSIC_PIP_LABEL: &str = "music-pip";
+
+/// Sent to every window once the picture-in-picture window is gone, however it
+/// was closed (its own button, Alt+F4, or [`close_music_pip`]).
+#[cfg(feature = "tauri")]
+const MUSIC_PIP_CLOSED_EVENT: &str = "kai-pip:closed";
+
+/// Opens the small always-on-top music window (bottom-right of the primary
+/// monitor), or just raises it when it is already open. `async` because
+/// creating a window from a synchronous command can deadlock on Windows.
+#[cfg(feature = "tauri")]
+#[tauri::command]
+async fn open_music_pip(app_handle: AppHandle) -> Result<(), String> {
+    if let Some(window) = app_handle.get_webview_window(MUSIC_PIP_LABEL) {
+        let _ = window.show();
+        let _ = window.set_focus();
+        return Ok(());
+    }
+    const WIDTH: f64 = 360.0;
+    const HEIGHT: f64 = 203.0; // 16:9 at 360 wide: the window is just the video
+    let mut builder = tauri::WebviewWindowBuilder::new(
+        &app_handle,
+        MUSIC_PIP_LABEL,
+        // Same bundle as the main window; `main.tsx` picks the player view.
+        tauri::WebviewUrl::App("index.html?pip=music".into()),
+    )
+    .title("Kai Music")
+    .inner_size(WIDTH, HEIGHT)
+    .min_inner_size(240.0, 150.0)
+    .decorations(false)
+    .always_on_top(true)
+    .resizable(true)
+    .focused(true)
+    .background_color(tauri::window::Color(11, 13, 16, 255));
+    if let Ok(Some(monitor)) = app_handle.primary_monitor() {
+        let scale = monitor.scale_factor();
+        let x = (monitor.position().x as f64 + monitor.size().width as f64) / scale - WIDTH - 24.0;
+        let y =
+            (monitor.position().y as f64 + monitor.size().height as f64) / scale - HEIGHT - 64.0;
+        builder = builder.position(x, y);
+    }
+    builder.build().map(|_| ()).map_err(|e| e.to_string())
+}
+
+/// Closes the music window (a no-op when it is not open) and, when asked,
+/// brings the main window back to the front.
+#[cfg(feature = "tauri")]
+#[tauri::command]
+async fn close_music_pip(app_handle: AppHandle, focus_main: bool) {
+    if let Some(window) = app_handle.get_webview_window(MUSIC_PIP_LABEL) {
+        let _ = window.destroy();
+    }
+    if focus_main {
+        if let Some(main) = app_handle.get_webview_window("main") {
+            let _ = main.unminimize();
+            let _ = main.show();
+            let _ = main.set_focus();
+        }
+    }
+}
+
 /// Reports where the page draws its maximize button (CSS pixels, relative to
 /// the window's client area; `None` clears it) so Windows 11 can show its
 /// snap-layouts popup there. Returns whether the native hit test is active;
@@ -495,15 +558,23 @@ pub fn run() {
             });
             Ok(())
         })
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { .. } = event {
+        .on_window_event(|window, event| match event {
+            // Only the main window ends the app; closing the music
+            // picture-in-picture window must leave the terminal running.
+            tauri::WindowEvent::CloseRequested { .. } if window.label() == "main" => {
                 // Hide at once, reap PTY children within a time limit, then exit.
                 exit_now(window.app_handle());
             }
+            tauri::WindowEvent::Destroyed if window.label() == MUSIC_PIP_LABEL => {
+                let _ = window.app_handle().emit(MUSIC_PIP_CLOSED_EVENT, ());
+            }
+            _ => {}
         })
         .invoke_handler(tauri::generate_handler![
             close_app_window,
             set_maximize_button_rect,
+            open_music_pip,
+            close_music_pip,
             get_available_shells,
             get_ai_cli_status,
             get_ai_cli_details,

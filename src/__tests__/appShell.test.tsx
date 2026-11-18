@@ -1141,6 +1141,14 @@ describe("App shell: AI CLI, music and updates", () => {
     expect(container.querySelector('[aria-label="Pause music"]')).not.toBeNull();
     await act(async () => modal("music").onProgressChange(42));
     expect(container.querySelector<HTMLElement>(".music-mini-progress i")!.style.width).toBe("42%");
+    // Between whole percents the player broadcasts the exact position and the
+    // footer bar follows it without waiting for the next whole number.
+    await act(async () => {
+      window.dispatchEvent(new CustomEvent("kai-music-progress", { detail: 42.6 }));
+    });
+    expect(container.querySelector<HTMLElement>(".music-mini-progress i")!.style.width).toBe(
+      "42.6%"
+    );
     await act(async () => modal("music").onMutedChange(true));
     expect(container.querySelector('[aria-label="Unmute music"]')).not.toBeNull();
 

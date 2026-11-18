@@ -1,5 +1,6 @@
 import ReactDOM from "react-dom/client";
 import App from "./App";
+import { isMusicPipWindow } from "./services/musicPip";
 import "./fonts.css";
 import "./App.css";
 
@@ -18,6 +19,14 @@ async function preloadFonts(): Promise<void> {
   await Promise.race([loads, new Promise((resolve) => setTimeout(resolve, 1500))]);
 }
 
-void preloadFonts().then(() => {
-  ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(<App />);
+void preloadFonts().then(async () => {
+  const root = ReactDOM.createRoot(document.getElementById("root") as HTMLElement);
+  // The detached music window loads this same bundle with `?pip=music` and
+  // renders only the small player, never the terminal app.
+  if (isMusicPipWindow()) {
+    const { MusicPipWindow } = await import("./components/MusicPlayer/MusicPipWindow");
+    root.render(<MusicPipWindow />);
+    return;
+  }
+  root.render(<App />);
 });

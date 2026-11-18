@@ -1,6 +1,7 @@
-import { FC, useRef, useState } from "react";
+import { FC, useEffect, useRef, useState } from "react";
 import { ShellPicker } from "./ShellPicker";
 import type { ShellProfile } from "../types/terminal";
+import { MUSIC_PROGRESS_EVENT } from "../services/musicService";
 import { withKeys, type MusicHintId } from "../services/shortcuts";
 import {
   GitBranch,
@@ -25,6 +26,29 @@ export interface MusicFooterState {
   muted: boolean;
   progress: number;
 }
+
+/**
+ * The footer's thin playback bar. `percent` is the whole-number progress kept
+ * in app state; the player also broadcasts the exact position, which this bar
+ * follows on its own so it moves continuously without re-rendering the app.
+ */
+const MusicMiniProgress: FC<{ percent: number }> = ({ percent }) => {
+  const [exact, setExact] = useState<number | null>(null);
+  useEffect(() => {
+    const onProgress = (e: Event) => {
+      const value = (e as CustomEvent<number>).detail;
+      if (typeof value === "number" && Number.isFinite(value)) setExact(value);
+    };
+    window.addEventListener(MUSIC_PROGRESS_EVENT, onProgress);
+    return () => window.removeEventListener(MUSIC_PROGRESS_EVENT, onProgress);
+  }, []);
+  const shown = Math.max(0, Math.min(100, exact ?? percent));
+  return (
+    <span className="music-mini-progress" aria-hidden="true">
+      <i style={{ width: `${shown}%` }} />
+    </span>
+  );
+};
 
 interface StatusBarProps {
   gitBranch: string | null;
@@ -418,9 +442,7 @@ export const StatusBar: FC<StatusBarProps> = ({
                 <Volume2 size={12} aria-hidden="true" />
               )}
             </button>
-            <span className="music-mini-progress" aria-hidden="true">
-              <i style={{ width: `${Math.max(0, Math.min(100, music.progress))}%` }} />
-            </span>
+            <MusicMiniProgress percent={music.progress} />
           </div>
         )}
         {updateAvailable && latestVersion ? (

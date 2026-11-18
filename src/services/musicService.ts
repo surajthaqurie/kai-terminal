@@ -170,7 +170,9 @@ export function canControlEmbed(): boolean {
 /**
  * Embed src for a track, or null when there is nothing embeddable.
  * `muted` and `loop` only apply at load; later changes use commands.
- * `startSeconds` resumes playback at that position on a rebuild (loop-off).
+ * `startSeconds` resumes playback at that position on a rebuild (loop-off,
+ * moving the video to or from the picture-in-picture window); `autoplay: false`
+ * lets such a rebuild stay paused when the song was paused.
  * Query-only tracks (plain song names) return null: the deprecated
  * `listType=search` embed renders Error 153, so callers must offer the
  * browser-search fallback instead of embedding a guess.
@@ -179,7 +181,8 @@ export function embedSrcForTrack(
   track: MusicTrack,
   muted = false,
   loop = false,
-  startSeconds = 0
+  startSeconds = 0,
+  autoplay = true
 ): string | null {
   // `origin` must be the page's REAL origin: the embed only accepts commands
   // (play / pause / mute / seek / volume) from that origin and only posts its
@@ -200,7 +203,7 @@ export function embedSrcForTrack(
   // Without a controllable origin our buttons cannot reach the player, so show
   // YouTube's own controls instead of leaving the video with no way to operate it.
   const controls = origin ? 0 : 1;
-  const tail = `autoplay=1&rel=0&controls=${controls}&enablejsapi=1${originParam}${muted ? "&mute=1" : ""}${loopParam}${startParam}`;
+  const tail = `autoplay=${autoplay ? 1 : 0}&rel=0&controls=${controls}&enablejsapi=1${originParam}${muted ? "&mute=1" : ""}${loopParam}${startParam}`;
   if (track.videoId) {
     // Loop-one wins over the mix: a YouTube Music link carries `list=RDAMVM…`,
     // and `loop=1` next to `list=` repeats the whole list, not this song.
@@ -460,6 +463,14 @@ export function parseYouTubePlayerMessage(data: unknown): YouTubePlayerTelemetry
 }
 
 /** Whole-number playback percentage (0-100); 0 when the duration is unknown. */
+/**
+ * Window event carrying the exact playback position (`detail`: a 0-100 number
+ * with decimals). The footer's thin progress bar listens to it so it moves
+ * continuously without re-rendering the whole app, which the whole-number
+ * `onProgressChange` path would do on every tick.
+ */
+export const MUSIC_PROGRESS_EVENT = "kai-music-progress";
+
 export function progressPercent(currentTime: number, duration: number): number {
   if (!(duration > 0) || !(currentTime > 0)) return 0;
   return Math.max(0, Math.min(100, Math.round((currentTime / duration) * 100)));

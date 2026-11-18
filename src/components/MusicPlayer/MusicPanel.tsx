@@ -18,6 +18,7 @@ import {
   Minus,
   Music,
   Pause,
+  PictureInPicture2,
   Pin,
   PinOff,
   Play,
@@ -34,10 +35,21 @@ import {
 } from "lucide-react";
 import { useCallPause } from "../../hooks/useCallPause";
 import { hasOpenModal } from "../../hooks/useModalBehavior";
+import {
+  PIP_EVENTS,
+  closeMusicPip,
+  emitPip,
+  listenPip,
+  openMusicPip,
+  type PipAction,
+  type PipState,
+} from "../../services/musicPip";
+import { isTauriAvailable } from "../../services/ptyService";
 import { isTypingTarget, withKeys, type MusicHintId } from "../../services/shortcuts";
 import { openExternalUrl } from "../../services/updateService";
 import {
   MusicTrack,
+  MUSIC_PROGRESS_EVENT,
   canControlEmbed,
   isYouTubeEmbedOrigin,
   YOUTUBE_LISTENING_HANDSHAKE,
@@ -152,6 +164,15 @@ export const MusicPanel: FC<MusicPanelProps> = ({
   const lastPercentRef = useRef(0);
   const mutedRef = useRef(muted);
   mutedRef.current = muted;
+  const playingRef = useRef(playing);
+  playingRef.current = playing;
+  const currentTimeRef = useRef(currentTime);
+  currentTimeRef.current = currentTime;
+  // True while the video lives in the detached picture-in-picture window: this
+  // panel then renders no iframe and relays commands/telemetry through events.
+  const [pipActive, setPipActive] = useState(false);
+  const pipActiveRef = useRef(false);
+  pipActiveRef.current = pipActive;
   const loopRef = useRef(loop);
   loopRef.current = loop;
   const queueRef = useRef(queue);
@@ -197,10 +218,14 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     if (!track || !online) return null;
     const start = rebuildStartRef.current;
     rebuildStartRef.current = 0;
-    return embedSrcForTrack(track, mutedRef.current, loopRef.current, start);
+    // A rebuild that resumes mid-song (loop-off, moving the video to or from
+    // the picture-in-picture window) must not start a paused song playing.
+    const autoplay = start > 0 ? playingRef.current : true;
+    return embedSrcForTrack(track, mutedRef.current, loopRef.current, start, autoplay);
     // Only the track's identity reloads the embed; a title update must not.
+    // Moving the video between windows rebuilds it too (`pipActive`).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [track?.videoId, track?.playlistId, track?.query, online, embedReloadNonce]);
+  }, [track?.videoId, track?.playlistId, track?.query, online, embedReloadNonce, pipActive]);
 
   // Track whether the live embed carries native loop, so switching loop off
   // knows it must rebuild (commands cannot cancel YouTube's own looping).
@@ -209,7 +234,13 @@ export const MusicPanel: FC<MusicPanelProps> = ({
   }, [src, track?.videoId, track?.playlistId]);
 
   const sendCommand = useCallback((func: YouTubeCommand | string, args: unknown = "") => {
-    frameRef.current?.contentWindow?.postMessage(youtubeCommand(func, args), "*");
+    const command = youtubeCommand(func, args);
+    if (pipActiveRef.current) {
+      // The iframe lives in the picture-in-picture window; it posts this on.
+      void emitPip(PIP_EVENTS.command, command);
+      return;
+    }
+    frameRef.current?.contentWindow?.postMessage(command, "*");
   }, []);
 
   // Older versions saved a queue locally; this version keeps nothing.
@@ -244,11 +275,27 @@ export const MusicPanel: FC<MusicPanelProps> = ({
   // handshake. Only messages from our own iframe window at trusted YouTube origins
   // are accepted.
   useEffect(() => {
-    const report = (percent: number) => {
+    // `percent` is the whole number the app state keeps (it re-renders the app
+    // when it changes); `exact` also goes out as a window event so the footer
+    // bar can move smoothly between whole percents.
+    let lastExact = -1;
+    const report = (percent: number, exact: number = percent) => {
+      if (Math.abs(exact - lastExact) >= 0.05) {
+        lastExact = exact;
+        try {
+          window.dispatchEvent(new CustomEvent(MUSIC_PROGRESS_EVENT, { detail: exact }));
+        } catch {
+          // ignore
+        }
+      }
       if (percent === lastPercentRef.current) return;
       lastPercentRef.current = percent;
       onProgressChange?.(percent);
     };
+    // YouTube sends changed fields only, so time and duration can arrive in
+    // separate messages: remember both to compute progress from either.
+    let knownTime = 0;
+    let knownDuration = 0;
     setPlaybackError(null);
     if (!src) {
       report(0);
@@ -266,10 +313,10 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     const handshake = () => {
       frameRef.current?.contentWindow?.postMessage(YOUTUBE_LISTENING_HANDSHAKE, "*");
     };
-    const onMessage = (e: MessageEvent) => {
-      if (!isYouTubeEmbedOrigin(e.origin)) return;
-      if (!frameRef.current || e.source !== frameRef.current.contentWindow) return;
-      const t = parseYouTubePlayerMessage(e.data);
+    // Telemetry arrives from our own iframe, or — while the video lives in the
+    // picture-in-picture window — relayed from that window's iframe.
+    const handleData = (data: unknown) => {
+      const t = parseYouTubePlayerMessage(data);
       if (!t) return;
       received = true;
       if (t.error !== undefined) {
@@ -316,11 +363,27 @@ export const MusicPanel: FC<MusicPanelProps> = ({
           );
         }
       }
-      if (t.currentTime !== undefined && t.duration !== undefined) {
-        report(progressPercent(t.currentTime, t.duration));
+      if (t.currentTime !== undefined) knownTime = t.currentTime;
+      if (t.duration !== undefined) knownDuration = t.duration;
+      if ((t.currentTime !== undefined || t.duration !== undefined) && knownDuration > 0) {
+        const exact = Math.max(0, Math.min(100, (knownTime / knownDuration) * 100));
+        report(progressPercent(knownTime, knownDuration), exact);
       }
     };
+    const onMessage = (e: MessageEvent) => {
+      if (!isYouTubeEmbedOrigin(e.origin)) return;
+      if (!frameRef.current || e.source !== frameRef.current.contentWindow) return;
+      handleData(e.data);
+    };
     window.addEventListener("message", onMessage);
+    let cancelled = false;
+    let unlistenPip: (() => void) | undefined;
+    void listenPip<string>(PIP_EVENTS.message, (data) => {
+      if (pipActiveRef.current) handleData(data);
+    }).then((u) => {
+      if (cancelled) u();
+      else unlistenPip = u;
+    });
     // The embed may not be listening yet at iframe load; retry briefly.
     const timer = window.setInterval(() => {
       if (received || ++tries > 20) {
@@ -330,11 +393,14 @@ export const MusicPanel: FC<MusicPanelProps> = ({
       handshake();
     }, 500);
     return () => {
+      cancelled = true;
+      unlistenPip?.();
       window.removeEventListener("message", onMessage);
       window.clearInterval(timer);
       report(0);
     };
-  }, [src, onProgressChange, sendCommand]);
+    // `pipActive`: re-arm the handshake when the video returns to this panel.
+  }, [src, pipActive, onProgressChange, sendCommand]);
 
   useCallPause({
     playing,
@@ -699,12 +765,15 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     }
   };
 
-  const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!src || duration <= 0) return;
-    const pct = Number(e.target.value);
-    const targetSec = (pct / 100) * duration;
+  const seekToPercent = (pct: number) => {
+    if (!src || duration <= 0 || !Number.isFinite(pct)) return;
+    const targetSec = (Math.max(0, Math.min(100, pct)) / 100) * duration;
     setCurrentTime(targetSec);
     sendCommand("seekTo", [targetSec, true]);
+  };
+
+  const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
+    seekToPercent(Number(e.target.value));
   };
 
   const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -746,8 +815,8 @@ export const MusicPanel: FC<MusicPanelProps> = ({
 
   // Footer + global shortcuts drive the panel via window events so the
   // footer works while the drawer is closed (panel stays mounted).
-  const actionsRef = useRef({ togglePlay, next, previous, toggleMute, toggleLoop });
-  actionsRef.current = { togglePlay, next, previous, toggleMute, toggleLoop };
+  const actionsRef = useRef({ togglePlay, next, previous, toggleMute, toggleLoop, seekToPercent });
+  actionsRef.current = { togglePlay, next, previous, toggleMute, toggleLoop, seekToPercent };
   useEffect(() => {
     const onTogglePlay = () => actionsRef.current.togglePlay();
     const onNext = () => actionsRef.current.next();
@@ -767,6 +836,112 @@ export const MusicPanel: FC<MusicPanelProps> = ({
       window.removeEventListener("kai-music-toggle-loop", onLoop);
     };
   }, []);
+
+  // ——— Picture-in-picture (detached always-on-top window) ———
+  // While it is open the window hosts the iframe and this panel stays the
+  // brain: it pushes what to show, and runs every button press through the
+  // same actions as the docked controls (see services/musicPip.ts).
+  const pipState: PipState = {
+    src,
+    title: track?.title ?? null,
+    playing,
+    muted,
+    volume,
+    currentTime,
+    duration,
+  };
+  const pipStateRef = useRef(pipState);
+  pipStateRef.current = pipState;
+  const onRequestOpenRef = useRef(onRequestOpen);
+  onRequestOpenRef.current = onRequestOpen;
+
+  /** The window is gone (however it closed): take the video back where it was. */
+  const handlePipClosed = useCallback(() => {
+    if (!pipActiveRef.current) return;
+    if (trackRef.current) rebuildStartRef.current = Math.max(0, Math.floor(currentTimeRef.current));
+    setPipActive(false);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const unlisteners: Array<() => void> = [];
+    const keep = (p: Promise<() => void>) => {
+      void p.then((u) => {
+        if (cancelled) u();
+        else unlisteners.push(u);
+      });
+    };
+    keep(listenPip(PIP_EVENTS.closed, handlePipClosed));
+    keep(
+      listenPip(PIP_EVENTS.ready, () => {
+        if (pipActiveRef.current) void emitPip(PIP_EVENTS.state, pipStateRef.current);
+      })
+    );
+    keep(
+      listenPip<PipAction>(PIP_EVENTS.action, (action) => {
+        if (!pipActiveRef.current || !action) return;
+        const a = actionsRef.current;
+        switch (action.name) {
+          case "toggle-play":
+            a.togglePlay();
+            break;
+          case "next":
+            void a.next();
+            break;
+          case "previous":
+            a.previous();
+            break;
+          case "mute":
+            a.toggleMute();
+            break;
+          case "seek":
+            a.seekToPercent(action.value);
+            break;
+          case "restore":
+            void closeMusicPip(true).then(handlePipClosed);
+            onRequestOpenRef.current?.();
+            break;
+        }
+      })
+    );
+    // A window left over from before a reload has no panel to talk to.
+    void closeMusicPip(false);
+    return () => {
+      cancelled = true;
+      unlisteners.forEach((u) => u());
+      // The player was turned off in Settings: its mini window goes with it.
+      if (pipActiveRef.current) void closeMusicPip(false);
+    };
+  }, [handlePipClosed]);
+
+  // Keep the window's display in step with the player.
+  useEffect(() => {
+    if (!pipActive) return;
+    void emitPip(PIP_EVENTS.state, pipState);
+    // `pipState` is rebuilt every render from exactly these values.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pipActive, src, track?.title, playing, muted, volume, currentTime, duration]);
+
+  const enterPip = async () => {
+    if (!track || !isTauriAvailable() || pipActiveRef.current) return;
+    // The iframe moves windows, so the embed reloads and resumes from here.
+    rebuildStartRef.current = Math.max(0, Math.floor(currentTime));
+    setPipActive(true);
+    if (!(await openMusicPip())) {
+      rebuildStartRef.current = Math.max(0, Math.floor(currentTimeRef.current));
+      setPipActive(false);
+      setNotice("Could not open the picture-in-picture window.");
+    }
+  };
+
+  const exitPip = async () => {
+    await closeMusicPip(false);
+    handlePipClosed();
+  };
+
+  const togglePip = () => {
+    void (pipActive ? exitPip() : enterPip());
+  };
 
   // Panel-scoped keys: Space play / pause, N next, P previous, M mute, L loop,
   // Esc closes the drawer. Only plain keys, never while typing in the search
@@ -1061,6 +1236,11 @@ export const MusicPanel: FC<MusicPanelProps> = ({
 
   const handleFullCloseAndReset = () => {
     sendCommand("pauseVideo");
+    if (pipActiveRef.current) {
+      void closeMusicPip(false);
+      rebuildStartRef.current = 0;
+      setPipActive(false);
+    }
     setTrack(null);
     setQueue([]);
     setSearchResults([]);
@@ -1334,6 +1514,22 @@ export const MusicPanel: FC<MusicPanelProps> = ({
             >
               {isExpanded || panelWidth >= 460 ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
             </button>
+            {track && isTauriAvailable() && (
+              <button
+                type="button"
+                className={`btn btn-icon ${pipActive ? "music-control-active" : ""}`}
+                onClick={togglePip}
+                title={
+                  pipActive
+                    ? "Bring the video back into the player"
+                    : "Pop out into an always-on-top mini player"
+                }
+                aria-label={pipActive ? "Close mini player window" : "Pop out mini player"}
+                aria-pressed={pipActive}
+              >
+                <PictureInPicture2 size={13} />
+              </button>
+            )}
             <button
               type="button"
               className={`btn btn-icon ${isPinned ? "music-control-active" : ""}`}
@@ -1410,7 +1606,15 @@ export const MusicPanel: FC<MusicPanelProps> = ({
 
         <div className="music-body">
           <div className="music-now">
-            {src ? (
+            {pipActive && src ? (
+              <div className="music-video-empty music-pip-placeholder" role="status">
+                <PictureInPicture2 size={22} aria-hidden="true" />
+                <span>Playing in the mini player window</span>
+                <button type="button" className="music-pip-return" onClick={togglePip}>
+                  Bring back to the player
+                </button>
+              </div>
+            ) : src ? (
               <iframe
                 key={src}
                 ref={frameRef}
