@@ -18,7 +18,7 @@ import {
   selectRanges,
   type RankedFile,
 } from "./retrieval";
-import { estimateTokens } from "./tokenCounter";
+import { estimateTokens, loadModelTokenizer } from "./tokenCounter";
 import { indexProject, isSensitiveFile, toPosixRel } from "./indexer";
 import { detectInstalledLspServers } from "./lspBridge";
 import {
@@ -550,10 +550,19 @@ export function toolGetDependencies(ctx: ToolContext, args: Record<string, unkno
 // kai_get_context
 // ---------------------------------------------------------------------------
 
-export function toolGetContext(ctx: ToolContext, args: Record<string, unknown>): ToolOutcome {
+export async function toolGetContext(
+  ctx: ToolContext,
+  args: Record<string, unknown>
+): Promise<ToolOutcome> {
   if (typeof args.task !== "string" || !args.task.trim()) {
     return fail("task parameter is required and must be a non-empty string");
   }
+  if (args.model !== undefined && (typeof args.model !== "string" || args.model.length > 100)) {
+    return fail("model must be a string of at most 100 characters");
+  }
+  // OpenAI models get an exact tokenizer; others keep the heuristic.
+  const model = typeof args.model === "string" ? args.model.trim() : "";
+  const tokenizer = model ? ((await loadModelTokenizer(model)) ?? undefined) : undefined;
   const task = args.task.trim().slice(0, 4000);
   // No explicit budget: the task category picks a starting budget and weak
   // matches are not padded in. An explicit budget is clamped and honoured as-is.
@@ -589,6 +598,7 @@ export function toolGetContext(ctx: ToolContext, args: Record<string, unknown>):
     categoryOverride,
     maxBytes: textBudget,
     knownStaleness: ctx.gate.knownStaleness,
+    tokenizer,
   });
   const retrievalMs = Date.now() - t0;
 

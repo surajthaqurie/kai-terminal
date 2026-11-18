@@ -9,6 +9,9 @@ const svc = vi.hoisted(() => ({
   teamsLogin: vi.fn(),
   verifyTeams: vi.fn(),
   teamsLogout: vi.fn(),
+  setTeamsClientId: vi.fn(),
+  cancelBrowserSignIn: vi.fn(),
+  onSignInUrl: vi.fn(),
 }));
 vi.mock("../services/integrationService", () => svc);
 
@@ -78,11 +81,16 @@ describe("teams view model", () => {
 describe("TeamsIntegrationCard", () => {
   let container: HTMLDivElement;
   let root: Root;
+  let signInUrlHandler: (url: string) => void = () => {};
 
   beforeEach(() => {
     (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
       true;
     Object.values(svc).forEach((fn) => fn.mockReset());
+    svc.onSignInUrl.mockImplementation(async (handler: (url: string) => void) => {
+      signInUrlHandler = handler;
+      return () => {};
+    });
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -129,6 +137,46 @@ describe("TeamsIntegrationCard", () => {
     expect(text()).toContain("Not set up");
     expect(text()).toContain("docs/teams-sign-in.md");
     expect((button("Connect Microsoft Teams") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("saves a client ID typed into the card when the build has no Microsoft app", async () => {
+    await render(NOT_SET_UP);
+    const input = container.querySelector(
+      'input[aria-label="Microsoft Entra Application (client) ID"]'
+    ) as HTMLInputElement;
+    expect(input).not.toBeNull();
+    expect((button("Save") as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      setter.call(input, "11111111-2222-3333-4444-555555555555");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    svc.setTeamsClientId.mockResolvedValue({ ok: true, value: SIGNED_OUT });
+    await click(button("Save"));
+    expect(svc.setTeamsClientId).toHaveBeenCalledWith("11111111-2222-3333-4444-555555555555");
+    expect(text()).toContain("Saved the Microsoft app ID");
+    expect((button("Connect Microsoft Teams") as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("shows the sign-in address while waiting, and can cancel", async () => {
+    await render(SIGNED_OUT);
+    let finish: (v: unknown) => void = () => {};
+    svc.teamsLogin.mockReturnValue(new Promise((r) => (finish = r)));
+    await click(button("Connect Microsoft Teams"));
+    await act(async () => signInUrlHandler("https://login.microsoftonline.com/common/authorize"));
+    expect(text()).toContain("https://login.microsoftonline.com/common/authorize");
+    expect(button("Copy link")).toBeDefined();
+    svc.cancelBrowserSignIn.mockResolvedValue(true);
+    await click(button("Cancel sign-in"));
+    expect(svc.cancelBrowserSignIn).toHaveBeenCalled();
+    await act(async () =>
+      finish({ ok: false, error: { code: "unavailable", message: "Sign-in was cancelled." } })
+    );
+    expect(text()).not.toContain("login.microsoftonline.com");
+    // A cancelled sign-in may have been stuck on the admin approval page.
+    svc.teamsLogin.mockResolvedValue({ ok: true, value: SIGNED_IN });
+    await click(button("Sign in without channel messages"));
+    expect(svc.teamsLogin).toHaveBeenLastCalledWith({ channels: false });
   });
 
   it("shows a cancelled sign-in as an error and stays signed out", async () => {

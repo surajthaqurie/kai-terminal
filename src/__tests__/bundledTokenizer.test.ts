@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   bundledEncodingFor,
+  estimateChatTokensAsync,
   estimateModelTokens,
   estimateModelTokensAsync,
   estimateTokens,
@@ -112,5 +113,42 @@ describe("bundled OpenAI tokenizers", () => {
     const m = estimateTokens("hello world");
     expect(m.isEstimate).toBe(true);
     expect(m.measuredTokens).toBeUndefined();
+  });
+});
+
+describe("chat framing", () => {
+  const messages = [
+    { role: "system", content: "You are helpful." },
+    { role: "user", content: "Hello there, how are you?" },
+  ];
+
+  it("matches the OpenAI chat format exactly for an OpenAI model", async () => {
+    const { encodeChat } = await import("gpt-tokenizer/model/gpt-4o");
+    const m = await estimateChatTokensAsync(messages, "gpt-4o");
+    expect(m.isExact).toBe(true);
+    expect(m.isEstimate).toBe(false);
+    expect(m.tokenizerName).toBe("bundled-o200k_base");
+    // encodeChat includes the 3 reply-priming tokens too.
+    expect(m.estimatedTokens).toBe(encodeChat(messages).length);
+  });
+
+  it("adds framing to the plain text count", async () => {
+    const text = await estimateModelTokensAsync("Hello there, how are you?", "gpt-4o");
+    const one = await estimateChatTokensAsync(
+      [{ role: "user", content: "Hello there, how are you?", name: "kai" }],
+      "gpt-4o"
+    );
+    const role = estimateModelTokens("user", "gpt-4o").estimatedTokens;
+    const name = estimateModelTokens("kai", "gpt-4o").estimatedTokens;
+    expect(one.estimatedTokens).toBe(text.estimatedTokens + role + name + 3 + 1 + 3);
+  });
+
+  it("stays a labeled estimate for models without a tokenizer", async () => {
+    const m = await estimateChatTokensAsync(messages, "claude-sonnet");
+    expect(m.isExact).toBe(false);
+    expect(m.isEstimate).toBe(true);
+    expect(m.measuredTokens).toBeUndefined();
+    expect(m.tokenizerName).toBe("kai-heuristic");
+    expect((await estimateChatTokensAsync([], "claude-sonnet")).estimatedTokens).toBe(0);
   });
 });

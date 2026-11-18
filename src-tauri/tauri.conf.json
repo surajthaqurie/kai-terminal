@@ -30,7 +30,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "resources": ["../dist/cli/index.js"],
+    "resources": ["../dist/cli/index.js", "../dist/cli/chunks/*.js"],
     "publisher": "surajthaqurie",
     "copyright": "Copyright © 2026 surajthaqurie",
     "category": "DeveloperTool",

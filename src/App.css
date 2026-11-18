@@ -4306,9 +4306,10 @@ button.status-git-btn-clickable:focus-visible {
   opacity: var(--music-custom-opacity, 0.4) !important;
 }
 
-.music-modal-dialog.popover-open,
-.music-modal-dialog.is-dimmed.popover-open {
-  opacity: 0.98 !important;
+/* While the Dim popover is open the panel shows the chosen level live (the
+   popover itself is portalled outside the panel, so it stays readable). */
+.music-modal-dialog.popover-open:not(.is-dimmed) {
+  opacity: 1 !important;
 }
 
 .music-modal-dialog.is-resizing {
@@ -4476,10 +4477,10 @@ button.status-git-btn-clickable:focus-visible {
   line-height: 1;
 }
 
+/* Portalled to <body> and placed under the trigger by MusicPanel (left/top),
+   above the music modal layers (up to z-index 2101). */
 .music-dim-popover {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: -114px;
+  position: fixed;
   width: 236px;
   box-sizing: border-box;
   background: var(--bg-surface-elevated, #23272e);
@@ -4489,7 +4490,7 @@ button.status-git-btn-clickable:focus-visible {
     0 12px 32px rgba(0, 0, 0, 0.6),
     0 0 0 1px var(--border-subtle, rgba(255, 255, 255, 0.08));
   padding: 12px;
-  z-index: 1000;
+  z-index: 2200;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -4502,7 +4503,7 @@ button.status-git-btn-clickable:focus-visible {
   content: "";
   position: absolute;
   top: -5px;
-  right: 122px;
+  left: var(--music-dim-arrow, 109px);
   width: 9px;
   height: 9px;
   transform: rotate(45deg);
@@ -5851,6 +5852,26 @@ button.status-git-btn-clickable:focus-visible {
   font-size: 11.5px;
 }
 
+.integration-note p {
+  margin: 0 0 6px;
+}
+
+.integration-signin-url {
+  display: inline-block;
+  max-width: 100%;
+  max-height: 3.2em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  word-break: break-all;
+  vertical-align: middle;
+}
+
+.integration-input {
+  flex: 1 1 260px;
+  min-width: 0;
+  font-family: var(--font-mono, ui-monospace, Consolas, monospace);
+}
+
 .integration-actions {
   display: flex;
   flex-wrap: wrap;
@@ -6251,6 +6272,14 @@ button.status-git-btn-clickable:focus-visible {
 /* ——— Music picture-in-picture (detached always-on-top window) ———
    Only the video shows until the pointer is over the window; then the title
    strip and the controls fade in over it. */
+/* The pip window is created transparent: the page paints nothing behind the
+   player, so Dim Opacity lets the desktop show through. */
+html.music-pip-window,
+html.music-pip-window[data-theme],
+html.music-pip-window body,
+html.music-pip-window #root {
+  background: transparent !important;
+}
 .music-pip {
   position: fixed;
   inset: 0;
@@ -6258,6 +6287,22 @@ button.status-git-btn-clickable:focus-visible {
   color: var(--text-primary);
   border: 1px solid var(--border-default);
   overflow: hidden;
+  cursor: grab;
+  /* Dim Opacity from the player; full while the pointer is over it. */
+  opacity: var(--music-pip-opacity, 1);
+  transition: opacity 0.2s ease;
+  will-change: opacity;
+}
+.music-pip:hover,
+.music-pip:focus-within {
+  opacity: 1;
+}
+.music-pip:active {
+  cursor: grabbing;
+}
+.music-pip button,
+.music-pip input {
+  cursor: pointer;
 }
 .music-pip-video {
   position: absolute;

@@ -6,7 +6,14 @@ import type {
   TeamsRpcResponse,
   TeamsStatusView,
 } from "../integrations/rpcTypes";
-import { clearTeamsAccount, getTeamsAccount, teamsSecretKey, type TeamsAccount } from "./config";
+import { checkClientId, isGuid } from "../integrations/oauthRegistration";
+import {
+  clearTeamsAccount,
+  getTeamsAccount,
+  saveTeamsClientId,
+  teamsSecretKey,
+  type TeamsAccount,
+} from "./config";
 import { GraphClient } from "./graph";
 import { assertNotAgentSession } from "./guard";
 import { CHANNEL_READ_SCOPE, signInToTeams, teamsClientId } from "./oauth";
@@ -29,6 +36,10 @@ export interface TeamsRpcDeps {
   /** Test seams: the browser sign-in and the Graph client. */
   signIn?: typeof signInToTeams;
   connect?: (account: TeamsAccount) => { graph: GraphClient; session: TeamsSession };
+  /** Called with the sign-in address before the browser opens. */
+  onSignInUrl?: (url: string) => void;
+  /** Test seam: where the client ID is saved. */
+  saveClientId?: (clientId: string) => void;
 }
 
 function connectDefault(
@@ -103,12 +114,35 @@ async function checkAccess(deps: TeamsRpcDeps): Promise<TeamsAccessView> {
  * when the organization needs an administrator to approve them). Fails before opening a
  * browser when the build has no Microsoft app.
  */
-async function login(deps: TeamsRpcDeps): Promise<TeamsStatusView> {
+async function login(deps: TeamsRpcDeps, channels = true): Promise<TeamsStatusView> {
   const env = deps.env ?? process.env;
   if (!deps.signIn) teamsClientId(env);
-  const signedIn = await (deps.signIn ?? signInToTeams)({}, { env });
+  const signedIn = await (deps.signIn ?? signInToTeams)(
+    {
+      ...(channels ? {} : { channelHistory: false }),
+      ...(deps.onSignInUrl ? { onUrl: deps.onSignInUrl } : {}),
+    },
+    { env }
+  );
   await storeTeamsSignIn(signedIn, deps.secrets);
   return teamsStatus(env);
+}
+
+/** Same as `--client-id`, from the desktop card. */
+function setClientId(raw: unknown, deps: TeamsRpcDeps): TeamsStatusView {
+  const id = typeof raw === "string" ? raw.trim() : "";
+  const problem = checkClientId(id);
+  if (problem) {
+    throw new IntegrationError(
+      "bad_request",
+      isGuid(id)
+        ? "That is not a real Application (client) ID."
+        : "That is not a valid Application (client) ID.",
+      problem
+    );
+  }
+  (deps.saveClientId ?? saveTeamsClientId)(id);
+  return teamsStatus(deps.env);
 }
 
 async function logout(deps: TeamsRpcDeps): Promise<void> {
@@ -127,12 +161,14 @@ export async function handleTeamsRpc(
     case "teams_status":
       return { ok: true, teams: teamsStatus(deps.env) };
     case "teams_login":
-      return { ok: true, teams: await login(deps) };
+      return { ok: true, teams: await login(deps, request.channels !== false) };
     case "teams_verify":
       return { ok: true, access: await checkAccess(deps) };
     case "teams_logout":
       await logout(deps);
       return { ok: true, teams: teamsStatus(deps.env) };
+    case "teams_set_client_id":
+      return { ok: true, teams: setClientId(request.clientId, deps) };
     default:
       throw new IntegrationError("bad_request", "Unknown operation.");
   }

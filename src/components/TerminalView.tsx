@@ -357,20 +357,16 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
     const staleReplyUntilRef = useRef(0);
 
     // Single writer for every paste route (key combo, toolbar button, native
-    // paste event from the context menu / middle-click). Keeps size limiting,
-    // history tracking and the no-auto-Enter rule (preparePasteText) in one place.
+    // paste event from the context menu / middle-click). Keeps history
+    // tracking and the no-auto-Enter rule (preparePasteText) in one place.
+    // Any size is delivered: writeToPty chunks the (already bracketed) paste
+    // under the backend's per-call bound and sends the chunks in order, so the
+    // ESC[200~ / ESC[201~ markers wrap the whole paste, not each chunk. A
+    // failed chunk stops the rest and rejects once (one message below).
     const pasteToPty = (text: string) => {
       const backendId = backendPtyIdRef.current;
       const term = xtermRef.current;
       if (!text || !backendId || !term) return;
-
-      const byteLen = new TextEncoder().encode(text).length;
-      if (byteLen > 1_048_576) {
-        term.writeln(
-          `\r\n\x1b[33m[Input rejected: payload size (${byteLen} bytes) exceeds maximum limit of 1048576 bytes; paste smaller chunks instead of losing data silently]\x1b[0m\r\n`
-        );
-        return;
-      }
 
       // Pasted text updates the line buffer so command history stays in sync.
       trackInputData(text.replace(/[\r\n]+$/, ""));

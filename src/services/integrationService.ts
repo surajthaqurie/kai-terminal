@@ -47,7 +47,7 @@ export async function integrationRpc(req: IntegrationRpcRequest): Promise<Integr
   } catch (err) {
     // The Rust side never includes the request in its messages.
     const message = typeof err === "string" && err ? err : "Could not reach the kai CLI.";
-    // An older `kai` earlier on PATH does not know `azure rpc` and prints nothing usable.
+    // Only reachable when falling back to an older `kai` on PATH.
     if (/returned no response|unexpected response/i.test(message)) {
       return unavailable(
         "The kai CLI did not understand the request. An older kai may be first on PATH: update it (npm i -g kai-terminal) or run `kai doctor`."
@@ -230,9 +230,46 @@ export async function getTeamsStatus(): Promise<RpcResult<TeamsStatusView>> {
  * returns once the person has finished (or gave up). Permission to read channel
  * messages is asked for too; the returned status says whether it was granted.
  */
-export async function teamsLogin(): Promise<RpcResult<TeamsStatusView>> {
-  const res = await integrationRpc({ op: "teams_login" });
+export async function teamsLogin(
+  opts: { channels?: boolean } = {}
+): Promise<RpcResult<TeamsStatusView>> {
+  const res = await integrationRpc({
+    op: "teams_login",
+    ...(opts.channels === false ? { channels: false } : {}),
+  });
   return pick(res, isTeamsStatus, (r) => r.teams as TeamsStatusView);
+}
+
+/** Saves the Microsoft Entra Application (client) ID Teams signs in with on this computer. */
+export async function setTeamsClientId(clientId: string): Promise<RpcResult<TeamsStatusView>> {
+  const res = await integrationRpc({ op: "teams_set_client_id", clientId });
+  return pick(res, isTeamsStatus, (r) => r.teams as TeamsStatusView);
+}
+
+/** Event the desktop shell sends with a browser sign-in's address while it waits. */
+export const SIGN_IN_URL_EVENT = "kai-integration:signin-url";
+
+/** Subscribes to the sign-in URL of a browser sign-in in progress. */
+export async function onSignInUrl(handler: (url: string) => void): Promise<() => void> {
+  if (!isTauriAvailable()) return () => {};
+  try {
+    const { listen } = await import("@tauri-apps/api/event");
+    return await listen<string>(SIGN_IN_URL_EVENT, (e) => {
+      if (typeof e.payload === "string" && e.payload.startsWith("https://")) handler(e.payload);
+    });
+  } catch {
+    return () => {};
+  }
+}
+
+/** Stops a browser sign-in that is waiting; its call then fails with "cancelled". */
+export async function cancelBrowserSignIn(): Promise<boolean> {
+  if (!isTauriAvailable()) return false;
+  try {
+    return await invoke<boolean>("cancel_integration_sign_in_cmd");
+  } catch {
+    return false;
+  }
 }
 
 export async function verifyTeams(): Promise<RpcResult<TeamsAccessView>> {

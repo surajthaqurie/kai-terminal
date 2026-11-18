@@ -62,6 +62,8 @@ export interface ServiceDeps {
    * defaults to the process-tree and environment check. Test seam.
    */
   agentGuard?: () => Promise<void>;
+  /** Receives the browser sign-in URL before the browser opens. */
+  onSignInUrl?: (url: string) => void;
 }
 
 function secretsOf(deps: ServiceDeps): SecretStore {
@@ -848,7 +850,7 @@ export async function handleRpc(
     case "status":
       return { ok: true, status: await getStatus(providerId, request.projectDir, deps) };
     case "login_browser": {
-      const result = await loginWithBrowser(providerId, {}, deps);
+      const result = await loginWithBrowser(providerId, { onUrl: deps.onSignInUrl }, deps);
       return { ok: true, accounts: result.accounts, user: result.user };
     }
     case "login": {
@@ -920,8 +922,13 @@ export async function handleRpc(
     case "teams_login":
     case "teams_verify":
     case "teams_logout":
+    case "teams_set_client_id":
       // Microsoft Teams is the person's own account, not a project integration.
-      return await handleTeamsRpc(request, { secrets: deps.secrets, agentGuard: deps.agentGuard });
+      return await handleTeamsRpc(request, {
+        secrets: deps.secrets,
+        agentGuard: deps.agentGuard,
+        onSignInUrl: deps.onSignInUrl,
+      });
     default:
       throw new IntegrationError("bad_request", "Unknown operation.");
   }

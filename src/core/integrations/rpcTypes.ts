@@ -164,10 +164,22 @@ export type TeamsRpcRequest =
    * Open the browser and sign in. Reading channel messages is asked for by default and
    * dropped automatically when the organization needs an administrator to approve it.
    */
-  | { op: "teams_login" }
+  | {
+      op: "teams_login";
+      /** false: do not ask for channel messages (an organization that needs admin approval). */
+      channels?: boolean;
+    }
   /** Call Microsoft Graph with the saved sign-in and report what it can reach. */
   | { op: "teams_verify" }
-  | { op: "teams_logout" };
+  | { op: "teams_logout" }
+  /** Save the Microsoft Entra Application (client) ID to sign in with on this computer. */
+  | { op: "teams_set_client_id"; clientId: string };
+
+/** Progress line printed before the response while a browser sign-in waits. */
+export interface IntegrationRpcEvent {
+  event: "signin_url";
+  url: string;
+}
 
 export interface TeamsStatusView {
   /** False when this build has no Microsoft Entra app to sign in with. */

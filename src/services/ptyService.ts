@@ -8,6 +8,11 @@ import {
   PtyExitPayload,
   UnlistenFn,
 } from "../types/terminal";
+import { createPtyWriteQueue } from "./ptyWriteQueue";
+
+const queuedPtyWrite = createPtyWriteQueue((id, data) =>
+  invoke<void>("write_to_pty", { id, data })
+);
 
 /**
  * Interface definition for PTY service operations.
@@ -127,9 +132,14 @@ class PtyServiceImpl implements IPtyService {
     }
   }
 
+  /**
+   * Writes go through a per-terminal queue that splits payloads into
+   * sub-1 MB chunks (the backend's per-call bound) and sends them in order,
+   * awaiting each invoke, so large pastes are delivered instead of rejected.
+   */
   static async writeToPty(id: string, data: string): Promise<void> {
     if (!isTauriAvailable()) return;
-    await invoke<void>("write_to_pty", { id, data });
+    await queuedPtyWrite(id, data);
   }
 
   static async resizePty(id: string, cols: number, rows: number): Promise<void> {

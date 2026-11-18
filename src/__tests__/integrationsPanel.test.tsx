@@ -18,6 +18,9 @@ const svc = vi.hoisted(() => ({
   teamsLogin: vi.fn(),
   verifyTeams: vi.fn(),
   teamsLogout: vi.fn(),
+  setTeamsClientId: vi.fn(),
+  cancelBrowserSignIn: vi.fn(),
+  onSignInUrl: vi.fn(async () => () => {}),
 }));
 vi.mock("../services/integrationService", () => svc);
 

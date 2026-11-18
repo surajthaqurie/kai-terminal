@@ -695,13 +695,13 @@ describe("MusicPanel modal implementation", () => {
     expect(localStorage.getItem("kai_music_dimmed")).toBeNull();
 
     // Popover is visible and has percentage slider and presets
-    const popover = container.querySelector(".music-dim-popover");
+    const popover = document.querySelector(".music-dim-popover");
     expect(popover).not.toBeNull();
-    const slider = container.querySelector(".music-dim-slider") as HTMLInputElement;
+    const slider = document.querySelector(".music-dim-slider") as HTMLInputElement;
     expect(slider).not.toBeNull();
 
     // Changing percentage via preset enables dimming, updates dimPercent and storage
-    const preset60 = Array.from(container.querySelectorAll(".music-dim-preset-chip")).find(
+    const preset60 = Array.from(document.querySelectorAll(".music-dim-preset-chip")).find(
       (el) => el.textContent?.trim() === "60%"
     ) as HTMLButtonElement;
     expect(preset60).not.toBeNull();
@@ -712,10 +712,10 @@ describe("MusicPanel modal implementation", () => {
     expect(dialog.classList.contains("is-dimmed")).toBe(true);
     expect(localStorage.getItem("kai_music_dimmed")).toBe("true");
     expect(localStorage.getItem("kai_music_dim_percent")).toBe("60");
-    expect(container.querySelector(".music-dim-val")?.textContent).toBe("60%");
+    expect(document.querySelector(".music-dim-val")?.textContent).toBe("60%");
 
     // Disable dimming via the "Off" button in the header toggle switch
-    const offBtn = Array.from(container.querySelectorAll(".music-dim-toggle-switch button")).find(
+    const offBtn = Array.from(document.querySelectorAll(".music-dim-toggle-switch button")).find(
       (el) => el.textContent?.trim() === "Off"
     ) as HTMLButtonElement;
     expect(offBtn).not.toBeNull();
@@ -728,7 +728,7 @@ describe("MusicPanel modal implementation", () => {
     expect(offBtn.classList.contains("active")).toBe(true);
 
     // Clicking "On" enables dimming again
-    const onBtn = Array.from(container.querySelectorAll(".music-dim-toggle-switch button")).find(
+    const onBtn = Array.from(document.querySelectorAll(".music-dim-toggle-switch button")).find(
       (el) => el.textContent?.trim() === "On"
     ) as HTMLButtonElement;
     expect(onBtn).not.toBeNull();

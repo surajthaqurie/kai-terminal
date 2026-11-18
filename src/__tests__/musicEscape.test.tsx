@@ -43,10 +43,10 @@ describe("MusicPanel Escape layering", () => {
   it("closes only the dim popover first, then the player on the next press", async () => {
     await render();
     await click("button[aria-label^='Dim player opacity']");
-    expect(container.querySelector(".music-dim-popover")).not.toBeNull();
+    expect(document.querySelector(".music-dim-popover")).not.toBeNull();
 
     await pressEscape();
-    expect(container.querySelector(".music-dim-popover")).toBeNull();
+    expect(document.querySelector(".music-dim-popover")).toBeNull();
     expect(onClose).not.toHaveBeenCalled();
 
     await pressEscape();
@@ -72,7 +72,7 @@ describe("MusicPanel Escape layering", () => {
     await click("button[aria-label^='Dim player opacity']");
 
     await pressEscape();
-    expect(container.querySelector(".music-dim-popover")).toBeNull();
+    expect(document.querySelector(".music-dim-popover")).toBeNull();
     expect(container.querySelector(".music-queue-drawer.open")).not.toBeNull();
     await pressEscape();
     expect(container.querySelector(".music-queue-drawer.open")).toBeNull();

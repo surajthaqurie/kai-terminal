@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { PtyService } from "../services/ptyService";
+import { PTY_WRITE_CHUNK_BYTES, splitUtf8Chunks } from "../services/ptyWriteQueue";
 import {
   splitTab,
   MAX_PANES_PER_TAB,
@@ -164,16 +165,18 @@ describe("Terminal Native PTY and Rendering Hardening", () => {
     expect(noopRemoval).toBe(afterRemoval);
   });
 
-  it("validates paste payload rejection above 1MB limit with TextEncoder byte calculation", () => {
-    const safePayload = "a".repeat(1024);
-    const safeByteLen = new TextEncoder().encode(safePayload).length;
-    expect(safeByteLen).toBe(1024);
-    expect(safeByteLen <= 1_048_576).toBe(true);
+  it("splits a paste above the 1 MB per-call bound into sub-limit chunks instead of rejecting it", () => {
+    // Oversized multibyte payload (emoji = 4 UTF-8 bytes per character)
+    const bigEmoji = "🚀".repeat(300_000); // 1,200,000 bytes > 1 MB
+    const enc = new TextEncoder();
+    expect(enc.encode(bigEmoji).length).toBe(1_200_000);
 
-    // Oversized multibyte payload (CJK / emoji 3-4 bytes per character)
-    const bigEmoji = "🚀".repeat(300_000); // 300,000 * 4 = 1,200,000 bytes > 1 MB
-    const bigByteLen = new TextEncoder().encode(bigEmoji).length;
-    expect(bigByteLen).toBe(1_200_000);
-    expect(bigByteLen > 1_048_576).toBe(true);
+    const chunks = splitUtf8Chunks(bigEmoji);
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const c of chunks) {
+      expect(enc.encode(c).length).toBeLessThanOrEqual(PTY_WRITE_CHUNK_BYTES);
+      expect(PTY_WRITE_CHUNK_BYTES).toBeLessThan(1_048_576);
+    }
+    expect(chunks.join("")).toBe(bigEmoji);
   });
 });

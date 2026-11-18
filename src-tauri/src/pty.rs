@@ -215,7 +215,11 @@ const MAX_ROWS: u16 = 500;
 // same byte order — this is flow pacing, NOT line splitting: newlines and
 // control characters are never inserted, removed, or reordered.
 const WRITE_SYSCALL_CHUNK_BYTES: usize = 32_768;
-// Maximum input payload size per IPC write call (1 MB)
+// Maximum input payload size per IPC write call (1 MB). This bounds a single
+// `write_to_pty` invoke only, not a paste: the frontend
+// (src/services/ptyWriteQueue.ts) splits larger writes into 256 KB UTF-8-safe
+// chunks and sends them sequentially per session, awaiting each call. The
+// guard stays as a safety net so no single IPC message can be unbounded.
 const MAX_INPUT_WRITE_BYTES: usize = 1_048_576;
 // Launch-argument hardening (Phase E): bound IPC-controlled vectors.
 const MAX_SPAWN_ARGS: usize = 64;
@@ -595,8 +599,9 @@ impl PtyManager {
     /// splitting, newline injection, or reordering is performed — canonical
     /// line-discipline limits (e.g. the 4,096-byte `n_tty` canonical buffer)
     /// remain OS semantics; shells that need long lines must enable raw mode
-    /// themselves. Payloads over 1 MB are rejected rather than silently
-    /// truncated.
+    /// themselves. A single call over 1 MB (`MAX_INPUT_WRITE_BYTES`) is
+    /// rejected rather than silently truncated; the frontend never sends one,
+    /// since it chunks large writes below that bound.
     pub fn write_to_pty(&self, id: &str, data: &str) -> Result<(), TerminalError> {
         if data.len() > MAX_INPUT_WRITE_BYTES {
             return Err(TerminalError::WriteFailed(format!(

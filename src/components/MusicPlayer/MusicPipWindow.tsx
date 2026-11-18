@@ -1,4 +1,11 @@
-import { FC, useEffect, useRef, useState } from "react";
+import {
+  FC,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import {
   Maximize2,
   Music,
@@ -16,6 +23,8 @@ import {
   closeMusicPip,
   emitPip,
   listenPip,
+  savePipPosition,
+  savePipSize,
   type PipAction,
   type PipState,
 } from "../../services/musicPip";
@@ -47,6 +56,101 @@ export const MusicPipWindow: FC = () => {
   const receivedRef = useRef(false);
 
   const act = (action: PipAction) => void emitPip(PIP_EVENTS.action, action);
+
+  // The window is transparent so Dim Opacity can show the desktop through it;
+  // the page itself must not paint the app's canvas color behind the player.
+  useEffect(() => {
+    document.documentElement.classList.add("music-pip-window");
+    return () => document.documentElement.classList.remove("music-pip-window");
+  }, []);
+
+  // Remember the window's position and size for next time.
+  useEffect(() => {
+    const unlisteners: Array<() => void> = [];
+    let cancelled = false;
+    let moveTimer = 0;
+    let sizeTimer = 0;
+    void (async () => {
+      try {
+        const { getCurrentWindow } = await import("@tauri-apps/api/window");
+        const win = getCurrentWindow();
+        const keep = (u: () => void) => {
+          if (cancelled) u();
+          else unlisteners.push(u);
+        };
+        keep(
+          await win.onMoved(({ payload }) => {
+            // A drag fires many moves; store only where it settles.
+            window.clearTimeout(moveTimer);
+            moveTimer = window.setTimeout(() => savePipPosition(payload.x, payload.y), 250);
+          })
+        );
+        keep(
+          await win.onResized(({ payload }) => {
+            window.clearTimeout(sizeTimer);
+            sizeTimer = window.setTimeout(() => {
+              // Reported in physical pixels; the window is created in logical ones.
+              void win
+                .scaleFactor()
+                .then((scale) => {
+                  const s = scale > 0 ? scale : 1;
+                  savePipSize(payload.width / s, payload.height / s);
+                })
+                .catch(() => {});
+            }, 250);
+          })
+        );
+      } catch {
+        // Not in the desktop app: nothing to remember.
+      }
+    })();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(moveTimer);
+      window.clearTimeout(sizeTimer);
+      unlisteners.forEach((u) => u());
+    };
+  }, []);
+
+  /** Drag the window from anywhere on it except its buttons and slider. */
+  const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    if ((e.target as HTMLElement).closest("button, input, a")) return;
+    e.preventDefault();
+    void import("@tauri-apps/api/window")
+      .then(({ getCurrentWindow }) => getCurrentWindow().startDragging())
+      .catch(() => {});
+  };
+
+  // YouTube reports the time only every so often (and it crosses two windows
+  // to get back here), so between reports the time and the progress bar are
+  // advanced locally every frame while playing: no stepping, no stalls.
+  const [smoothTime, setSmoothTime] = useState(0);
+  const anchorRef = useRef({ time: 0, at: 0 });
+  useEffect(() => {
+    anchorRef.current = { time: state.currentTime, at: performance.now() };
+    setSmoothTime(state.currentTime);
+  }, [state.currentTime]);
+  const advancing = state.playing && !state.buffering && Boolean(state.src);
+  useEffect(() => {
+    if (!advancing) {
+      setSmoothTime(anchorRef.current.time);
+      return;
+    }
+    let raf = 0;
+    const tick = () => {
+      const { time, at } = anchorRef.current;
+      const elapsed = (performance.now() - at) / 1000;
+      // Never run more than a couple of seconds ahead of the last report
+      // (a report that is late), nor past the end.
+      const next = time + Math.min(elapsed, 2);
+      setSmoothTime(state.duration > 0 ? Math.min(next, state.duration) : next);
+      raf = window.requestAnimationFrame(tick);
+    };
+    anchorRef.current = { ...anchorRef.current, at: performance.now() };
+    raf = window.requestAnimationFrame(tick);
+    return () => window.cancelAnimationFrame(raf);
+  }, [advancing, state.duration]);
 
   // Wire up the main window, then announce we are ready for its first state.
   useEffect(() => {
@@ -110,12 +214,40 @@ export const MusicPipWindow: FC = () => {
     post(youtubeCommand(stateRef.current.muted ? "mute" : "unMute"));
   };
 
-  const percent = state.duration > 0 ? progressPercent(state.currentTime, state.duration) : 0;
+  // While the seek slider is dragged it shows the drag position, not the
+  // advancing playback time, and seeks once on release: no fighting the bar,
+  // and no burst of seek commands to YouTube.
+  const [scrub, setScrub] = useState<number | null>(null);
+  const draggingRef = useRef(false);
+  const seekTo = (value: number) => {
+    act({ name: "seek", value });
+    // Show the new spot at once; YouTube's next report confirms it.
+    if (state.duration > 0) {
+      const time = (value / 100) * state.duration;
+      anchorRef.current = { time, at: performance.now() };
+      setSmoothTime(time);
+    }
+  };
+  const endScrub = () => {
+    if (!draggingRef.current) return;
+    draggingRef.current = false;
+    if (scrub !== null) seekTo(scrub);
+    setScrub(null);
+  };
+  const endScrubRef = useRef(endScrub);
+  endScrubRef.current = endScrub;
+
+  const playedPercent = state.duration > 0 ? progressPercent(smoothTime, state.duration) : 0;
+  const percent = scrub ?? playedPercent;
+  const shownTime =
+    scrub !== null && state.duration > 0 ? (scrub / 100) * state.duration : smoothTime;
   const title = state.title ?? "Nothing playing";
 
   return (
     <div
       className={`music-pip${src ? "" : " music-pip-idle"}`}
+      style={{ "--music-pip-opacity": String(state.opacity ?? 1) } as CSSProperties}
+      onPointerDown={onPointerDown}
       role="application"
       aria-label="YouTube Music mini player"
     >
@@ -139,9 +271,9 @@ export const MusicPipWindow: FC = () => {
         )}
       </div>
 
-      <div className="music-pip-head" data-tauri-drag-region>
+      <div className="music-pip-head">
         <Music size={12} aria-hidden="true" className="music-pip-head-icon" />
-        <span className="music-pip-title" data-tauri-drag-region title={title}>
+        <span className="music-pip-title" title={title}>
           {title}
         </span>
         <button
@@ -166,13 +298,24 @@ export const MusicPipWindow: FC = () => {
 
       <div className="music-pip-bar">
         <div className="music-pip-progress">
-          <span className="music-time-label">{formatTime(state.currentTime)}</span>
+          <span className="music-time-label">{formatTime(shownTime)}</span>
           <input
             type="range"
             min={0}
             max={100}
+            step="any"
             value={percent}
-            onChange={(e) => act({ name: "seek", value: Number(e.target.value) })}
+            onPointerDown={() => {
+              draggingRef.current = true;
+              // Released anywhere (even off the slider) ends the drag.
+              window.addEventListener("pointerup", () => endScrubRef.current(), { once: true });
+            }}
+            onChange={(e) => {
+              const value = Number(e.target.value);
+              // Pointer drags commit on release; keyboard steps seek at once.
+              if (draggingRef.current) setScrub(value);
+              else seekTo(value);
+            }}
             className="music-progress-slider"
             disabled={!src}
             aria-label="Seek track position"

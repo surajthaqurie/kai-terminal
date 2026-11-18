@@ -114,41 +114,123 @@ const MUSIC_PIP_LABEL: &str = "music-pip";
 #[cfg(feature = "tauri")]
 const MUSIC_PIP_CLOSED_EVENT: &str = "kai-pip:closed";
 
-/// Opens the small always-on-top music window (bottom-right of the primary
-/// monitor), or just raises it when it is already open. `async` because
-/// creating a window from a synchronous command can deadlock on Windows.
+/// WebView2 browser arguments. Every window in the app shares one WebView2
+/// environment, and WebView2 refuses to create a window whose arguments differ
+/// from the environment's, so this MUST stay identical to `additionalBrowserArgs`
+/// in `tauri.windows.conf.json`. Wry's defaults plus autoplay: the music window
+/// is a fresh page nobody has clicked in yet, and without this the YouTube embed
+/// it loads (with sound) would be blocked and the song would stop.
+#[cfg(all(feature = "tauri", target_os = "windows"))]
+const WEBVIEW2_BROWSER_ARGS: &str =
+    "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required";
+
+/// Smallest size of the music window (logical pixels).
+#[cfg(any(feature = "tauri", test))]
+const MUSIC_PIP_MIN_SIZE: (f64, f64) = (240.0, 150.0);
+
+/// Size to open the music window at: the saved `width`/`height` (logical
+/// pixels) when both are usable, never below the minimum nor above `max`
+/// (the primary monitor in logical pixels), otherwise 360x203.
+#[cfg(any(feature = "tauri", test))]
+fn music_pip_size(width: Option<f64>, height: Option<f64>, max: Option<(f64, f64)>) -> (f64, f64) {
+    const DEFAULT: (f64, f64) = (360.0, 203.0); // 16:9 at 360 wide: the window is just the video
+    let (min_w, min_h) = MUSIC_PIP_MIN_SIZE;
+    match (width, height) {
+        (Some(w), Some(h)) if w.is_finite() && h.is_finite() && w > 0.0 && h > 0.0 => {
+            let (max_w, max_h) = max.unwrap_or((f64::MAX, f64::MAX));
+            (w.min(max_w).max(min_w), h.min(max_h).max(min_h))
+        }
+        _ => DEFAULT,
+    }
+}
+
+/// Opens the small always-on-top music window, or just raises it when it is
+/// already open. It reopens where the user last dropped it (`x`/`y`, physical
+/// pixels) when that spot is still on a connected monitor, otherwise at the
+/// bottom-right of the primary monitor, and at its last size (`width`/`height`,
+/// logical pixels). `async` because creating a window from a synchronous
+/// command can deadlock on Windows.
 #[cfg(feature = "tauri")]
 #[tauri::command]
-async fn open_music_pip(app_handle: AppHandle) -> Result<(), String> {
+async fn open_music_pip(
+    app_handle: AppHandle,
+    x: Option<f64>,
+    y: Option<f64>,
+    width: Option<f64>,
+    height: Option<f64>,
+) -> Result<(), String> {
     if let Some(window) = app_handle.get_webview_window(MUSIC_PIP_LABEL) {
         let _ = window.show();
         let _ = window.set_focus();
         return Ok(());
     }
-    const WIDTH: f64 = 360.0;
-    const HEIGHT: f64 = 203.0; // 16:9 at 360 wide: the window is just the video
-    let mut builder = tauri::WebviewWindowBuilder::new(
+    let primary = app_handle.primary_monitor().ok().flatten();
+    let max = primary.as_ref().map(|m| {
+        let scale = m.scale_factor();
+        (
+            m.size().width as f64 / scale,
+            m.size().height as f64 / scale,
+        )
+    });
+    let (width, height) = music_pip_size(width, height, max);
+    let builder = tauri::WebviewWindowBuilder::new(
         &app_handle,
         MUSIC_PIP_LABEL,
         // Same bundle as the main window; `main.tsx` picks the player view.
         tauri::WebviewUrl::App("index.html?pip=music".into()),
     )
     .title("Kai Music")
-    .inner_size(WIDTH, HEIGHT)
-    .min_inner_size(240.0, 150.0)
+    .inner_size(width, height)
+    .min_inner_size(MUSIC_PIP_MIN_SIZE.0, MUSIC_PIP_MIN_SIZE.1)
     .decorations(false)
     .always_on_top(true)
     .resizable(true)
-    .focused(true)
-    .background_color(tauri::window::Color(11, 13, 16, 255));
-    if let Ok(Some(monitor)) = app_handle.primary_monitor() {
+    // Shown once it is in place, so it never flashes at a default spot.
+    .visible(false)
+    .focused(true);
+    // A see-through window lets the player's Dim Opacity show the desktop
+    // behind the video (macOS would need Tauri's private API).
+    #[cfg(not(target_os = "macos"))]
+    let builder = builder
+        .transparent(true)
+        .background_color(tauri::window::Color(0, 0, 0, 0));
+    #[cfg(target_os = "macos")]
+    let builder = builder.background_color(tauri::window::Color(11, 13, 16, 255));
+    #[cfg(target_os = "windows")]
+    let builder = builder.additional_browser_args(WEBVIEW2_BROWSER_ARGS);
+    let window = builder.build().map_err(|e| e.to_string())?;
+
+    let saved = match (x, y) {
+        (Some(x), Some(y)) if x.is_finite() && y.is_finite() => Some((x as i32, y as i32)),
+        _ => None,
+    };
+    // A saved spot counts only while its title strip is on some monitor (one
+    // may have been unplugged since).
+    let on_screen = |(px, py): (i32, i32)| {
+        app_handle.available_monitors().map_or(false, |monitors| {
+            monitors.iter().any(|m| {
+                let (mx, my) = (m.position().x, m.position().y);
+                let (mw, mh) = (m.size().width as i32, m.size().height as i32);
+                let (cx, cy) = (px + 40, py + 16);
+                cx >= mx && cx < mx + mw && cy >= my && cy < my + mh
+            })
+        })
+    };
+    let position = saved.filter(|p| on_screen(*p)).or_else(|| {
+        let monitor = primary.as_ref()?;
         let scale = monitor.scale_factor();
-        let x = (monitor.position().x as f64 + monitor.size().width as f64) / scale - WIDTH - 24.0;
-        let y =
-            (monitor.position().y as f64 + monitor.size().height as f64) / scale - HEIGHT - 64.0;
-        builder = builder.position(x, y);
+        let w = (width * scale) as i32;
+        let h = (height * scale) as i32;
+        let x = monitor.position().x + monitor.size().width as i32 - w - (24.0 * scale) as i32;
+        let y = monitor.position().y + monitor.size().height as i32 - h - (64.0 * scale) as i32;
+        Some((x, y))
+    });
+    if let Some((x, y)) = position {
+        let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
     }
-    builder.build().map(|_| ()).map_err(|e| e.to_string())
+    let _ = window.show();
+    let _ = window.set_focus();
+    Ok(())
 }
 
 /// Closes the music window (a no-op when it is not open) and, when asked,
@@ -286,8 +368,26 @@ fn get_agent_setup_snippet_cmd(id: String, project_arg: String) -> Result<String
 
 #[cfg(feature = "tauri")]
 #[tauri::command(async)]
-fn run_integration_rpc_cmd(request_json: String) -> Result<String, String> {
-    integrations::run_integration_rpc(&request_json)
+fn run_integration_rpc_cmd(app_handle: AppHandle, request_json: String) -> Result<String, String> {
+    let emitter = app_handle.clone();
+    let sink: integrations::SignInUrlSink = Box::new(move |url| {
+        let _ = emitter.emit_to("main", "kai-integration:signin-url", url);
+    });
+    let bundled = app_handle
+        .path()
+        .resource_dir()
+        .ok()
+        .and_then(|dir| kai_cli::find_bundled_cli(&dir))
+        .zip(kai_cli::find_node_exe())
+        .map(|(script, node)| integrations::BundledCli { node, script });
+    integrations::run_integration_rpc_with(&request_json, bundled.as_ref(), Some(sink))
+}
+
+/// Stops a browser sign-in that is waiting in the Integrations tab.
+#[cfg(feature = "tauri")]
+#[tauri::command]
+fn cancel_integration_sign_in_cmd() -> bool {
+    integrations::cancel_browser_sign_in()
 }
 
 #[cfg(feature = "tauri")]
@@ -583,6 +683,7 @@ pub fn run() {
             setup_agent_mcp_cmd,
             get_agent_setup_snippet_cmd,
             run_integration_rpc_cmd,
+            cancel_integration_sign_in_cmd,
             get_git_info_cmd,
             run_git_action_cmd,
             get_git_changes_cmd,
@@ -631,4 +732,39 @@ pub fn run() {
                 exit_now(app_handle);
             }
         });
+}
+
+#[cfg(test)]
+mod music_pip_size_tests {
+    use super::music_pip_size;
+
+    #[test]
+    fn defaults_when_nothing_saved() {
+        assert_eq!(music_pip_size(None, None, None), (360.0, 203.0));
+        assert_eq!(music_pip_size(Some(500.0), None, None), (360.0, 203.0));
+        assert_eq!(
+            music_pip_size(Some(f64::NAN), Some(300.0), None),
+            (360.0, 203.0)
+        );
+    }
+
+    #[test]
+    fn keeps_a_saved_size() {
+        assert_eq!(
+            music_pip_size(Some(480.0), Some(270.0), Some((1920.0, 1080.0))),
+            (480.0, 270.0)
+        );
+    }
+
+    #[test]
+    fn clamps_to_minimum_and_monitor() {
+        assert_eq!(
+            music_pip_size(Some(100.0), Some(80.0), None),
+            (240.0, 150.0)
+        );
+        assert_eq!(
+            music_pip_size(Some(4000.0), Some(3000.0), Some((1920.0, 1080.0))),
+            (1920.0, 1080.0)
+        );
+    }
 }

@@ -8,7 +8,12 @@ import {
   emitPip,
   isMusicPipWindow,
   listenPip,
+  loadPipPosition,
+  loadPipSize,
   openMusicPip,
+  pipOpacity,
+  savePipPosition,
+  savePipSize,
 } from "../services/musicPip";
 import { embedSrcForTrack } from "../services/musicService";
 
@@ -56,5 +61,50 @@ describe("music picture-in-picture", () => {
     expect(rs).toMatch(/CloseRequested \{ \.\. \} if window\.label\(\) == "main"/);
     expect(rs).toContain("open_music_pip,");
     expect(rs).toContain("close_music_pip,");
+  });
+
+  it("remembers where the mini window was dropped", () => {
+    localStorage.removeItem("kai_music_pip_position");
+    expect(loadPipPosition()).toBeNull();
+    savePipPosition(812.4, -40);
+    expect(loadPipPosition()).toEqual({ x: 812, y: -40 });
+    savePipPosition(Number.NaN, 5);
+    expect(loadPipPosition()).toEqual({ x: 812, y: -40 });
+    localStorage.setItem("kai_music_pip_position", "{bad");
+    expect(loadPipPosition()).toBeNull();
+  });
+
+  it("remembers the mini window's size", () => {
+    localStorage.removeItem("kai_music_pip_size");
+    expect(loadPipSize()).toBeNull();
+    savePipSize(480.6, 270.2);
+    expect(loadPipSize()).toEqual({ width: 481, height: 270 });
+    // Below the native minimum or not a number: ignored, the last good size stays.
+    savePipSize(100, 80);
+    savePipSize(Number.NaN, 300);
+    expect(loadPipSize()).toEqual({ width: 481, height: 270 });
+    localStorage.setItem("kai_music_pip_size", JSON.stringify({ width: 10, height: 10 }));
+    expect(loadPipSize()).toBeNull();
+    localStorage.setItem("kai_music_pip_size", "{bad");
+    expect(loadPipSize()).toBeNull();
+  });
+
+  it("carries the player's dim opacity to the mini window", () => {
+    expect(pipOpacity(false, 40)).toBe(1);
+    expect(pipOpacity(true, 40)).toBe(0.4);
+    expect(pipOpacity(true, 5)).toBe(0.15);
+    expect(pipOpacity(true, 100)).toBe(1);
+  });
+
+  it("uses the same WebView2 arguments for both windows, with autoplay allowed", () => {
+    const rs = fs.readFileSync(path.resolve(__dirname, "../../src-tauri/src/lib.rs"), "utf-8");
+    const conf = JSON.parse(
+      fs.readFileSync(path.resolve(__dirname, "../../src-tauri/tauri.windows.conf.json"), "utf-8")
+    );
+    const args: string = conf.app.windows[0].additionalBrowserArgs;
+    expect(args).toContain("--autoplay-policy=no-user-gesture-required");
+    // WebView2 refuses a second window whose arguments differ from the first.
+    expect(rs).toContain(`"${args}"`);
+    expect(rs).toContain(".additional_browser_args(WEBVIEW2_BROWSER_ARGS)");
   });
 });

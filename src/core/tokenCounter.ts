@@ -145,8 +145,9 @@ export function estimateModelTokens(text: string, modelName?: string): ModelToke
 
 /**
  * `estimateModelTokens` after loading the model's tokenizer. For an OpenAI-family model the count
- * is the exact count of its BPE vocabulary for this text (chat message framing is not added); for
- * any other model with no registered adapter it is the labeled heuristic.
+ * is the exact count of its BPE vocabulary for this text (no chat framing: see
+ * `estimateChatTokensAsync` for a list of messages); for any other model with no registered adapter
+ * it is the labeled heuristic.
  */
 export async function estimateModelTokensAsync(
   text: string,
@@ -154,6 +155,64 @@ export async function estimateModelTokensAsync(
 ): Promise<ModelTokenMetrics> {
   await loadModelTokenizer(modelName);
   return estimateModelTokens(text, modelName);
+}
+
+/** One chat message, as the OpenAI chat format frames it. */
+export interface ChatMessage {
+  role: string;
+  content: string;
+  name?: string;
+}
+
+/** OpenAI chat framing, as in tiktoken's `num_tokens_from_messages`. */
+export const CHAT_TOKENS_PER_MESSAGE = 3;
+export const CHAT_TOKENS_PER_NAME = 1;
+export const CHAT_REPLY_PRIMING_TOKENS = 3;
+
+/** Prompt tokens for chat messages, framing included. Exact for OpenAI models, else estimated. */
+export async function estimateChatTokensAsync(
+  messages: readonly ChatMessage[],
+  modelName?: string
+): Promise<ModelTokenMetrics> {
+  await loadModelTokenizer(modelName);
+  let tokens = messages.length > 0 ? CHAT_REPLY_PRIMING_TOKENS : 0;
+  let characterCount = 0;
+  let byteCount = 0;
+  let exact = true;
+  let tokenizerName = "kai-heuristic";
+  const add = (text: string) => {
+    if (!text) return;
+    const m = estimateModelTokens(text, modelName);
+    tokens += m.estimatedTokens;
+    characterCount += m.characterCount;
+    byteCount += m.byteCount;
+    exact &&= m.isExact;
+    if (m.isExact) tokenizerName = m.tokenizerName;
+  };
+  for (const message of messages) {
+    tokens += CHAT_TOKENS_PER_MESSAGE;
+    add(message.role);
+    add(message.content);
+    if (message.name) {
+      tokens += CHAT_TOKENS_PER_NAME;
+      add(message.name);
+    }
+  }
+  const isExact =
+    exact &&
+    (messages.length > 0
+      ? tokenizerName !== "kai-heuristic"
+      : Boolean(getModelTokenizer(modelName)));
+  return {
+    characterCount,
+    byteCount,
+    estimatedTokens: tokens,
+    measuredTokens: isExact ? tokens : undefined,
+    isEstimate: !isExact,
+    model: modelName,
+    tokenizerName: isExact ? tokenizerName : "kai-heuristic",
+    isExact,
+  };
 }
 
 /**

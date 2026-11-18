@@ -30,7 +30,8 @@ describe("MusicPanel action buttons", () => {
     vi.unstubAllGlobals();
   });
 
-  const $ = <T extends Element>(sel: string) => container.querySelector(sel) as T;
+  const $ = <T extends Element>(sel: string) =>
+    (container.querySelector(sel) ?? document.querySelector(sel)) as T;
   const byLabel = (label: string) => $<HTMLButtonElement>(`[aria-label="${label}"]`);
 
   const render = async (props: Partial<Parameters<typeof MusicPanel>[0]> = {}) => {
@@ -193,6 +194,14 @@ describe("MusicPanel action buttons", () => {
       expect($(".music-dim-popover")).not.toBeNull();
       await press(trigger());
       expect($(".music-dim-popover")).toBeNull();
+    });
+
+    it("renders the popover outside the panel so the panel can preview the dim live", async () => {
+      await render();
+      await press($<HTMLButtonElement>("[aria-label^='Dim player opacity']"));
+      const popover = $(".music-dim-popover");
+      expect(popover.parentElement).toBe(document.body);
+      expect(popover.closest(".music-modal-dialog")).toBeNull();
     });
 
     it("a press elsewhere still closes it, and a press inside it keeps it open", async () => {

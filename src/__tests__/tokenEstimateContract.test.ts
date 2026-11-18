@@ -10,6 +10,7 @@ import {
   getModelTokenizer,
   estimateModelTokens,
   type TokenizerFunction,
+  resetBundledTokenizers,
 } from "../core/tokenCounter";
 import { registerProject } from "../core/registry";
 import { indexProject } from "../core/indexer";
@@ -187,6 +188,37 @@ describe("token-count truthfulness contract (KNOWN_LIMITATIONS 1.8.2)", () => {
     expect(res?.error).toBeUndefined();
     const text = (res?.result as { content: Array<{ text: string }> }).content[0].text;
     expect(text).toContain("Estimate (character heuristic, not a model tokenizer)");
+  });
+
+  it("counts the context exactly when the caller names an OpenAI model", async () => {
+    const dir = makeTempProject({
+      "src/a.ts": "export function alpha() { return 1; }\n",
+    });
+    const call = (args: Record<string, unknown>) =>
+      handleMcpMessage(
+        {
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: {
+            name: "kai_get_context",
+            arguments: { task: "explain alpha", projectPath: dir, ...args },
+          },
+        },
+        dir
+      );
+    const textOf = (r: Awaited<ReturnType<typeof call>>) =>
+      (r?.result as { content: Array<{ text: string }> }).content[0].text;
+
+    const exact = await call({ model: "gpt-4o" });
+    expect(exact?.error).toBeUndefined();
+    expect(textOf(exact)).toContain("Custom tokenizer count");
+    // A model with no offline tokenizer keeps the labeled estimate.
+    const other = await call({ model: "claude-sonnet" });
+    expect(textOf(other)).toContain("Estimate (character heuristic, not a model tokenizer)");
+    const bad = await call({ model: 42 });
+    expect(JSON.stringify(bad)).toContain("model must be a string");
+    resetBundledTokenizers();
   });
 
   it("handles model-specific tokenizer adapters and makes unsupported models explicit", () => {

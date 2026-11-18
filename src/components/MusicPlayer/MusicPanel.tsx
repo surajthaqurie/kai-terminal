@@ -3,10 +3,12 @@ import {
   KeyboardEvent as ReactKeyboardEvent,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 import {
   ChevronLeft,
   Contrast,
@@ -41,6 +43,7 @@ import {
   emitPip,
   listenPip,
   openMusicPip,
+  pipOpacity,
   type PipAction,
   type PipState,
 } from "../../services/musicPip";
@@ -124,6 +127,8 @@ export const MusicPanel: FC<MusicPanelProps> = ({
   const [drawerOpen, setDrawerOpen] = useState<boolean>(false);
   const [drawerMode, setDrawerMode] = useState<"queue" | "search" | "favorites">("queue");
   const [playing, setPlaying] = useState(false);
+  // YouTube playerState 3 (buffering).
+  const [buffering, setBuffering] = useState(false);
   // YouTube `onError` code for the CURRENT embed (cleared when it reloads):
   // the video cannot play, so Play must explain why instead of toggling.
   const [playbackError, setPlaybackError] = useState<number | null>(null);
@@ -151,7 +156,9 @@ export const MusicPanel: FC<MusicPanelProps> = ({
   // the position through the `start` URL param instead of restarting.
   const [embedReloadNonce, setEmbedReloadNonce] = useState(0);
   const nativeLoopRef = useRef(false);
+  // The embed URL takes whole seconds; `resumeExactRef` keeps the fraction.
   const rebuildStartRef = useRef(0);
+  const resumeExactRef = useRef<number | null>(null);
   // Favorite songs, persisted in localStorage; the heart button in the
   // controls and the Favorites tab in the drawer both drive this list.
   const [favorites, setFavorites] = useState<MusicTrack[]>(() => loadFavorites());
@@ -218,6 +225,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     if (!track || !online) return null;
     const start = rebuildStartRef.current;
     rebuildStartRef.current = 0;
+    resumeExactRef.current = start > 0 && start % 1 !== 0 ? start : null;
     // A rebuild that resumes mid-song (loop-off, moving the video to or from
     // the picture-in-picture window) must not start a paused song playing.
     const autoplay = start > 0 ? playingRef.current : true;
@@ -297,6 +305,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     let knownTime = 0;
     let knownDuration = 0;
     setPlaybackError(null);
+    setBuffering(false);
     if (!src) {
       report(0);
       return;
@@ -323,13 +332,26 @@ export const MusicPanel: FC<MusicPanelProps> = ({
         // The embed refused to play (e.g. embedding disabled by the owner).
         // Never leave the UI claiming playback that cannot happen.
         setPlaying(false);
+        setBuffering(false);
         setPlaybackError(t.error);
         setNotice(describePlayerError(t.error));
         report(0);
         return;
       }
-      if (t.currentTime !== undefined) setCurrentTime(t.currentTime);
+      if (t.currentTime !== undefined) {
+        // Catch up the dropped fraction once; only while playing (seeking a cued embed starts it).
+        const target = resumeExactRef.current;
+        if (target !== null) {
+          resumeExactRef.current = null;
+          const behind = target - t.currentTime;
+          if (playingRef.current && behind > 0.2 && behind < 1.5) {
+            sendCommand("seekTo", [target, true]);
+          }
+        }
+        setCurrentTime(t.currentTime);
+      }
       if (t.duration !== undefined) setDuration(t.duration);
+      if (t.playerState !== undefined) setBuffering(t.playerState === 3);
       if (t.playerState === 1) setPlaying(true);
       else if (t.playerState === 2) setPlaying(false);
       else if (t.playerState === 0) {
@@ -683,7 +705,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     const leavesList = next && Boolean(track?.videoId && track?.playlistId);
     if ((!next && nativeLoopRef.current) || leavesList) {
       nativeLoopRef.current = next;
-      rebuildStartRef.current = Math.max(0, Math.floor(currentTime));
+      rebuildStartRef.current = Math.max(0, currentTime);
       setEmbedReloadNonce((n) => n + 1);
     }
   };
@@ -837,6 +859,25 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     };
   }, []);
 
+  const [dimPercent, setDimPercent] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem("kai_music_dim_percent");
+      if (saved) {
+        const parsed = parseInt(saved, 10);
+        if (Number.isFinite(parsed) && parsed >= 15 && parsed <= 100) return parsed;
+      }
+    } catch {}
+    return 40;
+  });
+
+  const [isDimmed, setIsDimmed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("kai_music_dimmed") === "true";
+    } catch {
+      return false;
+    }
+  });
+
   // ——— Picture-in-picture (detached always-on-top window) ———
   // While it is open the window hosts the iframe and this panel stays the
   // brain: it pushes what to show, and runs every button press through the
@@ -845,10 +886,12 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     src,
     title: track?.title ?? null,
     playing,
+    buffering,
     muted,
     volume,
     currentTime,
     duration,
+    opacity: pipOpacity(isDimmed, dimPercent),
   };
   const pipStateRef = useRef(pipState);
   pipStateRef.current = pipState;
@@ -858,7 +901,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
   /** The window is gone (however it closed): take the video back where it was. */
   const handlePipClosed = useCallback(() => {
     if (!pipActiveRef.current) return;
-    if (trackRef.current) rebuildStartRef.current = Math.max(0, Math.floor(currentTimeRef.current));
+    if (trackRef.current) rebuildStartRef.current = Math.max(0, currentTimeRef.current);
     setPipActive(false);
   }, []);
 
@@ -920,15 +963,26 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     void emitPip(PIP_EVENTS.state, pipState);
     // `pipState` is rebuilt every render from exactly these values.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pipActive, src, track?.title, playing, muted, volume, currentTime, duration]);
+  }, [
+    pipActive,
+    src,
+    track?.title,
+    playing,
+    buffering,
+    muted,
+    volume,
+    currentTime,
+    duration,
+    pipState.opacity,
+  ]);
 
   const enterPip = async () => {
     if (!track || !isTauriAvailable() || pipActiveRef.current) return;
     // The iframe moves windows, so the embed reloads and resumes from here.
-    rebuildStartRef.current = Math.max(0, Math.floor(currentTime));
+    rebuildStartRef.current = Math.max(0, currentTime);
     setPipActive(true);
     if (!(await openMusicPip())) {
-      rebuildStartRef.current = Math.max(0, Math.floor(currentTimeRef.current));
+      rebuildStartRef.current = Math.max(0, currentTimeRef.current);
       setPipActive(false);
       setNotice("Could not open the picture-in-picture window.");
     }
@@ -996,30 +1050,20 @@ export const MusicPanel: FC<MusicPanelProps> = ({
   // The smallest height earlier versions let you save; a saved one below the new minimum is raised, not discarded.
   const LEGACY_MIN_PANEL_HEIGHT = 320;
 
-  const [dimPercent, setDimPercent] = useState<number>(() => {
-    try {
-      const saved = localStorage.getItem("kai_music_dim_percent");
-      if (saved) {
-        const parsed = parseInt(saved, 10);
-        if (Number.isFinite(parsed) && parsed >= 15 && parsed <= 100) return parsed;
-      }
-    } catch {}
-    return 40;
-  });
-
-  const [isDimmed, setIsDimmed] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem("kai_music_dimmed") === "true";
-    } catch {
-      return false;
-    }
-  });
-
   const [showDimPopover, setShowDimPopover] = useState(false);
   // Wraps the trigger button AND the popover: a press on the trigger must not
   // count as an "outside" press, or mousedown closes the popover and the click
   // that follows reopens it, so the button could never close its own popover.
   const dimGroupRef = useRef<HTMLDivElement | null>(null);
+  // The popover is portalled to <body> so it stays fully opaque while the
+  // panel behind it previews the dim level live (a child can never be more
+  // opaque than its parent). It is placed under the trigger button.
+  const dimPopoverRef = useRef<HTMLDivElement | null>(null);
+  const [dimPopoverPos, setDimPopoverPos] = useState<{ left: number; top: number; arrow: number }>({
+    left: 0,
+    top: 0,
+    arrow: 109,
+  });
 
   const enableDim = (percent?: number) => {
     if (typeof percent === "number") {
@@ -1049,9 +1093,9 @@ export const MusicPanel: FC<MusicPanelProps> = ({
   useEffect(() => {
     if (!showDimPopover) return;
     const handleOutsideClick = (e: MouseEvent) => {
-      if (dimGroupRef.current && !dimGroupRef.current.contains(e.target as Node)) {
-        setShowDimPopover(false);
-      }
+      const target = e.target as Node;
+      if (dimGroupRef.current?.contains(target) || dimPopoverRef.current?.contains(target)) return;
+      setShowDimPopover(false);
     };
     window.addEventListener("mousedown", handleOutsideClick);
     return () => window.removeEventListener("mousedown", handleOutsideClick);
@@ -1128,6 +1172,23 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     } catch {}
     return DEFAULT_PANEL_HEIGHT;
   });
+
+  // Keep the portalled popover under its button (the panel can be resized or
+  // the window changed while it is open).
+  useLayoutEffect(() => {
+    if (!showDimPopover) return;
+    const POPOVER_WIDTH = 236;
+    const place = () => {
+      const button = dimGroupRef.current?.getBoundingClientRect();
+      if (!button) return;
+      const center = button.left + button.width / 2;
+      const left = Math.max(8, Math.min(window.innerWidth - POPOVER_WIDTH - 8, center - 113));
+      setDimPopoverPos({ left, top: button.bottom + 8, arrow: center - left - 4.5 });
+    };
+    place();
+    window.addEventListener("resize", place);
+    return () => window.removeEventListener("resize", place);
+  }, [showDimPopover, panelWidth, panelHeight]);
 
   const EXPANDED_PANEL_WIDTH = 520;
   const EXPANDED_PANEL_HEIGHT = 680;
@@ -1423,79 +1484,89 @@ export const MusicPanel: FC<MusicPanelProps> = ({
               >
                 <Contrast size={13} />
               </button>
-              {showDimPopover && (
-                <div
-                  className="music-dim-popover"
-                  role="dialog"
-                  aria-label="Adjust dim opacity"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <div className="music-dim-header">
-                    <div className="music-dim-title">
-                      <Contrast size={13} aria-hidden="true" />
-                      <span>Dim Opacity</span>
-                    </div>
-                    <div
-                      className="music-dim-toggle-switch"
-                      role="group"
-                      aria-label="Toggle dim opacity"
-                    >
-                      <button
-                        type="button"
-                        className={`music-dim-toggle-btn ${!isDimmed ? "active" : ""}`}
-                        onClick={disableDim}
-                        aria-pressed={!isDimmed}
-                        aria-label="Turn off dimming"
+              {showDimPopover &&
+                createPortal(
+                  <div
+                    ref={dimPopoverRef}
+                    className="music-dim-popover"
+                    role="dialog"
+                    aria-label="Adjust dim opacity"
+                    style={
+                      {
+                        left: `${dimPopoverPos.left}px`,
+                        top: `${dimPopoverPos.top}px`,
+                        "--music-dim-arrow": `${dimPopoverPos.arrow}px`,
+                      } as React.CSSProperties
+                    }
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <div className="music-dim-header">
+                      <div className="music-dim-title">
+                        <Contrast size={13} aria-hidden="true" />
+                        <span>Dim Opacity</span>
+                      </div>
+                      <div
+                        className="music-dim-toggle-switch"
+                        role="group"
+                        aria-label="Toggle dim opacity"
                       >
-                        Off
-                      </button>
-                      <button
-                        type="button"
-                        className={`music-dim-toggle-btn ${isDimmed ? "active active-on" : ""}`}
-                        onClick={() => enableDim()}
-                        aria-pressed={isDimmed}
-                        aria-label="Turn on dimming"
-                      >
-                        On
-                      </button>
-                    </div>
-                  </div>
-                  <div className="music-dim-body">
-                    <div className="music-dim-level-row">
-                      <span className="music-dim-level-label">Level</span>
-                      <span className="music-dim-val">{dimPercent}%</span>
-                    </div>
-                    <div className="music-dim-slider-row">
-                      <input
-                        type="range"
-                        min={15}
-                        max={100}
-                        step={5}
-                        value={dimPercent}
-                        onChange={(e) => handleDimPercentChange(Number(e.target.value))}
-                        className="music-dim-slider"
-                        aria-label="Dim opacity percentage slider"
-                      />
-                    </div>
-                    <div className="music-dim-range-labels" aria-hidden="true">
-                      <span>15%</span>
-                      <span>100%</span>
-                    </div>
-                    <div className="music-dim-presets">
-                      {[25, 40, 60, 80, 100].map((pct) => (
                         <button
-                          key={pct}
                           type="button"
-                          className={`music-dim-preset-chip ${dimPercent === pct && isDimmed ? "active" : ""}`}
-                          onClick={() => enableDim(pct)}
+                          className={`music-dim-toggle-btn ${!isDimmed ? "active" : ""}`}
+                          onClick={disableDim}
+                          aria-pressed={!isDimmed}
+                          aria-label="Turn off dimming"
                         >
-                          {pct}%
+                          Off
                         </button>
-                      ))}
+                        <button
+                          type="button"
+                          className={`music-dim-toggle-btn ${isDimmed ? "active active-on" : ""}`}
+                          onClick={() => enableDim()}
+                          aria-pressed={isDimmed}
+                          aria-label="Turn on dimming"
+                        >
+                          On
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                </div>
-              )}
+                    <div className="music-dim-body">
+                      <div className="music-dim-level-row">
+                        <span className="music-dim-level-label">Level</span>
+                        <span className="music-dim-val">{dimPercent}%</span>
+                      </div>
+                      <div className="music-dim-slider-row">
+                        <input
+                          type="range"
+                          min={15}
+                          max={100}
+                          step={5}
+                          value={dimPercent}
+                          onChange={(e) => handleDimPercentChange(Number(e.target.value))}
+                          className="music-dim-slider"
+                          aria-label="Dim opacity percentage slider"
+                        />
+                      </div>
+                      <div className="music-dim-range-labels" aria-hidden="true">
+                        <span>15%</span>
+                        <span>100%</span>
+                      </div>
+                      <div className="music-dim-presets">
+                        {[25, 40, 60, 80, 100].map((pct) => (
+                          <button
+                            key={pct}
+                            type="button"
+                            className={`music-dim-preset-chip ${dimPercent === pct && isDimmed ? "active" : ""}`}
+                            onClick={() => enableDim(pct)}
+                          >
+                            {pct}%
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>,
+                  document.body
+                )}
             </div>
             <button
               type="button"

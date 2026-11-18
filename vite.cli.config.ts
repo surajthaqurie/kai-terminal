@@ -46,6 +46,8 @@ export default defineConfig({
     __KAI_BUILD_AZURE_CLIENT_ID__: JSON.stringify(azureClientId),
     __KAI_BUILD_TEAMS_CLIENT_ID__: JSON.stringify(teamsClientId),
   },
+  // Bundle the tokenizer: the desktop app ships `dist/cli` without node_modules.
+  ssr: { noExternal: ["gpt-tokenizer"] },
   build: {
     target: "node20",
     outDir: "dist/cli",
@@ -65,6 +67,8 @@ export default defineConfig({
     rollupOptions: {
       output: {
         entryFileNames: "index.js",
+        // Unhashed: listed in `tauri.conf.json` resources.
+        chunkFileNames: "chunks/[name].js",
         banner: "#!/usr/bin/env node",
       },
       external: [

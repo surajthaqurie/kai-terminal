@@ -2,7 +2,10 @@ import { FC, useCallback, useEffect, useRef, useState } from "react";
 import { CheckCircle, Info, MessageSquare, Plus } from "lucide-react";
 import type { IntegrationErrorBody, TeamsStatusView } from "../core/integrations/rpcTypes";
 import {
+  cancelBrowserSignIn,
   getTeamsStatus,
+  onSignInUrl,
+  setTeamsClientId,
   teamsLogin,
   teamsLogout,
   verifyTeams,
@@ -17,7 +20,7 @@ import {
 } from "./teamsViewModel";
 import { formatError, initialsOf } from "./integrationsViewModel";
 
-type Busy = "load" | "connect" | "channels" | "verify" | "logout" | null;
+type Busy = "load" | "connect" | "channels" | "verify" | "logout" | "client-id" | null;
 
 /**
  * Microsoft Teams in the Integrations tab. Unlike Azure DevOps it is the person's
@@ -31,6 +34,11 @@ export const TeamsIntegrationCard: FC = () => {
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<IntegrationErrorBody | null>(null);
   const [confirmLogout, setConfirmLogout] = useState(false);
+  const [clientId, setClientId] = useState("");
+  const [signInUrl, setSignInUrl] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  // Offered after a cancelled sign-in (often stuck on admin approval).
+  const [offerNoChannels, setOfferNoChannels] = useState(false);
 
   // A reply that arrives after the tab closed is dropped.
   const mounted = useRef(true);
@@ -54,6 +62,24 @@ export const TeamsIntegrationCard: FC = () => {
     });
   }, [refresh]);
 
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    void Promise.resolve(
+      onSignInUrl((url) => {
+        if (busyNow.current === "connect" || busyNow.current === "channels") setSignInUrl(url);
+      })
+    ).then((u) => {
+      if (typeof u !== "function") return;
+      if (cancelled) u();
+      else unlisten = u;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
+
   // No refresh button: the card re-reads itself whenever the window regains focus.
   const busyNow = useRef(busy);
   busyNow.current = busy;
@@ -67,19 +93,27 @@ export const TeamsIntegrationCard: FC = () => {
 
   const run = async (kind: Exclude<Busy, null>, work: () => Promise<void>) => {
     setBusy(kind);
+    busyNow.current = kind;
     setNotice(null);
     setError(null);
+    setSignInUrl(null);
+    setCopied(false);
     try {
       await work();
     } finally {
-      if (mounted.current) setBusy(null);
+      if (mounted.current) {
+        setBusy(null);
+        setSignInUrl(null);
+      }
     }
   };
 
-  const signIn = (retryChannels = false) =>
+  const signIn = (retryChannels = false, channels = true) =>
     void run(retryChannels ? "channels" : "connect", async () => {
-      const res = await teamsLogin();
+      setOfferNoChannels(false);
+      const res = await (channels ? teamsLogin() : teamsLogin({ channels: false }));
       if (!res.ok) {
+        if (channels && /cancel/i.test(res.error.message)) setOfferNoChannels(true);
         setError(res.error);
         return;
       }
@@ -90,6 +124,28 @@ export const TeamsIntegrationCard: FC = () => {
           ? `Signed in as ${who}. Channel messages need admin approval.`
           : `Signed in as ${who}.`
       );
+    });
+
+  const copySignInUrl = () => {
+    if (!signInUrl) return;
+    void navigator.clipboard
+      ?.writeText(signInUrl)
+      .then(() => {
+        if (mounted.current) setCopied(true);
+      })
+      .catch(() => {});
+  };
+
+  const saveClientId = () =>
+    void run("client-id", async () => {
+      const res = await setTeamsClientId(clientId.trim());
+      if (!res.ok) {
+        setError(res.error);
+        return;
+      }
+      setStatus(res.value);
+      setClientId("");
+      setNotice("Saved the Microsoft app ID on this computer.");
     });
 
   const verify = () =>
@@ -165,11 +221,38 @@ export const TeamsIntegrationCard: FC = () => {
       {state !== "loading" && (
         <div className="integration-section">
           {state === "not_configured" && (
-            <p className="integration-warn integration-detected" role="status">
-              Kai has no Microsoft Entra app ID yet. Register an app (see docs/teams-sign-in.md),
-              then run <code>kai integration teams --client-id &lt;ID&gt;</code> in a terminal tab.
-              It is saved on this computer; reopen this tab afterwards.
-            </p>
+            <>
+              <p className="integration-warn integration-detected" role="status">
+                Kai has no Microsoft Entra app ID yet. Register an app (see docs/teams-sign-in.md)
+                and paste its Application (client) ID from Overview. It is saved on this computer.
+              </p>
+              <form
+                className="integration-actions"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (clientId.trim()) saveClientId();
+                }}
+              >
+                <input
+                  type="text"
+                  className="text-input modal-input integration-input"
+                  value={clientId}
+                  onChange={(e) => setClientId(e.target.value)}
+                  placeholder="Application (client) ID"
+                  aria-label="Microsoft Entra Application (client) ID"
+                  spellCheck={false}
+                  autoComplete="off"
+                  disabled={disabled}
+                />
+                <button
+                  type="submit"
+                  className="btn btn-primary btn-small"
+                  disabled={disabled || !clientId.trim()}
+                >
+                  {busy === "client-id" ? "Saving…" : "Save"}
+                </button>
+              </form>
+            </>
           )}
 
           {account && (
@@ -260,9 +343,43 @@ export const TeamsIntegrationCard: FC = () => {
           </div>
 
           {(busy === "connect" || busy === "channels") && (
-            <p className="integration-note" role="status">
-              Finish signing in in your browser.
-            </p>
+            <div className="integration-note" role="status">
+              <p>Finish signing in in your browser.</p>
+              {signInUrl && (
+                <p>
+                  Browser did not open? Open this address yourself:{" "}
+                  <code className="integration-signin-url">{signInUrl}</code>{" "}
+                  <button type="button" className="btn btn-ghost btn-small" onClick={copySignInUrl}>
+                    {copied ? "Copied" : "Copy link"}
+                  </button>
+                </p>
+              )}
+              <p>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-small"
+                  onClick={() => void cancelBrowserSignIn()}
+                >
+                  Cancel sign-in
+                </button>
+              </p>
+            </div>
+          )}
+          {offerNoChannels && busy === null && state !== "signed_in" && (
+            <div className="integration-notice" role="status">
+              <Info size={16} aria-hidden="true" />
+              <span>
+                Stuck on the Microsoft approval page? Sign in without channel messages: chats and
+                sending still work.
+              </span>
+              <button
+                type="button"
+                className="btn btn-secondary btn-small"
+                onClick={() => signIn(false, false)}
+              >
+                Sign in without channel messages
+              </button>
+            </div>
           )}
         </div>
       )}

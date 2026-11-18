@@ -6,9 +6,31 @@
 //! listing, and secrets (an access token typed in Settings) travel only
 //! through the pipe. The request body is never logged or put in an error.
 
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+
+/// Called with the sign-in address a browser sign-in prints before it waits.
+pub type SignInUrlSink = Box<dyn Fn(String) + Send + 'static>;
+
+/// The browser sign-in in progress, if any: setting its flag stops it.
+static ACTIVE_SIGN_IN: Mutex<Option<Arc<AtomicBool>>> = Mutex::new(None);
+
+/// Stops a waiting browser sign-in. Returns whether one was running.
+pub fn cancel_browser_sign_in() -> bool {
+    match ACTIVE_SIGN_IN.lock() {
+        Ok(active) => match active.as_ref() {
+            Some(flag) => {
+                flag.store(true, Ordering::SeqCst);
+                true
+            }
+            None => false,
+        },
+        Err(_) => false,
+    }
+}
 
 /// Largest request the bridge forwards. Requests are small by design.
 const MAX_REQUEST_BYTES: usize = 64 * 1024;
@@ -46,12 +68,27 @@ fn validate_request(raw: &str) -> Result<(), String> {
     }
 }
 
-/// The last non-empty line of the CLI's stdout: the response line, even if a
-/// shim or a warning printed something before it.
+/// The URL in a `{"event":"signin_url","url":"https://..."}` progress line.
+fn sign_in_url_of(line: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(line.trim()).ok()?;
+    if value.get("event")?.as_str()? != "signin_url" {
+        return None;
+    }
+    let url = value.get("url")?.as_str()?;
+    (url.starts_with("https://") && url.len() <= 8192).then(|| url.to_string())
+}
+
+fn is_event_line(line: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(line)
+        .ok()
+        .is_some_and(|v| v.get("event").is_some())
+}
+
+/// The response: the last non-empty stdout line that is not a progress event.
 fn last_non_empty_line(text: &str) -> Option<String> {
     text.lines()
         .map(str::trim)
-        .rfind(|line| !line.is_empty())
+        .rfind(|line| !line.is_empty() && !is_event_line(line))
         .map(str::to_string)
 }
 
@@ -87,6 +124,32 @@ fn launch_plan(launcher: &str, windows: bool) -> (String, Vec<String>) {
     )
 }
 
+/// Reads stdout (capped), passing each sign-in URL to `sink` as it arrives.
+fn read_stdout<R: Read + Send + 'static>(
+    stream: R,
+    sink: Option<SignInUrlSink>,
+) -> std::thread::JoinHandle<String> {
+    std::thread::spawn(move || {
+        let mut reader = BufReader::new(stream.take(MAX_RESPONSE_BYTES));
+        let mut out = String::new();
+        let mut buf = Vec::new();
+        loop {
+            buf.clear();
+            match reader.read_until(b'\n', &mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {
+                    let line = String::from_utf8_lossy(&buf);
+                    if let (Some(sink), Some(url)) = (sink.as_ref(), sign_in_url_of(&line)) {
+                        sink(url);
+                    }
+                    out.push_str(&line);
+                }
+            }
+        }
+        out
+    })
+}
+
 fn read_capped<R: Read + Send + 'static>(mut stream: R) -> std::thread::JoinHandle<String> {
     std::thread::spawn(move || {
         let mut buf = Vec::new();
@@ -97,12 +160,42 @@ fn read_capped<R: Read + Send + 'static>(mut stream: R) -> std::thread::JoinHand
 
 /// Runs one integration request through the installed `kai` CLI.
 pub fn run_integration_rpc(request_json: &str) -> Result<String, String> {
-    validate_request(request_json)?;
+    run_integration_rpc_with(request_json, None, None)
+}
+
+/// The CLI that ships inside the desktop app: Node.js plus its `index.js`.
+pub struct BundledCli {
+    pub node: String,
+    pub script: std::path::PathBuf,
+}
+
+/// Prefers the app's bundled CLI (always matches the app) over `kai` on PATH.
+fn command_for(bundled: Option<&BundledCli>) -> Result<(String, Vec<String>), String> {
+    if let Some(cli) = bundled {
+        return Ok((
+            cli.node.clone(),
+            vec![
+                cli.script.to_string_lossy().into_owned(),
+                "azure".to_string(),
+                "rpc".to_string(),
+            ],
+        ));
+    }
     let launcher = crate::ai_cli::get_kai_cli_launch()?
         .into_iter()
         .next()
         .ok_or_else(|| "kai CLI not found.".to_string())?;
-    let (program, args) = launch_plan(&launcher, cfg!(target_os = "windows"));
+    Ok(launch_plan(&launcher, cfg!(target_os = "windows")))
+}
+
+/// [`run_integration_rpc`] with an optional bundled CLI and sign-in URL callback.
+pub fn run_integration_rpc_with(
+    request_json: &str,
+    bundled: Option<&BundledCli>,
+    on_url: Option<SignInUrlSink>,
+) -> Result<String, String> {
+    validate_request(request_json)?;
+    let (program, args) = command_for(bundled)?;
 
     let mut command = Command::new(program);
     command
@@ -127,12 +220,27 @@ pub fn run_integration_rpc(request_json: &str) -> Result<String, String> {
             let _ = stdin.write_all(&body);
         })
     });
-    let stdout_reader = child.stdout.take().map(read_capped);
+    let stdout_reader = child.stdout.take().map(|out| read_stdout(out, on_url));
     let stderr_reader = child.stderr.take().map(read_capped);
 
     let timeout = timeout_for(request_json);
+    let cancel = (timeout == BROWSER_LOGIN_TIMEOUT).then(|| {
+        let flag = Arc::new(AtomicBool::new(false));
+        if let Ok(mut active) = ACTIVE_SIGN_IN.lock() {
+            *active = Some(flag.clone());
+        }
+        flag
+    });
     let started = Instant::now();
+    let mut cancelled = false;
+    let mut lost = false;
     let timed_out = loop {
+        if cancel.as_ref().is_some_and(|f| f.load(Ordering::SeqCst)) {
+            let _ = child.kill();
+            let _ = child.wait();
+            cancelled = true;
+            break false;
+        }
         match child.try_wait() {
             Ok(Some(_)) => break false,
             Ok(None) if started.elapsed() >= timeout => {
@@ -141,9 +249,20 @@ pub fn run_integration_rpc(request_json: &str) -> Result<String, String> {
                 break true;
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(50)),
-            Err(_) => return Err("Lost the kai CLI process.".to_string()),
+            Err(_) => {
+                lost = true;
+                break false;
+            }
         }
     };
+    if let (Some(flag), Ok(mut active)) = (cancel.as_ref(), ACTIVE_SIGN_IN.lock()) {
+        if active.as_ref().is_some_and(|a| Arc::ptr_eq(a, flag)) {
+            *active = None;
+        }
+    }
+    if lost {
+        return Err("Lost the kai CLI process.".to_string());
+    }
 
     if let Some(writer) = stdin_writer {
         let _ = writer.join();
@@ -155,6 +274,9 @@ pub fn run_integration_rpc(request_json: &str) -> Result<String, String> {
     // forwarded because it may echo arguments.
     let _ = stderr_reader.and_then(|h| h.join().ok());
 
+    if cancelled {
+        return Err("Sign-in was cancelled.".to_string());
+    }
     if timed_out {
         return Err("The integration request timed out.".to_string());
     }
@@ -169,6 +291,45 @@ pub fn run_integration_rpc(request_json: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_the_sign_in_address_and_skips_it_as_a_response() {
+        let event = r#"{"event":"signin_url","url":"https://login.microsoftonline.com/x"}"#;
+        assert_eq!(
+            sign_in_url_of(event).as_deref(),
+            Some("https://login.microsoftonline.com/x")
+        );
+        assert_eq!(
+            sign_in_url_of(r#"{"event":"signin_url","url":"file:///etc"}"#),
+            None
+        );
+        assert_eq!(sign_in_url_of(r#"{"ok":true}"#), None);
+        assert_eq!(sign_in_url_of("not json"), None);
+        let stdout = format!("{event}\n{{\"ok\":true}}\n");
+        assert_eq!(
+            last_non_empty_line(&stdout).as_deref(),
+            Some(r#"{"ok":true}"#)
+        );
+        // Killed while waiting: only the event was printed, so there is no response.
+        assert_eq!(last_non_empty_line(&format!("{event}\n")), None);
+    }
+
+    #[test]
+    fn prefers_the_bundled_cli() {
+        let cli = BundledCli {
+            node: "node".to_string(),
+            script: std::path::PathBuf::from("/app/_up_/dist/cli/index.js"),
+        };
+        let (program, args) = command_for(Some(&cli)).unwrap();
+        assert_eq!(program, "node");
+        assert_eq!(args[1..], ["azure".to_string(), "rpc".to_string()]);
+        assert!(args[0].ends_with("index.js"));
+    }
+
+    #[test]
+    fn cancelling_with_nothing_running_is_a_no_op() {
+        assert!(!cancel_browser_sign_in());
+    }
 
     #[test]
     fn accepts_a_small_json_object() {

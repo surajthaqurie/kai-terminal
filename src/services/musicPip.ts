@@ -30,21 +30,27 @@ export interface PipState {
   src: string | null;
   title: string | null;
   playing: boolean;
+  /** YouTube is waiting for data: hold the progress bar at the last report. */
+  buffering?: boolean;
   muted: boolean;
   /** 0-100, applied to the embed when it loads. */
   volume: number;
   currentTime: number;
   duration: number;
+  /** 0.15-1: the player's Dim Opacity (1 when dimming is off). */
+  opacity: number;
 }
 
 export const EMPTY_PIP_STATE: PipState = {
   src: null,
   title: null,
   playing: false,
+  buffering: false,
   muted: false,
   volume: 75,
   currentTime: 0,
   duration: 0,
+  opacity: 1,
 };
 
 /** A button press in the picture-in-picture window, executed by the main window. */
@@ -82,7 +88,14 @@ export async function openMusicPip(): Promise<boolean> {
   if (!isTauriAvailable()) return false;
   try {
     const { invoke } = await import("@tauri-apps/api/core");
-    await invoke("open_music_pip");
+    const saved = loadPipPosition();
+    const size = loadPipSize();
+    await invoke("open_music_pip", {
+      x: saved?.x ?? null,
+      y: saved?.y ?? null,
+      width: size?.width ?? null,
+      height: size?.height ?? null,
+    });
     return true;
   } catch (err) {
     console.warn("Failed to open the music picture-in-picture window:", err);
@@ -107,5 +120,78 @@ export function isMusicPipWindow(): boolean {
     return new URLSearchParams(window.location.search).get("pip") === "music";
   } catch {
     return false;
+  }
+}
+
+const PIP_POSITION_KEY = "kai_music_pip_position";
+
+/** Where the user last dropped the mini window (logical pixels), if anywhere. */
+export function loadPipPosition(): { x: number; y: number } | null {
+  try {
+    const raw = localStorage.getItem(PIP_POSITION_KEY);
+    if (!raw) return null;
+    const p = JSON.parse(raw) as { x?: unknown; y?: unknown };
+    if (typeof p.x === "number" && typeof p.y === "number" && Number.isFinite(p.x + p.y)) {
+      return { x: p.x, y: p.y };
+    }
+  } catch {
+    // Unreadable: fall back to the default corner.
+  }
+  return null;
+}
+
+/** Remembers the mini window's position so it reopens where it was dropped. */
+export function savePipPosition(x: number, y: number): void {
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+  try {
+    localStorage.setItem(PIP_POSITION_KEY, JSON.stringify({ x: Math.round(x), y: Math.round(y) }));
+  } catch {
+    // Storage unavailable: it just opens in the default corner next time.
+  }
+}
+
+/** Opacity the mini window shows for the player's Dim setting (1 = off). */
+export function pipOpacity(dimmed: boolean, dimPercent: number): number {
+  if (!dimmed || !Number.isFinite(dimPercent)) return 1;
+  return Math.max(0.15, Math.min(1, dimPercent / 100));
+}
+
+const PIP_SIZE_KEY = "kai_music_pip_size";
+
+/** Smallest mini window the native side allows (logical pixels). */
+export const PIP_MIN_SIZE = { width: 240, height: 150 } as const;
+
+/** The mini window's last size (logical pixels), if it was ever resized. */
+export function loadPipSize(): { width: number; height: number } | null {
+  try {
+    const raw = localStorage.getItem(PIP_SIZE_KEY);
+    if (!raw) return null;
+    const p = JSON.parse(raw) as { width?: unknown; height?: unknown };
+    if (
+      typeof p.width === "number" &&
+      typeof p.height === "number" &&
+      Number.isFinite(p.width + p.height) &&
+      p.width >= PIP_MIN_SIZE.width &&
+      p.height >= PIP_MIN_SIZE.height
+    ) {
+      return { width: p.width, height: p.height };
+    }
+  } catch {
+    // Unreadable: open at the default size.
+  }
+  return null;
+}
+
+/** Remembers the mini window's size (logical pixels) so it reopens at it. */
+export function savePipSize(width: number, height: number): void {
+  if (!Number.isFinite(width) || !Number.isFinite(height)) return;
+  if (width < PIP_MIN_SIZE.width || height < PIP_MIN_SIZE.height) return;
+  try {
+    localStorage.setItem(
+      PIP_SIZE_KEY,
+      JSON.stringify({ width: Math.round(width), height: Math.round(height) })
+    );
+  } catch {
+    // Storage unavailable: it just opens at the default size next time.
   }
 }

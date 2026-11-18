@@ -214,6 +214,53 @@ describe("Microsoft Teams RPC (the Integrations tab)", () => {
     });
   });
 
+  describe("desktop card extras", () => {
+    it("signs in without channel messages when asked, and passes the sign-in address on", async () => {
+      const signIn = vi.fn(async () => ({
+        secret: "{}",
+        user: { id: "oid-1", name: "Alex" },
+        scopes: ["User.Read"],
+      }));
+      const onSignInUrl = vi.fn();
+      await handleTeamsRpc({ op: "teams_login", channels: false }, deps({ signIn, onSignInUrl }));
+      expect(signIn).toHaveBeenCalledWith(
+        { channelHistory: false, onUrl: onSignInUrl },
+        { env: configured }
+      );
+    });
+
+    it("saves a real client ID typed into the card", async () => {
+      const saveClientId = vi.fn();
+      const res = await handleTeamsRpc(
+        { op: "teams_set_client_id", clientId: ` ${CLIENT_ID} ` },
+        deps({ saveClientId })
+      );
+      expect(saveClientId).toHaveBeenCalledWith(CLIENT_ID);
+      expect(res).toMatchObject({ ok: true, teams: { configured: true } });
+    });
+
+    it("refuses a malformed or example client ID and saves nothing", async () => {
+      const saveClientId = vi.fn();
+      for (const clientId of ["not-a-guid", "00000000-0000-0000-0000-000000000000", ""]) {
+        await expect(
+          handleTeamsRpc({ op: "teams_set_client_id", clientId }, deps({ saveClientId }))
+        ).rejects.toMatchObject({ code: "bad_request" });
+      }
+      expect(saveClientId).not.toHaveBeenCalled();
+    });
+
+    it("saves the ID for real through the integration RPC dispatch", async () => {
+      const res = await handleRpc(
+        "azure-devops",
+        { op: "teams_set_client_id", clientId: CLIENT_ID },
+        { agentGuard: async () => {} }
+      );
+      expect(res).toMatchObject({ ok: true });
+      const config = JSON.parse(fs.readFileSync(path.join(home, "config.json"), "utf8"));
+      expect(config.teams.clientId).toBe(CLIENT_ID);
+    });
+  });
+
   describe("an AI agent's session", () => {
     const refused = async () => {
       throw new IntegrationError("forbidden", "Microsoft Teams is not available in an agent.");

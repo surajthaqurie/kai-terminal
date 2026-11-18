@@ -174,6 +174,11 @@ export const MCP_TOOLS = [
         task: { type: "string", description: "Task or question." },
         categoryOverride: CATEGORY_PROP,
         tokenBudget: { type: "number", description: "Default depends on task type; max 20000." },
+        model: {
+          type: "string",
+          description:
+            "Your model (e.g. gpt-4o). OpenAI models get exact token counts; others the heuristic.",
+        },
         projectPath: PROJECT_PATH_PROP,
       },
       required: ["task"],
@@ -649,7 +654,7 @@ async function dispatchMcpMessage(
           outcome = toolGetDependencies(ctx, args);
           break;
         case "kai_get_context":
-          outcome = toolGetContext(ctx, args);
+          outcome = await toolGetContext(ctx, args);
           break;
         case "kai_refresh_index":
           outcome = await toolRefreshIndex(ctx, args);

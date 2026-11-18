@@ -12,9 +12,10 @@
 
 use crate::error::TerminalError;
 
-/// Largest clipboard text handed to the frontend; the PTY write path caps
-/// input at 1 MB anyway, so more would only be dropped later.
-const MAX_CLIPBOARD_BYTES: usize = 1024 * 1024;
+/// Largest clipboard text handed to the frontend. Pastes above the PTY's
+/// 1 MB per-call bound are delivered in chunks by the frontend, so this is
+/// only a sanity bound on one IPC response, well above real pastes.
+const MAX_CLIPBOARD_BYTES: usize = 32 * 1024 * 1024;
 
 fn decode(bytes: &[u8]) -> String {
     let text = String::from_utf8_lossy(bytes);
@@ -418,7 +419,8 @@ mod tests {
 
     #[test]
     fn decode_caps_size_on_a_char_boundary() {
-        let big = "世".repeat(MAX_CLIPBOARD_BYTES);
+        // Just over the cap, with the cut landing mid-character.
+        let big = "世".repeat(MAX_CLIPBOARD_BYTES / 3 + 1);
         let out = decode(big.as_bytes());
         assert!(out.len() <= MAX_CLIPBOARD_BYTES);
         assert!(out.chars().all(|c| c == '世'));

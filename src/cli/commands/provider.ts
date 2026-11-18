@@ -5,7 +5,7 @@ import {
   projectsUsingAccount,
 } from "../../core/integrations/config";
 import { findProvider, type ProviderInfo } from "../../core/integrations/providerCatalog";
-import type { IntegrationRpcRequest } from "../../core/integrations/rpcTypes";
+import type { IntegrationRpcEvent, IntegrationRpcRequest } from "../../core/integrations/rpcTypes";
 import {
   findAccounts,
   handleRpc,
@@ -491,7 +491,13 @@ async function runRpc(info: ProviderInfo): Promise<number> {
     if (typeof request !== "object" || request === null || typeof request.op !== "string") {
       throw new IntegrationError("bad_request", "Expected a JSON object with an op.");
     }
-    response = await handleRpc(info.id, request);
+    response = await handleRpc(info.id, request, {
+      // Printed before the response line; the desktop app shows it while waiting.
+      onSignInUrl: (url) => {
+        const event: IntegrationRpcEvent = { event: "signin_url", url };
+        process.stdout.write(`${JSON.stringify(event)}\n`);
+      },
+    });
   } catch (err) {
     const e =
       err instanceof SyntaxError
