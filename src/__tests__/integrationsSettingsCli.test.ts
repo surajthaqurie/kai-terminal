@@ -298,6 +298,9 @@ describe("kai integration azure: write tools", () => {
     const res = await kai("integration", "azure", dir, "--allow-writes");
     expect(res.out).toContain("change data in Azure DevOps through Kai, as you");
     expect(res.out).toContain("cannot create branches, merge, delete");
+    // Every write tool the switch unlocks is named before you agree to it.
+    expect(res.out).toContain("create work items");
+    expect(res.out).toContain("change a work item's state and fields");
     expect(res.out).toContain("Work Items and Code: Read & write");
     expect(findBinding(dir)!.binding.writeTools).toBe(true);
   });

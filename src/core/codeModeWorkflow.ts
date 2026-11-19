@@ -30,6 +30,7 @@ import {
   signalRunProcesses,
   sweepSupported,
 } from "./processSweep";
+import { killJob, newJobName, windowsCommandLine } from "./windowsJob";
 import { getReverseImports } from "./indexDerived";
 import { dependencyTargets } from "./importResolver";
 import { AGENT_EXIT_CLEANUP_SEQ, TERMINAL_MODE_RESET_SEQ } from "../services/terminalModes";
@@ -1727,6 +1728,12 @@ export function runExternalAgentCommand(
     env?: NodeJS.ProcessEnv;
     /** The args are already quoted for the OS (a `cmd.exe /c` line from `resolveSpawnTarget`). */
     windowsVerbatimArguments?: boolean;
+    /**
+     * Windows: a desktop binary that answered `probeJobHelper`. The command then
+     * runs inside a Job Object, so a timeout or abort stops every process it
+     * started, detached ones included (see `windowsJob.ts`).
+     */
+    jobHelper?: string | null;
   } = {}
 ): Promise<ExternalCommandResult> {
   const started = Date.now();
@@ -1764,13 +1771,30 @@ export function runExternalAgentCommand(
     // Every process of this run carries the token in its environment, so one that detached from
     // the process group can still be found (see `processSweep.ts`). Empty where that cannot work.
     const runToken = sweepSupported() ? newRunToken() : "";
+    // Windows: run through the desktop binary's Job Object helper when there is one.
+    const jobHelper = process.platform === "win32" && opts.jobHelper ? opts.jobHelper : null;
+    const jobName = jobHelper ? newJobName() : "";
+    // True once `--kai-job-kill` confirmed that nothing of the run is left.
+    let jobStopped = false;
     try {
-      child = spawn(command, args, {
+      const target = jobHelper
+        ? {
+            command: jobHelper,
+            args: [
+              "--kai-job-run",
+              jobName,
+              windowsCommandLine(command, args, opts.windowsVerbatimArguments),
+            ],
+            // The helper takes everything after the job name verbatim.
+            verbatim: true,
+          }
+        : { command, args, verbatim: opts.windowsVerbatimArguments };
+      child = spawn(target.command, target.args, {
         cwd: opts.cwd,
         env: runToken
           ? { ...(opts.env ?? process.env), [RUN_TOKEN_ENV]: runToken }
           : (opts.env ?? process.env),
-        windowsVerbatimArguments: opts.windowsVerbatimArguments,
+        windowsVerbatimArguments: target.verbatim,
         stdio: "inherit",
         windowsHide: true,
         // POSIX: lead a fresh process group so tree termination can
@@ -1805,6 +1829,9 @@ export function runExternalAgentCommand(
     const groupSignalOnly = (sig: NodeJS.Signals): void => {
       const pid = typeof child.pid === "number" ? child.pid : undefined;
       if (process.platform === "win32") {
+        // The job first, while the helper still holds it open: once the helper
+        // is gone, so is the job's name.
+        if (jobHelper && !jobStopped) jobStopped = killJob(jobHelper, jobName) === "stopped";
         if (pid !== undefined) {
           try {
             spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], {
@@ -1859,6 +1886,11 @@ export function runExternalAgentCommand(
      */
     const descendantsSurvive = async (): Promise<boolean> => {
       if (!treeKillAttempted) return false;
+      if (jobHelper) {
+        if (jobStopped) return false;
+        const again = killJob(jobHelper, jobName);
+        return again !== "stopped";
+      }
       if (!runToken) return true;
       if (findRunProcesses(runToken).length === 0) return false;
       groupSignalOnly("SIGKILL");

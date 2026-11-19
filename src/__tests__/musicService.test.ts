@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   canControlEmbed,
   clearLegacyQueue,
@@ -7,12 +7,18 @@ import {
   embedSrcForTrack,
   extractPlaylistId,
   hasNextItem,
+  isYouTubeEmbedOrigin,
   isFavoriteTrack,
   loadFavorites,
+  musicRelayOrigin,
+  MUSIC_RELAY_READY,
+  relayAnswers,
+  adoptMusicRelayFrom,
   parseYouTubePlayerMessage,
   resolveInputToTrack,
   saveFavorites,
   searchYouTubeVideoId,
+  setMusicRelay,
   toggleFavoriteTrack,
   watchUrlForTrack,
   youtubeCommand,
@@ -125,6 +131,93 @@ describe("music input resolution", () => {
         // Our buttons cannot reach the player here, so YouTube's own controls show.
         expect(src).toContain("controls=1");
         expect(canControlEmbed()).toBe(false);
+      });
+    });
+
+    describe("with the desktop app's local relay page (macOS / Linux)", () => {
+      const RELAY = "http://localhost:43123/youtube-relay.html";
+      afterEach(() => setMusicRelay(null));
+
+      it("hosts the embed in the relay, with the relay's origin, and is controllable", () => {
+        withLocation("tauri://localhost", () => {
+          setMusicRelay(RELAY);
+          const src = embedSrcForTrack(t)!;
+          expect(src.startsWith(`${RELAY}?src=`)).toBe(true);
+          const embed = new URL(decodeURIComponent(src.slice(`${RELAY}?src=`.length)));
+          expect(embed.origin).toBe("https://www.youtube-nocookie.com");
+          expect(embed.pathname).toBe("/embed/dQw4w9WgXcQ");
+          expect(embed.searchParams.get("origin")).toBe("http://localhost:43123");
+          expect(embed.searchParams.get("controls")).toBe("0");
+          expect(canControlEmbed()).toBe(true);
+          // Its reports reach the player from the relay's origin.
+          expect(isYouTubeEmbedOrigin("http://localhost:43123")).toBe(true);
+          expect(isYouTubeEmbedOrigin("http://localhost:9")).toBe(false);
+        });
+      });
+
+      it("is not used where the page's own origin works (Windows)", () => {
+        withLocation("http://tauri.localhost/", () => {
+          setMusicRelay(RELAY);
+          expect(embedSrcForTrack(t)!.startsWith("https://www.youtube-nocookie.com/embed/")).toBe(
+            true
+          );
+        });
+      });
+
+      it("is used only once the relay page says it loaded inside this page", async () => {
+        vi.useFakeTimers();
+        try {
+          // A webview that refuses to frame it never answers.
+          const silent = relayAnswers(RELAY, 1000);
+          vi.advanceTimersByTime(1100);
+          await expect(silent).resolves.toBe(false);
+          expect(document.querySelectorAll("iframe")).toHaveLength(0);
+
+          const answered = relayAnswers(RELAY, 1000);
+          const frame = document.querySelector("iframe") as HTMLIFrameElement;
+          // Only the ready line, from the relay frame and its origin, counts.
+          window.dispatchEvent(
+            new MessageEvent("message", {
+              origin: "http://localhost:1",
+              source: frame.contentWindow,
+              data: MUSIC_RELAY_READY,
+            })
+          );
+          window.dispatchEvent(
+            new MessageEvent("message", {
+              origin: "http://localhost:43123",
+              source: frame.contentWindow,
+              data: MUSIC_RELAY_READY,
+            })
+          );
+          await expect(answered).resolves.toBe(true);
+          expect(document.querySelectorAll("iframe")).toHaveLength(0);
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
+      it("the mini window takes the relay from the src it is sent", () => {
+        adoptMusicRelayFrom("https://www.youtube-nocookie.com/embed/x?origin=a");
+        expect(musicRelayOrigin()).toBeNull();
+        adoptMusicRelayFrom(
+          `${RELAY}?src=${encodeURIComponent("https://www.youtube-nocookie.com/embed/x")}`
+        );
+        expect(musicRelayOrigin()).toBe("http://localhost:43123");
+      });
+
+      it("accepts only a loopback relay address", () => {
+        for (const bad of [
+          "http://evil.example:43123/youtube-relay.html",
+          "https://localhost:43123/youtube-relay.html",
+          "http://localhost:43123/other.html",
+          // YouTube refuses to play inside a page addressed by IP.
+          "http://127.0.0.1:43123/youtube-relay.html",
+        ]) {
+          setMusicRelay(bad);
+          expect(musicRelayOrigin()).toBeNull();
+          expect(isYouTubeEmbedOrigin("http://evil.example:43123")).toBe(false);
+        }
       });
     });
   });

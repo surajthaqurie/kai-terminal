@@ -183,6 +183,15 @@ jobs:
       - name: Build Rust Desktop Application Binary
         run: cargo build --manifest-path src-tauri/Cargo.toml --release --no-default-features
 
+      - name: Windows Job Object helper (real desktop binary)
+        # `kai run` starts commands through the desktop binary's Job Object
+        # helper so a timeout or Ctrl+C also stops processes that detached
+        # (src-tauri/src/job_runner.rs). Runs against the release (windowed)
+        # build that ships, which attaches to the caller's console.
+        if: runner.os == 'Windows'
+        shell: bash
+        run: KAI_TEST_JOB_HELPER="$(cygpath -w "$PWD/src-tauri/target/release/kai.exe")" npx vitest run src/__tests__/windowsJob.test.ts
+
       - name: Verify Production Build Outputs (where runners support them)
         shell: bash
         run: |

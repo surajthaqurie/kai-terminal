@@ -56,7 +56,7 @@ describe("Production Security & Audit Validations", () => {
       fs.mkdirSync(projDir, { recursive: true });
       fs.writeFileSync(
         path.join(projDir, "AGENTS.md"),
-        "Always use API key: AKIAIOSFODNN7EXAMPLE for testing\n"
+        `Always use API key: ${["AKIA", "Q7RZ2M4KXW9T3BNP"].join("")} for testing\n`
       );
 
       const rules = loadProjectRules(projDir);
@@ -106,17 +106,26 @@ describe("Production Security & Audit Validations", () => {
       ].join("");
       expect(isSensitiveContent(pkcs8Key)).toBe(true);
       expect(isSensitiveContent(encryptedPk)).toBe(true);
+      const j = (...parts: string[]) => parts.join("");
       expect(
-        isSensitiveContent("github_pat_11AEXAMPLE0123456789abcdefghijklmnopqrstuvwxyz0123456789")
+        isSensitiveContent(
+          j("github_pat_", "11AQ4ZRT0", "kX9mPq2LwB7vN3cJ8hYtR5sD1fG6uK0eW4zA2bM9nV7xC3qL8pT5")
+        )
       ).toBe(true);
       expect(
-        isSensitiveContent("export ANTHROPIC_API_KEY=sk-ant-api03-abcdefghijklmnopqrstuvwxyz")
+        isSensitiveContent(j("export ANTHROPIC_API_KEY=", "sk-ant-", "api03-Qm7Xk2PzR9vLw4Tn8BcY3"))
       ).toBe(true);
       expect(
-        isSensitiveContent("export OPENAI_API_KEY=sk-abcdefghijklmnopqrstuvwxyz012345678901234567")
+        isSensitiveContent(
+          j("export OPENAI_API_KEY=", "sk-", "Qm7Xk2PzR9vLw4Tn8BcY3hJ6dF1gS5aE0uW")
+        )
       ).toBe(true);
-      expect(isSensitiveContent("export AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE")).toBe(true);
-      expect(isSensitiveContent("export SLACK_TOKEN=xoxb-123456789-abcdef")).toBe(true);
+      expect(isSensitiveContent(j("export AWS_ACCESS_KEY_ID=", "AKIA", "Q7RZ2M4KXW9T3BNP"))).toBe(
+        true
+      );
+      expect(isSensitiveContent(j("export SLACK_TOKEN=", "xox", "b-48291736-Tq8RmZ2vK"))).toBe(
+        true
+      );
 
       // Normal benign code should not be flagged
       expect(isSensitiveContent("export const safeValue = 'hello world';")).toBe(false);

@@ -12,7 +12,14 @@ import { estimateTokens, truncateToTokenBudget, type TokenizerFunction } from ".
 import { isWithinProjectBoundary } from "./registry";
 import { extractSearchTokens } from "./classifier";
 import { dependencyTargets } from "./importResolver";
-import { isBinaryFile, isSensitiveContent, isSensitiveFile } from "./indexer";
+import {
+  hasRealPrivateKey,
+  hasRealSecretMatch,
+  isBinaryFile,
+  isPlaceholderSecret,
+  isSensitiveContent,
+  isSensitiveFile,
+} from "./indexer";
 import {
   getReverseImports,
   getSymbolNameTable,
@@ -186,15 +193,18 @@ export function isPotentialSecretPath(relPath: string): boolean {
  * Checks file content for private keys or access credentials.
  */
 function containsSecretContent(content: string): boolean {
-  if (
-    /-----BEGIN (?:RSA|DSA|EC|OPENSSH|PGP)? PRIVATE KEY-----/i.test(content) ||
-    /\bAKIA[0-9A-Z]{16}\b/.test(content) ||
-    /\b(?:ghp|gho|ghu|ghs|ghr|glpat)_[A-Za-z0-9_]{16,}\b/.test(content) ||
-    /(?:api[_-]?key|secret[_-]?key|auth[_-]?token)\s*[:=]\s*['"][a-zA-Z0-9_\-\.]{20,}['"]/i.test(
-      content
-    )
-  ) {
+  const header = /-----BEGIN (?:RSA |DSA |EC |OPENSSH |PGP )?PRIVATE KEY-----/gi;
+  for (const m of content.matchAll(header)) {
+    if (hasRealPrivateKey(content.slice(m.index ?? 0), m[0])) return true;
+  }
+  if (hasRealSecretMatch(content, /\bAKIA[0-9A-Z]{16}\b/)) return true;
+  if (hasRealSecretMatch(content, /\b(?:ghp|gho|ghu|ghs|ghr|glpat)_[A-Za-z0-9_]{16,}\b/))
     return true;
+  // A long quoted value assigned to a key-like name: only the value is judged.
+  const assigned =
+    /(?:api[_-]?key|secret[_-]?key|auth[_-]?token)\s*[:=]\s*['"]([a-zA-Z0-9_\-.]{20,})['"]/gi;
+  for (const m of content.matchAll(assigned)) {
+    if (!isPlaceholderSecret(m[1])) return true;
   }
   return false;
 }

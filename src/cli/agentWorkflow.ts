@@ -28,6 +28,22 @@ import { installCommitMsgHook } from "../core/githooks";
 import { agentEnv } from "../core/teams/guard";
 import { announceCodeMode, clearActiveProjectState, saveActiveProjectState } from "./activeProject";
 import type { AgentDefinition } from "../core/agents";
+import { probeJobHelper } from "../core/windowsJob";
+import { findKaiAppBinary } from "./desktopApp";
+
+/**
+ * Windows: the desktop binary that can run the agent inside a Job Object, so a
+ * timeout or Ctrl+C stops every process it started (see `core/windowsJob.ts`).
+ * `KAI_JOB_HELPER` names another binary, or `off` disables it. Null when there
+ * is none (a CLI installed without the desktop app, or an older app).
+ */
+export function findWindowsJobHelper(env: NodeJS.ProcessEnv = process.env): string | null {
+  if (process.platform !== "win32") return null;
+  const override = env.KAI_JOB_HELPER?.trim();
+  if (override === "off") return null;
+  const candidate = override || findKaiAppBinary();
+  return candidate && probeJobHelper(candidate) ? candidate : null;
+}
 
 /**
  * Built-in command names. Grouped so the public surface stays obvious:
@@ -243,6 +259,7 @@ export async function executeAgentWorkflow(
           timeoutMs: opts.timeoutMs,
           signal: controller.signal,
           windowsVerbatimArguments: target.windowsVerbatimArguments,
+          jobHelper: findWindowsJobHelper(),
         });
         // The agent is a fullscreen TUI: restore mouse/focus/paste input
         // modes NOW (before any further logging) so a killed/crashed agent

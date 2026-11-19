@@ -39,7 +39,7 @@ import { SettingsService, DEFAULT_SETTINGS } from "../services/settingsService";
 import { loadCommandHistory, recordCommand, saveCommandHistory } from "../services/autocomplete";
 import { TerminalOutputBuffer } from "../services/terminalOutputBuffer";
 import { readAttachmentPasteText, readPasteContent } from "../services/clipboardService";
-import { isOpenLinkClick, openTerminalLink } from "../services/terminalLinks";
+import { guardLinkClicks, isOpenLinkClick, openTerminalLink } from "../services/terminalLinks";
 import { CODE_MODE_OSC, parseCodeModeSignal } from "../core/codeModeSignal";
 import {
   CD_PROBE_DELAYS_MS,
@@ -588,6 +588,17 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
     useEffect(() => {
       if (!containerRef.current) return;
 
+      // Whether the pointer is over a link xterm recognised (OSC 8 or plain
+      // URL). Read by guardLinkClicks so Ctrl+click on a link is not also
+      // forwarded to a mouse-aware program, which would open it a second time.
+      let overLink = false;
+      const onLinkHover = () => {
+        overLink = true;
+      };
+      const onLinkLeave = () => {
+        overLink = false;
+      };
+
       // 1. Initialize xterm.js instance with optimal terminal options for AI CLIs and TUIs
       const term = new Terminal({
         // Explicit hyperlinks (OSC 8, e.g. from git or CLIs) otherwise go through
@@ -601,6 +612,8 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
               console.error("Could not open link:", e);
             });
           },
+          hover: onLinkHover,
+          leave: onLinkLeave,
         },
         allowTransparency: true,
         cursorBlink: settings.cursorBlink,
@@ -632,15 +645,28 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       // Links in output (sign-in addresses, build logs, docs) are underlined on
       // hover and open in the browser on Ctrl+click (Cmd+click on macOS).
       term.loadAddon(
-        new WebLinksAddon((event, uri) => {
-          if (!isOpenLinkClick(event)) return;
-          openTerminalLink(uri).catch((e) => {
-            console.error("Could not open link:", e);
-          });
-        })
+        new WebLinksAddon(
+          (event, uri) => {
+            if (!isOpenLinkClick(event)) return;
+            openTerminalLink(uri).catch((e) => {
+              console.error("Could not open link:", e);
+            });
+          },
+          { hover: onLinkHover, leave: onLinkLeave }
+        )
       );
 
       term.open(containerRef.current);
+      // After open(): the screen element exists and xterm's Linkifier has
+      // already attached its mousedown listener, so ours runs after it.
+      const screenEl = term.element?.querySelector<HTMLElement>(".xterm-screen");
+      const unguardLinkClicks = screenEl
+        ? guardLinkClicks(
+            screenEl,
+            () => overLink,
+            () => term.focus()
+          )
+        : () => {};
       // Inline images (iTerm2 protocol and Sixel), so `kai teams` can show the
       // pictures people send. Guarded: if the add-on cannot start here, the
       // terminal works exactly as before and the chat falls back to links.
@@ -1200,6 +1226,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         }
         cwdSettlerRef.current?.dispose();
         onCodeModeChangeRef.current?.(null);
+        unguardLinkClicks();
         term.dispose();
       };
       // sessionId scopes the tab lifetime; shell/cwd changes apply on next launch.

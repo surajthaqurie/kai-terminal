@@ -214,40 +214,91 @@ export function isBinaryFile(filename: string, sampleBuffer?: Buffer): boolean {
 const AWS_SECRET_KEY_NAME = new RegExp("aws_secret_access_" + "key", "i");
 
 /**
+ * Marks a value as an obvious placeholder rather than a credential: the
+ * documented example keys (`...EXAMPLE`), `xxxxxxxxxxxx`, `<redacted>`, or a
+ * run of the alphabet or digits. These words and runs are long enough that a
+ * real, randomly generated key practically never contains one (a 7-character
+ * run from a 62-letter alphabet appears in about 1 of 10^11 keys), so skipping
+ * them lets documentation and test fixtures be indexed without letting a real
+ * key through.
+ */
+const PLACEHOLDER_MARKER =
+  /example|EXAMPLE|Example|placeholder|PLACEHOLDER|dummy|DUMMY|redacted|REDACTED|x{12,}|X{12,}|\*{8,}|abcdefg|ABCDEFG|1234567|0123456/;
+
+/** Characters a token continues with after its prefix (no `=`, `.`, `/`: names never leak in). */
+const TOKEN_TAIL = /[A-Za-z0-9_-]/;
+
+/** True when the value is an obvious placeholder (see `PLACEHOLDER_MARKER`). */
+export function isPlaceholderSecret(value: string): boolean {
+  return PLACEHOLDER_MARKER.test(value);
+}
+
+/**
+ * True when `pattern` matches somewhere in `content` with a value that is not
+ * a placeholder. Each match is extended forward over the rest of its token
+ * (a pattern that matches only a prefix, like the Slack one), and only the token itself
+ * is judged, never the variable name before it.
+ */
+export function hasRealSecretMatch(content: string, pattern: RegExp): boolean {
+  const flags = pattern.flags.includes("g") ? pattern.flags : pattern.flags + "g";
+  const re = new RegExp(pattern.source, flags);
+  for (const m of content.matchAll(re)) {
+    const begin = m.index ?? 0;
+    let end = begin + m[0].length;
+    const limit = Math.min(content.length, end + 512);
+    while (end < limit && TOKEN_TAIL.test(content[end])) end++;
+    if (!isPlaceholderSecret(content.slice(begin, end))) return true;
+  }
+  return false;
+}
+
+/**
+ * True when a private-key header is followed by a body that is not a
+ * placeholder (the body runs to the matching END line, or 8 KB).
+ */
+export function hasRealPrivateKey(content: string, header: string): boolean {
+  let from = 0;
+  for (;;) {
+    const at = content.indexOf(header, from);
+    if (at < 0) return false;
+    const bodyStart = at + header.length;
+    const endAt = content.indexOf("-----" + "END ", bodyStart);
+    const body = content.slice(bodyStart, endAt < 0 ? bodyStart + 8192 : endAt);
+    if (!isPlaceholderSecret(body)) return true;
+    from = bodyStart;
+  }
+}
+
+/**
  * Best-effort detection of high-confidence secret material inside file
  * content. Filename filtering alone is insufficient: an `app.ts` containing
  * an AWS key would otherwise be indexed and exfiltrated via snippets.
+ * Obvious placeholders (see `isPlaceholderSecret`) do not count.
  * Returns true when content should be excluded from the index.
  */
 export function isSensitiveContent(content: string): boolean {
   // Check private key headers dynamically to avoid matching CI secret scanner rules
   const pkPrefix = "-----" + "BEGIN ";
   const pkSuffix = "PRIVATE KEY-----";
-  if (
-    content.includes(pkPrefix + "RSA " + pkSuffix) ||
-    content.includes(pkPrefix + "OPENSSH " + pkSuffix) ||
-    content.includes(pkPrefix + "EC " + pkSuffix) ||
-    content.includes(pkPrefix + pkSuffix) ||
-    content.includes(pkPrefix + "ENCRYPTED " + pkSuffix)
-  ) {
-    return true;
+  for (const kind of ["RSA ", "OPENSSH ", "EC ", "", "ENCRYPTED "]) {
+    if (hasRealPrivateKey(content, pkPrefix + kind + pkSuffix)) return true;
   }
-  if (/AKIA[0-9A-Z]{16}/.test(content)) return true; // AWS access key id
+  if (hasRealSecretMatch(content, /AKIA[0-9A-Z]{16}/)) return true; // AWS access key id
   // Built at runtime, like the key headers above, so this source file does not
   // contain the literal it searches for and stays readable through the index and
-  // `kai_read_range`.
+  // `kai_read_range`. A setting name, not a value: always counts.
   if (AWS_SECRET_KEY_NAME.test(content)) return true;
-  if (/xox[bap]-/.test(content)) return true; // Slack tokens
-  if (/ghp_[A-Za-z0-9]{30,}/.test(content)) return true; // GitHub PAT
-  if (/github_pat_[A-Za-z0-9_]{50,}/.test(content)) return true; // GitHub fine-grained PAT
-  if (/sk-ant-[A-Za-z0-9_-]{20,}/.test(content)) return true; // Anthropic API key
+  if (hasRealSecretMatch(content, /xox[bap]-/)) return true; // Slack tokens
+  if (hasRealSecretMatch(content, /ghp_[A-Za-z0-9]{30,}/)) return true; // GitHub PAT
+  if (hasRealSecretMatch(content, /github_pat_[A-Za-z0-9_]{50,}/)) return true; // GitHub fine-grained PAT
+  if (hasRealSecretMatch(content, /sk-ant-[A-Za-z0-9_-]{20,}/)) return true; // Anthropic API key
   // OpenAI API key. The leading lookbehind keeps the prefix a real token
   // start: without it any long kebab-case word ending in "sk" (e.g.
   // "task-management-and-scheduling-service-config") matched and silently
   // dropped the whole file. Keys such as `sk-proj-...`, `"sk-..."` and
   // `KEY=sk-...` still match because they are not preceded by a word char.
-  if (/(?<![A-Za-z0-9])sk-[A-Za-z0-9_-]{32,}/.test(content)) return true;
-  if (/gsk_[A-Za-z0-9]{20,}/.test(content)) return true; // Generic API key prefix
+  if (hasRealSecretMatch(content, /(?<![A-Za-z0-9])sk-[A-Za-z0-9_-]{32,}/)) return true;
+  if (hasRealSecretMatch(content, /gsk_[A-Za-z0-9]{20,}/)) return true; // Generic API key prefix
   return false;
 }
 

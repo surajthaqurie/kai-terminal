@@ -4744,6 +4744,17 @@ button.status-git-btn-clickable:focus-visible {
   flex: 1 1 0;
   transition: min-height 0.2s ease;
 }
+/* The docked embed while the mini window plays: kept loaded (and paused) so
+   bringing the video back is instant, but takes no space and shows nothing. */
+.music-video.music-video-parked {
+  position: absolute;
+  width: 2px;
+  height: 2px;
+  min-height: 0;
+  flex: none;
+  opacity: 0;
+  pointer-events: none;
+}
 .music-panel.expanded .music-video,
 .music-panel.expanded .music-video-empty {
   min-height: 200px;
@@ -6294,8 +6305,12 @@ html.music-pip-window #root {
   will-change: opacity;
 }
 .music-pip:hover,
-.music-pip:focus-within {
+.music-pip.music-pip-chrome {
   opacity: 1;
+}
+/* Just the video while the controls rest: no cursor either. */
+.music-pip:not(.music-pip-chrome):not(.music-pip-idle) {
+  cursor: none;
 }
 .music-pip:active {
   cursor: grabbing;
@@ -6338,12 +6353,14 @@ html.music-pip-window #root {
   opacity: 0;
   transition: opacity 0.18s ease;
 }
-/* Shown on hover or keyboard focus, and always while nothing is playing so
-   the window can still be dragged and closed. */
-.music-pip:hover .music-pip-head,
-.music-pip:hover .music-pip-bar,
-.music-pip:focus-within .music-pip-head,
-.music-pip:focus-within .music-pip-bar,
+/* Shown while the pointer moves over the window (hidden again after a short
+   rest while a song plays, and as soon as it leaves), on keyboard focus, and
+   always while nothing is playing so the window can still be dragged and
+   closed. Only keyboard focus counts: a clicked button must not pin them. */
+.music-pip.music-pip-chrome .music-pip-head,
+.music-pip.music-pip-chrome .music-pip-bar,
+.music-pip:has(:focus-visible) .music-pip-head,
+.music-pip:has(:focus-visible) .music-pip-bar,
 .music-pip.music-pip-idle .music-pip-head,
 .music-pip.music-pip-idle .music-pip-bar {
   opacity: 1;

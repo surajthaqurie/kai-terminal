@@ -11,8 +11,10 @@ pub mod fonts;
 pub mod git;
 pub mod integrations;
 pub mod intelligence;
+pub mod job_runner;
 pub mod kai_cli;
 pub mod login_path;
+pub mod music_relay;
 pub mod pty;
 pub mod shell;
 pub mod shutdown;
@@ -242,6 +244,14 @@ async fn open_music_pip(
     let _ = window.show();
     let _ = window.set_focus();
     Ok(())
+}
+
+/// URL of the local page that hosts the YouTube embed where the app's own
+/// origin cannot control it (macOS / Linux; see `music_relay.rs`).
+#[cfg(feature = "tauri")]
+#[tauri::command]
+fn music_relay_url() -> Result<String, String> {
+    music_relay::relay_url()
 }
 
 /// Closes the music window (a no-op when it is not open) and, when asked,
@@ -714,6 +724,7 @@ pub fn run() {
             set_maximize_button_rect,
             open_music_pip,
             close_music_pip,
+            music_relay_url,
             get_available_shells,
             get_ai_cli_status,
             get_ai_cli_details,

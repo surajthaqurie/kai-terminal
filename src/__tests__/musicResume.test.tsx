@@ -161,33 +161,129 @@ describe("resuming the video after it moves to the mini window", () => {
     expect(sentCommands().map((c) => c.func)).toContain("unMute");
   });
 
-  it("a playing song still just seeks, with no mute", async () => {
+  /** Commands posted straight to the docked (possibly parked) embed. */
+  const spyDocked = () => {
+    const frame = $<HTMLIFrameElement>("iframe.music-video");
+    const spy = vi.spyOn(frame.contentWindow as Window, "postMessage");
+    return {
+      frame,
+      funcs: () =>
+        spy.mock.calls
+          .map(([msg]) => {
+            try {
+              return (JSON.parse(String(msg)) as { func?: string }).func;
+            } catch {
+              return undefined;
+            }
+          })
+          .filter(Boolean),
+    };
+  };
+
+  it("a playing song keeps playing in the player until the mini window's video plays", async () => {
     await render();
     await paste(LINK);
     await dockedTelemetry({ currentTime: 42.6, duration: 200, playerState: 1 });
+    const docked = spyDocked();
     await popOut();
-    await miniTelemetry({ currentTime: 42, playerState: 1 });
-    expect(sentCommands()).toEqual([{ func: "seekTo", args: [42.6, true] }]);
-  });
 
-  it("a whole-second position needs no seek", async () => {
-    await render();
-    await paste(LINK);
-    await dockedTelemetry({ currentTime: 42, duration: 200, playerState: 2 });
-    await popOut();
-    await miniTelemetry({ currentTime: 42, playerState: 5 });
+    // The mini window loads muted at the spot; the docked embed is not paused.
+    const state = lastState();
+    expect(state.src).toContain("start=42");
+    expect(state.src).toContain("mute=1");
+    expect(state.muted).toBe(true);
+    expect(state.buffering).toBe(false);
+    expect(docked.funcs()).not.toContain("pauseVideo");
+    // ...and stays loaded (parked), not destroyed.
+    expect($("iframe.music-video.music-video-parked")).toBe(docked.frame);
+
+    // Its time keeps coming from the docked embed meanwhile.
+    await dockedTelemetry({ currentTime: 44 });
+    expect(lastState().currentTime).toBe(44);
+    // A warm-up report from the mini window changes nothing yet.
+    await miniTelemetry({ currentTime: 42, playerState: 3 });
     expect(sentCommands()).toEqual([]);
+
+    // It plays: it takes over at the docked position, with sound.
+    await miniTelemetry({ currentTime: 42.1, playerState: 1 });
+    expect(docked.funcs()).toContain("pauseVideo");
+    const cmds = sentCommands();
+    expect(cmds.map((c) => c.func)).toEqual(["seekTo", "setVolume", "unMute", "playVideo"]);
+    expect((cmds[0].args as number[])[0]).toBeGreaterThanOrEqual(44);
+    expect(lastState().muted).toBe(false);
+
+    // From now on the parked docked embed is ignored.
+    await dockedTelemetry({ playerState: 2 });
+    expect(lastState().playing).toBe(true);
   });
 
-  it("shows buffering during the reload gap of a playing song, and ends it at the first report", async () => {
+  it("the mini window takes over after a while even if its video never reports", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
+    await render();
+    await paste(LINK);
+    await dockedTelemetry({ currentTime: 10, duration: 200, playerState: 1 });
+    const docked = spyDocked();
+    await popOut();
+    await act(async () => {
+      vi.advanceTimersByTime(8100);
+    });
+    expect(docked.funcs()).toContain("pauseVideo");
+    expect(sentCommands().map((c) => c.func)).toContain("unMute");
+  });
+
+  it("pops out the song a YouTube Music list is on now, not the list's first song", async () => {
+    await render();
+    await paste("https://music.youtube.com/watch?v=dQw4w9WgXcQ&list=RDAMVMdQw4w9WgXcQ");
+    // YouTube advanced inside the list to another song.
+    await dockedTelemetry({
+      currentTime: 30,
+      duration: 200,
+      playerState: 1,
+      videoData: { video_id: "9bZkp7q5F5I", title: "Next song" },
+    });
+    await popOut();
+    const src = lastState().src ?? "";
+    expect(src).toContain("/embed/9bZkp7q5F5I?");
+    expect(src).toContain("list=RDAMVMdQw4w9WgXcQ");
+    expect(src).toContain("start=30");
+  });
+
+  it("bringing the video back reuses the parked embed: no reload, just seek and play", async () => {
     await render();
     await paste(LINK);
     await dockedTelemetry({ currentTime: 42.6, duration: 200, playerState: 1 });
+    const docked = spyDocked();
     await popOut();
-    expect(lastState().buffering).toBe(true);
+    await miniTelemetry({ currentTime: 42.6, playerState: 1 });
+    await miniTelemetry({ currentTime: 80 });
 
-    await miniTelemetry({ currentTime: 42, playerState: 1 });
-    expect(lastState().buffering).toBe(false);
+    await act(async () => {
+      $<HTMLButtonElement>("button[aria-label='Close mini player window']").click();
+    });
+    const frame = $<HTMLIFrameElement>("iframe.music-video");
+    expect(frame).toBe(docked.frame);
+    expect(frame.classList.contains("music-video-parked")).toBe(false);
+    expect(frame.src).not.toContain("start=");
+    expect(docked.funcs().slice(-4)).toEqual(["seekTo", "setVolume", "unMute", "playVideo"]);
+  });
+
+  it("a song that changed while popped out is rebuilt in the player at its spot", async () => {
+    await render();
+    await paste(LINK);
+    await dockedTelemetry({ currentTime: 5, duration: 200, playerState: 2 });
+    await popOut();
+    await paste("https://www.youtube.com/watch?v=9bZkp7q5F5I");
+    // The new song plays in the mini window; the parked embed is dropped.
+    expect(lastState().src).toContain("/embed/9bZkp7q5F5I?");
+    expect($("iframe.music-video")).toBeNull();
+    await miniTelemetry({ currentTime: 12.4, duration: 100, playerState: 1 });
+
+    await act(async () => {
+      $<HTMLButtonElement>("button[aria-label='Close mini player window']").click();
+    });
+    const frame = $<HTMLIFrameElement>("iframe.music-video");
+    expect(frame.src).toContain("/embed/9bZkp7q5F5I?");
+    expect(frame.src).toContain("start=12");
   });
 
   it("does not show buffering for a paused song, or when nothing was playing", async () => {
@@ -197,16 +293,4 @@ describe("resuming the video after it moves to the mini window", () => {
     await popOut();
     expect(lastState().buffering).toBe(false);
   });
-
-  it("a video that never answers does not stay 'buffering' forever", async () => {
-    await render();
-    await paste(LINK);
-    await dockedTelemetry({ currentTime: 42.6, duration: 200, playerState: 1 });
-    await popOut();
-    expect(lastState().buffering).toBe(true);
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 5200));
-    });
-    expect(lastState().buffering).toBe(false);
-  }, 10000);
 });

@@ -30,10 +30,14 @@ import {
 } from "../../services/musicPip";
 import {
   YOUTUBE_LISTENING_HANDSHAKE,
+  adoptMusicRelayFrom,
   isYouTubeEmbedOrigin,
   progressPercent,
   youtubeCommand,
 } from "../../services/musicService";
+
+/** How long the controls stay after the pointer stops moving over the video. */
+const CHROME_IDLE_MS = 2500;
 
 function formatTime(sec: number): string {
   if (!Number.isFinite(sec) || sec <= 0) return "0:00";
@@ -112,8 +116,47 @@ export const MusicPipWindow: FC = () => {
     };
   }, []);
 
+  // The title strip and controls show while the pointer moves over the window
+  // and fade out after a short rest while a song plays (just the video), or as
+  // soon as the pointer leaves. They stay while it rests on the controls.
+  const [chrome, setChrome] = useState(false);
+  const chromeTimerRef = useRef(0);
+  const scheduleHide = (overControls: boolean) => {
+    window.clearTimeout(chromeTimerRef.current);
+    if (overControls || !stateRef.current.playing) return;
+    chromeTimerRef.current = window.setTimeout(() => setChrome(false), CHROME_IDLE_MS);
+  };
+  const showChrome = (e: ReactPointerEvent<HTMLDivElement>) => {
+    setChrome(true);
+    const overControls = Boolean(
+      (e.target as HTMLElement).closest(".music-pip-head, .music-pip-bar")
+    );
+    scheduleHide(overControls || draggingRef.current);
+  };
+  const hideChrome = () => {
+    window.clearTimeout(chromeTimerRef.current);
+    if (!draggingRef.current) setChrome(false);
+  };
+  // A song starting while the pointer rests on the video hides them too.
+  useEffect(() => {
+    if (state.playing) scheduleHide(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.playing]);
+  useEffect(() => {
+    // The pointer can leave the window without a pointerleave (window hidden,
+    // another window raised over it); losing focus covers that.
+    const onBlur = () => hideChrome();
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("blur", onBlur);
+      window.clearTimeout(chromeTimerRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   /** Drag the window from anywhere on it except its buttons and slider. */
   const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    showChrome(e);
     if (e.button !== 0) return;
     if ((e.target as HTMLElement).closest("button, input, a")) return;
     e.preventDefault();
@@ -161,7 +204,13 @@ export const MusicPipWindow: FC = () => {
         if (cancelled) u();
         else unlisteners.push(u);
       });
-    const stateReady = keep(listenPip<PipState>(PIP_EVENTS.state, (s) => setState(s)));
+    const stateReady = keep(
+      listenPip<PipState>(PIP_EVENTS.state, (s) => {
+        // A src through the main window's music relay: its reports come from there.
+        adoptMusicRelayFrom(s?.src ?? null);
+        setState(s);
+      })
+    );
     void keep(
       listenPip<string>(PIP_EVENTS.command, (msg) => {
         if (typeof msg === "string") frameRef.current?.contentWindow?.postMessage(msg, "*");
@@ -245,9 +294,12 @@ export const MusicPipWindow: FC = () => {
 
   return (
     <div
-      className={`music-pip${src ? "" : " music-pip-idle"}`}
+      className={`music-pip${src ? "" : " music-pip-idle"}${chrome ? " music-pip-chrome" : ""}`}
       style={{ "--music-pip-opacity": String(state.opacity ?? 1) } as CSSProperties}
       onPointerDown={onPointerDown}
+      onPointerMove={showChrome}
+      onPointerEnter={showChrome}
+      onPointerLeave={hideChrome}
       role="application"
       aria-label="YouTube Music mini player"
     >

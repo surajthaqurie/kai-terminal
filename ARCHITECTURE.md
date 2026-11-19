@@ -130,6 +130,8 @@ flowchart TD
 - **`git.rs`**: Reads branch/dirty state using local system `git` plumbing (no shell, 8 s timeout per invocation, kill+reap, stderr discarded). Reports detached HEAD, unborn branches, untracked/modified/deleted files; worktrees, nested repos, and unusual paths; graceful taxonomy for missing git / bad dirs.
 - **`kai_cli.rs`**: Auto-installs and self-repairs `kai` CLI user PATH integration on first launch across Windows, macOS, and Linux.
 - **`cli_guard.rs`**: Desktop/CLI collision prevention redirecting terminal-style subcommands (`code`, `status`, `query`, `agent setup`, etc.) from desktop GUI binary to Node CLI.
+- **`job_runner.rs`**: Windows Job Object helper for `kai run` (`kai.exe --kai-job-probe | --kai-job-run | --kai-job-kill`, handled in `main` before any window). The command runs in a named job, so a timeout or abort stops every process it started, detached ones included. The CLI side is `src/core/windowsJob.ts`.
+- **`music_relay.rs`**: Serves one static page on `http://localhost:<random port>` that hosts the YouTube embed and relays its postMessage traffic, so the music player can control YouTube where the app's own origin (`tauri://localhost` on macOS / Linux) is refused.
 - **`error.rs`**: Strongly typed Rust error definitions returned via IPC.
 
 ### 2.4 Project Intelligence & MCP Layer (`src/core/`, `src/cli/`, `bin/kai.js`)

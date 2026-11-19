@@ -158,13 +158,102 @@ export function currentWebOrigin(): string | null {
   return typeof origin === "string" && WEB_ORIGIN.test(origin) ? origin : null;
 }
 
+/** The local relay page's address, the only form `setMusicRelay` accepts. */
+const RELAY_URL = /^http:\/\/localhost:\d{1,5}\/youtube-relay\.html$/;
+
+let relayUrl: string | null = null;
+
+/**
+ * Uses the desktop app's local relay page (`src-tauri/src/music_relay.rs`) to
+ * host the embed. Where this page's own origin is not one YouTube accepts
+ * (`tauri://localhost` on macOS / Linux), the embed then runs inside that
+ * `http://localhost` page, which passes commands and reports through, so the
+ * player buttons work there too. Null (or anything else) turns it off.
+ */
+export function setMusicRelay(url: string | null): void {
+  relayUrl = typeof url === "string" && RELAY_URL.test(url) ? url : null;
+}
+
+/** The relay page's origin, when it is in use. */
+export function musicRelayOrigin(): string | null {
+  return relayUrl ? new URL(relayUrl).origin : null;
+}
+
+/**
+ * Uses the relay a src built by `embedSrcForTrack` points at (the mini window
+ * gets its src from the main window, which already checked that relay).
+ */
+export function adoptMusicRelayFrom(src: string | null): void {
+  if (!src) return;
+  const base = src.split("?")[0];
+  if (RELAY_URL.test(base)) setMusicRelay(base);
+}
+
+/** The message the relay page posts to the page that frames it, once loaded. */
+export const MUSIC_RELAY_READY = "kai-relay-ready";
+
+/**
+ * True when the relay page loads inside this page and says so. A webview that
+ * refuses to frame it (e.g. a mixed-content rule for `http://localhost` inside
+ * `tauri://localhost`) never answers, and the relay is then not used.
+ */
+export function relayAnswers(url: string, timeoutMs = 4000): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (typeof document === "undefined") {
+      resolve(false);
+      return;
+    }
+    const origin = new URL(url).origin;
+    const frame = document.createElement("iframe");
+    frame.style.display = "none";
+    frame.setAttribute("aria-hidden", "true");
+    frame.tabIndex = -1;
+    let done = false;
+    const finish = (ok: boolean) => {
+      if (done) return;
+      done = true;
+      window.removeEventListener("message", onMessage);
+      window.clearTimeout(timer);
+      frame.remove();
+      resolve(ok);
+    };
+    const onMessage = (e: MessageEvent) => {
+      if (e.origin === origin && e.source === frame.contentWindow && e.data === MUSIC_RELAY_READY) {
+        finish(true);
+      }
+    };
+    window.addEventListener("message", onMessage);
+    const timer = window.setTimeout(() => finish(false), timeoutMs);
+    frame.src = url;
+    document.body.appendChild(frame);
+  });
+}
+
+/**
+ * Asks the desktop app for its relay page, where this page's origin cannot
+ * control the embed, and uses it once it is confirmed to load here. A no-op
+ * where the page's own origin works (Windows, the browser).
+ */
+export async function initMusicRelay(): Promise<void> {
+  if (currentWebOrigin() !== null) return;
+  try {
+    const { isTauriAvailable } = await import("./ptyService");
+    if (!isTauriAvailable()) return;
+    const { invoke } = await import("@tauri-apps/api/core");
+    const url = await invoke<string>("music_relay_url");
+    if (RELAY_URL.test(url) && (await relayAnswers(url))) setMusicRelay(url);
+  } catch {
+    // No relay: the embed shows YouTube's own controls instead.
+  }
+}
+
 /**
  * True when the embed can be remote-controlled from this page. The embed only
- * honours postMessage commands from the origin it was told about, so this is
- * false exactly when `embedSrcForTrack` had to use a placeholder origin.
+ * honours postMessage commands from the origin it was told about: this page's,
+ * or the relay page's. False when `embedSrcForTrack` had to use a placeholder.
  */
 export function canControlEmbed(): boolean {
-  return currentWebOrigin() !== null;
+  return currentWebOrigin() !== null || relayUrl !== null;
 }
 
 /**
@@ -193,7 +282,10 @@ export function embedSrcForTrack(
   // macOS / Linux) is rejected by YouTube's embed validator (Error 153), so
   // only there do we fall back to a placeholder origin; the player then loads
   // but cannot be remote-controlled (see `canControlEmbed`).
-  const origin = currentWebOrigin();
+  // Without a usable origin of its own, the page hosts the embed in the relay,
+  // whose origin YouTube accepts (it sets the same value itself).
+  const relay = currentWebOrigin() === null ? musicRelayOrigin() : null;
+  const origin = currentWebOrigin() ?? relay;
   const originParam = origin
     ? `&origin=${encodeURIComponent(origin)}`
     : `&origin=${encodeURIComponent("https://www.youtube-nocookie.com")}&widget_referrer=${encodeURIComponent("https://www.youtube-nocookie.com")}`;
@@ -204,14 +296,18 @@ export function embedSrcForTrack(
   // YouTube's own controls instead of leaving the video with no way to operate it.
   const controls = origin ? 0 : 1;
   const tail = `autoplay=${autoplay ? 1 : 0}&rel=0&controls=${controls}&enablejsapi=1${originParam}${muted ? "&mute=1" : ""}${loopParam}${startParam}`;
+  const viaRelay = (embed: string) =>
+    relay && relayUrl ? `${relayUrl}?src=${encodeURIComponent(embed)}` : embed;
   if (track.videoId) {
     // Loop-one wins over the mix: a YouTube Music link carries `list=RDAMVM…`,
     // and `loop=1` next to `list=` repeats the whole list, not this song.
     const list = track.playlistId && !loopParam ? `&list=${track.playlistId}` : "";
-    return `https://www.youtube-nocookie.com/embed/${track.videoId}?${tail}${list}`;
+    return viaRelay(`https://www.youtube-nocookie.com/embed/${track.videoId}?${tail}${list}`);
   }
   if (track.playlistId) {
-    return `https://www.youtube-nocookie.com/embed?listType=playlist&list=${track.playlistId}&${tail}`;
+    return viaRelay(
+      `https://www.youtube-nocookie.com/embed?listType=playlist&list=${track.playlistId}&${tail}`
+    );
   }
   return null;
 }
@@ -359,7 +455,11 @@ export function watchUrlForTrack(track: MusicTrack): string {
 
 /** Only messages from trusted YouTube origins are accepted as player telemetry. */
 export function isYouTubeEmbedOrigin(origin: string): boolean {
-  return origin === "https://www.youtube.com" || origin === "https://www.youtube-nocookie.com";
+  if (origin === "https://www.youtube.com" || origin === "https://www.youtube-nocookie.com") {
+    return true;
+  }
+  // The local relay page passes the embed's reports on (see `setMusicRelay`).
+  return relayUrl !== null && origin === musicRelayOrigin();
 }
 
 /**
@@ -389,6 +489,8 @@ export interface YouTubePlayerTelemetry {
   playerState?: number;
   /** Title YouTube reports for the current video. */
   title?: string;
+  /** Video the embed is on now; differs from the loaded one once a list advances. */
+  videoId?: string;
   /** YouTube `onError` code: the embed cannot play this video at all. */
   error?: number;
 }
@@ -456,6 +558,8 @@ export function parseYouTubePlayerMessage(data: unknown): YouTubePlayerTelemetry
     if (videoData && typeof videoData === "object") {
       const title = (videoData as Record<string, unknown>).title;
       if (typeof title === "string" && title.trim()) out.title = title.trim().slice(0, 80);
+      const videoId = (videoData as Record<string, unknown>).video_id;
+      if (typeof videoId === "string" && /^[A-Za-z0-9_-]{11}$/.test(videoId)) out.videoId = videoId;
     }
     return Object.keys(out).length > 0 ? out : null;
   }

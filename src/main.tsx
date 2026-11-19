@@ -1,6 +1,6 @@
 import ReactDOM from "react-dom/client";
-import App from "./App";
 import { isMusicPipWindow } from "./services/musicPip";
+import { initMusicRelay } from "./services/musicService";
 import "./fonts.css";
 import "./App.css";
 
@@ -19,14 +19,21 @@ async function preloadFonts(): Promise<void> {
   await Promise.race([loads, new Promise((resolve) => setTimeout(resolve, 1500))]);
 }
 
-void preloadFonts().then(async () => {
-  const root = ReactDOM.createRoot(document.getElementById("root") as HTMLElement);
-  // The detached music window loads this same bundle with `?pip=music` and
-  // renders only the small player, never the terminal app.
-  if (isMusicPipWindow()) {
-    const { MusicPipWindow } = await import("./components/MusicPlayer/MusicPipWindow");
-    root.render(<MusicPipWindow />);
-    return;
-  }
-  root.render(<App />);
-});
+const root = ReactDOM.createRoot(document.getElementById("root") as HTMLElement);
+if (isMusicPipWindow()) {
+  // The detached music window loads this same page with `?pip=music` and
+  // renders only the small player: it never loads the terminal app's code nor
+  // waits for the terminal fonts, so the video starts as soon as possible.
+  // (It takes the music relay, if any, from the src the main window sends.)
+  void import("./components/MusicPlayer/MusicPipWindow").then(({ MusicPipWindow }) =>
+    root.render(<MusicPipWindow />)
+  );
+} else {
+  // On macOS / Linux the music player hosts YouTube in the app's local relay
+  // page (see `setMusicRelay`); checked in the background, never delaying the
+  // window.
+  void initMusicRelay();
+  // Fetch the app's code while the fonts load.
+  const app = import("./App");
+  void Promise.all([app, preloadFonts()]).then(([{ default: App }]) => root.render(<App />));
+}

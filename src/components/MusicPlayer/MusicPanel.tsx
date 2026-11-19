@@ -57,6 +57,7 @@ import {
   isYouTubeEmbedOrigin,
   YOUTUBE_LISTENING_HANDSHAKE,
   YouTubeCommand,
+  type YouTubePlayerTelemetry,
   clearLegacyQueue,
   describePlayerError,
   embedSrcForTrack,
@@ -100,6 +101,8 @@ const PLAYLIST_PAGE_SIZE = 12;
 const RESUME_GAP_MAX_MS = 5000;
 /** How long a paused embed stays muted while it is nudged to its exact fraction. */
 const PAUSED_SEEK_RESTORE_MS = 1500;
+/** Longest the docked embed keeps playing while the mini window's embed loads. */
+const PIP_HANDOFF_MAX_MS = 8000;
 
 /**
  * Music Time drawer (272px): one search box, the YouTube video, and four
@@ -190,6 +193,28 @@ export const MusicPanel: FC<MusicPanelProps> = ({
   const [pipActive, setPipActive] = useState(false);
   const pipActiveRef = useRef(false);
   pipActiveRef.current = pipActive;
+  // The embed URL the mini window shows (its own resume point, not this panel's).
+  const [pipSrc, setPipSrc] = useState<string | null>(null);
+  // While the mini window is open the docked embed stays loaded, paused and
+  // hidden ("parked"), so bringing the video back is a seek + play instead of a
+  // full YouTube reload. This is the src it holds; null when it was not kept.
+  const [keptMainSrc, setKeptMainSrc] = useState<string | null>(null);
+  const keptMainSrcRef = useRef<string | null>(null);
+  const keptVideoIdRef = useRef<string | null>(null);
+  // Pop-out handoff: a playing song keeps playing in the parked embed while the
+  // mini window's embed loads muted; it takes over once it actually plays, so
+  // there is no silent gap while the new window and YouTube load.
+  const [pipHandoff, setPipHandoff] = useState(false);
+  const pipHandoffRef = useRef(false);
+  const handoffTimerRef = useRef<number | undefined>(undefined);
+  // Last position the docked embed reported, and when (performance.now()).
+  const mainClockRef = useRef({ time: 0, at: 0 });
+  // The video the embed is really on. A YouTube Music link or playlist advances
+  // inside the embed, so this drifts from `track.videoId` (the list's first song).
+  const liveVideoIdRef = useRef<string | null>(null);
+  const lastTrackKeyRef = useRef<string | null>(null);
+  const volumeRef = useRef(volume);
+  volumeRef.current = volume;
   const loopRef = useRef(loop);
   loopRef.current = loop;
   const queueRef = useRef(queue);
@@ -236,15 +261,56 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     const start = rebuildStartRef.current;
     rebuildStartRef.current = 0;
     resumeExactRef.current = start > 0 && start % 1 !== 0 ? start : null;
-    // A rebuild that resumes mid-song (loop-off, moving the video to or from
+    // A rebuild that resumes mid-song (loop-off, the video coming back from
     // the picture-in-picture window) must not start a paused song playing.
     const autoplay = start > 0 ? playingRef.current : true;
     resumingRef.current = start > 0 && autoplay;
-    return embedSrcForTrack(track, mutedRef.current, loopRef.current, start, autoplay);
+    // A rebuild of the same track resumes the song the list is on now, not the
+    // list's first song; a new track starts fresh.
+    const key = `${track.videoId ?? ""}|${track.playlistId ?? ""}|${track.query}`;
+    const rebuild = key === lastTrackKeyRef.current;
+    lastTrackKeyRef.current = key;
+    if (!rebuild) liveVideoIdRef.current = track.videoId ?? null;
+    const liveId = liveVideoIdRef.current;
+    const embedTrack =
+      rebuild && liveId && liveId !== track.videoId ? { ...track, videoId: liveId } : track;
+    return embedSrcForTrack(embedTrack, mutedRef.current, loopRef.current, start, autoplay);
     // Only the track's identity reloads the embed; a title update must not.
-    // Moving the video between windows rebuilds it too (`pipActive`).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [track?.videoId, track?.playlistId, track?.query, online, embedReloadNonce, pipActive]);
+  }, [track?.videoId, track?.playlistId, track?.query, online, embedReloadNonce]);
+  const srcRef = useRef(src);
+  srcRef.current = src;
+
+  /** The current track, pointing at the song a list has advanced to. */
+  const liveTrack = (): MusicTrack | null => {
+    const t = trackRef.current;
+    const id = liveVideoIdRef.current;
+    return t && id && id !== t.videoId ? { ...t, videoId: id } : t;
+  };
+
+  /** Ends a pop-out handoff without touching either player. */
+  const cancelHandoff = useCallback(() => {
+    pipHandoffRef.current = false;
+    window.clearTimeout(handoffTimerRef.current);
+    setPipHandoff(false);
+  }, []);
+
+  /** The mini window's embed is ready: it takes over from the parked docked one. */
+  const finishHandoff = useCallback(() => {
+    if (!pipHandoffRef.current) return;
+    cancelHandoff();
+    const clock = mainClockRef.current;
+    const elapsed =
+      playingRef.current && clock.at > 0 ? Math.min(10, (performance.now() - clock.at) / 1000) : 0;
+    frameRef.current?.contentWindow?.postMessage(youtubeCommand("pauseVideo"), "*");
+    if (!pipActiveRef.current) return;
+    const toPip = (func: YouTubeCommand | string, args: unknown = "") =>
+      void emitPip(PIP_EVENTS.command, youtubeCommand(func, args));
+    toPip("seekTo", [Math.max(0, clock.time + elapsed), true]);
+    toPip("setVolume", [volumeRef.current]);
+    toPip(mutedRef.current ? "mute" : "unMute");
+    toPip(playingRef.current ? "playVideo" : "pauseVideo");
+  }, [cancelHandoff]);
 
   // Track whether the live embed carries native loop, so switching loop off
   // knows it must rebuild (commands cannot cancel YouTube's own looping).
@@ -254,7 +320,8 @@ export const MusicPanel: FC<MusicPanelProps> = ({
 
   const sendCommand = useCallback((func: YouTubeCommand | string, args: unknown = "") => {
     const command = youtubeCommand(func, args);
-    if (pipActiveRef.current) {
+    // During a pop-out handoff the parked docked embed is still the one playing.
+    if (pipActiveRef.current && !pipHandoffRef.current) {
       // The iframe lives in the picture-in-picture window; it posts this on.
       void emitPip(PIP_EVENTS.command, command);
       return;
@@ -348,10 +415,9 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     };
     // Telemetry arrives from our own iframe, or — while the video lives in the
     // picture-in-picture window — relayed from that window's iframe.
-    const handleData = (data: unknown) => {
-      const t = parseYouTubePlayerMessage(data);
-      if (!t) return;
+    const handleData = (t: YouTubePlayerTelemetry) => {
       received = true;
+      if (t.videoId) liveVideoIdRef.current = t.videoId;
       if (resumeGap && (t.playerState !== undefined || t.currentTime !== undefined)) {
         resumeGap = false;
         window.clearTimeout(resumeGapTimer);
@@ -441,13 +507,29 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     const onMessage = (e: MessageEvent) => {
       if (!isYouTubeEmbedOrigin(e.origin)) return;
       if (!frameRef.current || e.source !== frameRef.current.contentWindow) return;
-      handleData(e.data);
+      const t = parseYouTubePlayerMessage(e.data);
+      if (!t) return;
+      if (t.currentTime !== undefined) {
+        mainClockRef.current = { time: t.currentTime, at: performance.now() };
+      }
+      // While the mini window plays, the parked docked embed only keeps time.
+      if (pipActiveRef.current && !pipHandoffRef.current) return;
+      handleData(t);
     };
     window.addEventListener("message", onMessage);
     let cancelled = false;
     let unlistenPip: (() => void) | undefined;
     void listenPip<string>(PIP_EVENTS.message, (data) => {
-      if (pipActiveRef.current) handleData(data);
+      if (!pipActiveRef.current) return;
+      const t = parseYouTubePlayerMessage(data);
+      if (!t) return;
+      if (pipHandoffRef.current) {
+        // The mini window's embed is still warming up, muted, while the docked
+        // one plays on: it takes over once it really plays (or fails).
+        if (t.playerState === 1 || t.error !== undefined) finishHandoff();
+        if (t.error === undefined) return;
+      }
+      handleData(t);
     }).then((u) => {
       if (cancelled) u();
       else unlistenPip = u;
@@ -469,7 +551,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
       report(0);
     };
     // `pipActive`: re-arm the handshake when the video returns to this panel.
-  }, [src, pipActive, onProgressChange, sendCommand]);
+  }, [src, pipActive, onProgressChange, sendCommand, finishHandoff]);
 
   useCallPause({
     playing,
@@ -930,11 +1012,12 @@ export const MusicPanel: FC<MusicPanelProps> = ({
   // brain: it pushes what to show, and runs every button press through the
   // same actions as the docked controls (see services/musicPip.ts).
   const pipState: PipState = {
-    src,
+    src: pipSrc,
     title: track?.title ?? null,
     playing,
     buffering,
-    muted,
+    // Silent until it takes over from the docked embed (see `finishHandoff`).
+    muted: muted || pipHandoff,
     volume,
     currentTime,
     duration,
@@ -948,9 +1031,44 @@ export const MusicPanel: FC<MusicPanelProps> = ({
   /** The window is gone (however it closed): take the video back where it was. */
   const handlePipClosed = useCallback(() => {
     if (!pipActiveRef.current) return;
-    if (trackRef.current) rebuildStartRef.current = Math.max(0, currentTimeRef.current);
+    const wasHandoff = pipHandoffRef.current;
+    cancelHandoff();
+    pipActiveRef.current = false;
+    const frame = frameRef.current?.contentWindow;
+    const kept = keptMainSrcRef.current;
+    const sameVideo =
+      (liveVideoIdRef.current ?? trackRef.current?.videoId ?? null) === keptVideoIdRef.current;
+    if (frame && kept !== null && kept === srcRef.current && sameVideo) {
+      // The parked docked embed is still on this song: no reload, just catch
+      // it up. (Mid-handoff it never stopped playing.)
+      if (!wasHandoff) {
+        const post = (func: YouTubeCommand | string, args: unknown = "") =>
+          frame.postMessage(youtubeCommand(func, args), "*");
+        post("seekTo", [Math.max(0, currentTimeRef.current), true]);
+        post("setVolume", [volumeRef.current]);
+        post(mutedRef.current ? "mute" : "unMute");
+        post(playingRef.current ? "playVideo" : "pauseVideo");
+      }
+    } else if (trackRef.current) {
+      // The song changed while it was out: rebuild the docked embed at the spot.
+      rebuildStartRef.current = Math.max(0, currentTimeRef.current);
+      setEmbedReloadNonce((n) => n + 1);
+    }
+    keptMainSrcRef.current = null;
+    setKeptMainSrc(null);
+    setPipSrc(null);
     setPipActive(false);
-  }, []);
+  }, [cancelHandoff]);
+
+  // A new song (or a loop rebuild) while the mini window is open plays there;
+  // the parked docked embed, still on the old song, is dropped with it.
+  useEffect(() => {
+    if (!pipActiveRef.current) return;
+    cancelHandoff();
+    setPipSrc(src);
+  }, [src, cancelHandoff]);
+
+  useEffect(() => () => window.clearTimeout(handoffTimerRef.current), []);
 
   useEffect(() => {
     let cancelled = false;
@@ -1012,7 +1130,8 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     pipActive,
-    src,
+    pipSrc,
+    pipHandoff,
     track?.title,
     playing,
     buffering,
@@ -1024,13 +1143,55 @@ export const MusicPanel: FC<MusicPanelProps> = ({
   ]);
 
   const enterPip = async () => {
-    if (!track || !isTauriAvailable() || pipActiveRef.current) return;
-    // The iframe moves windows, so the embed reloads and resumes from here.
-    rebuildStartRef.current = Math.max(0, currentTime);
+    if (!track || !src || !isTauriAvailable() || pipActiveRef.current) return;
+    const position = Math.max(0, currentTimeRef.current);
+    // The song the embed is on NOW (a YouTube Music link or playlist may have
+    // moved past its first song), at the exact spot.
+    const embedTrack = liveTrack() ?? track;
+    // Parking needs an embed that obeys pause; one that ignores commands
+    // (macOS / Linux) is dropped instead, or it would keep playing hidden.
+    const park = canControlEmbed();
+    const handoff = park && playingRef.current && playbackError === null;
+    keptMainSrcRef.current = park ? src : null;
+    keptVideoIdRef.current = embedTrack.videoId ?? null;
+    setKeptMainSrc(keptMainSrcRef.current);
+    if (handoff) {
+      // Keep playing here while the mini window's embed loads muted.
+      pipHandoffRef.current = true;
+      setPipHandoff(true);
+      window.clearTimeout(handoffTimerRef.current);
+      handoffTimerRef.current = window.setTimeout(finishHandoff, PIP_HANDOFF_MAX_MS);
+      setPipSrc(embedSrcForTrack(embedTrack, true, loopRef.current, position, true));
+    } else {
+      frameRef.current?.contentWindow?.postMessage(youtubeCommand("pauseVideo"), "*");
+      resumeExactRef.current = position > 0 && position % 1 !== 0 ? position : null;
+      resumingRef.current = position > 0 && playingRef.current;
+      setPipSrc(
+        embedSrcForTrack(
+          embedTrack,
+          mutedRef.current,
+          loopRef.current,
+          position,
+          playingRef.current
+        )
+      );
+    }
+    pipActiveRef.current = true;
     setPipActive(true);
     if (!(await openMusicPip())) {
-      rebuildStartRef.current = Math.max(0, currentTimeRef.current);
+      const wasHandoff = pipHandoffRef.current;
+      cancelHandoff();
+      pipActiveRef.current = false;
+      keptMainSrcRef.current = null;
+      setKeptMainSrc(null);
+      setPipSrc(null);
       setPipActive(false);
+      if (!wasHandoff && park && playingRef.current) {
+        frameRef.current?.contentWindow?.postMessage(youtubeCommand("playVideo"), "*");
+      } else if (!park) {
+        rebuildStartRef.current = position;
+        setEmbedReloadNonce((n) => n + 1);
+      }
       setNotice("Could not open the picture-in-picture window.");
     }
   };
@@ -1042,6 +1203,12 @@ export const MusicPanel: FC<MusicPanelProps> = ({
 
   const togglePip = () => {
     void (pipActive ? exitPip() : enterPip());
+  };
+
+  /** Opens the song that is playing now (not a list's first song) on YouTube. */
+  const openOnYouTube = () => {
+    const t = liveTrack();
+    if (t) openExternalUrl(watchUrlForTrack(t));
   };
 
   // Panel-scoped keys: Space play / pause, N next, P previous, M mute, L loop,
@@ -1073,7 +1240,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
         break;
       case "o":
       case "O":
-        if (track) openExternalUrl(watchUrlForTrack(track));
+        openOnYouTube();
         break;
       default:
         return;
@@ -1346,7 +1513,12 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     sendCommand("pauseVideo");
     if (pipActiveRef.current) {
       void closeMusicPip(false);
+      cancelHandoff();
+      pipActiveRef.current = false;
       rebuildStartRef.current = 0;
+      keptMainSrcRef.current = null;
+      setKeptMainSrc(null);
+      setPipSrc(null);
       setPipActive(false);
     }
     setTrack(null);
@@ -1658,17 +1830,6 @@ export const MusicPanel: FC<MusicPanelProps> = ({
             >
               {isPinned ? <PinOff size={13} /> : <Pin size={13} />}
             </button>
-            {track && (
-              <button
-                type="button"
-                className="btn btn-icon"
-                onClick={() => openExternalUrl(watchUrlForTrack(track))}
-                title="Open in YouTube (O)"
-                aria-label="Open in YouTube"
-              >
-                <ExternalLink size={13} />
-              </button>
-            )}
             <button
               type="button"
               className="btn btn-icon"
@@ -1724,18 +1885,14 @@ export const MusicPanel: FC<MusicPanelProps> = ({
 
         <div className="music-body">
           <div className="music-now">
-            {pipActive && src ? (
-              <div className="music-video-empty music-pip-placeholder" role="status">
-                <PictureInPicture2 size={22} aria-hidden="true" />
-                <span>Playing in the mini player window</span>
-                <button type="button" className="music-pip-return" onClick={togglePip}>
-                  Bring back to the player
-                </button>
-              </div>
-            ) : src ? (
+            {/* While the mini window is open this embed stays loaded but parked
+                (paused, invisible) so bringing the video back needs no reload. */}
+            {src && (!pipActive || src === keptMainSrc) && (
               <iframe
                 key={src}
                 ref={frameRef}
+                aria-hidden={pipActive || undefined}
+                tabIndex={pipActive ? -1 : undefined}
                 referrerPolicy="no-referrer-when-downgrade"
                 onLoad={() => {
                   frameRef.current?.contentWindow?.postMessage(YOUTUBE_LISTENING_HANDSHAKE, "*");
@@ -1746,13 +1903,22 @@ export const MusicPanel: FC<MusicPanelProps> = ({
                     sendCommand("unMute");
                   }
                 }}
-                className="music-video"
+                className={`music-video${pipActive ? " music-video-parked" : ""}`}
                 src={src}
                 title={track?.title ?? "YouTube player"}
                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
                 allowFullScreen
               />
-            ) : track && !online ? (
+            )}
+            {pipActive && src ? (
+              <div className="music-video-empty music-pip-placeholder" role="status">
+                <PictureInPicture2 size={22} aria-hidden="true" />
+                <span>Playing in the mini player window</span>
+                <button type="button" className="music-pip-return" onClick={togglePip}>
+                  Bring back to the player
+                </button>
+              </div>
+            ) : src ? null : track && !online ? (
               <div className="music-video-empty music-offline" role="status">
                 <WifiOff size={16} aria-hidden="true" />
                 <span>No internet connection</span>
@@ -1775,9 +1941,9 @@ export const MusicPanel: FC<MusicPanelProps> = ({
                 <button
                   type="button"
                   className="btn btn-icon music-open-browser-btn"
-                  onClick={() => openExternalUrl(watchUrlForTrack(track))}
-                  title="Open on YouTube (O)"
-                  aria-label="Open on YouTube"
+                  onClick={openOnYouTube}
+                  title="Open in YouTube (O)"
+                  aria-label="Open in YouTube"
                 >
                   <ExternalLink size={12} />
                 </button>
@@ -1865,17 +2031,6 @@ export const MusicPanel: FC<MusicPanelProps> = ({
               >
                 <Heart size={14} fill={isCurrentFavorite ? "currentColor" : "none"} />
               </button>
-              <button
-                type="button"
-                className="btn btn-icon music-ctrl-btn"
-                onClick={() => track && openExternalUrl(watchUrlForTrack(track))}
-                disabled={!track}
-                title="Open in YouTube (O)"
-                aria-label="Open in YouTube"
-              >
-                <ExternalLink size={14} />
-              </button>
-
               <div className="music-volume-group" title={`Volume: ${muted ? 0 : volume}%`}>
                 <button
                   type="button"

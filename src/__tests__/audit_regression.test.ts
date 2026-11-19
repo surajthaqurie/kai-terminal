@@ -41,10 +41,12 @@ function makeTempProject(files: Record<string, string>): string {
 describe("audit regression: indexer security & correctness", () => {
   it("excludes file content containing high-confidence secrets", () => {
     expect(isSensitiveContent("const x = 1;")).toBe(false);
-    expect(isSensitiveContent("AKIAIOSFODNN7EXAMPLE plus more")).toBe(true);
+    expect(isSensitiveContent(["AKIA", "Q7RZ2M4KXW9T3BNP plus more"].join(""))).toBe(true);
     const testRsaKey = ["-----", "BEGIN ", "RSA ", "PRIVATE KEY-----", "\nabc"].join("");
     expect(isSensitiveContent(testRsaKey)).toBe(true);
-    expect(isSensitiveContent("token = ghp_abcdefghijklmnopqrstuvwxyz123456")).toBe(true);
+    expect(isSensitiveContent(["token = ghp_", "Qm7Xk2PzR9vLw4Tn8BcY3hJ6dF1gS5aE"].join(""))).toBe(
+      true
+    );
   });
 
   it("still flags the AWS secret key setting name, and the detector's own source is not flagged", () => {

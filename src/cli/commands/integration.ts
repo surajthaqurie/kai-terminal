@@ -94,9 +94,10 @@ Settings of a folder that is already connected (run on their own, not with the o
                                not enforced)
   --clear-branch-pattern       Agents choose their own branch names again
   --allow-writes               Let agents change data as you: comment on work items and
-                               pull requests, change a work item's state, open a pull request
-                               between existing branches. Off by default; only you can turn it
-                               on (it asks first, -y/--yes skips the question)
+                               pull requests, create work items, change a work item's state
+                               and fields, open a pull request between existing branches.
+                               Off by default; only you can turn it on (it asks first,
+                               -y/--yes skips the question)
   --no-writes                  Read-only again (the default)
 `);
 }
@@ -710,7 +711,9 @@ async function runSettings(info: ProviderInfo, flags: Flags, dir: string): Promi
   if (has("--allow-writes") && !yes) {
     console.log(`  Agents will be able to change data in ${info.label} through Kai, as you:`);
     console.log(`    - add comments to work items and pull requests`);
-    console.log(`    - change a work item's state`);
+    console.log(`    - create work items (optionally under a parent) and assign them`);
+    console.log(`    - change a work item's state and fields (title, description, assignee,`);
+    console.log(`      tags, priority, hours, sprint)`);
     console.log(`    - open a pull request between branches that already exist`);
     console.log(`  They cannot create branches, merge, delete or edit anything else. Every change`);
     console.log(
