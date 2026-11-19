@@ -58,6 +58,7 @@ import {
   YOUTUBE_LISTENING_HANDSHAKE,
   YouTubeCommand,
   type YouTubePlayerTelemetry,
+  type YouTubeVideoResult,
   clearLegacyQueue,
   describePlayerError,
   embedSrcForTrack,
@@ -103,6 +104,8 @@ const RESUME_GAP_MAX_MS = 5000;
 const PAUSED_SEEK_RESTORE_MS = 1500;
 /** Longest the docked embed keeps playing while the mini window's embed loads. */
 const PIP_HANDOFF_MAX_MS = 8000;
+/** Previous restarts the song once it has played longer than this (seconds). */
+const PREVIOUS_RESTART_SECONDS = 3;
 
 /**
  * Music Time drawer (272px): one search box, the YouTube video, and four
@@ -223,22 +226,47 @@ export const MusicPanel: FC<MusicPanelProps> = ({
   // playing, so Previous walks back through it. A ref (no re-render needed —
   // the button stays enabled whenever something is playing).
   const historyRef = useRef<MusicTrack[]>([]);
+  // Songs Previous stepped back from, most recent last: Next returns to them
+  // first (like a browser's Forward). Choosing any other song clears it.
+  const forwardRef = useRef<MusicTrack[]>([]);
+  // The first song YouTube reported for the current list: Previous only asks
+  // the embed to step back once the list has moved past it.
+  const listStartIdRef = useRef<string | null>(null);
   const trackRef = useRef(track);
   trackRef.current = track;
   // Auto-advance rate guard: an "ended" state can arrive twice (state event +
   // envelope); ignore repeats within 1.5 s so the queue never skips two songs.
   const lastAutoNextRef = useRef(0);
 
-  /** Snapshot the currently playing song onto the Previous-history stack.
-   *  Called at switch time — before `setTrack` changes the current track. */
-  const pushHistory = useCallback(() => {
-    const cur = trackRef.current;
-    if (!cur || (!cur.videoId && !cur.playlistId) || cur.playlistId) return;
-    const last = historyRef.current[historyRef.current.length - 1];
-    if (last && last.videoId === cur.videoId) return;
-    // Bounded stack: keep the 50 most recent songs.
-    historyRef.current = [...historyRef.current.slice(-49), cur];
+  /** The current track at the song a list is on now (YouTube may have moved
+   *  on inside it), keeping the list so going back resumes it there. */
+  const currentAtLive = useCallback((): MusicTrack | null => {
+    const t = trackRef.current;
+    const liveId = liveVideoIdRef.current;
+    if (!t || !t.playlistId || !liveId || liveId === t.videoId) return t;
+    return {
+      ...t,
+      videoId: liveId,
+      thumbnail: `https://i.ytimg.com/vi/${encodeURIComponent(liveId)}/mqdefault.jpg`,
+    };
   }, []);
+
+  /** Snapshot the currently playing song onto the Previous-history stack.
+   *  Called at switch time — before `setTrack` changes the current track.
+   *  `clearForward: false` only for Next returning along the Forward stack. */
+  const pushHistory = useCallback(
+    (clearForward = true) => {
+      if (clearForward) forwardRef.current = [];
+      const cur = currentAtLive();
+      // A bare playlist (no song known yet) would restart from its first song.
+      if (!cur?.videoId) return;
+      const last = historyRef.current[historyRef.current.length - 1];
+      if (last && last.videoId === cur.videoId) return;
+      // Bounded stack: keep the 50 most recent songs.
+      historyRef.current = [...historyRef.current.slice(-49), cur];
+    },
+    [currentAtLive]
+  );
 
   // Focus the search box whenever the drawer opens so the footer toggle
   // feels like opening a real panel (and keyboard users land in context).
@@ -257,7 +285,18 @@ export const MusicPanel: FC<MusicPanelProps> = ({
   // with); toggling loop mid-song does not rebuild the iframe, so it can
   // never restart playback.
   const src = useMemo(() => {
-    if (!track || !online) return null;
+    if (!track) return null;
+    // A rebuild of the same track resumes the song the list is on now, not the
+    // list's first song; a new track starts fresh. Decided before the online
+    // check so a song changed while offline never keeps the old live song.
+    const key = `${track.videoId ?? ""}|${track.playlistId ?? ""}|${track.query}`;
+    const rebuild = key === lastTrackKeyRef.current;
+    lastTrackKeyRef.current = key;
+    if (!rebuild) {
+      liveVideoIdRef.current = track.videoId ?? null;
+      listStartIdRef.current = track.videoId ?? null;
+    }
+    if (!online) return null;
     const start = rebuildStartRef.current;
     rebuildStartRef.current = 0;
     resumeExactRef.current = start > 0 && start % 1 !== 0 ? start : null;
@@ -265,12 +304,6 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     // the picture-in-picture window) must not start a paused song playing.
     const autoplay = start > 0 ? playingRef.current : true;
     resumingRef.current = start > 0 && autoplay;
-    // A rebuild of the same track resumes the song the list is on now, not the
-    // list's first song; a new track starts fresh.
-    const key = `${track.videoId ?? ""}|${track.playlistId ?? ""}|${track.query}`;
-    const rebuild = key === lastTrackKeyRef.current;
-    lastTrackKeyRef.current = key;
-    if (!rebuild) liveVideoIdRef.current = track.videoId ?? null;
     const liveId = liveVideoIdRef.current;
     const embedTrack =
       rebuild && liveId && liveId !== track.videoId ? { ...track, videoId: liveId } : track;
@@ -417,7 +450,11 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     // picture-in-picture window — relayed from that window's iframe.
     const handleData = (t: YouTubePlayerTelemetry) => {
       received = true;
-      if (t.videoId) liveVideoIdRef.current = t.videoId;
+      if (t.videoId) {
+        liveVideoIdRef.current = t.videoId;
+        // A bare playlist link names no song: its first report is the start.
+        listStartIdRef.current ??= t.videoId;
+      }
       if (resumeGap && (t.playerState !== undefined || t.currentTime !== undefined)) {
         resumeGap = false;
         window.clearTimeout(resumeGapTimer);
@@ -580,15 +617,85 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     setPlaying((v) => !v);
   };
 
+  /**
+   * The song after the one playing, for a song from a list. Used only while
+   * loop is on: the embed then holds this one song (`loop=1&playlist=<id>`),
+   * not the list, so YouTube cannot say what comes next.
+   */
+  const loopListRef = useRef<{ id: string; items: YouTubeVideoResult[] } | null>(null);
+  const nextInList = async (cur: MusicTrack): Promise<MusicTrack | null> => {
+    const listId = cur.playlistId;
+    if (!listId) return null;
+    let items: { title: string; videoId?: string | null }[] =
+      playlistIdRef.current === listId ? playlistItemsRef.current : [];
+    if (items.length === 0 && loopListRef.current?.id === listId) {
+      items = loopListRef.current.items;
+    }
+    if (items.length === 0) {
+      const fetched = await fetchPlaylistVideos(listId, 200);
+      if (fetched.length > 0) loopListRef.current = { id: listId, items: fetched };
+      items = fetched;
+    }
+    const liveId = liveVideoIdRef.current ?? cur.videoId;
+    const at = items.findIndex((i) => i.videoId === liveId);
+    // Not in what was loaded (a mix that differs per listener, a very long
+    // list): guessing would jump back to the list's start, so say "unknown".
+    if (at < 0) return null;
+    // Past the last song, loop carries on from the top of the list.
+    const after = items[at + 1] ?? items[0];
+    if (!after?.videoId || after.videoId === liveId) return null;
+    return {
+      ...cur,
+      videoId: after.videoId,
+      title: after.title,
+      query: after.title,
+      thumbnail: `https://i.ytimg.com/vi/${encodeURIComponent(after.videoId)}/mqdefault.jpg`,
+    };
+  };
+
   const next = async () => {
+    // After Previous, Next first returns to the songs stepped back from.
+    const forward = forwardRef.current.pop();
+    if (forward) {
+      pushHistory(false);
+      setTrack(forward);
+      setPlaying(true);
+      setCurrentTime(0);
+      setDuration(0);
+      setNotice(null);
+      return;
+    }
     // Native playlist embeds own the Next action: let YouTube advance within
     // the list instead of consuming the suggestion queue.
-    if (track?.playlistId) {
+    if (track?.playlistId && !nativeLoopRef.current) {
       sendCommand("nextVideo");
       setPlaying(true);
       return;
     }
-    if (queueRef.current.length > 0) {
+    // Loop is on for a song from a list. The embed is a one-song loop, where
+    // `nextVideo` just restarts the same song, so move to the list's next song
+    // ourselves. It keeps the list (turning loop off resumes the list from
+    // there) and keeps looping, now on the new song.
+    if (track?.playlistId) {
+      const cur = track;
+      const following = await nextInList(cur);
+      // The user may have picked another song while the list loaded.
+      // (Compared by ids: a title update replaces the track object.)
+      const now = trackRef.current;
+      if (now?.videoId !== cur.videoId || now?.playlistId !== cur.playlistId) return;
+      if (following) {
+        pushHistory();
+        setTrack(following);
+        setPlaying(true);
+        setCurrentTime(0);
+        setDuration(0);
+        return;
+      }
+      // List unavailable: fall through to songs related to this one. The
+      // queue is skipped: it is not refilled while a list plays, so it still
+      // holds suggestions for whatever played before the list.
+    }
+    if (!track?.playlistId && queueRef.current.length > 0) {
       pushHistory();
       const [nextItem, ...remaining] = queueRef.current;
       setTrack(nextItem);
@@ -598,7 +705,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
       return;
     }
     if (!src) return;
-    if (hasNextItem(track)) {
+    if (hasNextItem(track) && !nativeLoopRef.current) {
       sendCommand("nextVideo");
       setPlaying(true);
       return;
@@ -671,24 +778,38 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     // every edit would search again after each song the user skips or removes.
   }, [relatedSeed, currentVideoId, hasPlaylist, queueEmpty]);
 
-  /** Previous button: pops the last played song off the history stack. With
-   *  an empty history it restarts the current song (standard player
-   *  behavior). Native playlist embeds own their own position, so Previous
-   *  simply restarts the current list video. */
+  /** Previous button, like every music player:
+   *  1. more than a few seconds into the song: restart it;
+   *  2. a list playing in the embed, past its first song: YouTube steps back;
+   *  3. otherwise the last song played (history); the song being left is
+   *     remembered so Next returns to it (like a browser's Forward);
+   *  4. nothing earlier: restart the song. */
   const previous = () => {
-    if (trackRef.current?.playlistId) {
+    const cur = trackRef.current;
+    if (!cur) return;
+    if (currentTimeRef.current > PREVIOUS_RESTART_SECONDS) {
       replayCurrent();
       return;
     }
-    const prevTrack = historyRef.current.pop();
-    if (prevTrack) {
-      setTrack(prevTrack);
+    const liveId = liveVideoIdRef.current;
+    const listStart = listStartIdRef.current;
+    if (cur.playlistId && !nativeLoopRef.current && liveId && listStart && liveId !== listStart) {
+      sendCommand("previousVideo");
       setPlaying(true);
-      setCurrentTime(0);
-      setDuration(0);
       return;
     }
-    replayCurrent();
+    const prevTrack = historyRef.current.pop();
+    if (!prevTrack) {
+      replayCurrent();
+      return;
+    }
+    const leaving = currentAtLive();
+    if (leaving?.videoId) forwardRef.current = [...forwardRef.current.slice(-49), leaving];
+    setTrack(prevTrack);
+    setPlaying(true);
+    setCurrentTime(0);
+    setDuration(0);
+    setNotice(null);
   };
 
   // Playlist drawer browsing is session-scoped: items stay visible while the
@@ -1992,7 +2113,12 @@ export const MusicPanel: FC<MusicPanelProps> = ({
                 onClick={next}
                 disabled={!src && queue.length === 0}
                 title={withKeys(
-                  queue.length > 0 ? `Play next: ${queue[0].title}` : "Next song / replay",
+                  // A song from a list moves on inside that list, not the queue.
+                  track?.playlistId
+                    ? "Next song in the list"
+                    : queue.length > 0
+                      ? `Play next: ${queue[0].title}`
+                      : "Next song / replay",
                   "N",
                   shortcutHints?.next
                 )}

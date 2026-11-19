@@ -475,7 +475,7 @@ export const YOUTUBE_LISTENING_HANDSHAKE = JSON.stringify({
 });
 
 export type YouTubeCommand =
-  "playVideo" | "pauseVideo" | "nextVideo" | "mute" | "unMute" | "seekTo";
+  "playVideo" | "pauseVideo" | "nextVideo" | "previousVideo" | "mute" | "unMute" | "seekTo";
 
 /** Control message for an embed that was loaded with `enablejsapi=1`. */
 export function youtubeCommand(func: YouTubeCommand | string, args: unknown = ""): string {

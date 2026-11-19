@@ -38,3 +38,6 @@ build-dir/
 
 # Node.js binary fetched by scripts/fetch-node.mjs for release builds
 src-tauri/resources/node/
+
+# Tauri-generated capability schemas (rebuilt on every tauri build/dev)
+src-tauri/gen/schemas/
