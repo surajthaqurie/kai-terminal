@@ -238,7 +238,7 @@ kai teams                          # open the chat here (first time: kai integra
 
 ## Shared Agent
 
-Chat with the Claude Code or OpenCode installed on another PC, or let your other PCs use yours. It lives in the desktop app only: **AI Providers → Shared Agent** (or the Shared Agent switch in the header). There is no `kai` command for it.
+Chat with the Claude Code or OpenCode installed on another PC, or let your other PCs use yours. It lives in the desktop app only: **AI Providers → Shared Agent**. While sharing is on, the AI Providers icon in the header shows a green dot. There is no `kai` command for it.
 
 > Traffic on your network is plain HTTP. Use Shared Agent only on a network you trust, and never port-forward its port.
 
@@ -253,16 +253,19 @@ Chat with the Claude Code or OpenCode installed on another PC, or let your other
 
 ### Use a shared agent
 
-- **Join a PC**: paste the invite link (`http://192.168.1.20:8765/join#…` on the same network, `https://<tunnel address>/join#…` over the internet). The PC is added to **Joined PCs**, with whether it is online, how fast it answers, which agents it shares and the tokens you have used through it.
-- **Chat**: type and press Enter (Shift+Enter for a new line). **New chat** starts over. The chat clears when you close the window.
-- **Fallback, automatic**: a message goes to the joined PC's agent first. If that PC is offline, busy, has removed you or fails, your own Claude Code answers instead, and the chat says which one answered.
+- **Join a PC**: paste the invite link (`http://192.168.1.20:8765/join#…` on the same network, `https://<tunnel address>/join#…` over the internet). The PC is added to **Joined PCs**, with whether it is online, how fast it answers, which agents it shares and the tokens you have used through it. The chat appears once a PC is joined.
+- **Chat**: type and press Enter (Shift+Enter for a new line). The answer appears as it is written. **New chat** starts over. The chat clears when you close the window.
+- **Only the joined PC answers**: nothing runs on your own PC. If that PC is offline, busy, has removed you or fails, the chat says so; send the message again when it is back.
+- **Pop out**: opens the chat in its own window and carries the conversation over. **Dock** (or closing that window) brings it back to the panel.
 
 ### What a shared agent can do
 
 - It **only chats**. It runs in an empty folder, read-only, and cannot read or change your files, run commands or use MCP tools. There is no setting that widens this. A tool the agent tries to use is blocked, and the chat says so.
 - Your message reaches the agent on its standard input, never on a command line, and no shell is involved.
 - Only PCs on a network this PC is attached to (or PCs coming through the tunnel address you set) can join or chat. A PC's access only works from the network it joined on.
-- Kai Terminal speaks the same protocol as Agent Bridge, so the two can join each other.
+- Shared Agent only works between Kai Terminal PCs. A host refuses any other program (an Agent Bridge PC, a browser, `curl`), and Kai will not join or chat with a host that is not Kai Terminal.
+- **End-to-end encrypted**: everything between the two PCs is encrypted and signed by Kai itself, so the network, ngrok, Cloudflare Tunnel or any proxy in between only relays ciphertext. No invite secret, key, prompt or answer crosses the network in readable form. The invite link carries the host's key fingerprint: if something else answers at that address, Kai refuses it and sends nothing.
+- **Safety code**: the Share screen shows a code like `K7QF-2M9D-XR4T`, and each joined PC shows the code of the host it joined. Read them to each other: if they match, you are connected to the right PC with no one in between.
 
 ## Project graph
 

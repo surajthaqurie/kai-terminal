@@ -28,6 +28,7 @@ const host = (over: Partial<JoinedHost> = {}): JoinedHost => ({
     { id: "opencode", name: "OpenCode", available: false },
   ],
   usage: emptyUsage(),
+  safetyCode: "",
   ...over,
 });
 

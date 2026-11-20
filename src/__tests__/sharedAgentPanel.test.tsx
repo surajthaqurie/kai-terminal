@@ -68,6 +68,7 @@ const office = (over: Partial<JoinedHost> = {}): JoinedHost => ({
   checkedAt: null,
   agents: [{ id: "claude", name: "Claude Code", available: true }],
   usage: { input: 10_000, output: 2_000, cacheRead: 480, cacheWrite: 0, runs: 4, costUsd: 0.4 },
+  safetyCode: "K7QF-2M9D-XR4T",
   ...over,
 });
 const laptop = office({
@@ -105,6 +106,7 @@ const shareStatus = (over: Partial<ShareStatus> = {}): ShareStatus => ({
   invites: [],
   devices: [],
   runs: [],
+  safetyCode: null,
   ...over,
 });
 
@@ -221,7 +223,7 @@ describe("Use a shared agent", () => {
     svc.joinHost.mockResolvedValue({ ok: true, value: studio });
     await type(
       container.querySelector<HTMLInputElement>('input[aria-label="Invite link"]')!,
-      `http://192.168.1.50:8765/join#${"a".repeat(43)}`
+      `http://192.168.1.50:8765/join#${"a".repeat(43)}.${"f".repeat(43)}`
     );
     await click(buttonByText("Join"));
     expect(container.querySelector("#sa-chat-title")!.textContent).toBe("Chat with Studio-PC");
@@ -247,7 +249,7 @@ describe("Use a shared agent", () => {
     expect(svc.joinHost).not.toHaveBeenCalled();
     expect(text()).toContain("not a valid invite link");
 
-    const good = `http://192.168.1.50:8765/join#${"a".repeat(43)}`;
+    const good = `http://192.168.1.50:8765/join#${"a".repeat(43)}.${"f".repeat(43)}`;
     const studio = office({
       id: "h3",
       name: "Studio-PC",
@@ -273,7 +275,7 @@ describe("Use a shared agent", () => {
     await openReceive();
     await type(
       container.querySelector<HTMLInputElement>('input[aria-label="Invite link"]')!,
-      `http://192.168.1.50:8765/join#${"a".repeat(43)}`
+      `http://192.168.1.50:8765/join#${"a".repeat(43)}.${"f".repeat(43)}`
     );
     await click(buttonByText("Join"));
     expect(container.querySelector("[role=alert]")!.textContent).toContain("already used");

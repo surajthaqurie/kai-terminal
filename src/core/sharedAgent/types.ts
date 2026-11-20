@@ -8,9 +8,22 @@
  *    with the agents that PC shares.
  *  - SHARE: this PC runs a small host server so other PCs can chat with its
  *    local agents (read-only, in an empty folder).
- * The wire protocol is the same one Agent Bridge (`lan-agent-hub`) speaks, so
- * a Kai PC and an Agent Bridge PC can use each other.
+ * Both ends must be Kai Terminal: every call carries {@link KAI_CLIENT_HEADER}
+ * and every reply {@link KAI_SERVICE_HEADER}, and each side refuses the other
+ * without it. (The wire shape grew out of Agent Bridge's, but Agent Bridge PCs
+ * and other HTTP clients are refused.) The headers are a product boundary, not
+ * an authentication step: invites and device tokens are what keep strangers out.
  */
+
+/** What a Kai host and a Kai client call themselves on the wire. */
+export const KAI_SERVICE = "kai-terminal";
+/** Sent by a Kai client on every call to a host. Value: {@link KAI_SERVICE}. */
+export const KAI_CLIENT_HEADER = "x-kai-client";
+/** Sent by a Kai host on every reply. Value: {@link KAI_SERVICE}. */
+export const KAI_SERVICE_HEADER = "x-kai-service";
+/** Why a host refuses a caller that is not Kai Terminal. */
+export const NOT_KAI_CLIENT =
+  "Shared Agent only works between Kai Terminal PCs. Join from Kai Terminal.";
 
 /** The agents that can be shared. Both have a verified non-interactive, read-only mode. */
 export const SHARED_AGENT_IDS = ["claude", "opencode"] as const;
@@ -116,6 +129,12 @@ export interface JoinedHost {
   agents: AgentView[];
   /** Tokens this PC has used through that host (counted here, from the host's own reports). */
   usage: UsageTotals;
+  /**
+   * The host's safety code ("K7QF-2M9D-XR4T"), from the identity key it proved
+   * it holds. Matches the code on the host's Share screen. Empty for rows
+   * joined before end-to-end encryption (they must join again).
+   */
+  safetyCode: string;
   message?: string;
 }
 
@@ -152,8 +171,11 @@ export interface ShareInvite {
 
 export type DeviceState = "connected" | "offline" | "disconnected";
 
-/** A model name that may be passed to an agent's command line. */
-export const MODEL_RE = /^[A-Za-z0-9._:/#@\-[\]]{1,100}$/;
+/**
+ * A model name that may be passed to an agent's command line. It must start with
+ * a letter or digit, so it can never be read as a flag ("--auto", "-c").
+ */
+export const MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._:/#@\-[\]]{0,99}$/;
 
 /** Longest run a host can allow one PC, and the default. */
 export const MAX_RUN_MINUTES_LIMIT = 240;
@@ -293,6 +315,11 @@ export interface ShareStatus {
   invites: ShareInvite[];
   devices: ShareDevice[];
   runs: ShareRun[];
+  /**
+   * This host's safety code, present while sharing is on. A joined PC shows the
+   * same code; reading them to each other proves no one is in between.
+   */
+  safetyCode: string | null;
 }
 
 export interface CreatedInvite {

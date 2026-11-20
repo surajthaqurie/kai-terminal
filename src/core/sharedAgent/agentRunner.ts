@@ -82,23 +82,39 @@ export function buildCommand(
       "--permission-mode",
       "dontAsk",
       "--restricted",
-      "--allowedTools",
-      "Read",
-      "Glob",
-      "Grep",
+      // Chat only: no built-in tools at all (the run folder is empty anyway).
+      "--tools=", // one argument: an empty argv entry is fragile through Windows launchers
+      // None of the host user's CLAUDE.md, skills, plugins, hooks, custom commands
+      // or agents: a remote PC must not read or trigger them.
+      "--safe-mode",
+      "--disable-slash-commands",
       "--strict-mcp-config", // no MCP servers / connectors
     ];
     if (model) args.push("--model", model);
     if (resume) args.push("--resume", resume);
     return { args, env: {} };
   }
-  // OpenCode: the read-only "plan" agent, with every write / shell tool denied.
-  // --standalone gives each run a private server, so the permission config applies.
+  // OpenCode: the read-only "plan" agent with every permission denied, globally and
+  // on the agent itself (an agent-level rule in the user's config would otherwise win).
+  // That covers MCP servers from the user's global config too: their tools are refused.
+  // --standalone gives each run a private server, so this config applies.
   const args = ["run", "--standalone", "--format", "json", "--agent", "plan"];
   if (model) args.push("--model", model);
   if (resume) args.push("--session", resume);
-  const deny = { edit: "deny", write: "deny", bash: "deny", execute: "deny", webfetch: "deny" };
-  return { args, env: { OPENCODE_CONFIG_CONTENT: JSON.stringify({ permission: deny }) } };
+  const deny = {
+    "*": "deny",
+    edit: "deny",
+    write: "deny",
+    bash: "deny",
+    webfetch: "deny",
+    websearch: "deny",
+    read: "deny",
+    task: "deny",
+    skill: "deny",
+    external_directory: "deny",
+  };
+  const config = { permission: deny, agent: { plan: { permission: deny } } };
+  return { args, env: { OPENCODE_CONFIG_CONTENT: JSON.stringify(config) } };
 }
 
 function childEnv(extra: Record<string, string>, cwd: string): NodeJS.ProcessEnv {

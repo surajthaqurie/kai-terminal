@@ -439,7 +439,10 @@ describe("request validation", () => {
 
   it("explains an unreachable host when joining", async () => {
     const b = makeSide("Laptop");
-    const r = await b.svc.handle({ op: "host_join", link: "http://127.0.0.1:1/join#abcdefghij" });
+    const r = await b.svc.handle({
+      op: "host_join",
+      link: `http://127.0.0.1:1/join#${"a".repeat(43)}.${"f".repeat(43)}`,
+    });
     expect(r).toMatchObject({ ok: false, error: { code: "unreachable" } });
   });
 });

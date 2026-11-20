@@ -25,17 +25,23 @@ import {
 import { GrantsError, defaultGrants, parseGrants } from "../core/sharedAgent/types";
 import { formatCost, formatDuration } from "../components/sharedAgentViewModel";
 
+/** A link's fragment is `<secret>.<host fingerprint>`; `key` below is the whole fragment. */
+const secret = "A".repeat(43);
+const fp = "F".repeat(43);
+
 describe("invite links", () => {
-  const key = "A".repeat(43);
+  const key = `${secret}.${fp}`;
 
   it("parses a LAN invite and round-trips", () => {
-    const link = buildInviteLink("http://192.168.1.20:8765", key);
+    const link = buildInviteLink("http://192.168.1.20:8765", secret, fp);
+    expect(link).toBe(`http://192.168.1.20:8765/join#${key}`);
     expect(parseInviteLink(link)).toEqual({
       origin: "http://192.168.1.20:8765",
-      key,
+      key: secret,
+      fingerprint: fp,
       tunnel: false,
     });
-    expect(parseInviteLink(`  ${link}  `)?.key).toBe(key);
+    expect(parseInviteLink(`  ${link}  `)?.key).toBe(secret);
   });
 
   it("defaults the port and accepts loopback", () => {
@@ -55,7 +61,10 @@ describe("invite links", () => {
     ["https wrong path", `https://abc.tunnel.example.com/x/join#${key}`],
     ["wrong path", `http://192.168.1.20:8765/other#${key}`],
     ["no secret", "http://192.168.1.20:8765/join"],
-    ["short secret", "http://192.168.1.20:8765/join#abc"],
+    ["short secret", `http://192.168.1.20:8765/join#abc.${fp}`],
+    ["no host fingerprint (an older Kai's link)", `http://192.168.1.20:8765/join#${secret}`],
+    ["short fingerprint", `http://192.168.1.20:8765/join#${secret}.abc`],
+    ["extra part", `http://192.168.1.20:8765/join#${key}.x`],
     ["bad characters", "http://192.168.1.20:8765/join#abc def ghi jkl"],
     ["credentials", `http://u:p@192.168.1.20:8765/join#${key}`],
     ["link-local", `http://169.254.1.1:8765/join#${key}`],
@@ -76,14 +85,15 @@ describe("invite links", () => {
 });
 
 describe("internet (tunnel) links", () => {
-  const key = "A".repeat(43);
+  const key = `${secret}.${fp}`;
 
   it("parses an https tunnel invite", () => {
-    const link = buildInviteLink("https://abc-12.tunnel.example.com", key);
+    const link = buildInviteLink("https://abc-12.tunnel.example.com", secret, fp);
     expect(link).toBe(`https://abc-12.tunnel.example.com/join#${key}`);
     expect(parseInviteLink(link)).toEqual({
       origin: "https://abc-12.tunnel.example.com",
-      key,
+      key: secret,
+      fingerprint: fp,
       tunnel: true,
     });
     expect(parseInviteLink(`https://x.trycloudflare.com:8443/join#${key}`)?.origin).toBe(
@@ -222,7 +232,11 @@ describe("agent command lines", () => {
     const { args } = buildCommand("claude");
     expect(args).toEqual(expect.arrayContaining(["-p", "--output-format", "stream-json"]));
     expect(args).toEqual(expect.arrayContaining(["--permission-mode", "dontAsk", "--restricted"]));
-    expect(args).toEqual(expect.arrayContaining(["--allowedTools", "Read", "Glob", "Grep"]));
+    // No tools at all, and none of the host user's CLAUDE.md, skills, plugins or commands.
+    expect(args).toEqual(
+      expect.arrayContaining(["--tools=", "--safe-mode", "--disable-slash-commands"])
+    );
+    expect(args).not.toContain("--allowedTools");
     expect(args).toContain("--strict-mcp-config");
     // The answer streams as it is written.
     expect(args).toContain("--include-partial-messages");
@@ -241,6 +255,10 @@ describe("agent command lines", () => {
       AgentError
     );
     expect(() => buildCommand("opencode", { resume: sid })).toThrow(AgentError);
+    // A model name can never be read as a flag.
+    for (const flag of ["--auto", "-c", "--wizard", "-m"]) {
+      expect(() => buildCommand("opencode", { model: flag }), flag).toThrow(AgentError);
+    }
   });
 
   it("denies every write and shell tool for OpenCode", () => {
@@ -248,9 +266,14 @@ describe("agent command lines", () => {
     expect(args).toEqual(
       expect.arrayContaining(["--agent", "plan", "--session", "ses_abcdef123456"])
     );
-    const deny = JSON.parse(env.OPENCODE_CONFIG_CONTENT).permission;
-    for (const tool of ["edit", "write", "bash", "execute", "webfetch"]) {
-      expect(deny[tool], tool).toBe("deny");
+    const config = JSON.parse(env.OPENCODE_CONFIG_CONTENT);
+    // Everything denied (MCP tools from the user's global config included), on the
+    // plan agent too, so an agent-level rule in the user's config can't re-allow it.
+    for (const deny of [config.permission, config.agent.plan.permission]) {
+      expect(deny["*"]).toBe("deny");
+      for (const tool of ["edit", "write", "bash", "webfetch", "read", "task", "skill"]) {
+        expect(deny[tool], tool).toBe("deny");
+      }
     }
   });
 });

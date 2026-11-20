@@ -348,6 +348,14 @@ export const SharedAgentShare: FC<ShareProps> = ({ active }) => {
                     </span>
                   )}
                 </div>
+                {share.safetyCode && (
+                  <span
+                    className="sa-muted sa-safety"
+                    title="Every chat is end-to-end encrypted. A joined PC shows this same code: compare them to be sure no one is in between."
+                  >
+                    End-to-end encrypted · safety code <code>{share.safetyCode}</code>
+                  </span>
+                )}
               </>
             ) : (
               <span className="sa-muted">

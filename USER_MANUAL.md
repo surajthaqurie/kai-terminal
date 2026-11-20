@@ -263,7 +263,9 @@ Chat with the Claude Code or OpenCode installed on another PC, or let your other
 - It **only chats**. It runs in an empty folder, read-only, and cannot read or change your files, run commands or use MCP tools. There is no setting that widens this. A tool the agent tries to use is blocked, and the chat says so.
 - Your message reaches the agent on its standard input, never on a command line, and no shell is involved.
 - Only PCs on a network this PC is attached to (or PCs coming through the tunnel address you set) can join or chat. A PC's access only works from the network it joined on.
-- Kai Terminal speaks the same protocol as Agent Bridge, so the two can join each other.
+- Shared Agent only works between Kai Terminal PCs. A host refuses any other program (an Agent Bridge PC, a browser, `curl`), and Kai will not join or chat with a host that is not Kai Terminal.
+- **End-to-end encrypted**: everything between the two PCs is encrypted and signed by Kai itself, so the network, ngrok, Cloudflare Tunnel or any proxy in between only relays ciphertext. No invite secret, key, prompt or answer crosses the network in readable form. The invite link carries the host's key fingerprint: if something else answers at that address, Kai refuses it and sends nothing.
+- **Safety code**: the Share screen shows a code like `K7QF-2M9D-XR4T`, and each joined PC shows the code of the host it joined. Read them to each other: if they match, you are connected to the right PC with no one in between.
 
 ## Project graph
 

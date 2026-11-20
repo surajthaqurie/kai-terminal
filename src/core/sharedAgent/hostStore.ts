@@ -1,6 +1,8 @@
 /**
  * What the host remembers between runs: which agents it shares, the PCs that
- * joined (each with a hash of its token, never the token) and their usage.
+ * joined (each with its public key only: nothing here lets anyone pose as a
+ * PC or as the host) and their usage. The host's private identity key lives in
+ * the OS secret store, and invite secrets only in memory.
  *
  * Whether sharing is ON is deliberately not stored: a LAN listener is opened
  * only when a person turns it on in this session, so restarting Kai always
@@ -26,7 +28,8 @@ export type DeviceStatus = "approved" | "revoked";
 
 export interface InviteRecord {
   id: string;
-  keyHash: string;
+  /** Lookup tag derived from the secret (`inviteMaterial`). The secret itself is never stored. */
+  tag: string;
   status: "open" | "used" | "cancelled" | "expired";
   createdMs: number;
   createdAt: string;
@@ -47,7 +50,8 @@ export interface DeviceRecord {
    */
   network: string;
   status: DeviceStatus;
-  tokenHash: string;
+  /** The PC's X25519 public key (base64url): it must prove it holds the private half on every session. */
+  publicKey: string;
   createdAt: string;
   lastSeen: string;
   lastSeenMs: number;
@@ -121,12 +125,25 @@ export class HostStore {
     try {
       const parsed = JSON.parse(fs.readFileSync(this.file, "utf8")) as Partial<HostFile>;
       if (parsed && parsed.version === 1) {
+        const devices = parsed.devices ?? {};
+        for (const d of Object.values(devices)) {
+          // Joined with a bearer token, before end-to-end encryption: it must join again.
+          if (typeof d.publicKey !== "string" || !d.publicKey) {
+            d.publicKey = "";
+            d.status = "revoked";
+          }
+          delete (d as { tokenHash?: unknown }).tokenHash;
+        }
+        const invites = parsed.invites ?? {};
+        for (const [id, inv] of Object.entries(invites)) {
+          if (typeof inv.tag !== "string") delete invites[id]; // old hash-only invite
+        }
         return {
           ...blank(),
           ...parsed,
           agents: parsed.agents ?? {},
-          invites: parsed.invites ?? {},
-          devices: parsed.devices ?? {},
+          invites,
+          devices,
           sessions: parsed.sessions ?? {},
         };
       }

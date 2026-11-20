@@ -198,6 +198,14 @@ export const SharedAgentReceive: FC<ReceiveProps> = ({ active }) => {
                       {h.address}
                       {h.internet ? " · internet" : ""} · {pill.label}
                     </span>
+                    {h.safetyCode && (
+                      <span
+                        className="sa-muted sa-safety"
+                        title="End-to-end encrypted. This code should match the one on the host's Share screen."
+                      >
+                        Safety code <code>{h.safetyCode}</code>
+                      </span>
+                    )}
                     <span className="sa-muted">
                       {agents.length ? `${agents.map((a) => a.name).join(", ")} · ` : ""}
                       <span className="sa-tokens" title={tokenBreakdown(h.usage)}>

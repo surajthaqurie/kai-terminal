@@ -21,6 +21,7 @@ const status = (over: Partial<ShareStatus> = {}): ShareStatus => ({
   invites: [],
   devices: [],
   runs: [],
+  safetyCode: null,
   ...over,
 });
 

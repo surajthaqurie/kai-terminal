@@ -120,8 +120,9 @@ export class SharedAgentService {
     const dir = deps.dir ?? sharedAgentDir();
     this.locate = deps.locate ?? defaultLocator;
     this.chatDir = path.join(dir, "chat");
+    const secrets = deps.secrets ?? defaultSecretStore();
     this.client = new HostsClient({
-      secrets: deps.secrets ?? defaultSecretStore(),
+      secrets,
       fetchImpl: deps.fetchImpl,
       file: path.join(dir, "hosts.json"),
     });
@@ -134,6 +135,7 @@ export class SharedAgentService {
       version: deps.version ?? "0.0.0",
       chatDir: this.chatDir,
       networks: deps.networks,
+      secrets,
       onChange: () => this.shareChanged(),
     });
     const period = deps.heartbeatMs ?? 15_000;
@@ -237,8 +239,10 @@ export class SharedAgentService {
           share: this.shareStatus(),
           invite: {
             id: invite.id,
-            link: buildInviteLink(`http://${ip}:${port}`, invite.key),
-            ...(publicUrl ? { internetLink: buildInviteLink(publicUrl, invite.key) } : {}),
+            link: buildInviteLink(`http://${ip}:${port}`, invite.key, invite.fingerprint),
+            ...(publicUrl
+              ? { internetLink: buildInviteLink(publicUrl, invite.key, invite.fingerprint) }
+              : {}),
             expiresInSeconds: invite.expiresInSeconds,
           },
         };
@@ -298,6 +302,7 @@ export class SharedAgentService {
       internet: allowedOrigin(h.origin)?.tunnel === true,
       connectedAt: h.connectedAt,
       connected: h.connected,
+      safetyCode: this.client.safetyCodeOf(h.id),
       online: h.connected ? (s?.online ?? null) : null,
       latencyMs: s?.latencyMs ?? null,
       checkedAt: s?.checkedAt ?? null,
@@ -660,6 +665,7 @@ export class SharedAgentService {
       invites: this.host.openInvites(),
       devices: this.host.devices(),
       runs: this.host.activeRuns(),
+      safetyCode: port === null ? null : this.host.safetyCode,
     };
   }
 

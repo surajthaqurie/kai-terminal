@@ -1,23 +1,23 @@
 /**
- * The host: a small HTTP server that lets PCs on the same network chat with
- * this PC's agents. It speaks the Agent Bridge device protocol, so Agent
- * Bridge PCs can join a Kai host and Kai can join an Agent Bridge host.
+ * The host: a small HTTP server that lets other Kai Terminal PCs chat with
+ * this PC's agents, on the LAN or through any tunnel (ngrok, Cloudflare
+ * Tunnel, a reverse proxy).
  *
- * Security model (see SECURITY.md):
+ * Security model (see SECURITY.md section 5):
  *  - Off until a person turns sharing on in this session.
- *  - Only addresses on a subnet this PC is attached to (or this PC) are served,
- *    plus, only while the host has set an internet (tunnel) address, PCs that
- *    reach it through that tunnel (any HTTPS tunnel or reverse proxy). A
- *    relayed request is recognised by its forwarding headers or the tunnel's
- *    host name and never gets the trust of a local or LAN caller.
- *  - A PC joins with a one-time, expiring invite secret (256 bits, kept as a
- *    hash, rate limited per address). It then gets a random bearer token, kept
- *    as a hash. A token only works from the subnet it was issued on (a tunnel
- *    token only through the tunnel, and only while the tunnel is set).
+ *  - The network is untrusted. Everything after the handshake is end-to-end
+ *    encrypted and authenticated (`secureChannel.ts`): a LAN sniffer or the
+ *    tunnel provider sees only ciphertext. No secret, token or prompt is ever
+ *    sent in the clear, and there is no bearer token to steal or replay.
+ *  - The host proves its identity key (pinned by the fingerprint in the invite
+ *    link); each PC proves the key it registered when it joined.
+ *  - A PC joins with a one-time, expiring invite secret (256 bits) that never
+ *    leaves the link: only a tag derived from it is sent, and the derived key
+ *    is kept in memory only. Failed attempts are rate limited per address.
+ *  - Defence in depth on top: only callers on a subnet this PC is attached to
+ *    (or this PC), plus tunnel traffic while a tunnel address is set; a PC only
+ *    works from the kind of network it joined from; only Kai clients are served.
  *  - Agents run read-only in an empty folder; no file, shell or MCP access.
- *  - Plain HTTP on the LAN: trusted networks only, never port-forward. Over the
- *    internet only through an HTTPS tunnel (it terminates TLS, then relays to
- *    this server).
  */
 import crypto from "crypto";
 import http from "http";
@@ -36,10 +36,8 @@ import {
   type Run,
 } from "./agentRunner";
 import {
-  digest,
   grantsOf,
   inviteExpired,
-  sameDigest,
   type DeviceRecord,
   type HostStore,
   newDeviceUsage,
@@ -52,9 +50,35 @@ import {
   tunnelClientIp,
   type LocalNetwork,
 } from "./netcheck";
+import type { SecretStore } from "../integrations/secretStore";
 import {
+  CONFIRM_COUNTER,
+  CONFIRM_TEXT,
+  ChannelError,
+  PROTOCOL,
+  ReplayWindow,
+  b64u,
+  fingerprint,
+  fromB64u,
+  generateKeyPair,
+  hostKeys,
+  inviteMaterial,
+  keyPairFromPrivate,
+  open,
+  safetyCode,
+  sameBytes,
+  seal,
+  type HandshakeMode,
+  type KeyPair,
+  type SessionKeys,
+} from "./secureChannel";
+import {
+  KAI_CLIENT_HEADER,
+  KAI_SERVICE,
+  KAI_SERVICE_HEADER,
   MAX_TASKS_PER_DEVICE,
   MODEL_RE,
+  NOT_KAI_CLIENT,
   SHARED_AGENT_IDS,
   SHARED_AGENT_NAMES,
   emptyUsage,
@@ -75,6 +99,7 @@ import {
 const ONLINE_WINDOW_MS = 120_000;
 const PERSIST_SEEN_MS = 30_000;
 const MAX_BODY_BYTES = 512 * 1024;
+const MAX_HELLO_BYTES = 2 * 1024;
 const MAX_PROMPT_CHARS = 200_000;
 const MAX_OPEN_INVITES = 10;
 const MAX_DEVICES = 50;
@@ -83,6 +108,17 @@ const KEY_MAX_FAILURES = 10; // wrong invite secrets allowed per address ...
 const KEY_FAILURE_WINDOW_MS = 300_000; // ... in this long
 const PROBE_TTL_MS = 60_000;
 const POLL_WAIT_MS = 8_000;
+/** Secure sessions: idle limit, idle limit before the client proved its keys, hard limit. */
+const SESSION_IDLE_MS = 15 * 60_000;
+const UNPROVEN_SESSION_MS = 30_000;
+const SESSION_MAX_MS = 8 * 3600_000;
+const MAX_SESSIONS = 200;
+const MAX_SESSIONS_PER_PC = 4;
+const MAX_HELLOS_PER_MINUTE = 30;
+/** Addresses tracked for rate limiting; the oldest is forgotten past this. */
+const MAX_TRACKED_ADDRESSES = 4096;
+/** Where the host's private identity key is kept (OS secret store). */
+export const HOST_IDENTITY_SECRET = "kai/shared-agent/host-identity";
 /** The port is taken by another program. */
 export class PortInUseError extends Error {
   constructor(readonly port: number) {
@@ -111,7 +147,9 @@ export async function isPortFree(port: number, bindHost = "0.0.0.0"): Promise<bo
 export class HttpError extends Error {
   constructor(
     readonly status: number,
-    message: string
+    message: string,
+    /** Machine-readable reason the client acts on ("session", "device", "replay"). */
+    readonly code?: string
   ) {
     super(message);
   }
@@ -124,6 +162,11 @@ export interface HostServerOptions {
   detectOtherClis?: OtherCliDetector;
   hostName: string;
   version: string;
+  /**
+   * Keeps the host's identity key between runs (the OS secret store). Without
+   * one (tests) a new key is made each run, so earlier joins stop working.
+   */
+  secrets?: SecretStore;
   /** The empty folder every shared chat runs in. */
   chatDir: string;
   /** Overridable so tests can pretend to be on a LAN. */
@@ -143,6 +186,11 @@ export class HostServer {
   private others: ShareOtherCli[] = [];
   private probedAt = 0;
   private keyFailures = new Map<string, number[]>();
+  private hellos = new Map<string, number[]>();
+  private identity: KeyPair | null = null;
+  /** Invite PSKs by invite id. Memory only: a restart voids open invites. */
+  private invitePsk = new Map<string, Buffer>();
+  private sessions = new Map<string, SecureSession>();
   private lastPersist = new Map<string, number>();
   private readonly networks: () => LocalNetwork[];
 
@@ -186,7 +234,11 @@ export class HostServer {
     if (net === TUNNEL_NETWORK) {
       return {
         net: publicUrl ? net : null,
-        client: tunnelClientIp(req.headers),
+        // Forwarding headers name the internet client only when the tunnel agent runs on
+        // this PC. From any other peer they are the caller's own words: rate limiting goes
+        // by the real peer address, so made-up headers can't buy more attempts.
+        client:
+          remote === "::1" || remote.startsWith("127.") ? tunnelClientIp(req.headers) : remote,
         tunnel: true,
       };
     }
@@ -202,6 +254,7 @@ export class HostServer {
    */
   async start(port: number, bindHost = "0.0.0.0"): Promise<number> {
     if (this.server) return this.boundPort;
+    this.identity = await this.loadIdentity();
     await this.refreshProbes(true);
     const server = http.createServer((req, res) => void this.handle(req, res));
     server.headersTimeout = 15_000;
@@ -222,9 +275,45 @@ export class HostServer {
     server.on("error", () => {});
     this.server = server;
     this.boundPort = (server.address() as AddressInfo).port;
-    // A no-time-limit invite lives for one sharing session; drop any left by a crash.
-    this.cancelUntilOffInvites();
+    // An invite's key lives only in memory: any open invite from an earlier run is void.
+    this.cancelInvitesWithoutSecret();
     return this.boundPort;
+  }
+
+  /** The host's identity key from the secret store, made on first use. */
+  private async loadIdentity(): Promise<KeyPair> {
+    if (this.identity) return this.identity;
+    const secrets = this.opts.secrets;
+    const stored = secrets ? await secrets.get(HOST_IDENTITY_SECRET).catch(() => null) : null;
+    if (stored) {
+      try {
+        return keyPairFromPrivate(stored);
+      } catch {
+        // Damaged: make a new one (joined PCs will be told to join again).
+      }
+    }
+    const fresh = generateKeyPair();
+    if (secrets) await secrets.set(HOST_IDENTITY_SECRET, fresh.privateKey);
+    return fresh;
+  }
+
+  /** The safety code people compare between PCs; null until sharing has started once. */
+  get safetyCode(): string | null {
+    return this.identity ? safetyCode(this.identity.publicKey) : null;
+  }
+
+  private cancelInvitesWithoutSecret(): void {
+    const changed = this.opts.store.write((d) => {
+      let n = 0;
+      for (const inv of Object.values(d.invites)) {
+        if (inv.status === "open" && !this.invitePsk.has(inv.id)) {
+          inv.status = "cancelled";
+          n++;
+        }
+      }
+      return n > 0;
+    });
+    if (changed) this.opts.onChange?.();
   }
 
   /**
@@ -237,6 +326,7 @@ export class HostServer {
     this.server = null;
     this.runs.stopAll("sharing turned off");
     await this.runs.settle(3000);
+    this.sessions.clear();
     this.cancelUntilOffInvites();
     if (!server) return;
     await new Promise<void>((resolve) => {
@@ -251,6 +341,7 @@ export class HostServer {
       let n = 0;
       for (const inv of Object.values(d.invites)) {
         if (inv.status === "open" && inv.ttlSeconds === 0) {
+          this.invitePsk.delete(inv.id);
           inv.status = "cancelled";
           n++;
         }
@@ -325,21 +416,29 @@ export class HostServer {
     });
   }
 
-  /** The secret is returned once; only its hash is kept. */
+  /**
+   * The secret is returned once, with the host key's fingerprint for the link.
+   * The file keeps only a lookup tag; the derived PSK stays in memory.
+   */
   createInvite(minutes: InviteMinutes): {
     id: string;
     key: string;
+    fingerprint: string;
     expiresInSeconds: number | null;
   } {
+    const identity = this.identity;
+    if (!identity || !this.server) throw new HttpError(409, "Turn sharing on first.");
     if (this.openInvites().length >= MAX_OPEN_INVITES) {
       throw new HttpError(429, "Too many open invites. Cancel one first.");
     }
     const key = randomToken(32);
     const id = randomToken(9);
+    const { tag, psk } = inviteMaterial(key);
+    this.invitePsk.set(id, psk);
     this.opts.store.write((d) => {
       d.invites[id] = {
         id,
-        keyHash: digest(key),
+        tag,
         status: "open",
         createdMs: Date.now(),
         createdAt: new Date().toISOString(),
@@ -347,7 +446,12 @@ export class HostServer {
       };
     });
     this.opts.onChange?.();
-    return { id, key, expiresInSeconds: minutes === 0 ? null : minutes * 60 };
+    return {
+      id,
+      key,
+      fingerprint: fingerprint(identity.publicKey),
+      expiresInSeconds: minutes === 0 ? null : minutes * 60,
+    };
   }
 
   cancelInvite(id: string): boolean {
@@ -357,6 +461,8 @@ export class HostServer {
       if (inv.status === "open") inv.status = "cancelled";
       return true;
     });
+    this.invitePsk.delete(id);
+    for (const [sid, s] of this.sessions) if (s.inviteId === id) this.sessions.delete(sid);
     if (ok) this.opts.onChange?.();
     return ok;
   }
@@ -398,6 +504,7 @@ export class HostServer {
       dev.status = "revoked";
       return true;
     });
+    this.dropSessionsOf(id);
     if (ok) {
       this.runs.stopDevice(id, "disconnected by the host");
       this.opts.onChange?.();
@@ -413,6 +520,7 @@ export class HostServer {
         if (s.deviceId === id) delete d.sessions[sid];
       return true;
     });
+    this.dropSessionsOf(id);
     if (ok) {
       this.runs.stopDevice(id, "removed by the host");
       this.opts.onChange?.();
@@ -470,68 +578,279 @@ export class HostServer {
       await this.route(req, res);
     } catch (e) {
       if (e instanceof HttpError) {
-        send(res, e.status, { detail: e.message });
+        send(res, e.status, { detail: e.message, ...(e.code ? { code: e.code } : {}) });
       } else if (!res.headersSent) {
         send(res, 500, { detail: "Internal error" });
       }
     }
   }
 
+  /**
+   * Only these are served in the clear: the landing page, a health check that
+   * says nothing about this PC, and the two secure-channel endpoints, whose
+   * bodies are a handshake or ciphertext.
+   */
   private async route(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     const method = req.method ?? "GET";
-    const url = new URL(req.url ?? "/", "http://host");
-    const p = url.pathname;
+    const p = new URL(req.url ?? "/", "http://host").pathname;
 
     if (method === "GET" && (p === "/" || p === "/join")) return landing(res);
     if (method === "GET" && p === "/api/health") {
-      const { net } = this.origin(req);
-      return send(res, 200, {
-        ok: true,
-        service: "kai-terminal",
-        version: this.opts.version,
-        time: new Date().toISOString(),
-        same_network: net !== null,
-        is_host: net === "loopback",
-      });
+      return send(res, 200, { ok: true, service: KAI_SERVICE, protocol: PROTOCOL });
     }
-    if (method === "POST" && p === "/api/pair/key") return this.pair(req, res);
+    if (method === "POST" && p === "/api/sc/hello") return this.hello(req, res);
+    if (method === "POST" && p === "/api/sc/call") return this.sealedCall(req, res);
+    throw new HttpError(404, "Not found");
+  }
 
-    if (p.startsWith("/api/device/")) {
-      const device = this.requireDevice(req);
-      if (method === "GET" && p === "/api/device/me") return this.me(res, device);
-      if (method === "POST" && p === "/api/device/disconnect") return this.leave(res, device);
-      if (method === "POST" && p === "/api/device/runs") return this.startRun(req, res, device);
-      const m = /^\/api\/device\/runs\/([A-Za-z0-9_-]{4,40})\/(poll|stop)$/.exec(p);
-      if (m) {
-        const run = this.runs.get(m[1]);
-        if (!run || run.init.deviceId !== device.id) throw new HttpError(404, "Run not found");
-        if (method === "GET" && m[2] === "poll") return this.poll(res, run, url);
-        if (method === "POST" && m[2] === "stop") {
-          return send(res, 200, { stopped: this.runs.stop(run.id, "stopped by that PC") });
-        }
+  /** Where the caller is; refused unless it is a Kai client on a network we serve. */
+  private admit(req: http.IncomingMessage): { net: string; client: string } {
+    requireKaiClient(req);
+    const { net, client, tunnel } = this.origin(req);
+    if (net === null) {
+      throw new HttpError(
+        403,
+        tunnel
+          ? "This host has turned internet access off."
+          : "This PC is not on the same local network as the host."
+      );
+    }
+    return { net, client };
+  }
+
+  // -------------------------------------------------- handshake
+
+  private async hello(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    const { net, client } = this.admit(req);
+    if (!this.keyAttemptAllowed(client)) {
+      throw new HttpError(429, "Too many failed attempts. Wait a few minutes and try again.");
+    }
+    if (!this.helloAllowed(client)) {
+      throw new HttpError(429, "Too many connection attempts. Wait a minute and try again.");
+    }
+    const identity = this.identity;
+    if (!identity) throw new HttpError(503, "Sharing is off.");
+    const body = await readJson(req, MAX_HELLO_BYTES);
+    if (body.v !== 1 || (body.mode !== "pair" && body.mode !== "device")) {
+      throw new HttpError(
+        426,
+        "This Kai Terminal speaks a different sharing version. Update both PCs."
+      );
+    }
+    const mode: HandshakeMode = body.mode;
+    const tag = text(body.tag, 8, 64, "tag");
+    let clientEphemeral: string;
+    try {
+      clientEphemeral = b64u(fromB64u(body.e, 32));
+    } catch {
+      throw new HttpError(422, "Bad handshake");
+    }
+
+    let psk: Buffer | undefined;
+    let clientStatic: string | undefined;
+    let deviceId: string | undefined;
+    let inviteId: string | undefined;
+    if (mode === "pair") {
+      const now = Date.now();
+      const invite = this.opts.store.read((d) =>
+        Object.values(d.invites).find(
+          (i) => i.status === "open" && !inviteExpired(i, now) && sameBytes(i.tag, tag)
+        )
+      );
+      psk = invite ? this.invitePsk.get(invite.id) : undefined;
+      if (!invite || !psk) {
+        this.keyFailed(client);
+        throw new HttpError(
+          401,
+          "This invite link is wrong, already used, cancelled or expired. Ask the host for a new one."
+        );
+      }
+      inviteId = invite.id;
+    } else {
+      const device = this.opts.store.read((d) => d.devices[tag]);
+      if (!device || device.status !== "approved" || !device.publicKey) {
+        this.keyFailed(client);
+        throw new HttpError(
+          401,
+          "This PC is not approved (unknown or removed). Join again.",
+          "device"
+        );
+      }
+      this.checkNetwork(device, net);
+      clientStatic = device.publicKey;
+      deviceId = device.id;
+    }
+
+    this.dropStaleSessions();
+    if (this.sessions.size >= MAX_SESSIONS) {
+      throw new HttpError(503, "This host is busy. Try again in a minute.");
+    }
+    const mine = [...this.sessions.entries()].filter(
+      ([, s]) => (deviceId && s.deviceId === deviceId) || (inviteId && s.inviteId === inviteId)
+    );
+    if (mine.length >= MAX_SESSIONS_PER_PC) {
+      // Oldest goes: a PC that reconnects many times keeps working.
+      mine.sort((a, b) => a[1].lastMs - b[1].lastMs);
+      this.sessions.delete(mine[0][0]);
+    }
+
+    const ephemeral = generateKeyPair();
+    const sid = randomToken(18);
+    let keys: SessionKeys;
+    try {
+      keys = hostKeys(
+        {
+          mode,
+          tag,
+          clientEphemeral,
+          hostEphemeral: ephemeral.publicKey,
+          hostStatic: identity.publicKey,
+          clientStatic,
+          sid,
+        },
+        identity.privateKey,
+        ephemeral.privateKey,
+        psk
+      );
+    } catch (e) {
+      if (e instanceof ChannelError) {
+        this.keyFailed(client);
+        throw new HttpError(422, "Bad handshake");
+      }
+      throw e;
+    }
+    const now = Date.now();
+    this.sessions.set(sid, {
+      keys,
+      mode,
+      deviceId,
+      inviteId,
+      net,
+      createdMs: now,
+      lastMs: now,
+      replay: new ReplayWindow(),
+      proven: false,
+    });
+    send(res, 200, {
+      v: 1,
+      sid,
+      h: identity.publicKey,
+      e: ephemeral.publicKey,
+      confirm: seal(keys.send, sid, "s2c", CONFIRM_COUNTER, keys.transcript, CONFIRM_TEXT),
+    });
+  }
+
+  private dropStaleSessions(now = Date.now()): void {
+    for (const [sid, s] of this.sessions) {
+      const idleLimit = s.proven ? SESSION_IDLE_MS : UNPROVEN_SESSION_MS;
+      if (now - s.lastMs > idleLimit || now - s.createdMs > SESSION_MAX_MS) {
+        this.sessions.delete(sid);
+      }
+    }
+  }
+
+  private dropSessionsOf(deviceId: string): void {
+    for (const [sid, s] of this.sessions) if (s.deviceId === deviceId) this.sessions.delete(sid);
+  }
+
+  // -------------------------------------------------- sealed calls
+
+  private async sealedCall(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    const { net, client } = this.admit(req);
+    if (!this.keyAttemptAllowed(client)) {
+      throw new HttpError(429, "Too many failed attempts. Wait a few minutes and try again.");
+    }
+    const body = await readJson(req, MAX_BODY_BYTES);
+    const sid = typeof body.s === "string" ? body.s : "";
+    const n = body.n;
+    this.dropStaleSessions();
+    const session = this.sessions.get(sid);
+    if (!session) throw new HttpError(401, "Session ended. Reconnect.", "session");
+    if (session.net !== net) {
+      this.sessions.delete(sid);
+      throw new HttpError(401, "Session ended. Reconnect.", "session");
+    }
+    if (typeof n !== "number" || !Number.isSafeInteger(n) || n < 1) {
+      throw new HttpError(422, "Bad counter");
+    }
+    let plain: string;
+    try {
+      plain = open(session.keys.recv, sid, "c2s", n, session.keys.transcript, body.c);
+    } catch {
+      // Wrong key, tampered or forged: whoever sent it does not hold the session keys.
+      this.keyFailed(client);
+      this.sessions.delete(sid);
+      throw new HttpError(401, "Session ended. Reconnect.", "session");
+    }
+    // Checked only after it decrypted, so nobody without the keys can burn counters.
+    if (!session.replay.accept(n)) throw new HttpError(409, "Replayed message refused.", "replay");
+    session.proven = true;
+    session.lastMs = Date.now();
+
+    let status = 200;
+    let reply: unknown;
+    try {
+      reply = await this.dispatchInner(session, parseInner(plain), net, client);
+    } catch (e) {
+      if (e instanceof HttpError) {
+        status = e.status;
+        reply = { detail: e.message, ...(e.code ? { code: e.code } : {}) };
+      } else {
+        status = 500;
+        reply = { detail: "Internal error" };
+      }
+    }
+    session.lastMs = Date.now(); // a long poll counts as activity until it answers
+    send(res, 200, {
+      n,
+      c: seal(
+        session.keys.send,
+        sid,
+        "s2c",
+        n,
+        session.keys.transcript,
+        JSON.stringify({ status, body: reply })
+      ),
+    });
+  }
+
+  private async dispatchInner(
+    session: SecureSession,
+    inner: InnerRequest,
+    net: string,
+    client: string
+  ): Promise<unknown> {
+    const { method, path: p, body } = inner;
+    if (session.mode === "pair") {
+      if (method === "POST" && p === "/pair") return this.pair(session, body, net, client);
+      throw new HttpError(404, "Not found");
+    }
+    const device = this.requireDevice(session, net, client);
+    if (method === "GET" && p === "/me") return this.me(device);
+    if (method === "POST" && p === "/disconnect") {
+      this.disconnectDevice(device.id);
+      return { status: "disconnected" };
+    }
+    if (method === "POST" && p === "/runs") return this.startRun(body, device);
+    const url = new URL(p, "http://inner");
+    const m = /^\/runs\/([A-Za-z0-9_-]{4,40})\/(poll|stop)$/.exec(url.pathname);
+    if (m) {
+      const run = this.runs.get(m[1]);
+      if (!run || run.init.deviceId !== device.id) throw new HttpError(404, "Run not found");
+      if (method === "GET" && m[2] === "poll") return this.poll(run, url);
+      if (method === "POST" && m[2] === "stop") {
+        return { stopped: this.runs.stop(run.id, "stopped by that PC") };
       }
     }
     throw new HttpError(404, "Not found");
   }
 
-  private requireDevice(req: http.IncomingMessage): DeviceRecord {
-    const auth = req.headers.authorization;
-    if (!auth || !auth.startsWith("Bearer ")) {
-      throw new HttpError(401, "Device token required. Join this host first.");
-    }
-    const hashed = digest(auth.slice(7).trim());
-    const device = this.opts.store.read((d) =>
-      Object.values(d.devices).find(
-        (x) => x.status === "approved" && sameDigest(x.tokenHash, hashed)
-      )
-    );
-    if (!device)
-      throw new HttpError(401, "This PC is not approved (unknown or removed). Join again.");
-    const { net, client, tunnel } = this.origin(req);
-    if (net === null && tunnel) {
-      throw new HttpError(403, "This host has turned internet access off.");
-    }
-    if (net === null || (net !== "loopback" && net !== device.network)) {
+  /**
+   * A PC works only from the kind of network it joined from. Loopback is not a
+   * wildcard: a TCP forwarder on this PC (ssh -R, ngrok tcp) looks local.
+   */
+  private checkNetwork(device: DeviceRecord, net: string): void {
+    if (net !== device.network) {
       throw new HttpError(
         403,
         device.network === TUNNEL_NETWORK
@@ -539,6 +858,20 @@ export class HostServer {
           : "This PC is not on the network it joined from. Connect to the host's LAN."
       );
     }
+  }
+
+  /** The session's device: still approved, on the network it joined from. */
+  private requireDevice(session: SecureSession, net: string, client: string): DeviceRecord {
+    const id = session.deviceId;
+    const device = id ? this.opts.store.read((d) => d.devices[id]) : undefined;
+    if (!device || device.status !== "approved") {
+      throw new HttpError(
+        401,
+        "This PC is not approved (unknown or removed). Join again.",
+        "device"
+      );
+    }
+    this.checkNetwork(device, net);
     const now = Date.now();
     device.lastSeenMs = now;
     device.lastSeen = new Date(now).toISOString();
@@ -551,44 +884,39 @@ export class HostServer {
     return device;
   }
 
-  private async pair(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-    const { net, client: remote, tunnel } = this.origin(req);
-    if (net === null) {
-      throw new HttpError(
-        403,
-        tunnel
-          ? "This host has turned internet access off, so it can't be joined over the internet."
-          : "This PC is not on the same local network as the host, so it can't join."
-      );
-    }
-    if (!this.keyAttemptAllowed(remote)) {
-      throw new HttpError(429, "Too many wrong invite attempts. Wait a few minutes and try again.");
-    }
-    const body = await readJson(req);
+  /** Inside a pairing session: the session keys already prove the invite secret. */
+  private pair(
+    session: SecureSession,
+    body: Record<string, unknown>,
+    net: string,
+    remote: string
+  ): Record<string, unknown> {
     const name = text(body.device_name, 2, 64, "device_name");
     const platform =
       body.platform === undefined ? "Windows" : text(body.platform, 1, 32, "platform");
-    const key = text(body.key, 8, 128, "key").trim();
-    const hashed = digest(key);
-    const token = randomToken(40);
+    let publicKey: string;
+    try {
+      publicKey = b64u(fromB64u(body.public_key, 32));
+    } catch {
+      throw new HttpError(422, "public_key must be an X25519 public key");
+    }
+    const inviteId = session.inviteId as string;
 
     const deviceId = this.opts.store.write((d) => {
       const now = Date.now();
-      const invite = Object.values(d.invites).find(
-        (i) => i.status === "open" && sameDigest(i.keyHash, hashed)
-      );
-      if (!invite || inviteExpired(invite, now)) return null;
-      // The same PC joining again (same name and address) keeps its row and history.
-      const old = Object.values(d.devices).find((x) => x.name === name && x.ip === remote);
-      if (!old && Object.keys(d.devices).length >= MAX_DEVICES) return "full" as const;
-      const rec: DeviceRecord = old ?? {
+      const invite = d.invites[inviteId];
+      if (!invite || invite.status !== "open" || inviteExpired(invite, now)) return null;
+      // Always a new row: matching an old one by name and address would let anyone
+      // with an invite take over another PC's permissions and history.
+      if (Object.keys(d.devices).length >= MAX_DEVICES) return "full" as const;
+      const rec: DeviceRecord = {
         id: randomToken(15),
         name,
         platform,
         ip: remote,
         network: net,
         status: "approved",
-        tokenHash: "",
+        publicKey: "",
         createdAt: new Date(now).toISOString(),
         lastSeen: new Date(now).toISOString(),
         lastSeenMs: now,
@@ -599,7 +927,7 @@ export class HostServer {
         ip: remote,
         network: net,
         status: "approved" as const,
-        tokenHash: digest(token),
+        publicKey,
         lastSeen: new Date(now).toISOString(),
         lastSeenMs: now,
       });
@@ -609,28 +937,26 @@ export class HostServer {
       invite.deviceId = rec.id;
       return rec.id;
     });
-    if (deviceId === "full")
+    if (deviceId === "full") {
       throw new HttpError(409, "This host has reached its limit of joined PCs.");
+    }
     if (!deviceId) {
-      this.keyFailed(remote);
       throw new HttpError(
         401,
         "This invite link is wrong, already used, cancelled or expired. Ask the host for a new one."
       );
     }
+    // The invite is spent: forget its secret and end every session made with it.
+    this.invitePsk.delete(inviteId);
+    for (const [sid, s] of this.sessions) if (s.inviteId === inviteId) this.sessions.delete(sid);
     this.opts.onChange?.();
-    send(res, 200, {
-      status: "connected",
-      device_id: deviceId,
-      device_token: token,
-      host_name: this.opts.hostName,
-    });
+    return { status: "connected", device_id: deviceId, host_name: this.opts.hostName };
   }
 
-  private me(res: http.ServerResponse, device: DeviceRecord): void {
+  private me(device: DeviceRecord): Record<string, unknown> {
     const active = this.runs.activeFor(device.id);
     const grants = grantsOf(device);
-    send(res, 200, {
+    return {
       device: {
         id: device.id,
         name: device.name,
@@ -654,20 +980,13 @@ export class HostServer {
       chat_workspace: "chat",
       host_name: this.opts.hostName,
       active_run: active ? { id: active.id, status: active.status } : null,
-    });
-  }
-
-  private leave(res: http.ServerResponse, device: DeviceRecord): void {
-    this.disconnectDevice(device.id);
-    send(res, 200, { status: "disconnected" });
+    };
   }
 
   private async startRun(
-    req: http.IncomingMessage,
-    res: http.ServerResponse,
+    body: Record<string, unknown>,
     device: DeviceRecord
-  ): Promise<void> {
-    const body = await readJson(req);
+  ): Promise<Record<string, unknown>> {
     const agent = body.agent;
     const grants = grantsOf(device);
     if (!isSharedAgentId(agent) || !this.opts.store.agentEnabled(agent) || !grants.agents[agent]) {
@@ -677,9 +996,8 @@ export class HostServer {
       throw new HttpError(403, "Only plain chat is shared by this host");
     }
     const prompt = text(body.prompt, 1, MAX_PROMPT_CHARS, "prompt");
-    // The host's choice for this PC wins over anything the PC asks for.
-    const asked = typeof body.model === "string" ? body.model.trim() : "";
-    const model = grants.models[agent] || asked || null;
+    // Only the host picks the model (its account pays): what the PC asks for is ignored.
+    const model = grants.models[agent] || null;
     if (model && !MODEL_RE.test(model)) {
       throw new HttpError(422, "Model name has invalid characters");
     }
@@ -730,18 +1048,13 @@ export class HostServer {
       }
     });
     this.opts.onChange?.();
-    send(res, 200, {
-      run_id: run.id,
-      session_id: sessionId,
-      level: "read",
-      resumed: Boolean(resume),
-    });
+    return { run_id: run.id, session_id: sessionId, level: "read", resumed: Boolean(resume) };
   }
 
-  private async poll(res: http.ServerResponse, run: Run, url: URL): Promise<void> {
+  private async poll(run: Run, url: URL): Promise<Record<string, unknown>> {
     const after = Math.max(0, Number.parseInt(url.searchParams.get("after") ?? "0", 10) || 0);
     const { events, finished } = await run.wait(after, POLL_WAIT_MS);
-    send(res, 200, { events, finished, status: run.status });
+    return { events, finished, status: run.status };
   }
 
   private recordFinished(run: Run): void {
@@ -762,13 +1075,77 @@ export class HostServer {
   private keyAttemptAllowed(ip: string): boolean {
     const now = Date.now();
     const recent = (this.keyFailures.get(ip) ?? []).filter((t) => now - t < KEY_FAILURE_WINDOW_MS);
-    this.keyFailures.set(ip, recent);
+    if (recent.length) this.keyFailures.set(ip, recent);
+    else this.keyFailures.delete(ip);
     return recent.length < KEY_MAX_FAILURES;
   }
 
   private keyFailed(ip: string): void {
+    if (this.keyFailures.size >= MAX_TRACKED_ADDRESSES && !this.keyFailures.has(ip)) {
+      const oldest = this.keyFailures.keys().next().value;
+      if (oldest !== undefined) this.keyFailures.delete(oldest);
+    }
     this.keyFailures.set(ip, [...(this.keyFailures.get(ip) ?? []), Date.now()]);
   }
+
+  /** Handshakes per address per minute (each costs the host a few X25519 operations). */
+  private helloAllowed(ip: string): boolean {
+    const now = Date.now();
+    const recent = (this.hellos.get(ip) ?? []).filter((t) => now - t < 60_000);
+    if (recent.length >= MAX_HELLOS_PER_MINUTE) {
+      this.hellos.set(ip, recent);
+      return false;
+    }
+    if (this.hellos.size >= MAX_TRACKED_ADDRESSES && !this.hellos.has(ip)) {
+      const oldest = this.hellos.keys().next().value;
+      if (oldest !== undefined) this.hellos.delete(oldest);
+    }
+    recent.push(now);
+    this.hellos.set(ip, recent);
+    return true;
+  }
+}
+
+interface SecureSession {
+  keys: SessionKeys;
+  mode: HandshakeMode;
+  deviceId?: string;
+  inviteId?: string;
+  /** The network the handshake came from; the session works only from there. */
+  net: string;
+  createdMs: number;
+  lastMs: number;
+  replay: ReplayWindow;
+  /** True once a sealed call decrypted: the client really holds the keys. */
+  proven: boolean;
+}
+
+interface InnerRequest {
+  method: "GET" | "POST";
+  path: string;
+  body: Record<string, unknown>;
+}
+
+function parseInner(plain: string): InnerRequest {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(plain);
+  } catch {
+    throw new HttpError(400, "Body must be a JSON object");
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new HttpError(400, "Body must be a JSON object");
+  }
+  const o = parsed as Record<string, unknown>;
+  if (o.m !== "GET" && o.m !== "POST") throw new HttpError(400, "Bad method");
+  if (typeof o.p !== "string" || !o.p.startsWith("/") || o.p.length > 300) {
+    throw new HttpError(400, "Bad path");
+  }
+  const b = o.b ?? {};
+  if (!b || typeof b !== "object" || Array.isArray(b)) {
+    throw new HttpError(400, "Body must be a JSON object");
+  }
+  return { method: o.m, path: o.p, body: b as Record<string, unknown> };
 }
 
 const TITLE_CHARS = 120;
@@ -808,7 +1185,18 @@ function deviceState(x: DeviceRecord, now: number): DeviceState {
   return now - x.lastSeenMs < ONLINE_WINDOW_MS ? "connected" : "offline";
 }
 
+/** True when the caller says it is Kai Terminal. */
+function isKaiClient(req: http.IncomingMessage): boolean {
+  const v = req.headers[KAI_CLIENT_HEADER];
+  return typeof v === "string" && v.trim().toLowerCase() === KAI_SERVICE;
+}
+
+function requireKaiClient(req: http.IncomingMessage): void {
+  if (!isKaiClient(req)) throw new HttpError(403, NOT_KAI_CLIENT);
+}
+
 const SECURITY_HEADERS: Record<string, string> = {
+  [KAI_SERVICE_HEADER]: KAI_SERVICE,
   "Content-Security-Policy":
     "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'",
   "X-Content-Type-Options": "nosniff",
@@ -842,14 +1230,17 @@ function landing(res: http.ServerResponse): void {
   res.end(html);
 }
 
-async function readJson(req: http.IncomingMessage): Promise<Record<string, unknown>> {
+async function readJson(
+  req: http.IncomingMessage,
+  limit: number
+): Promise<Record<string, unknown>> {
   const declared = Number(req.headers["content-length"] ?? 0);
-  if (declared > MAX_BODY_BYTES) throw new HttpError(413, "Request too large");
+  if (declared > limit) throw new HttpError(413, "Request too large");
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of req) {
     size += (chunk as Buffer).length;
-    if (size > MAX_BODY_BYTES) throw new HttpError(413, "Request too large");
+    if (size > limit) throw new HttpError(413, "Request too large");
     chunks.push(chunk as Buffer);
   }
   try {
