@@ -70,28 +70,40 @@ export function generateKeyPair(): KeyPair {
   return { publicKey: pub.x, privateKey: jwk.d };
 }
 
+// Fixed DER headers for raw X25519 keys (RFC 8410). Importing as DER works the
+// same on every Node/OpenSSL build; a JWK private key without its matching `x`
+// is rejected by some (it failed every handshake on macOS CI).
+const PKCS8_X25519 = Buffer.from("302e020100300506032b656e04220420", "hex");
+const SPKI_X25519 = Buffer.from("302a300506032b656e032100", "hex");
+
+function privateKeyObject(privateKey: string): crypto.KeyObject {
+  const raw = fromB64u(privateKey, KEY_BYTES);
+  return crypto.createPrivateKey({
+    key: Buffer.concat([PKCS8_X25519, raw]),
+    format: "der",
+    type: "pkcs8",
+  });
+}
+
+function publicKeyObject(publicKey: string): crypto.KeyObject {
+  const raw = fromB64u(publicKey, KEY_BYTES);
+  return crypto.createPublicKey({
+    key: Buffer.concat([SPKI_X25519, raw]),
+    format: "der",
+    type: "spki",
+  });
+}
+
 /** Rebuilds a key pair from its stored private half (the public half is derived). */
 export function keyPairFromPrivate(privateKey: string): KeyPair {
-  fromB64u(privateKey, KEY_BYTES);
-  const key = crypto.createPrivateKey({
-    key: { kty: "OKP", crv: "X25519", d: privateKey, x: "" },
-    format: "jwk",
-  });
-  const pub = crypto.createPublicKey(key).export({ format: "jwk" });
+  const pub = crypto.createPublicKey(privateKeyObject(privateKey)).export({ format: "jwk" });
   if (!pub.x) throw new ChannelError("bad private key");
   return { publicKey: pub.x, privateKey };
 }
 
 function dh(privateKey: string, publicKey: string): Buffer {
-  fromB64u(publicKey, KEY_BYTES);
-  const priv = crypto.createPrivateKey({
-    key: { kty: "OKP", crv: "X25519", d: privateKey, x: "" },
-    format: "jwk",
-  });
-  const pub = crypto.createPublicKey({
-    key: { kty: "OKP", crv: "X25519", x: publicKey },
-    format: "jwk",
-  });
+  const pub = publicKeyObject(publicKey);
+  const priv = privateKeyObject(privateKey);
   const shared = crypto.diffieHellman({ privateKey: priv, publicKey: pub });
   // An all-zero result means a low-order public key: refuse it.
   if (shared.every((b) => b === 0)) throw new ChannelError("weak key");
