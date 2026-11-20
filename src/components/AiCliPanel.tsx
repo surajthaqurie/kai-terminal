@@ -15,6 +15,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { IntegrationsPanel } from "./IntegrationsPanel";
+import { Badge } from "./ui";
 import { SharedAgentPanel } from "./SharedAgentPanel";
 import {
   getAiCliDetails,
@@ -199,7 +200,13 @@ export const AiCliPanel: FC<AiCliPanelProps> = ({
   };
 
   return (
-    <div className="modal-backdrop" onClick={onClose} role="dialog" aria-label="AI CLI providers">
+    <div
+      className="modal-backdrop"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label="AI CLI providers"
+    >
       <div
         className={`settings-modal settings-tabs-modal${activeTab === "shared" ? " is-wide" : ""}`}
         ref={dialogRef}
@@ -259,16 +266,13 @@ export const AiCliPanel: FC<AiCliPanelProps> = ({
         {sharedVisited && <SharedAgentPanel active={activeTab === "shared"} />}
         {/* Kept mounted but hidden on the other tab so detection state survives a tab switch. */}
         <div
-          className="modal-body"
+          className="modal-body ai-providers-body"
           hidden={activeTab !== "providers"}
           role="tabpanel"
           aria-labelledby="ai-cli-tab-providers"
-          style={{
-            display: activeTab === "providers" ? "flex" : "none",
-            gap: "12px",
-          }}
+          style={{ display: activeTab === "providers" ? "flex" : "none" }}
         >
-          <p className="muted-text" style={{ margin: 0 }}>
+          <p className="muted-text flush">
             The terminal works with or without these tools. Everything below is detected
             automatically on this machine (binary on PATH or in well-known install locations,
             bounded version probe, local config-file presence, kai wiring). All checks are passive,
@@ -291,33 +295,14 @@ export const AiCliPanel: FC<AiCliPanelProps> = ({
           </div>
 
           {successMessage && (
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                padding: "8px 12px",
-                borderRadius: "var(--radius-sm)",
-                background: "var(--color-success-bg)",
-                color: "var(--color-success)",
-                fontSize: "var(--text-sm)",
-                border: "1px solid var(--border-default)",
-              }}
-            >
-              <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                <CheckCircle size={14} />
+            <div className="inline-notice inline-notice-success" role="status">
+              <div className="row">
+                <CheckCircle size={14} aria-hidden="true" />
                 <span>{successMessage}</span>
               </div>
               <button
                 type="button"
-                className="btn-close"
-                style={{
-                  padding: 0,
-                  color: "var(--color-success)",
-                  background: "none",
-                  border: "none",
-                  cursor: "pointer",
-                }}
+                className="btn-close inline-notice-close"
                 onClick={() => setSuccessMessage(null)}
                 aria-label="Dismiss success message"
               >
@@ -327,31 +312,11 @@ export const AiCliPanel: FC<AiCliPanelProps> = ({
           )}
 
           {customError && (
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                padding: "8px 12px",
-                borderRadius: "var(--radius-sm)",
-                background: "var(--color-danger-bg)",
-                color: "var(--color-danger)",
-                fontSize: "var(--text-sm)",
-                border: "1px solid var(--border-default)",
-              }}
-              role="alert"
-            >
+            <div className="inline-notice inline-notice-danger" role="alert">
               <span>{customError}</span>
               <button
                 type="button"
-                className="btn-close"
-                style={{
-                  padding: 0,
-                  color: "var(--color-danger)",
-                  background: "none",
-                  border: "none",
-                  cursor: "pointer",
-                }}
+                className="btn-close inline-notice-close"
                 onClick={() => setCustomError(null)}
                 aria-label="Dismiss error message"
               >
@@ -362,7 +327,7 @@ export const AiCliPanel: FC<AiCliPanelProps> = ({
 
           <div className="ai-provider-list">
             {details.length === 0 && (
-              <p className="muted-text" role="status" style={{ margin: 0 }}>
+              <p className="muted-text flush" role="status">
                 {isRefreshing ? "Detecting providers…" : "No providers detected."}
               </p>
             )}
@@ -407,42 +372,16 @@ export const AiCliPanel: FC<AiCliPanelProps> = ({
                     <span>
                       Kai wiring:{" "}
                       {d.kai_wired ? (
-                        <span
-                          style={{
-                            color: "var(--color-success)",
-                            fontWeight: 600,
-                            backgroundColor: "var(--color-success-bg)",
-                            padding: "2px 6px",
-                            borderRadius: "var(--radius-xs)",
-                            display: "inline-block",
-                          }}
-                        >
-                          Configured ✓
-                        </span>
+                        <Badge tone="success">Configured ✓</Badge>
                       ) : (
-                        <span style={{ color: "var(--text-secondary)" }}>Not configured</span>
+                        <span className="text-secondary">Not configured</span>
                       )}
                     </span>
                   </div>
-                  <p className="muted-text" style={{ margin: 0, fontSize: "12px" }}>
-                    {d.diagnostic}
-                  </p>
-                  {!d.available && (
-                    <p className="muted-text" style={{ margin: 0, fontSize: "12px" }}>
-                      {d.install_guidance}
-                    </p>
-                  )}
+                  <p className="muted-sm">{d.diagnostic}</p>
+                  {!d.available && <p className="muted-sm">{d.install_guidance}</p>}
 
-                  <div
-                    className="ai-provider-actions"
-                    style={{
-                      display: "flex",
-                      gap: "8px",
-                      alignItems: "center",
-                      marginTop: "4px",
-                      flexWrap: "wrap",
-                    }}
-                  >
+                  <div className="ai-provider-actions">
                     {/* Configure / Reconfigure button for available CLIs with a
                       known config format. Custom-registered binaries are
                       launch targets, not config owners, so they get guidance
@@ -474,7 +413,7 @@ export const AiCliPanel: FC<AiCliPanelProps> = ({
                       </button>
                     )}
                     {d.available && d.id.startsWith("custom:") && (
-                      <p className="muted-text" style={{ margin: 0, fontSize: "12px" }}>
+                      <p className="muted-sm">
                         Registered custom binary — launch it from a terminal tab. Kai MCP wiring
                         applies to the built-in providers above.
                       </p>
@@ -509,9 +448,7 @@ export const AiCliPanel: FC<AiCliPanelProps> = ({
 
                     {/* Only show custom path input if the CLI is NOT already available/found */}
                     {!d.available && !d.id.startsWith("custom:") && (
-                      <div
-                        style={{ display: "flex", gap: "8px", alignItems: "center", width: "100%" }}
-                      >
+                      <div className="row row-fill">
                         <input
                           type="text"
                           className="text-input modal-input"
@@ -521,7 +458,6 @@ export const AiCliPanel: FC<AiCliPanelProps> = ({
                             setCustomPaths({ ...customPaths, [d.id]: e.target.value })
                           }
                           aria-label={`Custom path for ${d.name}`}
-                          style={{ flex: 1 }}
                         />
                         <button
                           type="button"
@@ -535,27 +471,9 @@ export const AiCliPanel: FC<AiCliPanelProps> = ({
                     )}
                   </div>
                   {manualOpen[d.id] && !d.id.startsWith("custom:") && (
-                    <div
-                      style={{
-                        background: "var(--bg-surface-sunken)",
-                        border: "1px solid var(--border-default)",
-                        borderRadius: "var(--radius-sm)",
-                        padding: "8px 10px",
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: "6px",
-                      }}
-                    >
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          alignItems: "center",
-                        }}
-                      >
-                        <span style={{ fontSize: "12px", fontWeight: 600 }}>
-                          Manual setup — {d.name}
-                        </span>
+                    <div className="ai-manual-setup">
+                      <div className="ai-manual-setup-head">
+                        <span className="ai-manual-setup-title">Manual setup — {d.name}</span>
                         <button
                           type="button"
                           className="btn btn-secondary btn-small"
@@ -568,13 +486,7 @@ export const AiCliPanel: FC<AiCliPanelProps> = ({
                         </button>
                       </div>
                       <pre
-                        style={{
-                          margin: 0,
-                          whiteSpace: "pre-wrap",
-                          wordBreak: "break-word",
-                          fontSize: "12px",
-                          userSelect: "text",
-                        }}
+                        className="ai-manual-setup-snippet"
                         tabIndex={0}
                         aria-label={`Manual MCP setup snippet for ${d.name}`}
                       >
@@ -589,36 +501,22 @@ export const AiCliPanel: FC<AiCliPanelProps> = ({
             })}
           </div>
 
-          <div
-            className="setting-field"
-            style={{
-              borderTop: "1px solid var(--border-default)",
-              paddingTop: "12px",
-              marginTop: "8px",
-            }}
-          >
-            <label style={{ display: "block", marginBottom: "8px" }}>
-              Register User-Defined AI Executable
-            </label>
-            <div
-              className="setting-row"
-              style={{ display: "flex", gap: "8px", alignItems: "center" }}
-            >
+          <div className="setting-field ai-register-custom">
+            <label className="block-label">Register User-Defined AI Executable</label>
+            <div className="setting-row row">
               <input
                 type="text"
-                className="text-input modal-input"
+                className="text-input modal-input grow"
                 placeholder="Name (e.g. Ollama, LocalLLM)"
                 value={newCliName}
                 onChange={(e) => setNewCliName(e.target.value)}
-                style={{ flex: 1 }}
               />
               <input
                 type="text"
-                className="text-input modal-input"
+                className="text-input modal-input grow-wide"
                 placeholder="Executable Path (e.g. /usr/local/bin/ollama)"
                 value={newCliPath}
                 onChange={(e) => setNewCliPath(e.target.value)}
-                style={{ flex: 1.5 }}
               />
               <button
                 className="btn btn-primary"

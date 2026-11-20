@@ -1,0 +1,149 @@
+/* =========================================================================
+   Base & Resets
+   ========================================================================= */
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body,
+html,
+#root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background-color: var(--bg-canvas);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+/* Accessible focus visible */
+:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: 1px;
+}
+
+/* Honour the OS "reduce motion" setting everywhere, including infinite pulses
+   and spinners. !important is required: it must beat every component rule. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Visually hidden, still read by screen readers. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--scroll-track);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--scroll-thumb);
+  border-radius: var(--radius-xs);
+  border: 1px solid transparent;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scroll-thumb-hover);
+}
+
+/* ——— Layout utilities: replace one-off inline style objects in components ——— */
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.row-fill {
+  width: 100%;
+}
+
+.row-fill > .text-input,
+.grow {
+  flex: 1;
+  min-width: 0;
+}
+
+.grow-wide {
+  flex: 1.5;
+  min-width: 0;
+}
+
+.flush {
+  margin: 0;
+}
+
+.block-label {
+  display: block;
+  margin-bottom: var(--space-2);
+}
+
+.text-secondary {
+  color: var(--text-secondary);
+}
+
+/* Secondary explanatory line (was `muted-text` + inline 12px). */
+.muted-sm {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.mt-2 {
+  margin-top: var(--space-2);
+}
+
+.mt-3 {
+  margin-top: var(--space-3);
+}
+
+.mt-4 {
+  margin-top: var(--space-4);
+}
+
+.align-end {
+  align-self: flex-end;
+}
+
+.justify-start {
+  justify-content: flex-start;
+}
+
+/* A field group set apart from the one above it. */
+.section-divider {
+  border-top: 1px solid var(--border-default);
+  padding-top: var(--space-3);
+}

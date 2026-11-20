@@ -1,0 +1,14 @@
+/* Keyboard shortcut label (<Kbd>). Context classes (e.g. .palette-shortcut) refine it. */
+.kbd {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px var(--space-1-5);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-xs);
+  background-color: var(--bg-surface-sunken);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.4;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}

@@ -1,0 +1,48 @@
+/* GENERATED from src/theme/registry.ts by `npm run themes:generate`. Do not edit. */
+
+/* Rosé Pine */
+[data-theme="rose-pine"] {
+  color-scheme: dark;
+
+  --bg-canvas: #16141f;
+  --bg-header: #13111b;
+  --bg-surface: #191724;
+  --bg-surface-elevated: #26233a;
+  --bg-surface-sunken: #13111b;
+  --bg-overlay: rgba(19, 17, 27, 0.82);
+  --border-subtle: rgba(224, 222, 244, 0.1);
+  --border-default: rgba(224, 222, 244, 0.18);
+  --border-strong: #403d52;
+  --border-accent: rgba(196, 167, 231, 0.45);
+  --text-primary: #e0def4;
+  --text-secondary: #b4b0cc;
+  --text-tertiary: #908caa;
+  --text-inverse: #16141f;
+  --accent-primary: #c4a7e7;
+  --accent-hover: #d4bff0;
+  --accent-subtle: rgba(196, 167, 231, 0.15);
+  --accent-glow: rgba(196, 167, 231, 0.35);
+  --accent-ring: rgba(196, 167, 231, 0.5);
+  --color-success: #9ccfd8;
+  --color-success-bg: rgba(156, 207, 216, 0.12);
+  --color-warning: #f6c177;
+  --color-warning-bg: rgba(246, 193, 119, 0.14);
+  --color-danger: #eb6f92;
+  --color-danger-bg: rgba(235, 111, 146, 0.08);
+  --color-purple: #c4a7e7;
+  --color-purple-bg: rgba(196, 167, 231, 0.15);
+  --scroll-track: #13111b;
+  --scroll-thumb: #2a283e;
+  --scroll-thumb-hover: #403d52;
+
+  --tab-color-blue: #9ccfd8;
+  --tab-color-green: #31748f;
+  --tab-color-yellow: #f6c177;
+  --tab-color-red: #eb6f92;
+  --tab-color-purple: #c4a7e7;
+  --tab-color-teal: #ebbcba;
+  --tab-color-orange: #f6c177;
+  --tab-color-gray: #6e6a86;
+
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23908caa' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+}

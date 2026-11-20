@@ -1,0 +1,94 @@
+/* =========================================================================
+   Terminal Viewport & Container
+   ========================================================================= */
+
+.tab-content {
+  width: 100%;
+  height: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  scrollbar-width: none;
+}
+
+.tab-content::-webkit-scrollbar {
+  display: none;
+}
+
+.terminal-container {
+  width: 100%;
+  height: 100%;
+  flex: 1 1 0%;
+  min-height: 0;
+  min-width: 0;
+  position: relative;
+  overflow: hidden;
+  /* Own stacking context: xterm's internal layers stay below pane overlays. */
+  isolation: isolate;
+  background-color: var(--bg-canvas);
+}
+
+.terminal-xterm-host {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  overflow: hidden;
+  background-color: transparent !important;
+}
+
+.terminal-xterm-host .xterm {
+  height: 100%;
+  width: 100%;
+  padding: var(--terminal-padding-y) var(--terminal-padding-x);
+  box-sizing: border-box;
+  background-color: transparent !important;
+}
+
+/* Ensure xterm's internal viewport, screen, and scrollable container seamlessly
+   inherit transparency so the theme background fills the full pane edge-to-edge.
+   This permanently eliminates black bars/padding on the top, left, and bottom across
+   all themes. */
+.terminal-xterm-host .xterm .xterm-viewport,
+.terminal-xterm-host .xterm .xterm-screen,
+.terminal-xterm-host .xterm .xterm-scrollable-element {
+  background-color: transparent !important;
+}
+
+/* Remove xterm 6's hardcoded black inset shadows on top, left, and corners */
+.terminal-xterm-host .xterm .xterm-scrollable-element > .shadow,
+.terminal-xterm-host .xterm .xterm-scrollable-element > .shadow.top,
+.terminal-xterm-host .xterm .xterm-scrollable-element > .shadow.left,
+.terminal-xterm-host .xterm .xterm-scrollable-element > .shadow.top-left-corner,
+.terminal-xterm-host .xterm .xterm-scrollable-element > .shadow.top.left {
+  display: none !important;
+  box-shadow: none !important;
+}
+
+.terminal-xterm-host .xterm .xterm-scrollable-element > .scrollbar {
+  background: transparent !important;
+}
+
+.terminal-xterm-host .xterm .composition-view {
+  background: var(--bg-surface-elevated) !important;
+  color: var(--text-primary) !important;
+}
+
+/* xterm 6 draws its own VS Code-style scrollbar (.xterm-scrollable-element)
+   instead of a native one on .xterm-viewport, so recolor the slider here; the
+   native ::-webkit-scrollbar rules used with xterm 5 no longer apply and a
+   forced overflow-y on the viewport would show a second, native scrollbar. */
+.terminal-xterm-host .xterm .xterm-scrollable-element > .scrollbar > .slider {
+  background: var(--scroll-thumb) !important;
+  border-radius: var(--radius-xs);
+}
+
+.terminal-xterm-host .xterm .xterm-scrollable-element > .scrollbar > .slider:hover,
+.terminal-xterm-host .xterm .xterm-scrollable-element > .scrollbar > .slider.active {
+  background: var(--scroll-thumb-hover) !important;
+}

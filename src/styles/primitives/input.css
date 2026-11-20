@@ -1,0 +1,90 @@
+/* Form Inputs & Selects */
+.select-input,
+.text-input {
+  background-color: var(--bg-surface-sunken);
+  color: var(--text-primary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  padding: 5px 9px;
+  font-size: var(--text-sm);
+  outline: none;
+  transition:
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+select,
+.select-input {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-color: var(--bg-surface-sunken);
+  color: var(--text-primary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  padding: 4px 26px 4px 9px;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  outline: none;
+  cursor: pointer;
+  background-image: var(--select-chevron);
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  background-size: 11px;
+  transition:
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+select::-ms-expand,
+.select-input::-ms-expand {
+  display: none;
+}
+
+select:hover,
+.select-input:hover,
+.text-input:hover {
+  border-color: var(--border-strong);
+}
+
+select:focus,
+.select-input:focus,
+.text-input:focus {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 2px var(--accent-ring);
+}
+
+select option,
+.select-input option {
+  background-color: var(--bg-surface);
+  color: var(--text-primary);
+  padding: 8px 10px;
+}
+
+select optgroup,
+.select-input optgroup {
+  background-color: var(--bg-surface);
+  color: var(--text-tertiary);
+  font-style: normal;
+  font-weight: 600;
+}
+
+select option:checked,
+.select-input option:checked {
+  background-color: var(--bg-surface-elevated);
+  color: var(--accent-primary);
+}
+
+.modal-input.select-input,
+select.modal-input {
+  width: 100%;
+  padding: 7px 30px 7px 11px;
+  font-size: var(--text-base);
+  background-position: right 10px center;
+}
+
+.modal-input {
+  width: 100%;
+  padding: 7px 11px;
+  font-size: var(--text-base);
+}

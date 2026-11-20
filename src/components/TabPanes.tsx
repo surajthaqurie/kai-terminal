@@ -42,6 +42,13 @@ const FULL_RECT: PaneRect = { paneId: "", x: 0, y: 0, w: 1, h: 1 };
 
 const pct = (fraction: number) => `${fraction * 100}%`;
 
+/** Last path segment of a working directory ("C:\\src\\kai" -> "kai"). */
+export function folderName(dir: string | undefined): string {
+  if (!dir) return "";
+  const parts = dir.split(/[/\\]/).filter(Boolean);
+  return parts.length > 0 ? parts[parts.length - 1] : dir;
+}
+
 /**
  * One tab's pane area, rendered as a flat grid (no-remount splits): the
  * layout tree drives GEOMETRY ONLY. Every live pane renders exactly once as
@@ -116,13 +123,17 @@ export const TabPanes = memo(function TabPanes({
     window.addEventListener("pointerup", up);
   };
 
+  const isSplit = tab.panes.length > 1;
+
   const renderPane = (pane: TerminalPane): ReactNode => {
     const rect = rectByPaneId.get(pane.id) ?? FULL_RECT;
     const focusPane = () => onFocusPane(tab.id, pane.id);
+    const isActivePane = pane.id === tab.activePaneId;
+    const dir = pane.cwd || tab.cwd;
     return (
       <div
         key={pane.id}
-        className={`pane-item pane-grid-pane ${pane.id === tab.activePaneId ? "active-pane" : ""}`}
+        className={`pane-item pane-grid-pane ${isActivePane ? "active-pane" : ""}`}
         style={{
           left: pct(rect.x),
           top: pct(rect.y),
@@ -132,6 +143,12 @@ export const TabPanes = memo(function TabPanes({
         onClick={focusPane}
         onPointerDown={focusPane}
       >
+        {isSplit && (
+          <div className="pane-label" title={dir || undefined}>
+            <span className="pane-label-name">{folderName(dir) || "Terminal"}</span>
+            {isActivePane && <span className="sr-only"> (active pane)</span>}
+          </div>
+        )}
         <TerminalView
           ref={(el) => {
             terminalRefs.current[pane.id] = el;
@@ -164,6 +181,7 @@ export const TabPanes = memo(function TabPanes({
       <div
         className="pane-container-none pane-grid"
         data-pane-container={tab.id}
+        data-split={isSplit ? "true" : "false"}
         ref={containerRef}
       >
         {tab.panes.map(renderPane)}

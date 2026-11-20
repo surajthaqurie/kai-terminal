@@ -1,0 +1,48 @@
+/* GENERATED from src/theme/registry.ts by `npm run themes:generate`. Do not edit. */
+
+/* Kai Light */
+[data-theme="kai-light"] {
+  color-scheme: light;
+
+  --bg-canvas: #eceef2;
+  --bg-header: #f3f4f6;
+  --bg-surface: #fafbfc;
+  --bg-surface-elevated: #ffffff;
+  --bg-surface-sunken: #eef0f3;
+  --bg-overlay: rgba(31, 35, 40, 0.32);
+  --border-subtle: rgba(31, 35, 40, 0.08);
+  --border-default: rgba(31, 35, 40, 0.15);
+  --border-strong: #b8bec7;
+  --border-accent: rgba(14, 116, 144, 0.5);
+  --text-primary: #1f2328;
+  --text-secondary: #3d444d;
+  --text-tertiary: #59636e;
+  --text-inverse: #ffffff;
+  --accent-primary: #0e7490;
+  --accent-hover: #0b5f76;
+  --accent-subtle: rgba(14, 116, 144, 0.1);
+  --accent-glow: rgba(14, 116, 144, 0.22);
+  --accent-ring: rgba(14, 116, 144, 0.45);
+  --color-success: #1a7b33;
+  --color-success-bg: rgba(26, 127, 55, 0.08);
+  --color-warning: #8a5c00;
+  --color-warning-bg: rgba(154, 103, 0, 0.1);
+  --color-danger: #c21f2b;
+  --color-danger-bg: rgba(207, 34, 46, 0.08);
+  --color-purple: #7a45d6;
+  --color-purple-bg: rgba(130, 80, 223, 0.08);
+  --scroll-track: #eef0f3;
+  --scroll-thumb: #c9ced6;
+  --scroll-thumb-hover: #a9b0ba;
+
+  --tab-color-blue: #0550ae;
+  --tab-color-green: #116329;
+  --tab-color-yellow: #7d4e00;
+  --tab-color-red: #cf222e;
+  --tab-color-purple: #8250df;
+  --tab-color-teal: #0e7490;
+  --tab-color-orange: #bc4c00;
+  --tab-color-gray: #57606a;
+
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2357606a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+}

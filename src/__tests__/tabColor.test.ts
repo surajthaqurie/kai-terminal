@@ -41,9 +41,12 @@ describe("TabBar tab color", () => {
 
     const items = Array.from(container.querySelectorAll(".tab-item"));
     expect(items).toHaveLength(2);
-    // Colored tab: has-color class + --tab-color var (drives the active pill).
+    // Colored tab: has-color class + --tab-color var (drives the active pill). The
+    // stored preset hex is painted as the current theme's colour of the same name.
     expect(items[0]?.classList.contains("has-color")).toBe(true);
-    expect((items[0] as HTMLElement).style.getPropertyValue("--tab-color")).toBe("#f38ba8");
+    expect((items[0] as HTMLElement).style.getPropertyValue("--tab-color")).toBe(
+      "var(--tab-color-red)"
+    );
     expect(container.querySelector(".tab-color-dot")).not.toBeNull();
     // Plain tab: no marker, no dot.
     expect(items[1]?.classList.contains("has-color")).toBe(false);

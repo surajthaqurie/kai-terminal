@@ -1,0 +1,127 @@
+/* =========================================================================
+   Floating Search Bar Overlay
+   ========================================================================= */
+
+.terminal-search-bar {
+  position: absolute;
+  top: 8px;
+  right: 16px;
+  z-index: var(--z-overlay-in-pane);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background-color: var(--bg-surface-elevated);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(12px);
+  padding: 4px 6px;
+  animation: fadeInDown var(--transition-fast);
+}
+
+.search-input {
+  background-color: var(--bg-surface-sunken);
+  color: var(--text-primary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  font-size: var(--text-sm);
+  outline: none;
+  min-width: 170px;
+  transition: border-color var(--transition-fast);
+}
+
+.search-input:focus {
+  border-color: var(--accent-primary);
+}
+
+.search-input.no-results,
+.search-input.no-results:focus {
+  border-color: var(--color-danger);
+}
+
+/* "3 of 17" / "No results": fixed width so the bar does not jump while typing. */
+.search-count {
+  min-width: 64px;
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.search-count.no-results {
+  color: var(--color-danger);
+}
+
+.search-nav-btn:disabled {
+  opacity: var(--state-disabled-opacity);
+  cursor: not-allowed;
+}
+
+.search-options {
+  display: flex;
+  gap: 2px;
+}
+
+.search-option-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-tertiary);
+  padding: 4px 5px;
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Explicit properties: never animate layout. */
+  transition-property: background-color, border-color, color, box-shadow, opacity, transform;
+  transition-duration: var(--duration-fast);
+  transition-timing-function: var(--ease-standard);
+}
+
+.search-option-btn:hover {
+  background-color: var(--bg-surface);
+  color: var(--text-primary);
+}
+
+.search-option-btn.active {
+  background-color: var(--accent-subtle);
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+}
+
+.search-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-left: 1px solid var(--border-subtle);
+  padding-left: 4px;
+}
+
+.search-nav-btn,
+.search-close-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  padding: 4px;
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Explicit properties: never animate layout. */
+  transition-property: background-color, border-color, color, box-shadow, opacity, transform;
+  transition-duration: var(--duration-fast);
+  transition-timing-function: var(--ease-standard);
+}
+
+.search-nav-btn:hover:not(:disabled) {
+  background-color: var(--bg-surface);
+  color: var(--text-primary);
+}
+
+.search-close-btn:hover {
+  background-color: var(--color-danger-bg);
+  color: var(--color-danger);
+}

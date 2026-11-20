@@ -1,3 +1,5 @@
+import type { ThemeId } from "../theme/registry";
+
 /**
  * Shell profile definition detected on host OS or configured by user.
  */
@@ -164,18 +166,9 @@ export interface GitInfoLike {
 }
 
 /**
- * Available color theme names.
+ * Available color theme ids (defined by the theme registry).
  */
-export type ThemeName =
-  | "kai-dark"
-  | "gruvbox-dark"
-  | "catppuccin-mocha"
-  | "tokyo-night"
-  | "nord"
-  | "dracula"
-  | "solarized-dark"
-  | "one-dark"
-  | "rose-pine";
+export type ThemeName = ThemeId;
 
 /**
  * Terminal cursor appearance styles.
@@ -232,6 +225,11 @@ export interface UserSettings {
   theme: ThemeName;
   fontFamily: string;
   fontSize: number;
+  /** Terminal line height, a multiple of the font size (xterm `lineHeight`). */
+  lineHeight?: number;
+  /** Space between the pane edge and the terminal text, in px. */
+  terminalPaddingX?: number;
+  terminalPaddingY?: number;
   scrollback: number;
   cursorBlink: boolean;
   cursorStyle?: CursorStyle;

@@ -1,0 +1,30 @@
+/* Chrome sub-surfaces are aliases of the theme surfaces: header, tab strip and
+   footer wear the theme's own surface colour (the colour the terminal paints),
+   so the window reads as one piece. Defined once here, never per theme. */
+:root,
+[data-theme] {
+  --bg-tab-bar: var(--bg-surface);
+  --bg-statusbar: var(--bg-surface);
+  --bg-tab-active: var(--bg-surface);
+  --bg-tab-inactive: var(--bg-surface-sunken);
+  /* Surface tinted toward the text colour: lighter on dark themes, darker on light. */
+  --bg-tab-hover: color-mix(in srgb, var(--text-primary) 8%, var(--bg-surface));
+  --bg-card: var(--bg-surface);
+}
+
+/* Interaction-state and semantic aliases, derived from each theme's own colours
+   so every theme gets them without per-theme declarations. */
+:root,
+[data-theme] {
+  --state-hover: color-mix(in srgb, var(--text-primary) 7%, transparent);
+  --state-active: color-mix(in srgb, var(--text-primary) 11%, transparent);
+  --state-disabled-opacity: 0.5;
+  --focus-ring-color: var(--accent-primary);
+  --focus-ring-width: 2px;
+  --color-info: var(--accent-primary);
+  --color-info-bg: var(--accent-subtle);
+
+  /* Terminal panes */
+  --pane-ring-active: var(--accent-primary);
+  --pane-inactive-dim: color-mix(in srgb, var(--bg-canvas) 35%, transparent);
+}

@@ -3,7 +3,7 @@ import { isMusicPipWindow } from "./services/musicPip";
 import { isSharedChatWindow } from "./services/sharedChatWindow";
 import { initMusicRelay } from "./services/musicService";
 import "./fonts.css";
-import "./App.css";
+import "./styles/index.css";
 
 /**
  * xterm measures its character cell when it opens, so the bundled fonts must be

@@ -1,0 +1,48 @@
+/* GENERATED from src/theme/registry.ts by `npm run themes:generate`. Do not edit. */
+
+/* Dracula */
+[data-theme="dracula"] {
+  color-scheme: dark;
+
+  --bg-canvas: #1e1f29;
+  --bg-header: #191a21;
+  --bg-surface: #282a36;
+  --bg-surface-elevated: #343746;
+  --bg-surface-sunken: #191a21;
+  --bg-overlay: rgba(25, 26, 33, 0.82);
+  --border-subtle: rgba(248, 248, 242, 0.1);
+  --border-default: rgba(248, 248, 242, 0.18);
+  --border-strong: #6272a4;
+  --border-accent: rgba(189, 147, 249, 0.45);
+  --text-primary: #f8f8f2;
+  --text-secondary: #c2c4d0;
+  --text-tertiary: #a4afd0;
+  --text-inverse: #282a36;
+  --accent-primary: #bd93f9;
+  --accent-hover: #ff79c6;
+  --accent-subtle: rgba(189, 147, 249, 0.15);
+  --accent-glow: rgba(189, 147, 249, 0.35);
+  --accent-ring: rgba(189, 147, 249, 0.5);
+  --color-success: #50fa7b;
+  --color-success-bg: rgba(80, 250, 123, 0.12);
+  --color-warning: #f1fa8c;
+  --color-warning-bg: rgba(241, 250, 140, 0.14);
+  --color-danger: #ff8585;
+  --color-danger-bg: rgba(255, 85, 85, 0.08);
+  --color-purple: #c69dfb;
+  --color-purple-bg: rgba(189, 147, 249, 0.09);
+  --scroll-track: #191a21;
+  --scroll-thumb: #44475a;
+  --scroll-thumb-hover: #6272a4;
+
+  --tab-color-blue: #bd93f9;
+  --tab-color-green: #50fa7b;
+  --tab-color-yellow: #f1fa8c;
+  --tab-color-red: #ff5555;
+  --tab-color-purple: #ff79c6;
+  --tab-color-teal: #8be9fd;
+  --tab-color-orange: #ffb86c;
+  --tab-color-gray: #6272a4;
+
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23b5b7c7' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+}

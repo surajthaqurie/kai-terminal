@@ -7,16 +7,15 @@ import {
   saveChatHandoff,
   type ChatSnapshot,
 } from "../services/sharedChatWindow";
-import { SettingsService, isLightTheme } from "../services/settingsService";
+import { SettingsService } from "../services/settingsService";
+import { applyThemeToDocument } from "../theme/applyTheme";
 import { SharedAgentChat } from "./SharedAgentChat";
 
 /** The window opens in the person's theme (it has none of the app around it to set it). */
 function applySavedTheme(): void {
   try {
     const { theme } = SettingsService.loadSettings();
-    document.documentElement.setAttribute("data-theme", theme);
-    document.body.setAttribute("data-theme", theme);
-    document.documentElement.style.colorScheme = isLightTheme(theme) ? "light" : "dark";
+    applyThemeToDocument(theme);
   } catch {
     // The default theme is fine.
   }

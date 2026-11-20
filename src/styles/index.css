@@ -1,0 +1,53 @@
+/* =========================================================================
+   Kai Terminal stylesheet entry (imported once, from src/main.tsx).
+
+   Import order IS the cascade order. The shell / feature files are contiguous
+   slices of the former App.css in their original order, so moving rules here
+   changed no cascade or specificity. Layering rule: features use primitives
+   and semantic tokens, never theme literals. See docs/DESIGN_SYSTEM.md.
+   ========================================================================= */
+
+/* 1. Tokens: theme-agnostic scales, then derived semantic aliases. */
+@import "./tokens/primitives.css";
+@import "./tokens/semantic.css";
+
+/* 2. Themes: colour tokens only, GENERATED from src/theme/registry.ts. */
+@import "./themes/index.css";
+
+/* 3. Base: reset, focus ring, reduced motion, scrollbars, utilities. */
+@import "./base.css";
+
+/* 4. Generic primitives used by src/components/ui. */
+@import "./primitives/kbd.css";
+@import "./primitives/badge.css";
+@import "./primitives/banner.css";
+@import "./primitives/dialog.css";
+
+/* 5. App shell and the original component layers, in source order. */
+@import "./shell/layout.css";
+@import "./shell/tab-bar.css";
+@import "./shell/header.css";
+@import "./primitives/menu.css";
+@import "./primitives/button.css";
+@import "./primitives/input.css";
+@import "./shell/terminal.css";
+@import "./primitives/toast.css";
+@import "./shell/panes.css";
+@import "./shell/search.css";
+@import "./primitives/modal.css";
+@import "./shell/palette.css";
+
+/* 6. Features, with the shell layers that sat between them (original order). */
+@import "./features/settings.css";
+@import "./features/ai-providers.css";
+@import "./features/update.css";
+@import "./shell/status-bar.css";
+@import "./features/git.css";
+@import "./features/workspace.css";
+@import "./shell/responsive.css";
+@import "./features/music.css";
+@import "./features/integrations.css";
+@import "./features/translucency.css";
+@import "./shell/shell-picker.css";
+@import "./features/music-pip.css";
+@import "./features/shared-agent.css";

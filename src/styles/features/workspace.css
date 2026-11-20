@@ -1,0 +1,66 @@
+/* =========================================================================
+   Workspace Modal
+   ========================================================================= */
+
+.workspace-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.workspace-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  background-color: var(--bg-surface-sunken);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  /* Explicit properties: never animate layout. */
+  transition-property: background-color, border-color, color, box-shadow, opacity, transform;
+  transition-duration: var(--duration-fast);
+  transition-timing-function: var(--ease-standard);
+}
+
+.workspace-card:hover {
+  border-color: var(--border-strong);
+  background-color: var(--bg-surface-elevated);
+}
+
+.workspace-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.workspace-name {
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.workspace-meta {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+.workspace-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.workspace-modal-body {
+  max-height: 65vh;
+  overflow-y: auto;
+}
+
+.workspace-name-row {
+  margin: var(--space-2) 0;
+}
+
+.workspace-rename-row {
+  gap: var(--space-1-5);
+}

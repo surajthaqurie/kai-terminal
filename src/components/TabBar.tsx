@@ -1,6 +1,15 @@
 import { CSSProperties, FC, ReactNode, useCallback, useEffect, useRef, useState } from "react";
-import { ShellProfile, TerminalTab } from "../types/terminal";
-import { X, Plus, ChevronDown, Terminal as TerminalIcon } from "lucide-react";
+import { SessionStatus, ShellProfile, TerminalTab } from "../types/terminal";
+import {
+  X,
+  Plus,
+  ChevronDown,
+  Terminal as TerminalIcon,
+  LoaderCircle,
+  CircleAlert,
+  CircleSlash,
+} from "lucide-react";
+import { TAB_COLORS, tabColorName, tabColorValue } from "../theme/registry";
 import { PopupMenu, type MenuEntry } from "./PopupMenu";
 import { AppIcon } from "./AppIcon";
 import { WindowControls } from "./WindowControls";
@@ -34,16 +43,35 @@ interface TabBarProps {
   children?: ReactNode;
 }
 
-export const TAB_COLOR_PRESETS = [
-  "#89b4fa",
-  "#a6e3a1",
-  "#f9e2af",
-  "#f38ba8",
-  "#cba6f7",
-  "#94e2d5",
-  "#fab387",
-  "#9399b2",
-];
+/** Stored tab colour values (hex keys kept for saved sessions); painted per theme. */
+export const TAB_COLOR_PRESETS: ReadonlyArray<string> = TAB_COLORS.map((c) => c.key);
+
+/** Plain words for each session state, shown in the tab tooltip. */
+const STATUS_TEXT: Record<SessionStatus, string> = {
+  connecting: "starting",
+  connected: "running",
+  disconnected: "exited",
+  error: "failed to start",
+};
+
+/**
+ * Leading tab icon. Each state has its own shape (not only its own colour):
+ * a spinner while the shell starts, an alert when it failed, a slashed circle
+ * once it exited, the terminal glyph while it runs.
+ */
+function TabStatusIcon({ status }: { status: SessionStatus }) {
+  const props = { size: 14, className: "tab-icon", "aria-hidden": true } as const;
+  switch (status) {
+    case "connecting":
+      return <LoaderCircle {...props} className="tab-icon tab-icon-spin" />;
+    case "error":
+      return <CircleAlert {...props} />;
+    case "disconnected":
+      return <CircleSlash {...props} />;
+    default:
+      return <TerminalIcon {...props} />;
+  }
+}
 
 interface MenuState {
   tabId: string;
@@ -440,25 +468,22 @@ export const TabBar: FC<TabBarProps> = ({
                 className={`tab-item ${isActive ? "active" : ""} status-${tab.status}${
                   tab.color ? " has-color" : ""
                 }${isDragging ? " dragging" : ""}`}
-                style={tab.color ? ({ "--tab-color": tab.color } as CSSProperties) : undefined}
+                style={
+                  tab.color
+                    ? ({ "--tab-color": tabColorValue(tab.color) } as CSSProperties)
+                    : undefined
+                }
                 onPointerDown={(e) => beginPotentialDrag(e, tab)}
                 onContextMenu={(e) => openMenu(e, tab)}
                 onClick={(e) => handleTabClick(tab.id, e.detail)}
                 onKeyDown={(e) => handleTabKeyDown(e, index)}
               >
-                <TerminalIcon size={14} className="tab-icon" />
-                {tab.color && (
-                  <span
-                    className="tab-color-dot"
-                    style={{ backgroundColor: tab.color }}
-                    aria-hidden="true"
-                  />
-                )}
+                <TabStatusIcon status={tab.status} />
+                {tab.color && <span className="tab-color-dot" aria-hidden="true" />}
                 {isEditing ? (
                   <input
                     type="text"
-                    className="text-input"
-                    style={{ height: "20px", fontSize: "11px", padding: "0 4px" }}
+                    className="text-input tab-rename-input"
                     value={editTitle}
                     autoFocus
                     maxLength={80}
@@ -486,7 +511,7 @@ export const TabBar: FC<TabBarProps> = ({
                       e.stopPropagation();
                       startEditing(tab);
                     }}
-                    title="Drag to reorder — double-click or right-click to rename"
+                    title={`${tab.title} (${STATUS_TEXT[tab.status]}). Drag to reorder; double-click or right-click to rename`}
                   >
                     {tab.title}
                   </span>
@@ -579,6 +604,7 @@ export const TabBar: FC<TabBarProps> = ({
                 className={`tab-color-swatch${!menuTab.color ? " selected" : ""}`}
                 title="Default (no color)"
                 aria-label="Default tab color"
+                aria-pressed={!menuTab.color}
                 onClick={() => {
                   onSetTabColor?.(menuTab.id, undefined);
                   setMenu(null);
@@ -589,9 +615,10 @@ export const TabBar: FC<TabBarProps> = ({
                   key={c}
                   type="button"
                   className={`tab-color-swatch${menuTab.color === c ? " selected" : ""}`}
-                  style={{ backgroundColor: c }}
-                  title={c}
-                  aria-label={`Tab color ${c}`}
+                  style={{ backgroundColor: tabColorValue(c) }}
+                  title={tabColorName(c)}
+                  aria-label={`Tab color ${tabColorName(c)}`}
+                  aria-pressed={menuTab.color === c}
                   onClick={() => {
                     onSetTabColor?.(menuTab.id, c);
                     setMenu(null);

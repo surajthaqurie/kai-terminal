@@ -2,6 +2,8 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import * as fs from "fs";
 import * as path from "path";
+import { getTheme, mixHex, THEME_IDS } from "../theme/registry";
+import { readStylesheet } from "./helpers/styles";
 import {
   DEFAULT_SETTINGS,
   PREVIOUS_DEFAULT_FONT_FAMILY,
@@ -15,26 +17,34 @@ import type { ThemeName } from "../types/terminal";
  * bundled instead of left to whatever each OS happens to have installed.
  */
 const ROOT = path.resolve(__dirname, "../..");
-const css = fs.readFileSync(path.join(ROOT, "src/App.css"), "utf8");
+const css = readStylesheet();
 
-const THEMES: ThemeName[] = [
-  "kai-dark",
-  "gruvbox-dark",
-  "catppuccin-mocha",
-  "tokyo-night",
-  "nord",
-  "dracula",
-  "solarized-dark",
-  "one-dark",
-  "rose-pine",
-];
+const THEMES: ThemeName[] = THEME_IDS.slice();
 
+/**
+ * A theme's effective chrome colours. Tab bar, status bar and tab states are
+ * aliases of the theme surfaces (`:root, [data-theme]` in the stylesheet), so
+ * they are resolved here the same way the browser resolves them.
+ */
 function themeVars(theme: ThemeName): Record<string, string> {
-  const m = new RegExp(`\\[data-theme="${theme}"\\]\\s*\\{([\\s\\S]*?)\\n\\}`).exec(css);
-  expect(m, `theme ${theme} block`).not.toBeNull();
-  const vars: Record<string, string> = {};
-  for (const v of m![1].matchAll(/--([a-z0-9-]+)\s*:\s*([^;]+);/g)) vars[v[1]] = v[2].trim();
-  return vars;
+  const c = getTheme(theme).chrome;
+  const alias = (name: string) => {
+    const m = new RegExp(`--${name}:\\s*var\\(--([a-z-]+)\\)`).exec(css);
+    expect(m, `--${name} alias`).not.toBeNull();
+    return c[m![1] as keyof typeof c];
+  };
+  expect(css).toContain(
+    "--bg-tab-hover: color-mix(in srgb, var(--text-primary) 8%, var(--bg-surface));"
+  );
+  return {
+    ...c,
+    "bg-tab-bar": alias("bg-tab-bar"),
+    "bg-statusbar": alias("bg-statusbar"),
+    "bg-tab-active": alias("bg-tab-active"),
+    "bg-tab-inactive": alias("bg-tab-inactive"),
+    // color-mix(in srgb, text-primary 8%, surface)
+    "bg-tab-hover": mixHex(c["text-primary"], c["bg-surface"], 0.08),
+  };
 }
 
 type RGB = [number, number, number];
@@ -81,11 +91,14 @@ describe("refined theme chrome", () => {
         expect(contrast(v["text-primary"], v["bg-tab-active"])).toBeGreaterThanOrEqual(4.5);
       });
 
-      it("separates the chrome from the terminal so the layers read as layers", () => {
+      it("layers the tab states: inactive and hover tabs differ from the active tab", () => {
         const lum = (k: string) => luminance(rgb(v[k]));
-        const [a, b] = [lum("bg-tab-bar"), lum("bg-tab-active")].sort((x, y) => y - x);
-        expect((a + 0.05) / (b + 0.05)).toBeGreaterThan(1.05);
-        expect(v["bg-tab-inactive"]).not.toBe(v["bg-tab-bar"]);
+        const ratio = (x: string, y: string) => {
+          const [a, b] = [lum(x), lum(y)].sort((p, q) => q - p);
+          return (a + 0.05) / (b + 0.05);
+        };
+        expect(v["bg-tab-inactive"]).not.toBe(v["bg-tab-active"]);
+        expect(ratio("bg-tab-hover", "bg-tab-active")).toBeGreaterThan(1.05);
       });
     });
   }

@@ -1,0 +1,49 @@
+/* <Dialog> panel. Header / body / footer reuse .modal-header, .modal-body, .modal-footer. */
+.dialog {
+  display: flex;
+  flex-direction: column;
+  width: 520px;
+  max-width: 92vw;
+  max-height: 92vh;
+  overflow: hidden;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-modal);
+}
+
+.dialog-title {
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+}
+
+/* Single-field dialogs (rename): tight header and body. */
+.dialog-compact {
+  width: 400px;
+}
+
+.dialog-compact .modal-header {
+  padding: 10px var(--space-3) 10px var(--space-4);
+}
+
+.dialog-compact .modal-body {
+  padding: var(--space-4);
+}
+
+.dialog-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+/* <IconButton> wraps its icon so the glyph is centred and hidden from AT. */
+.btn-icon-glyph {
+  display: inline-flex;
+}

@@ -1,0 +1,279 @@
+/* =========================================================================
+   Status Bar Footer
+   ========================================================================= */
+
+.status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  height: 26px;
+  min-height: 26px;
+  padding: 0 12px;
+  background-color: var(--bg-statusbar);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  flex: 0 0 auto;
+  user-select: none;
+  z-index: 20;
+}
+
+.status-left,
+.status-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.status-mode-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: var(--radius-xs);
+  background-color: var(--accent-subtle);
+  border: 1px solid var(--border-accent);
+  color: var(--accent-primary);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+}
+
+button.status-mode-pill {
+  cursor: pointer;
+  font-family: inherit;
+  transition:
+    opacity 0.15s ease,
+    background-color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+button.status-mode-pill:hover {
+  background-color: var(--accent-subtle);
+  border-color: var(--accent-primary);
+}
+
+.status-mode-pill.status-mode-terminal {
+  background-color: transparent;
+  border-color: transparent;
+  color: var(--text-secondary);
+}
+
+button.status-mode-pill.status-mode-terminal:hover {
+  background-color: var(--bg-surface-elevated);
+  color: var(--text-primary);
+}
+
+/* The mode pill opens the project in the editor; the caret picks which editor. */
+.status-mode-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.status-mode-caret {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 18px;
+  margin-left: 1px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-xs);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition:
+    background-color var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.status-mode-caret:hover,
+.status-mode-caret.is-open {
+  background-color: var(--bg-surface-elevated);
+  color: var(--text-primary);
+}
+
+.status-git-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.status-git-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-xs);
+  color: var(--color-success);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  padding: 2px 8px;
+  cursor: default;
+  max-width: 320px;
+}
+
+.status-git-btn.is-display {
+  cursor: default;
+}
+
+/* Clickable variant (renders as a real <button>): inherit the same look the
+ * display span had, reset native button chrome, and signal interactivity. */
+button.status-git-btn-clickable {
+  font-family: inherit;
+  font-size: inherit;
+  color: var(--color-success);
+  cursor: pointer;
+  transition:
+    background-color var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+button.status-git-btn-clickable:hover {
+  background-color: var(--state-hover);
+}
+
+button.status-git-btn-clickable:focus-visible {
+  outline: 1px solid var(--accent-ring);
+  outline-offset: 1px;
+}
+
+.status-git-branch {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 180px;
+}
+
+/* Clean = hollow ring, dirty = filled dot: the shape carries the state too. */
+.status-git-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  border: 1.5px solid var(--color-success);
+}
+
+.status-git-dot.dirty {
+  border-color: var(--color-warning);
+  background-color: var(--color-warning);
+}
+
+.status-git-repo {
+  font-weight: 400;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+.status-git-empty {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  border: 1px dashed var(--border-default);
+  border-radius: var(--radius-xs);
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+
+.status-right {
+  margin-left: auto;
+}
+
+.status-version {
+  font-family: var(--font-mono);
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+.status-update-available {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background-color: var(--color-warning-bg);
+  border: 1px solid var(--color-warning);
+  border-radius: var(--radius-xs);
+  color: var(--color-warning);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  padding: 2px 7px;
+  cursor: pointer;
+  font-family: var(--font-mono);
+  /* Explicit properties: never animate layout. */
+  transition-property: background-color, border-color, color, box-shadow, opacity, transform;
+  transition-duration: var(--duration-fast);
+  transition-timing-function: var(--ease-standard);
+}
+
+.status-update-available:hover {
+  background-color: var(--color-warning-bg);
+  border-color: var(--color-warning);
+  filter: brightness(1.15);
+}
+
+.status-check-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: var(--radius-xs);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Explicit properties: never animate layout. */
+  transition-property: background-color, border-color, color, box-shadow, opacity, transform;
+  transition-duration: var(--duration-fast);
+  transition-timing-function: var(--ease-standard);
+}
+
+.status-check-btn:hover:not(:disabled) {
+  color: var(--accent-primary);
+  background-color: var(--bg-surface-elevated);
+}
+
+.status-check-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Narrow windows (the window minimum is 400px): drop the least important
+   items first so the shell picker, mode and branch never clip.
+   Order: version -> music title -> repo name + art -> whole music mini. */
+@media (max-width: 760px) {
+  .status-bar .status-version,
+  .status-bar .music-mini-title {
+    display: none;
+  }
+}
+
+@media (max-width: 600px) {
+  .status-bar .status-git-repo,
+  .status-bar .music-mini-art {
+    display: none;
+  }
+
+  .status-bar .status-git-branch {
+    max-width: 96px;
+  }
+}
+
+@media (max-width: 480px) {
+  .status-bar .music-mini,
+  .status-bar .status-sep {
+    display: none;
+  }
+
+  .status-bar {
+    gap: var(--space-2);
+    padding: 0 var(--space-2);
+  }
+}

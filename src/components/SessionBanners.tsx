@@ -1,46 +1,4 @@
-import type { ReactNode } from "react";
-
-interface BannerProps {
-  role: "status" | "alert";
-  label: string;
-  text: string;
-  danger?: boolean;
-  children: ReactNode;
-}
-
-function Banner({ role, label, text, danger, children }: BannerProps) {
-  return (
-    <div
-      className="session-restore-banner"
-      role={role}
-      aria-label={label}
-      style={danger ? { borderColor: "var(--color-danger)" } : undefined}
-    >
-      <span className="session-restore-text">{text}</span>
-      <div className="session-restore-actions">{children}</div>
-    </div>
-  );
-}
-
-function BannerButton({
-  primary,
-  onClick,
-  children,
-}: {
-  primary?: boolean;
-  onClick: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      className={`btn ${primary ? "btn-primary" : "btn-secondary"} btn-small`}
-      onClick={onClick}
-    >
-      {children}
-    </button>
-  );
-}
+import { Banner, Button } from "./ui";
 
 interface SessionBannersProps {
   /** Number of tabs in a previous session offered for restore (0 = none). */
@@ -72,30 +30,57 @@ export function SessionBanners({
     <>
       {pendingRestoreCount > 0 && (
         <Banner
-          role="status"
+          tone="info"
           label="Restore previous session"
-          text={`Previous session found (${pendingRestoreCount} tab${
+          actions={
+            <>
+              <Button size="sm" variant="primary" onClick={onRestoreSession}>
+                Load session
+              </Button>
+              <Button size="sm" onClick={onDismissRestore}>
+                Start fresh
+              </Button>
+            </>
+          }
+        >
+          {`Previous session found (${pendingRestoreCount} tab${
             pendingRestoreCount === 1 ? "" : "s"
           }). Kai started fresh for a fast launch.`}
-        >
-          <BannerButton primary onClick={onRestoreSession}>
-            Load session
-          </BannerButton>
-          <BannerButton onClick={onDismissRestore}>Start fresh</BannerButton>
         </Banner>
       )}
       {paneNotice && (
-        <Banner role="status" label="Pane split unavailable" text={paneNotice}>
-          <BannerButton onClick={onDismissNotice}>Dismiss</BannerButton>
+        // Informational: the split was refused, nothing broke.
+        <Banner
+          tone="info"
+          label="Pane split unavailable"
+          actions={
+            <Button size="sm" onClick={onDismissNotice}>
+              Dismiss
+            </Button>
+          }
+        >
+          {paneNotice}
         </Banner>
       )}
       {faultMessage && (
-        <Banner role="alert" label="Shell keeps exiting" text={faultMessage} danger>
-          <BannerButton primary onClick={onRetryFault}>
-            Retry
-          </BannerButton>
-          <BannerButton onClick={onOpenSettings}>Open Settings</BannerButton>
-          <BannerButton onClick={onDismissFault}>Dismiss</BannerButton>
+        <Banner
+          tone="danger"
+          label="Shell keeps exiting"
+          actions={
+            <>
+              <Button size="sm" variant="primary" onClick={onRetryFault}>
+                Retry
+              </Button>
+              <Button size="sm" onClick={onOpenSettings}>
+                Open Settings
+              </Button>
+              <Button size="sm" onClick={onDismissFault}>
+                Dismiss
+              </Button>
+            </>
+          }
+        >
+          {faultMessage}
         </Banner>
       )}
     </>

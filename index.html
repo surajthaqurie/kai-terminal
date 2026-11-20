@@ -7,24 +7,38 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="Kai — Desktop terminal for Windows, Linux, and macOS with AI context intelligence, local MCP, and Git diff review." />
     <meta name="referrer" content="no-referrer-when-downgrade" />
-    <meta name="theme-color" content="#0b0d10" />
+    <meta name="theme-color" content="#0c0c0c" />
     <title>Kai — One Terminal. Every Platform.</title>
+    <!-- theme:first-paint:begin -->
     <style>
       /* Painted before any script or stylesheet loads, so the window never shows a
-         blank white frame while the app starts. The boot script below sets data-theme
-         from the saved settings; the colors match getThemeCanvasColor. */
-      html { background: #0b0d10; }
+         blank frame while the app starts. GENERATED from src/theme/registry.ts. */
+      html { background: #0c0c0c; }
+      html[data-theme="catppuccin-mocha"] { background: #181825; }
+      html[data-theme="tokyo-night"] { background: #16161e; }
+      html[data-theme="nord"] { background: #242933; }
       html[data-theme="one-dark"] { background: #1e2227; }
       html[data-theme="dracula"] { background: #1e1f29; }
-      html[data-theme="tokyo-night"] { background: #16161e; }
-      html[data-theme="catppuccin-mocha"] { background: #181825; }
-      html[data-theme="gruvbox-dark"] { background: #1e1e1e; }
-      html[data-theme="nord"] { background: #242933; }
       html[data-theme="solarized-dark"] { background: #00212b; }
+      html[data-theme="gruvbox-dark"] { background: #1e1e1e; }
       html[data-theme="rose-pine"] { background: #16141f; }
+      html[data-theme="kai-light"] { background: #eceef2; }
     </style>
     <script>
       (function () {
+        // Theme id -> [canvas colour, color-scheme]. GENERATED from src/theme/registry.ts.
+        var themes = {
+          "kai-dark": ["#0c0c0c", "dark"],
+          "catppuccin-mocha": ["#181825", "dark"],
+          "tokyo-night": ["#16161e", "dark"],
+          "nord": ["#242933", "dark"],
+          "one-dark": ["#1e2227", "dark"],
+          "dracula": ["#1e1f29", "dark"],
+          "solarized-dark": ["#00212b", "dark"],
+          "gruvbox-dark": ["#1e1e1e", "dark"],
+          "rose-pine": ["#16141f", "dark"],
+          "kai-light": ["#eceef2", "light"],
+        };
         try {
           var raw =
             localStorage.getItem("kai_user_settings") ||
@@ -32,23 +46,12 @@
           if (raw) {
             var s = JSON.parse(raw);
             if (s && s.theme) {
-              // A removed theme (e.g. "kali", "monokai", the light themes) falls back to the default.
-              var colors = {
-                "kai-dark": "#0b0d10",
-                "gruvbox-dark": "#1e1e1e",
-                "catppuccin-mocha": "#181825",
-                "tokyo-night": "#16161e",
-                nord: "#242933",
-                dracula: "#1e1f29",
-                "solarized-dark": "#00212b",
-                "one-dark": "#1e2227",
-                "rose-pine": "#16141f",
-              };
-              var theme = colors.hasOwnProperty(s.theme) ? s.theme : "kai-dark";
+              // A removed theme (e.g. "kali") falls back to the default.
+              var theme = themes.hasOwnProperty(s.theme) ? s.theme : "kai-dark";
               document.documentElement.setAttribute("data-theme", theme);
-              document.documentElement.style.colorScheme = "dark";
+              document.documentElement.style.colorScheme = themes[theme][1];
               var m = document.querySelector('meta[name="theme-color"]');
-              if (m) m.setAttribute("content", colors[theme]);
+              if (m) m.setAttribute("content", themes[theme][0]);
             }
             // See-through window (Windows / Linux desktop app): apply the saved
             // opacity before first paint so the chrome never flashes opaque.
@@ -65,6 +68,7 @@
         } catch (_) {}
       })();
     </script>
+    <!-- theme:first-paint:end -->
   </head>
   <body>
     <div id="root"></div>

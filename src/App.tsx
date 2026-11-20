@@ -45,7 +45,6 @@ import { resolveEffectiveProjectDir } from "./services/projectService";
 import { isMacPlatform, musicShortcutHints, platformLabel } from "./services/shortcuts";
 import { RELEASES_PAGE_URL } from "./services/updateService";
 import type { ShellProfile, SplitDirection, TerminalTab } from "./types/terminal";
-import "./App.css";
 
 /**
  * Application shell: wires the feature hooks (tabs, session lifecycle, git /

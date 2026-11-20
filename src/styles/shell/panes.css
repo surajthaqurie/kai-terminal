@@ -1,0 +1,209 @@
+/* =========================================================================
+   Split Pane Layout
+   ========================================================================= */
+
+.pane-container-none {
+  width: 100%;
+  height: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+.pane-item {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0%;
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+}
+
+/* The active-pane ring is an overlay, not a border: a real (even transparent)
+ * border insets the terminal by 1px on every side, and the darker `--bg-canvas`
+ * behind it showed as a visible gap against the header and footer. */
+.pane-item::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 1px solid transparent;
+  pointer-events: none;
+  z-index: 5;
+  transition: border-color var(--transition-fast);
+}
+
+/* Only a split has more than one place input can go, so only a split shows
+ * which pane is active. A lone pane gets no frame (it framed the whole window). */
+.pane-grid[data-split="true"] .pane-item.active-pane::after {
+  border-color: var(--pane-ring-active);
+}
+
+/* Inactive panes in a split recede under a light veil of the canvas colour,
+ * so the pane that takes input stands out without any glow. The active pane is
+ * never dimmed. Pointer events pass through: clicking a dimmed pane focuses it. */
+.pane-grid[data-split="true"] .pane-item:not(.active-pane)::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--pane-inactive-dim);
+  pointer-events: none;
+  z-index: 4;
+}
+
+/* Split-only header: which folder each pane is in (live from OSC 7), so a
+ * split no longer depends on the status bar, which shows the active pane only. */
+.pane-label {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  font-size: var(--text-xs);
+  line-height: 1;
+  color: var(--text-tertiary);
+  background-color: var(--bg-surface);
+  border-bottom: 1px solid var(--border-subtle);
+  user-select: none;
+}
+
+.pane-label-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pane-item.active-pane .pane-label {
+  color: var(--text-primary);
+}
+
+/* Split Pane Divider: `--border-strong` (not `--border-subtle`) so the seam
+ * between two same-background terminals stays visible in every theme. The old
+ * 8%-white subtle token composited to ~1.3:1 on dark terminals (kai-dark) — the
+ * "split border is invisible" report. `--border-strong` adapts per theme
+ * (an opaque colour in every theme); hover/active stay accent.
+ * Locked by the pane-divider contrast test for every theme in the registry. */
+.pane-divider {
+  position: relative;
+  background-color: var(--border-strong);
+  flex: 0 0 1px;
+  z-index: 10;
+  user-select: none;
+  touch-action: none;
+  transition: background-color var(--transition-fast);
+}
+
+/* Divider naming follows the SPLIT direction (not the bar orientation):
+ * a "vertical" split lays panes side-by-side, so its divider is a vertical
+ * bar (col-resize); a "horizontal" split stacks panes, so its divider is a
+ * horizontal bar (row-resize). These were swapped, which also broke the
+ * drag axis affordance. */
+.pane-divider-vertical {
+  cursor: col-resize;
+  width: 1px;
+}
+
+.pane-divider-horizontal {
+  cursor: row-resize;
+  height: 1px;
+}
+
+/* Invisible generous hit area for effortless grabbing */
+.pane-divider-vertical::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  right: -4px;
+  z-index: 11;
+}
+
+.pane-divider-horizontal::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -4px;
+  bottom: -4px;
+  z-index: 11;
+}
+
+.pane-divider:hover,
+.pane-divider:active {
+  background-color: var(--accent-primary);
+}
+
+/* Flat-grid rendering (no-remount splits): panes and dividers are direct,
+ * absolutely-positioned children of the tab container with stable React keys,
+ * so splitting/closing/dragging never reparents a live xterm. Higher
+ * specificity than `.pane-item`/`.pane-divider` (which keep border, cursor,
+ * and hit-area styling) guarantees the override wins regardless of order.
+ * Divider lanes overlay the exact pane seams: the 1px visual bar is centered
+ * on the seam via translate, while the generous ::after hit area is kept. */
+.pane-grid {
+  position: relative;
+}
+.pane-grid .pane-grid-pane {
+  position: absolute;
+  /* The active pane's 1px border must paint INSIDE its fractional rect
+   * (default content-box would add 2px outside the % width/height, pushing
+   * the pane 1px over its neighbor and the divider off the true seam). */
+  box-sizing: border-box;
+}
+.pane-grid .pane-divider-abs {
+  position: absolute;
+}
+.pane-grid .pane-divider-abs.pane-divider-vertical {
+  transform: translateX(-50%);
+}
+.pane-grid .pane-divider-abs.pane-divider-horizontal {
+  transform: translateY(-50%);
+}
+
+/* Shell launch failure, inside the pane: theme danger tokens, one place. */
+.terminal-launch-error {
+  position: absolute;
+  inset: auto 12px 12px 12px;
+  z-index: var(--z-overlay-in-pane);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background-color: var(--bg-surface-elevated);
+  border: 1px solid var(--border-default);
+  border-left: 3px solid var(--color-danger);
+  box-shadow: var(--shadow-md);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+}
+
+.terminal-launch-error-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.terminal-launch-error-title {
+  color: var(--color-danger);
+  font-weight: 600;
+}
+
+.terminal-launch-error-detail {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-launch-error-tip {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}

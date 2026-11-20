@@ -1,0 +1,48 @@
+/* GENERATED from src/theme/registry.ts by `npm run themes:generate`. Do not edit. */
+
+/* Catppuccin Mocha */
+[data-theme="catppuccin-mocha"] {
+  color-scheme: dark;
+
+  --bg-canvas: #181825;
+  --bg-header: #11111b;
+  --bg-surface: #1e1e2e;
+  --bg-surface-elevated: #28283d;
+  --bg-surface-sunken: #11111b;
+  --bg-overlay: rgba(17, 17, 27, 0.82);
+  --border-subtle: rgba(205, 214, 244, 0.1);
+  --border-default: rgba(205, 214, 244, 0.18);
+  --border-strong: #45475a;
+  --border-accent: rgba(137, 180, 250, 0.45);
+  --text-primary: #cdd6f4;
+  --text-secondary: #aeb5d1;
+  --text-tertiary: #989db6;
+  --text-inverse: #11111b;
+  --accent-primary: #89b4fa;
+  --accent-hover: #b4befe;
+  --accent-subtle: rgba(137, 180, 250, 0.15);
+  --accent-glow: rgba(137, 180, 250, 0.35);
+  --accent-ring: rgba(137, 180, 250, 0.5);
+  --color-success: #a6e3a1;
+  --color-success-bg: rgba(166, 227, 161, 0.12);
+  --color-warning: #f9e2af;
+  --color-warning-bg: rgba(249, 226, 175, 0.14);
+  --color-danger: #f38ba8;
+  --color-danger-bg: rgba(243, 139, 168, 0.15);
+  --color-purple: #cba6f7;
+  --color-purple-bg: rgba(203, 166, 247, 0.15);
+  --scroll-track: #11111b;
+  --scroll-thumb: #313244;
+  --scroll-thumb-hover: #45475a;
+
+  --tab-color-blue: #89b4fa;
+  --tab-color-green: #a6e3a1;
+  --tab-color-yellow: #f9e2af;
+  --tab-color-red: #f38ba8;
+  --tab-color-purple: #cba6f7;
+  --tab-color-teal: #94e2d5;
+  --tab-color-orange: #fab387;
+  --tab-color-gray: #6c7086;
+
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23a6adc8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+}

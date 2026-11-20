@@ -68,13 +68,13 @@ describe("SettingsService", () => {
       expect(canvasColor.startsWith("#")).toBe(true);
     }
     expect(SettingsService.getThemeCanvasColor("rose-pine")).toBe("#16141f");
-    expect(SettingsService.getThemeCanvasColor("kai-dark")).toBe("#0b0d10");
+    expect(SettingsService.getThemeCanvasColor("kai-dark")).toBe("#0c0c0c");
   });
 
   it("should default to the Kai Dark theme", () => {
     expect(DEFAULT_SETTINGS.theme).toBe("kai-dark");
     const kai = SettingsService.getThemeColors("kai-dark");
-    expect(kai.background).toBe("#0f1115");
+    expect(kai.background).toBe("#0c0c0c");
     expect(kai.foreground).toBeDefined();
     expect(kai.cursor).toBeDefined();
   });

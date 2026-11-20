@@ -17,7 +17,7 @@ export function windowTransparencySupported(): boolean {
 
 /**
  * Drives the see-through chrome from the "Terminal Background Opacity"
- * setting. `--win-alpha` feeds the `.win-translucent` rules in App.css (header,
+ * setting. `--win-alpha` feeds the `.win-translucent` rules in styles/features/translucency.css (header,
  * tabs, footer, canvas); the terminal background itself is repainted by xterm
  * from the same value (`SettingsService.getThemeColors`).
  */

@@ -1,0 +1,48 @@
+/* GENERATED from src/theme/registry.ts by `npm run themes:generate`. Do not edit. */
+
+/* Tokyo Night */
+[data-theme="tokyo-night"] {
+  color-scheme: dark;
+
+  --bg-canvas: #16161e;
+  --bg-header: #13141c;
+  --bg-surface: #1a1b26;
+  --bg-surface-elevated: #24283b;
+  --bg-surface-sunken: #13141c;
+  --bg-overlay: rgba(19, 20, 28, 0.82);
+  --border-subtle: rgba(192, 202, 245, 0.1);
+  --border-default: rgba(192, 202, 245, 0.18);
+  --border-strong: #414868;
+  --border-accent: rgba(122, 162, 247, 0.45);
+  --text-primary: #c0caf5;
+  --text-secondary: #a2acd6;
+  --text-tertiary: #8e98c2;
+  --text-inverse: #15161e;
+  --accent-primary: #7aa2f7;
+  --accent-hover: #89ddff;
+  --accent-subtle: rgba(122, 162, 247, 0.15);
+  --accent-glow: rgba(122, 162, 247, 0.35);
+  --accent-ring: rgba(122, 162, 247, 0.5);
+  --color-success: #9ece6a;
+  --color-success-bg: rgba(158, 206, 106, 0.12);
+  --color-warning: #e0af68;
+  --color-warning-bg: rgba(224, 175, 104, 0.14);
+  --color-danger: #f7768e;
+  --color-danger-bg: rgba(247, 118, 142, 0.11);
+  --color-purple: #bb9af7;
+  --color-purple-bg: rgba(187, 154, 247, 0.15);
+  --scroll-track: #13141c;
+  --scroll-thumb: #292e42;
+  --scroll-thumb-hover: #414868;
+
+  --tab-color-blue: #7aa2f7;
+  --tab-color-green: #9ece6a;
+  --tab-color-yellow: #e0af68;
+  --tab-color-red: #f7768e;
+  --tab-color-purple: #bb9af7;
+  --tab-color-teal: #7dcfff;
+  --tab-color-orange: #ff9e64;
+  --tab-color-gray: #565f89;
+
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23a9b1d6' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+}

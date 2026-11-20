@@ -64,6 +64,7 @@ export const DiagnosticsModal: FC<DiagnosticsModalProps> = ({ isOpen, onClose, l
       className="modal-backdrop"
       onClick={onClose}
       role="dialog"
+      aria-modal="true"
       aria-label="Diagnostics and recovery"
     >
       <div

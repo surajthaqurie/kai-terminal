@@ -1,0 +1,71 @@
+/* =========================================================================
+   Kai Terminal — primitive tokens (theme-agnostic scales)
+   Theme colours: src/styles/themes/ (generated from src/theme/registry.ts).
+   Derived semantic aliases: tokens/semantic.css. Conventions: docs/DESIGN_SYSTEM.md.
+   ========================================================================= */
+:root {
+  /* ——— Typography Scale ——— */
+  --font-sans:
+    "Inter Variable", "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono:
+    "JetBrains Mono Variable", "JetBrains Mono", "Fira Code", "DejaVu Sans Mono", ui-monospace,
+    SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  /* 11px is the floor for UI text. --text-micro is reserved for dense
+     counters and badges inside the music player and integration chips. */
+  --text-micro: 10px;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-base: 13px;
+  --text-md: 14px;
+  --text-lg: 16px;
+  --text-xl: 18px;
+
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+
+  --leading-normal: 1.45;
+
+  /* ——— Spacing: 4px grid (6px for compact controls). Add steps when a rule needs them. ——— */
+  --space-1: 4px;
+  --space-1-5: 6px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+
+  /* ——— Control sizes (one place for hit targets) ——— */
+  --control-h-sm: 24px;
+  --control-h-md: 28px;
+
+  /* ——— Global layers. Values below 100 are local stacking inside one
+     component and stay literal; everything that floats over the app is here. */
+  --z-overlay-in-pane: 100; /* search bar, launch error */
+  --z-drawer: 900; /* music drawer (closed) */
+  --z-modal: 1000; /* dialogs */
+  --z-menu: 1200; /* context menus over dialogs */
+  --z-pinned: 2100; /* open / pinned music player, above dialogs */
+  --z-toast: 2200; /* toasts and popovers above everything */
+
+  /* ——— Terminal ——— */
+  --terminal-padding-x: 6px;
+  --terminal-padding-y: 4px;
+
+  /* ——— Radii Scale ——— */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-full: 9999px;
+
+  /* ——— Elevation & Shadows ——— */
+  --shadow-md: 0 6px 18px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 12px 36px rgba(0, 0, 0, 0.55);
+  --shadow-modal: 0 24px 64px -10px rgba(0, 0, 0, 0.75), 0 0 0 1px var(--border-subtle);
+
+  /* ——— Transitions ——— */
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --duration-fast: 140ms;
+  --transition-fast: var(--duration-fast) var(--ease-standard);
+}

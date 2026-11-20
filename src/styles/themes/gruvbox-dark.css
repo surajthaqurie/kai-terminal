@@ -1,0 +1,48 @@
+/* GENERATED from src/theme/registry.ts by `npm run themes:generate`. Do not edit. */
+
+/* Gruvbox Dark */
+[data-theme="gruvbox-dark"] {
+  color-scheme: dark;
+
+  --bg-canvas: #1e1e1e;
+  --bg-header: #212121;
+  --bg-surface: #282828;
+  --bg-surface-elevated: #373737;
+  --bg-surface-sunken: #202020;
+  --bg-overlay: rgba(32, 32, 32, 0.82);
+  --border-subtle: rgba(235, 219, 178, 0.1);
+  --border-default: rgba(235, 219, 178, 0.18);
+  --border-strong: #534f46;
+  --border-accent: rgba(250, 189, 47, 0.45);
+  --text-primary: #ebdbb2;
+  --text-secondary: #d4c6a1;
+  --text-tertiary: #aba187;
+  --text-inverse: #1e1e1e;
+  --accent-primary: #fabd2f;
+  --accent-hover: #fbc954;
+  --accent-subtle: rgba(250, 189, 47, 0.15);
+  --accent-glow: rgba(250, 189, 47, 0.35);
+  --accent-ring: rgba(250, 189, 47, 0.5);
+  --color-success: #b8bb26;
+  --color-success-bg: rgba(184, 187, 38, 0.11);
+  --color-warning: #fabd2f;
+  --color-warning-bg: rgba(250, 189, 47, 0.14);
+  --color-danger: #fc8d7f;
+  --color-danger-bg: rgba(252, 131, 117, 0.08);
+  --color-purple: #d89daf;
+  --color-purple-bg: rgba(216, 149, 167, 0.08);
+  --scroll-track: #1e1e1e;
+  --scroll-thumb: #4f4c44;
+  --scroll-thumb-hover: #6c6758;
+
+  --tab-color-blue: #458588;
+  --tab-color-green: #98971a;
+  --tab-color-yellow: #d79921;
+  --tab-color-red: #cc241d;
+  --tab-color-purple: #b16286;
+  --tab-color-teal: #689d6a;
+  --tab-color-orange: #fe8019;
+  --tab-color-gray: #928374;
+
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23baae90' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+}

@@ -36,6 +36,9 @@ import {
 } from "../services/shortcuts";
 import { ShellProfile, SessionStatus, UserSettings } from "../types/terminal";
 import { SettingsService, DEFAULT_SETTINGS } from "../services/settingsService";
+import { getTheme, searchDecorations } from "../theme/registry";
+import { detectHostOs, launchFailureTip } from "./launchFailure";
+import type { SearchResults, SearchOptions } from "./SearchBar";
 import { loadCommandHistory, recordCommand, saveCommandHistory } from "../services/autocomplete";
 import { TerminalOutputBuffer } from "../services/terminalOutputBuffer";
 import { readAttachmentPasteText, readPasteContent } from "../services/clipboardService";
@@ -224,6 +227,8 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
     // offers Retry (re-spawn) so a bad shell binary / cwd never leaves the
     // user staring at a dead pane with "use the + button" as the only fix.
     const [launchError, setLaunchError] = useState<string | null>(null);
+    // Match count from the search addon's own result event (null: no search yet).
+    const [searchResults, setSearchResults] = useState<SearchResults | null>(null);
 
     // ---- Command line tracking & history ---------------------------------
     // Native Kali/Linux terminal autocompletion (ZSH autosuggestions, compinit,
@@ -529,10 +534,8 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         if (mySeq !== initSeqRef.current) return;
         const errorMsg = err instanceof Error ? err.message : String(err);
         setLaunchError(errorMsg);
-        term.writeln(`\r\n\x1b[31m[Failed to launch shell: ${errorMsg}]\x1b[0m\r\n`);
-        term.writeln(
-          `\x1b[33m[Tip: if this persists, check your PowerShell profile or pick Command Prompt as the default shell in Settings.]\x1b[0m\r\n`
-        );
+        // One dim line in the scrollback; the details and Retry live in the overlay.
+        term.writeln(`\r\n\x1b[2m[Shell failed to start]\x1b[0m`);
         onStatusRef.current?.("error", errorMsg);
       } finally {
         // A newer spawn owns the flag (and the buffer) once it has started.
@@ -568,6 +571,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
 
       term.options.fontFamily = settings.fontFamily;
       term.options.fontSize = settings.fontSize;
+      term.options.lineHeight = settings.lineHeight ?? DEFAULT_SETTINGS.lineHeight;
       term.options.cursorBlink = settings.cursorBlink;
       term.options.cursorStyle = settings.cursorStyle || "block";
       term.options.scrollback = settings.scrollback;
@@ -622,7 +626,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         cursorStyle: settings.cursorStyle || "block",
         fontFamily: settings.fontFamily,
         fontSize: settings.fontSize,
-        lineHeight: 1.2,
+        lineHeight: settings.lineHeight ?? DEFAULT_SETTINGS.lineHeight,
         scrollback: settings.scrollback,
         allowProposedApi: true,
         convertEol: false, // Do not modify raw line endings from PTY
@@ -725,6 +729,11 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       xtermRef.current = term;
       fitAddonRef.current = fitAddon;
       searchAddonRef.current = searchAddon;
+      // Fires after every find (decorations must be on): "3 of 17" / "No results".
+      // resultIndex is -1 when the match count passes the highlight limit.
+      searchAddon.onDidChangeResults(({ resultIndex, resultCount }) =>
+        setSearchResults({ index: resultIndex, count: resultCount })
+      );
 
       // 2. Custom key event handler: universal copy/paste across
       // Windows / Linux / macOS + search toggle.
@@ -1362,38 +1371,32 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [visible]);
 
-    const handleSearch = (
-      term: string,
-      options: { caseSensitive: boolean; wholeWord: boolean; regex: boolean }
-    ) => {
+    const findOptions = (options: SearchOptions) => ({
+      ...options,
+      decorations: searchDecorations(getTheme(settings.theme)),
+    });
+
+    const handleSearch = (term: string, options: SearchOptions) => {
       if (!term) {
         searchAddonRef.current?.clearDecorations();
+        setSearchResults(null);
         return;
       }
-      searchAddonRef.current?.findNext(term, options);
+      searchAddonRef.current?.findNext(term, { ...findOptions(options), incremental: true });
     };
 
-    const handleSearchNext = (
-      term: string,
-      options: { caseSensitive: boolean; wholeWord: boolean; regex: boolean }
-    ) => {
-      if (term) {
-        searchAddonRef.current?.findNext(term, options);
-      }
+    const handleSearchNext = (term: string, options: SearchOptions) => {
+      if (term) searchAddonRef.current?.findNext(term, findOptions(options));
     };
 
-    const handleSearchPrevious = (
-      term: string,
-      options: { caseSensitive: boolean; wholeWord: boolean; regex: boolean }
-    ) => {
-      if (term) {
-        searchAddonRef.current?.findPrevious(term, options);
-      }
+    const handleSearchPrevious = (term: string, options: SearchOptions) => {
+      if (term) searchAddonRef.current?.findPrevious(term, findOptions(options));
     };
 
     const handleCloseSearch = () => {
       setIsSearchVisible(false);
       searchAddonRef.current?.clearDecorations();
+      setSearchResults(null);
       xtermRef.current?.focus();
     };
 
@@ -1408,6 +1411,9 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
             settings.opacity ?? 1.0
           ),
           position: "relative",
+          // Read by `.terminal-xterm-host .xterm`; the fit addon subtracts it.
+          ["--terminal-padding-x" as string]: `${settings.terminalPaddingX ?? DEFAULT_SETTINGS.terminalPaddingX}px`,
+          ["--terminal-padding-y" as string]: `${settings.terminalPaddingY ?? DEFAULT_SETTINGS.terminalPaddingY}px`,
         }}
       >
         {isSearchVisible && (
@@ -1417,6 +1423,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
               onSearchNext={handleSearchNext}
               onSearchPrevious={handleSearchPrevious}
               onClose={handleCloseSearch}
+              results={searchResults}
             />
           </Suspense>
         )}
@@ -1427,29 +1434,14 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
           aria-label="Terminal output"
         />
         {launchError && (
-          <div
-            className="terminal-launch-error"
-            role="alert"
-            aria-label="Terminal failed to start"
-            style={{
-              position: "absolute",
-              inset: "auto 12px 12px 12px",
-              padding: "10px 12px",
-              borderRadius: 8,
-              background: "rgba(20, 8, 8, 0.92)",
-              border: "1px solid #f38ba8",
-              color: "#f5e0e8",
-              fontSize: 12,
-              display: "flex",
-              gap: 10,
-              alignItems: "center",
-              justifyContent: "space-between",
-            }}
-          >
-            <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
-              Shell failed to start: {launchError} — check Settings → Shell or pick another profile,
-              then retry.
-            </span>
+          <div className="terminal-launch-error" role="alert" aria-label="Terminal failed to start">
+            <div className="terminal-launch-error-text">
+              <strong className="terminal-launch-error-title">Shell failed to start</strong>
+              <span className="terminal-launch-error-detail" title={launchError}>
+                {launchError}
+              </span>
+              <span className="terminal-launch-error-tip">{launchFailureTip(detectHostOs())}</span>
+            </div>
             <button
               type="button"
               className="btn btn-primary btn-small"

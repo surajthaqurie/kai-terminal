@@ -1,0 +1,141 @@
+/* =========================================================================
+   Command Palette
+   ========================================================================= */
+
+.command-palette-modal {
+  width: 560px;
+  max-width: 92vw;
+  background-color: var(--bg-surface-elevated);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-modal);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  animation: scaleIn var(--transition-fast);
+}
+
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.palette-input-wrapper {
+  display: flex;
+  align-items: center;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border-subtle);
+  gap: 12px;
+  background-color: var(--bg-surface-sunken);
+}
+
+/* The palette input drops its own outline; the field row shows focus instead. */
+.palette-input-wrapper:focus-within {
+  box-shadow: inset 0 -2px 0 var(--accent-primary);
+}
+
+.palette-search-icon {
+  color: var(--accent-primary);
+  flex: 0 0 auto;
+}
+
+.palette-input {
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  font-size: var(--text-md);
+  width: 100%;
+  outline: none;
+}
+
+.palette-input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.palette-list {
+  max-height: 340px;
+  overflow-y: auto;
+  padding: 8px;
+  background-color: var(--bg-surface);
+}
+
+.palette-empty {
+  padding: 28px;
+  text-align: center;
+  color: var(--text-tertiary);
+  font-size: var(--text-base);
+}
+
+.palette-item {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  gap: 12px;
+  cursor: pointer;
+  transition: background-color var(--transition-fast);
+}
+
+/* Pointer movement moves the selection, so one style covers both: the accent
+   tint plus a stripe (a shape cue, not only a colour). Primary text stays. */
+.palette-item.selected {
+  background-color: var(--accent-subtle);
+  box-shadow: inset 2px 0 0 var(--accent-primary);
+}
+
+/* Recently used commands end with a hairline before the full list. */
+.palette-item-last-recent {
+  margin-bottom: 4px;
+  box-shadow: 0 1px 0 var(--border-subtle);
+}
+
+.palette-item-last-recent.selected {
+  box-shadow:
+    inset 2px 0 0 var(--accent-primary),
+    0 1px 0 var(--border-subtle);
+}
+
+.palette-item-icon {
+  color: var(--accent-primary);
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.palette-item-details {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.palette-item-label {
+  font-size: var(--text-base);
+  color: var(--text-primary);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.palette-item-category {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+.palette-shortcut {
+  background-color: var(--bg-surface-sunken);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-xs);
+  padding: 2px 7px;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  box-shadow: 0 1px 0 var(--border-default);
+}

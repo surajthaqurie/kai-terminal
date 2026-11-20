@@ -1,7 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { Download, Github, Menu, Moon, Sun, Terminal, X } from 'lucide-react';
+import { Download, Github, Menu, Moon, Sun, X } from 'lucide-react';
+import { BrandMark } from './BrandMark';
 import { useTheme } from '../theme/ThemeContext';
 import { useRepoStars } from '../hooks/useRepo';
 import { Link } from '../router';
@@ -40,9 +41,7 @@ export function SiteHeader({ version }: { version: string }) {
     <header className="t-header">
       <div className="t-header-inner" style={{ position: 'relative' }}>
         <Link to="/" className="t-brand" aria-label="Kai home" onClick={() => setOpen(false)}>
-          <div className="t-brand-mark">
-            <Terminal size={22} color="#22d3ee" />
-          </div>
+          <BrandMark size={36} className="t-brand-mark" />
           <div>
             <span className="t-brand-name">kai</span>
             <span className="t-version">{version}</span>

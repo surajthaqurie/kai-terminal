@@ -163,13 +163,7 @@ code, kbd, samp, pre { overflow-wrap: anywhere; word-break: break-word; }
 }
 .t-header-inner { max-width: 1200px; margin: 0 auto; padding: 1rem 1.5rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
 .t-brand { display: flex; align-items: center; gap: 0.75rem; text-decoration: none; }
-.t-brand-mark {
-  width: 38px; height: 38px; border-radius: 10px;
-  background-color: #0d1117;
-  border: 1px solid var(--border);
-  display: flex; align-items: center; justify-content: center;
-  flex-shrink: 0;
-}
+.t-brand-mark { display: block; flex-shrink: 0; }
 .t-brand-name { font-size: 1.3rem; font-weight: 800; letter-spacing: -0.02em; color: var(--text-primary); }
 .t-version {
   margin-left: 0.4rem; font-size: 0.75rem; font-weight: 700; font-variant-numeric: tabular-nums;

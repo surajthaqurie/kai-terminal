@@ -134,7 +134,13 @@ export const WorkspaceModal: FC<WorkspaceModalProps> = ({
   };
 
   return (
-    <div className="modal-backdrop" onClick={onClose} role="dialog" aria-label="Named Workspaces">
+    <div
+      className="modal-backdrop"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Named Workspaces"
+    >
       <div
         className="settings-modal"
         ref={dialogRef}
@@ -148,14 +154,14 @@ export const WorkspaceModal: FC<WorkspaceModalProps> = ({
           </button>
         </div>
 
-        <div className="modal-body" style={{ maxHeight: "65vh", overflowY: "auto" }}>
+        <div className="modal-body workspace-modal-body">
           <p className="muted-text">
             Workspaces save your active session tab layout, project working directories, and split
             panes. Keystrokes, scrollback history, and credentials are <strong>never</strong>{" "}
             persisted.
           </p>
 
-          <div className="setting-row" style={{ margin: "8px 0" }}>
+          <div className="setting-row workspace-name-row">
             <input
               type="text"
               className="text-input modal-input"
@@ -180,7 +186,7 @@ export const WorkspaceModal: FC<WorkspaceModalProps> = ({
             </p>
           )}
 
-          <div className="setting-field" style={{ marginTop: "12px" }}>
+          <div className="setting-field mt-3">
             <label>Saved Workspaces ({workspaces.length})</label>
             {workspaces.length === 0 ? (
               <p className="muted-text">No saved workspaces yet.</p>
@@ -190,7 +196,7 @@ export const WorkspaceModal: FC<WorkspaceModalProps> = ({
                   <div key={ws.id} className="workspace-card">
                     <div className="workspace-info">
                       {editingId === ws.id ? (
-                        <div style={{ display: "flex", gap: "6px" }}>
+                        <div className="row workspace-rename-row">
                           <input
                             type="text"
                             className="text-input modal-input"
@@ -249,10 +255,7 @@ export const WorkspaceModal: FC<WorkspaceModalProps> = ({
             )}
           </div>
 
-          <div
-            className="setting-field"
-            style={{ borderTop: "1px solid var(--border-default)", paddingTop: "12px" }}
-          >
+          <div className="setting-field section-divider">
             <label>Create New Empty Workspace</label>
             <div className="setting-row">
               <input

@@ -4,9 +4,9 @@ import {
   DEFAULT_SETTINGS,
   PREVIOUS_DEFAULT_FONT_FAMILY,
   SettingsService,
-  isLightTheme,
 } from "../services/settingsService";
 import { applyWindowOpacity } from "../services/windowOpacity";
+import { applyThemeToDocument } from "../theme/applyTheme";
 import { pickDefaultShell } from "../services/paneShell";
 import { withSkipProfileArgs } from "../services/shellArgs";
 import { zoomedFontSize } from "../services/shortcuts";
@@ -68,15 +68,7 @@ export function useTerminalConfig({
 
   // Synchronize active theme to documentElement, body, color-scheme, and theme-color meta
   useEffect(() => {
-    document.documentElement.setAttribute("data-theme", userSettings.theme);
-    document.body.setAttribute("data-theme", userSettings.theme);
-    document.documentElement.style.colorScheme = isLightTheme(userSettings.theme)
-      ? "light"
-      : "dark";
-    const meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) {
-      meta.setAttribute("content", SettingsService.getThemeCanvasColor(userSettings.theme));
-    }
+    applyThemeToDocument(userSettings.theme);
   }, [userSettings.theme]);
 
   // See-through window: the same opacity that tints the terminal background

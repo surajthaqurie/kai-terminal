@@ -294,7 +294,9 @@ export const StatusBar: FC<StatusBarProps> = ({
   }
 
   return (
-    <footer className="status-bar" role="status" aria-label="Application status bar">
+    // Not a live region: music titles and git refreshes would be read out
+    // constantly. Update results are announced by their own toast / notice.
+    <footer className="status-bar" aria-label="Application status bar">
       <div className="status-left">
         {onChangeShell && (
           <>
@@ -366,9 +368,7 @@ export const StatusBar: FC<StatusBarProps> = ({
                   className={`status-git-dot${gitDirty ? " dirty" : ""}`}
                   title={gitDirty ? "Uncommitted changes" : "Clean"}
                   aria-hidden="true"
-                >
-                  ●
-                </span>
+                />
                 {repoName && <span className="status-git-repo">({repoName})</span>}
               </button>
             ) : (
@@ -386,9 +386,7 @@ export const StatusBar: FC<StatusBarProps> = ({
                   className={`status-git-dot${gitDirty ? " dirty" : ""}`}
                   title={gitDirty ? "Uncommitted changes" : "Clean"}
                   aria-hidden="true"
-                >
-                  ●
-                </span>
+                />
                 {repoName && <span className="status-git-repo">({repoName})</span>}
               </span>
             )}

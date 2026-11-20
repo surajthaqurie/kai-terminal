@@ -8,7 +8,15 @@ import {
   CursorStyle,
   KeybindingsConfig,
 } from "../types/terminal";
-import { DEFAULT_SETTINGS, SettingsService, isLightTheme } from "../services/settingsService";
+import {
+  DEFAULT_SETTINGS,
+  SettingsService,
+  TERMINAL_LAYOUT_DEFAULTS,
+  TERMINAL_LAYOUT_LIMITS,
+} from "../services/settingsService";
+import { DEFAULT_THEME_ID, THEMES, themePreview } from "../theme/registry";
+import { applyThemeToDocument } from "../theme/applyTheme";
+import { Badge } from "./ui";
 import {
   SHORTCUT_ACTION_LABELS,
   FIXED_ACTION_LABELS,
@@ -110,29 +118,20 @@ export const FONT_PRESETS = [
 const BUNDLED_FONT_INDEX = 0;
 const SYSTEM_FONT_INDEX = 2;
 
+/** Appearance swatches, derived from the theme registry (they cannot drift from the theme). */
 export const THEME_OPTIONS: Array<{
   id: ThemeName;
   name: string;
   bg: string;
   fg: string;
   accent: string;
-}> = [
-  { id: "kai-dark", name: "Kai Dark (Default)", bg: "#0f1115", fg: "#d9dce3", accent: "#22d3ee" },
-  { id: "gruvbox-dark", name: "Gruvbox Dark", bg: "#282828", fg: "#ebdbb2", accent: "#fabd2f" },
-  {
-    id: "catppuccin-mocha",
-    name: "Catppuccin Mocha",
-    bg: "#1e1e2e",
-    fg: "#cdd6f4",
-    accent: "#89b4fa",
-  },
-  { id: "tokyo-night", name: "Tokyo Night", bg: "#1a1b26", fg: "#c0caf5", accent: "#7aa2f7" },
-  { id: "nord", name: "Nord", bg: "#2e3440", fg: "#d8dee9", accent: "#88c0d0" },
-  { id: "dracula", name: "Dracula", bg: "#282a36", fg: "#f8f8f2", accent: "#bd93f9" },
-  { id: "solarized-dark", name: "Solarized Dark", bg: "#002b36", fg: "#93a1a1", accent: "#268bd2" },
-  { id: "one-dark", name: "One Dark", bg: "#282c34", fg: "#abb2bf", accent: "#61afef" },
-  { id: "rose-pine", name: "Rose Pine", bg: "#191724", fg: "#e0def4", accent: "#c4a7e7" },
-];
+  colorScheme: "dark" | "light";
+}> = THEMES.map((t) => ({
+  id: t.id,
+  colorScheme: t.colorScheme,
+  name: t.id === DEFAULT_THEME_ID ? `${t.name} (Default)` : t.name,
+  ...themePreview(t),
+}));
 
 export const EDITOR_PRESETS = [
   { label: "Auto-Detect (VS Code, Cursor, VSCodium, Sublime, Zed)", value: "" },
@@ -162,15 +161,6 @@ interface SettingsModalProps {
   onDownloadAndInstall?: () => void;
   /** Tab to show when the dialog opens; without it the last tab is kept. */
   initialTab?: SettingsTab;
-}
-
-/** Applies a theme to the document (colors, color-scheme, browser chrome). */
-function applyDocumentTheme(theme: UserSettings["theme"]) {
-  document.documentElement.setAttribute("data-theme", theme);
-  document.body.setAttribute("data-theme", theme);
-  document.documentElement.style.colorScheme = isLightTheme(theme) ? "light" : "dark";
-  const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute("content", SettingsService.getThemeCanvasColor(theme));
 }
 
 export const SettingsModal: FC<SettingsModalProps> = ({
@@ -243,8 +233,8 @@ export const SettingsModal: FC<SettingsModalProps> = ({
   useEffect(() => {
     if (!isOpen) return;
     const saved = settings.theme;
-    if (formData.theme) applyDocumentTheme(formData.theme);
-    return () => applyDocumentTheme(saved);
+    if (formData.theme) applyThemeToDocument(formData.theme);
+    return () => applyThemeToDocument(saved);
   }, [formData.theme, isOpen, settings.theme]);
 
   const handleCancel = () => onClose();
@@ -491,9 +481,7 @@ export const SettingsModal: FC<SettingsModalProps> = ({
   const handleReset = () => {
     setFormData(DEFAULT_SETTINGS);
     setBindingErrors({});
-    document.documentElement.setAttribute("data-theme", DEFAULT_SETTINGS.theme);
-    document.body.setAttribute("data-theme", DEFAULT_SETTINGS.theme);
-    document.documentElement.style.colorScheme = "dark";
+    applyThemeToDocument(DEFAULT_SETTINGS.theme);
     const matchedFont = FONT_PRESETS.find((p) => p.value === DEFAULT_SETTINGS.fontFamily);
     setSelectedFontPreset(matchedFont ? matchedFont.value : "custom");
     setSelectedEditorPreset("");
@@ -598,7 +586,10 @@ export const SettingsModal: FC<SettingsModalProps> = ({
                             &gt;_
                           </span>
                         </div>
-                        <span className="theme-card-name">{theme.name}</span>
+                        <span className="theme-card-name">
+                          {theme.name}
+                          {theme.colorScheme === "light" && <Badge>Light</Badge>}
+                        </span>
                       </button>
                     );
                   })}
@@ -652,7 +643,7 @@ export const SettingsModal: FC<SettingsModalProps> = ({
                   </select>
                 </div>
 
-                <div className="setting-field checkbox-field" style={{ alignSelf: "flex-end" }}>
+                <div className="setting-field checkbox-field align-end">
                   <label className="checkbox-label">
                     <input
                       type="checkbox"
@@ -727,6 +718,7 @@ export const SettingsModal: FC<SettingsModalProps> = ({
                   style={{
                     fontFamily: formData.fontFamily,
                     fontSize: `${formData.fontSize}px`,
+                    lineHeight: formData.lineHeight,
                   }}
                 >
                   The quick brown fox jumps over the lazy dog.
@@ -769,6 +761,54 @@ export const SettingsModal: FC<SettingsModalProps> = ({
                         ...formData,
                         scrollback: Math.max(1000, parseInt(e.target.value) || 10000),
                       })
+                    }
+                  />
+                </div>
+              </div>
+
+              <div className="setting-row">
+                <div className="setting-field">
+                  <label htmlFor="line-height-input">Line Height</label>
+                  <input
+                    id="line-height-input"
+                    type="number"
+                    className="text-input modal-input"
+                    min={TERMINAL_LAYOUT_LIMITS.lineHeight.min}
+                    max={TERMINAL_LAYOUT_LIMITS.lineHeight.max}
+                    step={0.05}
+                    value={formData.lineHeight ?? TERMINAL_LAYOUT_DEFAULTS.lineHeight}
+                    onChange={(e) =>
+                      setFormData({ ...formData, lineHeight: e.target.valueAsNumber })
+                    }
+                  />
+                </div>
+
+                <div className="setting-field">
+                  <label htmlFor="padding-x-input">Horizontal Padding (px)</label>
+                  <input
+                    id="padding-x-input"
+                    type="number"
+                    className="text-input modal-input"
+                    min={TERMINAL_LAYOUT_LIMITS.padding.min}
+                    max={TERMINAL_LAYOUT_LIMITS.padding.max}
+                    value={formData.terminalPaddingX ?? TERMINAL_LAYOUT_DEFAULTS.paddingX}
+                    onChange={(e) =>
+                      setFormData({ ...formData, terminalPaddingX: e.target.valueAsNumber })
+                    }
+                  />
+                </div>
+
+                <div className="setting-field">
+                  <label htmlFor="padding-y-input">Vertical Padding (px)</label>
+                  <input
+                    id="padding-y-input"
+                    type="number"
+                    className="text-input modal-input"
+                    min={TERMINAL_LAYOUT_LIMITS.padding.min}
+                    max={TERMINAL_LAYOUT_LIMITS.padding.max}
+                    value={formData.terminalPaddingY ?? TERMINAL_LAYOUT_DEFAULTS.paddingY}
+                    onChange={(e) =>
+                      setFormData({ ...formData, terminalPaddingY: e.target.valueAsNumber })
                     }
                   />
                 </div>
@@ -942,19 +982,18 @@ export const SettingsModal: FC<SettingsModalProps> = ({
                   onChange={(e) => setShortcutFilter(e.target.value)}
                   placeholder="Find a shortcut, e.g. music, split, Ctrl+T"
                   aria-label="Find a shortcut"
-                  style={{ marginTop: "12px", width: "100%" }}
                 />
                 {filterWords.length > 0 &&
                   visibleGroups.length === 0 &&
                   visibleHelp.length === 0 && (
-                    <p className="muted-text" role="status" style={{ marginTop: "12px" }}>
+                    <p className="muted-text mt-3" role="status">
                       No shortcut matches “{shortcutFilter.trim()}”.
                     </p>
                   )}
 
                 {visibleGroups.map(({ heading, actions }) => (
-                  <div key={heading} style={{ marginTop: "16px" }}>
-                    <label style={{ display: "block" }}>{heading}</label>
+                  <div key={heading} className="mt-4">
+                    <label className="block-label">{heading}</label>
                     <div className="shortcuts-table">
                       {actions.map((action) => {
                         const isRecording = recordingAction === action;
@@ -1024,13 +1063,13 @@ export const SettingsModal: FC<SettingsModalProps> = ({
                 ))}
 
                 {(conflicts.length > 0 || reservedConflicts.length > 0) && (
-                  <p className="error-text" role="alert" style={{ marginTop: "8px" }}>
+                  <p className="error-text mt-2" role="alert">
                     Conflicting shortcuts must be resolved before saving.
                   </p>
                 )}
 
                 {visibleHelp.length > 0 && (
-                  <label style={{ marginTop: "16px", display: "block" }}>
+                  <label className="block-label mt-4">
                     Other built-in shortcuts{" "}
                     <span className="muted-text">(fixed, not remappable)</span>
                   </label>
@@ -1109,7 +1148,7 @@ export const SettingsModal: FC<SettingsModalProps> = ({
               </div>
 
               <div className="setting-field">
-                <div className="footer-actions" style={{ justifyContent: "flex-start" }}>
+                <div className="footer-actions justify-start">
                   <button
                     type="button"
                     className="btn btn-primary btn-small"

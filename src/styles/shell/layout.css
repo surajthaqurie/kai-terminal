@@ -1,0 +1,33 @@
+/* =========================================================================
+   App Layout Primitives
+   ========================================================================= */
+
+.app-layout {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  width: 100vw;
+  min-height: 0;
+  background-color: var(--bg-canvas);
+  color: var(--text-primary);
+  overflow: hidden;
+}
+
+.app-header {
+  background-color: var(--bg-surface);
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  z-index: 20;
+}
+
+.app-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  position: relative;
+  overflow: hidden;
+  background-color: var(--bg-canvas);
+  display: flex;
+  flex-direction: column;
+}

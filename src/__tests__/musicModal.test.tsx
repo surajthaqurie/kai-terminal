@@ -558,10 +558,8 @@ describe("MusicPanel modal implementation", () => {
   });
 
   it("includes CSS for inactive dimming, invisible resize handles, and glassy right-side slider", async () => {
-    const fs = await import("fs");
-    const path = await import("path");
-    const cssPath = path.resolve(__dirname, "../App.css");
-    const cssContent = fs.readFileSync(cssPath, "utf-8");
+    const { readStylesheet } = await import("./helpers/styles");
+    const cssContent = readStylesheet();
 
     // Inactive dimming & active brightness
     expect(cssContent).toContain("opacity: 0.62;");
@@ -582,9 +580,14 @@ describe("MusicPanel modal implementation", () => {
 
     // Pinned player elevation above Settings, Git modals, etc.
     expect(cssContent).toContain(".music-modal-backdrop.pinned");
-    expect(cssContent).toContain("z-index: 2100 !important;");
+    // Layers are tokens: the pinned player sits on --z-pinned, above --z-modal.
+    expect(cssContent).toContain("z-index: var(--z-pinned) !important;");
     expect(cssContent).toContain(".music-modal-backdrop.pinned .music-modal-dialog");
-    expect(cssContent).toContain("z-index: 2101 !important;");
+    expect(cssContent).toContain("z-index: calc(var(--z-pinned) + 1) !important;");
+    const layer = (name: string) =>
+      Number(new RegExp(`--z-${name}:\\s*(\\d+)`).exec(cssContent)?.[1]);
+    expect(layer("pinned")).toBe(2100);
+    expect(layer("pinned")).toBeGreaterThan(layer("modal"));
   });
 
   it("renders professional Lucide music icon instead of raw text ♪ in panel and status bar", async () => {

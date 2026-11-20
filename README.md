@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/logo.svg" alt="Kai logo" width="96" height="96">
+</p>
+
 # kai — One terminal. Every platform.
 
 [![CI](https://github.com/surajthaqurie/kai-terminal/actions/workflows/ci.yml/badge.svg)](https://github.com/surajthaqurie/kai-terminal/actions)

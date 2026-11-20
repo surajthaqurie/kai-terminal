@@ -1,0 +1,48 @@
+/* GENERATED from src/theme/registry.ts by `npm run themes:generate`. Do not edit. */
+
+/* Nord */
+[data-theme="nord"] {
+  color-scheme: dark;
+
+  --bg-canvas: #242933;
+  --bg-header: #1e222a;
+  --bg-surface: #2e3440;
+  --bg-surface-elevated: #3b4252;
+  --bg-surface-sunken: #1e222a;
+  --bg-overlay: rgba(30, 34, 42, 0.82);
+  --border-subtle: rgba(236, 239, 244, 0.1);
+  --border-default: rgba(236, 239, 244, 0.18);
+  --border-strong: #4c566a;
+  --border-accent: rgba(136, 192, 208, 0.45);
+  --text-primary: #eceff4;
+  --text-secondary: #dce1eb;
+  --text-tertiary: #adb5c4;
+  --text-inverse: #2e3440;
+  --accent-primary: #88c0d0;
+  --accent-hover: #8fbcbb;
+  --accent-subtle: rgba(136, 192, 208, 0.15);
+  --accent-glow: rgba(136, 192, 208, 0.35);
+  --accent-ring: rgba(136, 192, 208, 0.5);
+  --color-success: #aac593;
+  --color-success-bg: rgba(163, 190, 140, 0.08);
+  --color-warning: #ebcb8b;
+  --color-warning-bg: rgba(235, 203, 139, 0.14);
+  --color-danger: #eca1a8;
+  --color-danger-bg: rgba(191, 97, 106, 0.08);
+  --color-purple: #ceb0ce;
+  --color-purple-bg: rgba(180, 142, 173, 0.08);
+  --scroll-track: #1e222a;
+  --scroll-thumb: #3b4252;
+  --scroll-thumb-hover: #4c566a;
+
+  --tab-color-blue: #81a1c1;
+  --tab-color-green: #a3be8c;
+  --tab-color-yellow: #ebcb8b;
+  --tab-color-red: #bf616a;
+  --tab-color-purple: #b48ead;
+  --tab-color-teal: #88c0d0;
+  --tab-color-orange: #d08770;
+  --tab-color-gray: #697589;
+
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23d8dee9' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+}

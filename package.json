@@ -43,7 +43,8 @@
     "changeset": "changeset",
     "version-packages": "changeset version",
     "release:repoint": "bash scripts/repoint-tag.sh",
-    "prepare": "husky"
+    "prepare": "husky",
+    "themes:generate": "node scripts/generate-themes.ts"
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.3.0",

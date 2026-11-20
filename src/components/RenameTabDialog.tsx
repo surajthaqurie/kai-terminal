@@ -1,6 +1,6 @@
-import { useState } from "react";
-import { useModalBehavior } from "../hooks/useModalBehavior";
+import { useEffect, useRef, useState } from "react";
 import type { TerminalTab } from "../types/terminal";
+import { Button, Dialog } from "./ui";
 
 interface RenameTabDialogProps {
   tab: TerminalTab;
@@ -10,49 +10,45 @@ interface RenameTabDialogProps {
 
 /** Small modal that renames one tab; mount it only while renaming. */
 export function RenameTabDialog({ tab, onRename, onClose }: RenameTabDialogProps) {
-  const dialogRef = useModalBehavior(true, onClose);
   const [value, setValue] = useState(tab.title);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Focus the field after the dialog has recorded where focus came from (not
+  // `autoFocus`, which ran first and left focus nowhere when the dialog closed).
+  useEffect(() => {
+    const t = setTimeout(() => inputRef.current?.select(), 0);
+    return () => clearTimeout(t);
+  }, []);
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div
-        className="command-palette-modal"
-        ref={dialogRef}
-        onClick={(e) => e.stopPropagation()}
-        role="dialog"
-        aria-label="Rename session"
-        style={{ padding: 16 }}
+    <Dialog open onClose={onClose} title="Rename session" className="dialog-compact">
+      <form
+        className="dialog-form"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (value.trim()) onRename(tab.id, value.trim());
+          onClose();
+        }}
       >
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (value.trim()) onRename(tab.id, value.trim());
-            onClose();
-          }}
-        >
-          <label htmlFor="rename-session-input" className="shortcut-label">
-            Rename session
-          </label>
-          <input
-            id="rename-session-input"
-            type="text"
-            className="text-input modal-input"
-            autoFocus
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            placeholder="Session name"
-            style={{ marginTop: 8 }}
-          />
-          <div className="footer-actions" style={{ marginTop: 12, justifyContent: "flex-end" }}>
-            <button type="button" className="btn btn-secondary btn-small" onClick={onClose}>
-              Cancel
-            </button>
-            <button type="submit" className="btn btn-primary btn-small">
-              Save
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+        <input
+          ref={inputRef}
+          id="rename-session-input"
+          type="text"
+          className="text-input modal-input"
+          aria-label="Session name"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder="Session name"
+        />
+        <div className="dialog-actions">
+          <Button size="sm" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button size="sm" variant="primary" type="submit">
+            Save
+          </Button>
+        </div>
+      </form>
+    </Dialog>
   );
 }

@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, it, expect } from "vitest";
-import * as fs from "fs";
-import * as path from "path";
+import { getTheme, THEME_IDS } from "../theme/registry";
+import { readStylesheet } from "./helpers/styles";
 import { SettingsService } from "../services/settingsService";
 import type { ThemeName } from "../types/terminal";
 
@@ -58,57 +58,25 @@ function contrastRatio(fgStr: string, bgStr: string): number {
   return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
 }
 
-function themeVars(css: string, theme: string): Record<string, string> {
-  const blockRegex = /\[data-theme="([^"]+)"\][\s\S]*?\{([\s\S]*?)\}/g;
-  let match: RegExpExecArray | null;
-  // :root carries the kai-dark defaults; a theme block overrides them.
-  const rootVars: Record<string, string> = {};
-  const rootMatch = /:root[\s\S]*?\{([\s\S]*?)\}/.exec(css);
-  const varRegex = /--([a-z0-9-]+)\s*:\s*([^;]+);/g;
-  if (rootMatch) {
-    let v: RegExpExecArray | null;
-    while ((v = varRegex.exec(rootMatch[1])) !== null) {
-      rootVars["--" + v[1]] = v[2].trim();
-    }
-  }
-  while ((match = blockRegex.exec(css)) !== null) {
-    if (match[1] !== theme) continue;
-    const vars = { ...rootVars };
-    let v: RegExpExecArray | null;
-    const inner = new RegExp(varRegex.source, "g");
-    while ((v = inner.exec(match[2])) !== null) {
-      vars["--" + v[1]] = v[2].trim();
-    }
-    return vars;
-  }
-  return rootVars;
+function themeVars(theme: ThemeName): Record<string, string> {
+  return Object.fromEntries(Object.entries(getTheme(theme).chrome).map(([k, v]) => ["--" + k, v]));
 }
 
 describe("Split divider visibility (no invisible seams)", () => {
-  const css = fs.readFileSync(path.resolve(__dirname, "../App.css"), "utf8");
+  const css = readStylesheet();
   // The divider rule must stay on the strong token: the old subtle token
   // composited to ~1.1:1 on dark terminals (kai-dark) — an invisible seam.
   it("keeps .pane-divider on the --border-strong token", () => {
     const rule = /\.pane-divider\s*\{[^}]*\}/.exec(css);
-    expect(rule, ".pane-divider rule must exist in App.css").toBeDefined();
+    expect(rule, ".pane-divider rule must exist in the stylesheet").toBeDefined();
     expect(rule![0]).toContain("var(--border-strong)");
   });
 
-  const THEMES: ThemeName[] = [
-    "kai-dark",
-    "gruvbox-dark",
-    "catppuccin-mocha",
-    "tokyo-night",
-    "nord",
-    "dracula",
-    "solarized-dark",
-    "one-dark",
-    "rose-pine",
-  ];
+  const THEMES: ThemeName[] = THEME_IDS.slice();
 
   for (const theme of THEMES) {
     it(`divider is distinguishable from the terminal background in "${theme}"`, () => {
-      const vars = themeVars(css, theme);
+      const vars = themeVars(theme);
       const divider = vars["--border-strong"] as string | undefined;
       expect(divider, `Theme ${theme} must define --border-strong`).toBeDefined();
       if (!divider) return;

@@ -1,0 +1,46 @@
+/* =========================================================================
+   See-through window (Windows / Linux desktop app)
+   `--win-alpha` is the "Terminal Background Opacity" setting. The native
+   window is transparent (src-tauri/tauri.windows.conf.json), so each layer
+   that paints chrome mixes its token with transparency; layers that only
+   wrapped another painted layer are cleared so alphas never stack. The
+   terminal background itself is repainted by xterm with the same alpha.
+   Menus, dialogs and the command palette stay opaque so they remain legible.
+   ========================================================================= */
+
+@supports (background-color: color-mix(in srgb, red 50%, transparent)) {
+  html.win-translucent {
+    --win-pct: calc(var(--win-alpha, 1) * 100%);
+  }
+
+  html.win-translucent,
+  html.win-translucent[data-theme],
+  html.win-translucent body,
+  html.win-translucent #root,
+  .win-translucent .app-layout,
+  .win-translucent .app-header,
+  .win-translucent .app-body,
+  .win-translucent .terminal-container {
+    background-color: transparent;
+  }
+
+  .win-translucent .tab-bar {
+    background-color: color-mix(in srgb, var(--bg-tab-bar) var(--win-pct), transparent);
+  }
+
+  .win-translucent .status-bar {
+    background-color: color-mix(in srgb, var(--bg-statusbar) var(--win-pct), transparent);
+  }
+
+  .win-translucent .tab-item {
+    background-color: color-mix(in srgb, var(--bg-tab-inactive) var(--win-pct), transparent);
+  }
+
+  .win-translucent .tab-item:hover {
+    background-color: color-mix(in srgb, var(--bg-tab-hover) var(--win-pct), transparent);
+  }
+
+  .win-translucent .tab-item.active {
+    background-color: color-mix(in srgb, var(--bg-tab-active) var(--win-pct), transparent);
+  }
+}

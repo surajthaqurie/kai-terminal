@@ -7,6 +7,7 @@ import {
   ProjectWorkspaceSettings,
 } from "../types/terminal";
 import { ITheme } from "@xterm/xterm";
+import { THEMES, canvasColor, getTheme, isThemeId } from "../theme/registry";
 import { PtyService } from "./ptyService";
 import {
   DEFAULT_FIXED_SHORTCUTS,
@@ -162,11 +163,23 @@ export function migrateLegacyKeybindings(
 export const PREVIOUS_DEFAULT_FONT_FAMILY =
   "'Fira Code', 'FiraCode', 'DejaVu Sans Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace";
 
+/** Terminal layout defaults and limits (Settings → Terminal). */
+export const TERMINAL_LAYOUT_DEFAULTS = { lineHeight: 1.2, paddingX: 6, paddingY: 4 } as const;
+export const TERMINAL_LAYOUT_LIMITS = {
+  lineHeight: { min: 1, max: 2 },
+  padding: { min: 0, max: 24 },
+} as const;
+
 export const DEFAULT_SETTINGS: UserSettings = {
   theme: "kai-dark",
   fontFamily:
     "'JetBrains Mono Variable', 'JetBrains Mono', 'Fira Code', 'DejaVu Sans Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace",
   fontSize: 14,
+  // The values Kai always used before these became settings: an older saved
+  // file has none of them and so keeps exactly the look it had.
+  lineHeight: TERMINAL_LAYOUT_DEFAULTS.lineHeight,
+  terminalPaddingX: TERMINAL_LAYOUT_DEFAULTS.paddingX,
+  terminalPaddingY: TERMINAL_LAYOUT_DEFAULTS.paddingY,
   scrollback: 10000,
   cursorBlink: true,
   cursorStyle: "block",
@@ -200,29 +213,14 @@ const PREVIOUS_DEFAULT_CURSOR_BLINK = false;
 /** Stored beside the settings once they were saved after Mute moved off `Ctrl+Shift+,`. */
 const MUSIC_KEYS_MIGRATED = "_musicKeysMigrated";
 
-/** Theme ids the Appearance panel can mark selected. Single source of truth. */
-const KNOWN_THEME_IDS: ReadonlyArray<ThemeName> = [
-  "kai-dark",
-  "gruvbox-dark",
-  "catppuccin-mocha",
-  "tokyo-night",
-  "nord",
-  "dracula",
-  "solarized-dark",
-  "one-dark",
-  "rose-pine",
-];
-
-/** Themes with a light background: drives the native `color-scheme` and scrollbars. */
-const LIGHT_THEME_IDS: ReadonlyArray<ThemeName> = [];
-
 /** Theme ids removed in a later release, mapped to the theme that replaces them. */
 const LEGACY_THEME_IDS: Readonly<Record<string, ThemeName>> = {
   kali: "kai-dark",
 };
 
+/** Themes with a light background: drives the native `color-scheme` and scrollbars. */
 export function isLightTheme(theme: ThemeName): boolean {
-  return LIGHT_THEME_IDS.includes(theme);
+  return getTheme(theme).colorScheme === "light";
 }
 
 /**
@@ -232,224 +230,14 @@ export function isLightTheme(theme: ThemeName): boolean {
  */
 export function normalizeThemeId(input: unknown): ThemeName {
   if (typeof input !== "string") return DEFAULT_SETTINGS.theme;
-  if ((KNOWN_THEME_IDS as ReadonlyArray<string>).includes(input)) return input as ThemeName;
+  if (isThemeId(input)) return input;
   return LEGACY_THEME_IDS[input] ?? DEFAULT_SETTINGS.theme;
 }
 
-/** xterm palettes. Window chrome colours live in App.css (`[data-theme]` blocks). */
-const TERMINAL_THEMES: Record<ThemeName, ITheme> = {
-  "kai-dark": {
-    background: "#0f1115",
-    foreground: "#d9dce3",
-    cursor: "#22d3ee",
-    selectionBackground: "#264f78",
-    black: "#1c1f26",
-    red: "#f87171",
-    green: "#4ade80",
-    yellow: "#facc15",
-    blue: "#60a5fa",
-    magenta: "#c084fc",
-    cyan: "#22d3ee",
-    white: "#d4d4d8",
-    brightBlack: "#6b7385",
-    brightRed: "#fca5a5",
-    brightGreen: "#86efac",
-    brightYellow: "#fde047",
-    brightBlue: "#93c5fd",
-    brightMagenta: "#d8b4fe",
-    brightCyan: "#67e8f9",
-    brightWhite: "#fafafa",
-  },
-  "one-dark": {
-    background: "#282c34",
-    foreground: "#abb2bf",
-    cursor: "#528bff",
-    selectionBackground: "#3e4451",
-    black: "#3f4451",
-    red: "#e06c75",
-    green: "#98c379",
-    yellow: "#e5c07b",
-    blue: "#61afef",
-    magenta: "#c678dd",
-    cyan: "#56b6c2",
-    white: "#abb2bf",
-    brightBlack: "#667085",
-    brightRed: "#e06c75",
-    brightGreen: "#98c379",
-    brightYellow: "#e5c07b",
-    brightBlue: "#61afef",
-    brightMagenta: "#c678dd",
-    brightCyan: "#56b6c2",
-    brightWhite: "#ffffff",
-  },
-  dracula: {
-    background: "#282a36",
-    foreground: "#f8f8f2",
-    cursor: "#f8f8f2",
-    selectionBackground: "#44475a",
-    black: "#21222c",
-    red: "#ff5555",
-    green: "#50fa7b",
-    yellow: "#f1fa8c",
-    blue: "#bd93f9",
-    magenta: "#ff79c6",
-    cyan: "#8be9fd",
-    white: "#f8f8f2",
-    brightBlack: "#6272a4",
-    brightRed: "#ff6e6e",
-    brightGreen: "#69ff94",
-    brightYellow: "#ffffa5",
-    brightBlue: "#d6acff",
-    brightMagenta: "#ff92d0",
-    brightCyan: "#a4ffff",
-    brightWhite: "#ffffff",
-  },
-  "tokyo-night": {
-    background: "#1a1b26",
-    foreground: "#c0caf5",
-    cursor: "#c0caf5",
-    selectionBackground: "#283457",
-    black: "#15161e",
-    red: "#f7768e",
-    green: "#9ece6a",
-    yellow: "#e0af68",
-    blue: "#7aa2f7",
-    magenta: "#bb9af7",
-    cyan: "#7dcfff",
-    white: "#a9b1d6",
-    brightBlack: "#565f89",
-    brightRed: "#f7768e",
-    brightGreen: "#9ece6a",
-    brightYellow: "#e0af68",
-    brightBlue: "#7aa2f7",
-    brightMagenta: "#bb9af7",
-    brightCyan: "#7dcfff",
-    brightWhite: "#c0caf5",
-  },
-  "catppuccin-mocha": {
-    background: "#1e1e2e",
-    foreground: "#cdd6f4",
-    cursor: "#f5e0dc",
-    selectionBackground: "#585b7055",
-    black: "#45475a",
-    red: "#f38ba8",
-    green: "#a6e3a1",
-    yellow: "#f9e2af",
-    blue: "#89b4fa",
-    magenta: "#cba6f7",
-    cyan: "#94e2d5",
-    white: "#bac2de",
-    brightBlack: "#6c7086",
-    brightRed: "#f38ba8",
-    brightGreen: "#a6e3a1",
-    brightYellow: "#f9e2af",
-    brightBlue: "#89b4fa",
-    brightMagenta: "#cba6f7",
-    brightCyan: "#94e2d5",
-    brightWhite: "#a6adc8",
-  },
-  "gruvbox-dark": {
-    background: "#282828",
-    foreground: "#ebdbb2",
-    cursor: "#ebdbb2",
-    selectionBackground: "#504945",
-    black: "#3c3836",
-    red: "#cc241d",
-    green: "#98971a",
-    yellow: "#d79921",
-    blue: "#458588",
-    magenta: "#b16286",
-    cyan: "#689d6a",
-    white: "#a89984",
-    brightBlack: "#928374",
-    brightRed: "#fb4934",
-    brightGreen: "#b8bb26",
-    brightYellow: "#fabd2f",
-    brightBlue: "#83a598",
-    brightMagenta: "#d3869b",
-    brightCyan: "#8ec07c",
-    brightWhite: "#ebdbb2",
-  },
-  nord: {
-    background: "#2e3440",
-    foreground: "#d8dee9",
-    cursor: "#d8dee9",
-    selectionBackground: "#434c5e",
-    black: "#3b4252",
-    red: "#bf616a",
-    green: "#a3be8c",
-    yellow: "#ebcb8b",
-    blue: "#81a1c1",
-    magenta: "#b48ead",
-    cyan: "#88c0d0",
-    white: "#e5e9f0",
-    brightBlack: "#697589",
-    brightRed: "#d06f79",
-    brightGreen: "#b1d196",
-    brightYellow: "#f0d399",
-    brightBlue: "#8cafd2",
-    brightMagenta: "#c895bf",
-    brightCyan: "#93ccdc",
-    brightWhite: "#eceff4",
-  },
-  "solarized-dark": {
-    background: "#002b36",
-    foreground: "#93a1a1",
-    cursor: "#93a1a1",
-    selectionBackground: "#073642",
-    black: "#073642",
-    red: "#dc322f",
-    green: "#859900",
-    yellow: "#b58900",
-    blue: "#268bd2",
-    magenta: "#d33682",
-    cyan: "#2aa198",
-    white: "#eee8d5",
-    brightBlack: "#586e75",
-    brightRed: "#cb4b16",
-    brightGreen: "#7a8f00",
-    brightYellow: "#c9a227",
-    brightBlue: "#4aa3e0",
-    brightMagenta: "#6c71c4",
-    brightCyan: "#93a1a1",
-    brightWhite: "#fdf6e3",
-  },
-  "rose-pine": {
-    background: "#191724",
-    foreground: "#e0def4",
-    cursor: "#e0def4",
-    selectionBackground: "#403d52",
-    black: "#26233a",
-    red: "#eb6f92",
-    green: "#31748f",
-    yellow: "#f6c177",
-    blue: "#9ccfd8",
-    magenta: "#c4a7e7",
-    cyan: "#ebbcba",
-    white: "#e0def4",
-    brightBlack: "#6e6a86",
-    brightRed: "#eb6f92",
-    brightGreen: "#31748f",
-    brightYellow: "#f6c177",
-    brightBlue: "#9ccfd8",
-    brightMagenta: "#c4a7e7",
-    brightCyan: "#ebbcba",
-    brightWhite: "#e0def4",
-  },
-};
-
-/** Colour behind the panes and window chrome; mirrored in index.html's first paint. */
-export const THEME_CANVAS_COLORS: Record<ThemeName, string> = {
-  "kai-dark": "#0b0d10",
-  "one-dark": "#1e2227",
-  dracula: "#1e1f29",
-  "tokyo-night": "#16161e",
-  "catppuccin-mocha": "#181825",
-  "gruvbox-dark": "#1e1e1e",
-  nord: "#242933",
-  "solarized-dark": "#00212b",
-  "rose-pine": "#16141f",
-};
+/** Colour behind the panes and window chrome, per theme (from the theme registry). */
+export const THEME_CANVAS_COLORS: Readonly<Record<ThemeName, string>> = Object.fromEntries(
+  THEMES.map((t) => [t.id, canvasColor(t)])
+) as Record<ThemeName, string>;
 
 export class SettingsService {
   /** Validates and clamps settings; always recovers to safe defaults. */
@@ -506,6 +294,24 @@ export class SettingsService {
     }
     if (!Number.isFinite(merged.fontSize)) merged.fontSize = DEFAULT_SETTINGS.fontSize;
     merged.fontSize = Math.max(8, Math.min(36, Math.round(merged.fontSize)));
+    const clamp = (v: unknown, min: number, max: number, fallback: number) =>
+      typeof v === "number" && Number.isFinite(v) ? Math.max(min, Math.min(max, v)) : fallback;
+    const { lineHeight, padding } = TERMINAL_LAYOUT_LIMITS;
+    merged.lineHeight =
+      Math.round(
+        clamp(
+          merged.lineHeight,
+          lineHeight.min,
+          lineHeight.max,
+          TERMINAL_LAYOUT_DEFAULTS.lineHeight
+        ) * 100
+      ) / 100;
+    merged.terminalPaddingX = Math.round(
+      clamp(merged.terminalPaddingX, padding.min, padding.max, TERMINAL_LAYOUT_DEFAULTS.paddingX)
+    );
+    merged.terminalPaddingY = Math.round(
+      clamp(merged.terminalPaddingY, padding.min, padding.max, TERMINAL_LAYOUT_DEFAULTS.paddingY)
+    );
     if (!Number.isFinite(merged.scrollback)) merged.scrollback = 10000;
     merged.scrollback = Math.max(1000, Math.min(100000, Math.round(merged.scrollback)));
     merged.cursorBlink = Boolean(merged.cursorBlink);
@@ -648,7 +454,7 @@ export class SettingsService {
   }
 
   static getThemeColors(themeName: ThemeName, opacity: number = 1.0): ITheme {
-    const baseTheme = TERMINAL_THEMES[themeName] ?? TERMINAL_THEMES[DEFAULT_SETTINGS.theme];
+    const baseTheme: ITheme = getTheme(themeName).terminal;
 
     if (opacity < 1.0 && baseTheme.background) {
       return {

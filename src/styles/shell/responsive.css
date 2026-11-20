@@ -1,0 +1,79 @@
+/* =========================================================================
+   Responsive Design Breakpoints
+   ========================================================================= */
+
+@media (max-width: 860px) {
+  .header-palette {
+    width: 30px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .header-palette-text,
+  .header-palette-kbd {
+    display: none;
+  }
+
+  .git-changes-backdrop {
+    padding: 0;
+  }
+
+  .git-changes-modal {
+    width: 100% !important;
+    height: 100% !important;
+    min-width: 0;
+    min-height: 0;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    resize: none;
+  }
+
+  /* No edge-dragging on narrow layouts: the dialog is full-bleed and the
+     !important size above discards any desktop inline resize. */
+  .git-resize-handle {
+    display: none;
+  }
+
+  .git-changes-content {
+    flex-direction: column;
+  }
+
+  .git-changes-sidebar {
+    width: 100% !important;
+    max-width: 100%;
+    flex: none !important;
+    height: 200px;
+    border-right: none;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .git-changes-divider {
+    display: none;
+  }
+
+  .settings-modal {
+    width: 96vw;
+  }
+}
+
+@media (max-width: 600px) {
+  .tab-bar {
+    height: 34px;
+  }
+
+  .tab-item {
+    height: 28px;
+    padding: 4px 8px;
+    font-size: var(--text-xs);
+  }
+
+  .tab-title {
+    max-width: 90px;
+  }
+
+  .setting-row {
+    flex-direction: column;
+    gap: 12px;
+  }
+}

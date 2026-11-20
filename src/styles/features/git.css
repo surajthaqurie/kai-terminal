@@ -1,0 +1,908 @@
+/* =========================================================================
+   Git Status Centered Dialog
+   ========================================================================= */
+
+.git-status-modal {
+  width: 600px;
+  max-width: 90vw;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-modal);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: scaleIn var(--transition-fast);
+}
+
+.git-status-dir {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  margin-bottom: 8px;
+  word-break: break-all;
+  user-select: text;
+}
+
+.git-status-output {
+  background-color: var(--bg-surface-sunken);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-primary);
+  max-height: 46vh;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  line-height: 1.5;
+  user-select: text;
+  cursor: text;
+}
+
+/* =========================================================================
+   VS Code-style Source Control & Diff Review Modal
+   ========================================================================= */
+
+.git-changes-backdrop {
+  padding: 20px;
+}
+
+.git-changes-modal {
+  /* Windowed by default (not fullscreen): centered dialog the user can
+     resize from any edge/corner via the custom `.git-resize-handle`
+     grips (like a normal terminal window). Fullscreen remains
+     available through the header toggle (`.git-fullscreen`). The size
+     lives in React state and is ignored while fullscreen, so a manual
+     resize can never stick around and break fullscreen. */
+  width: min(1180px, 100%);
+  height: min(820px, 100%);
+  min-width: min(720px, 100%);
+  min-height: 480px;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-modal);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+  color: var(--text-primary);
+  animation: scaleIn var(--transition-fast);
+  resize: none;
+}
+
+.git-changes-modal.git-fullscreen {
+  width: 100% !important;
+  height: 100% !important;
+  max-width: none;
+  max-height: none;
+  min-width: 0;
+  min-height: 0;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  resize: none;
+}
+
+/* Custom resize grips on all four edges + four corners. Transparent by
+   default; accent highlight on hover so the dialog still looks clean. */
+.git-resize-handle {
+  position: absolute;
+  z-index: 5;
+  touch-action: none;
+}
+
+.git-resize-n,
+.git-resize-s {
+  left: 8px;
+  right: 8px;
+  height: 8px;
+  cursor: ns-resize;
+}
+
+.git-resize-n {
+  top: -4px;
+}
+
+.git-resize-s {
+  bottom: -4px;
+}
+
+.git-resize-e,
+.git-resize-w {
+  top: 8px;
+  bottom: 8px;
+  width: 8px;
+  cursor: ew-resize;
+}
+
+.git-resize-e {
+  right: -4px;
+}
+
+.git-resize-w {
+  left: -4px;
+}
+
+.git-resize-ne,
+.git-resize-nw,
+.git-resize-se,
+.git-resize-sw {
+  width: 14px;
+  height: 14px;
+}
+
+.git-resize-ne {
+  top: -7px;
+  right: -7px;
+  cursor: nesw-resize;
+}
+
+.git-resize-sw {
+  bottom: -7px;
+  left: -7px;
+  cursor: nesw-resize;
+}
+
+.git-resize-nw {
+  top: -7px;
+  left: -7px;
+  cursor: nwse-resize;
+}
+
+.git-resize-se {
+  bottom: -7px;
+  right: -7px;
+  cursor: nwse-resize;
+}
+
+.git-changes-divider {
+  flex: 0 0 6px;
+  cursor: col-resize;
+  background: transparent;
+  position: relative;
+}
+
+.git-changes-divider::after {
+  content: "";
+  position: absolute;
+  inset: 0 2px;
+  background: var(--border-subtle);
+  border-radius: 2px;
+}
+
+.git-changes-divider:hover::after {
+  background: var(--accent-primary);
+}
+
+.git-changes-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  background-color: var(--bg-header);
+  border-bottom: 1px solid var(--border-subtle);
+  flex: 0 0 auto;
+}
+
+.git-changes-title-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.git-changes-title-group .title-icon {
+  color: var(--accent-primary);
+}
+
+.git-changes-title {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.git-branch-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--text-xs);
+  background-color: var(--accent-subtle);
+  border: 1px solid var(--border-accent);
+  color: var(--accent-primary);
+  border-radius: var(--radius-xs);
+  padding: 1px 7px;
+  font-weight: 500;
+}
+
+.git-changes-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.git-action-banner {
+  background-color: var(--accent-subtle);
+  color: var(--accent-primary);
+  font-size: var(--text-sm);
+  padding: 6px 16px;
+  border-bottom: 1px solid var(--border-accent);
+  font-weight: 500;
+}
+
+.git-error-banner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background-color: var(--color-danger-bg);
+  border-bottom: 1px solid var(--color-danger);
+  color: var(--color-danger);
+  font-size: var(--text-sm);
+  padding: 6px 16px;
+}
+
+.git-changes-content {
+  display: flex;
+  flex: 1 1 0%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Left Sidebar (VS Code Source Control Tree) */
+.git-changes-sidebar {
+  width: 320px;
+  min-width: 250px;
+  max-width: 400px;
+  border-right: 1px solid var(--border-subtle);
+  background-color: var(--bg-surface-sunken);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.sidebar-filter-row {
+  display: flex;
+  align-items: center;
+  padding: 8px 10px;
+  gap: 8px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.sidebar-filter-input {
+  flex: 1;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  padding: 5px 8px;
+  outline: none;
+}
+
+.sidebar-filter-input:focus {
+  border-color: var(--accent-primary);
+}
+
+.total-changes-count {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+.changes-tree-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 0;
+}
+
+.changes-section {
+  margin-bottom: 12px;
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 12px;
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+}
+
+.section-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shortcut-filter {
+  width: 100%;
+  margin-top: 12px;
+}
+
+.section-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: transparent;
+  border: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  font-size: var(--text-xs);
+  padding: 2px 6px;
+  border-radius: var(--radius-xs);
+  /* Explicit properties: never animate layout. */
+  transition-property: background-color, border-color, color, box-shadow, opacity, transform;
+  transition-duration: var(--duration-fast);
+  transition-timing-function: var(--ease-standard);
+}
+
+.section-action-btn:hover {
+  background-color: var(--bg-surface-elevated);
+  color: var(--text-primary);
+}
+
+.file-row,
+.tree-file-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  cursor: pointer;
+  border-left: 2px solid transparent;
+  transition:
+    background-color var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+.file-row:hover,
+.tree-file-item:hover {
+  background-color: var(--bg-surface);
+}
+
+.file-row.selected,
+.tree-file-item.selected {
+  background-color: var(--bg-surface-elevated);
+  border-left-color: var(--accent-primary);
+}
+
+.file-icon-wrap {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.file-status-icon.modified {
+  color: var(--color-warning);
+}
+.file-status-icon.added {
+  color: var(--color-success);
+}
+.file-status-icon.deleted {
+  color: var(--color-danger);
+}
+
+.file-item-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.file-status-letter {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  width: 14px;
+  text-align: center;
+  flex: 0 0 auto;
+}
+
+.file-status-letter.modified {
+  color: var(--color-warning);
+}
+.file-status-letter.added {
+  color: var(--color-success);
+}
+.file-status-letter.deleted {
+  color: var(--color-danger);
+}
+.file-status-letter.untracked {
+  color: var(--color-success);
+}
+
+.file-names {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.file-name {
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.file-dir {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-weight: 400;
+}
+
+.file-dir-path {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--font-mono);
+}
+
+.file-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: var(--radius-xs);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  font-family: var(--font-mono);
+  line-height: 1;
+  text-align: center;
+  user-select: none;
+  flex: 0 0 auto;
+}
+
+.file-badge.badge-modified {
+  color: var(--color-warning);
+  background-color: var(--color-warning-bg);
+}
+
+.file-badge.badge-added {
+  color: var(--color-success);
+  background-color: var(--color-success-bg);
+}
+
+.file-badge.badge-deleted {
+  color: var(--color-danger);
+  background-color: var(--color-danger-bg);
+}
+
+.file-badge.badge-renamed {
+  color: var(--accent-primary);
+  background-color: var(--accent-subtle);
+}
+
+.file-badge.badge-untracked {
+  color: var(--color-purple);
+  background-color: var(--color-purple-bg);
+}
+
+.file-row-actions,
+.file-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 0;
+  flex: 0 0 auto;
+  transition: opacity var(--transition-fast);
+}
+
+.file-row:hover .file-row-actions,
+.file-row.selected .file-row-actions,
+.file-row:focus-within .file-row-actions,
+.tree-file-item:hover .file-actions,
+.tree-file-item.selected .file-actions,
+.tree-file-item:focus-within .file-actions {
+  opacity: 1;
+}
+
+/* Touch / pen devices have no hover: always show the per-file
+   Stage / Discard actions so they stay reachable on every OS. */
+@media (hover: none) {
+  .file-row-actions,
+  .file-actions {
+    opacity: 1;
+  }
+}
+
+.file-action-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-tertiary);
+  padding: 3px;
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Explicit properties: never animate layout. */
+  transition-property: background-color, border-color, color, box-shadow, opacity, transform;
+  transition-duration: var(--duration-fast);
+  transition-timing-function: var(--ease-standard);
+}
+
+.file-action-btn:hover {
+  background-color: var(--bg-surface-elevated);
+  color: var(--text-primary);
+}
+
+.file-action-btn.danger-hover:hover {
+  color: var(--color-danger);
+}
+
+.changes-clean-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 36px 20px;
+  text-align: center;
+  color: var(--text-tertiary);
+  gap: 8px;
+}
+
+.clean-icon {
+  color: var(--color-success);
+}
+
+/* Right Diff Viewer Panel */
+.git-diff-viewer {
+  flex: 1 1 0%;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+  background-color: var(--bg-surface);
+}
+
+.diff-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.diff-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px;
+  background-color: var(--bg-header);
+  border-bottom: 1px solid var(--border-subtle);
+  /* Single toolbar space: Unified/Split toggle and Stage/Discard stay on
+     one row on every OS and window size — narrow windows scroll this row
+     horizontally instead of wrapping the actions onto a second line. */
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  gap: 12px;
+  flex: 0 0 auto;
+}
+
+.diff-file-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.diff-file-path {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.diff-stage-tag {
+  font-size: var(--text-xs);
+  padding: 1px 6px;
+  border-radius: var(--radius-xs);
+  background-color: var(--bg-surface-elevated);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
+}
+
+.diff-stats-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--text-xs);
+  font-family: var(--font-mono);
+  font-weight: 700;
+}
+
+.diff-add-stat {
+  color: var(--color-success);
+}
+.diff-del-stat {
+  color: var(--color-danger);
+}
+
+.diff-view-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+  flex-shrink: 0;
+}
+
+.mode-toggle-group {
+  display: inline-flex;
+  background-color: var(--bg-surface-sunken);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  padding: 1px;
+}
+
+.mode-toggle-group .toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  padding: 3px 8px;
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+  /* Explicit properties: never animate layout. */
+  transition-property: background-color, border-color, color, box-shadow, opacity, transform;
+  transition-duration: var(--duration-fast);
+  transition-timing-function: var(--ease-standard);
+}
+
+.mode-toggle-group .toggle-btn.active {
+  background-color: var(--accent-primary);
+  color: var(--text-inverse);
+  font-weight: 600;
+}
+
+.discard-confirm-box {
+  background-color: var(--color-danger-bg);
+  border-bottom: 1px solid var(--color-danger);
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.discard-confirm-box p {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-danger);
+  font-weight: 500;
+}
+
+.discard-confirm-actions {
+  display: flex;
+  gap: 6px;
+}
+
+/* Diff Editor Content */
+.diff-editor-body {
+  flex: 1 1 0%;
+  overflow-y: auto;
+  overflow-x: auto;
+  background-color: var(--bg-surface-sunken);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  outline: none;
+}
+
+.diff-editor-body:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--accent-ring);
+}
+
+.diff-loading,
+.diff-empty-state,
+.diff-unselected-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 30px;
+  text-align: center;
+  color: var(--text-tertiary);
+}
+
+.diff-unselected-state .muted-icon {
+  color: var(--border-strong);
+  margin-bottom: 12px;
+}
+
+.diff-unselected-state h4,
+.diff-empty-state h4 {
+  margin: 0 0 6px 0;
+  color: var(--text-primary);
+  font-size: var(--text-md);
+}
+
+.diff-empty-state p {
+  user-select: text;
+}
+
+/* Unified Diff Rendering */
+.diff-unified-view {
+  width: 100%;
+}
+
+.diff-hunk {
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.hunk-header-row {
+  background-color: var(--accent-subtle);
+  border-top: 1px solid var(--border-accent);
+  border-bottom: 1px solid var(--border-accent);
+  color: var(--accent-primary);
+  padding: 2px 10px;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  user-select: none;
+}
+
+.diff-line-row {
+  display: flex;
+  width: 100%;
+  min-height: 20px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.diff-line-row.diff-line-add {
+  background-color: var(--color-success-bg);
+  color: var(--color-success);
+}
+
+.diff-line-row.diff-line-delete {
+  background-color: var(--color-danger-bg);
+  color: var(--color-danger);
+}
+
+.diff-line-row.diff-line-context {
+  color: var(--text-secondary);
+}
+
+.diff-line-num {
+  width: 44px;
+  min-width: 44px;
+  text-align: right;
+  padding-right: 8px;
+  color: var(--text-tertiary);
+  user-select: none;
+  font-size: var(--text-xs);
+}
+
+.diff-line-add .diff-line-num {
+  color: var(--color-success);
+}
+.diff-line-delete .diff-line-num {
+  color: var(--color-danger);
+}
+
+.diff-line-marker {
+  width: 18px;
+  min-width: 18px;
+  text-align: center;
+  user-select: none;
+  font-weight: 700;
+}
+
+.diff-line-content {
+  flex: 1;
+  padding-right: 12px;
+  user-select: text;
+  cursor: text;
+}
+
+/* Split (Side-by-Side) Diff Rendering */
+.diff-split-view {
+  width: 100%;
+}
+
+.diff-split-column-headers {
+  display: flex;
+  width: 100%;
+  background-color: var(--bg-header);
+  border-bottom: 1px solid var(--border-subtle);
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  user-select: none;
+}
+
+.split-header-col {
+  flex: 1 1 50%;
+  display: flex;
+  align-items: center;
+  padding: 4px 12px;
+  border-right: 1px solid var(--border-subtle);
+}
+
+.split-header-col:last-child {
+  border-right: none;
+}
+
+.split-header-tag {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text-tertiary);
+  letter-spacing: 0.3px;
+}
+
+.split-header-col.left-header .split-header-tag {
+  color: var(--color-danger);
+}
+.split-header-col.right-header .split-header-tag {
+  color: var(--color-success);
+}
+
+.diff-split-hunk {
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.split-rows-table {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
+.split-row {
+  display: flex;
+  width: 100%;
+  min-height: 20px;
+}
+
+.split-col {
+  flex: 1 1 50%;
+  display: flex;
+  min-width: 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+  border-right: 1px solid var(--border-subtle);
+}
+
+.split-col:last-child {
+  border-right: none;
+}
+
+.split-col.diff-line-delete {
+  background-color: var(--color-danger-bg);
+  color: var(--color-danger);
+}
+
+.split-col.diff-line-add {
+  background-color: var(--color-success-bg);
+  color: var(--color-success);
+}
+
+.split-col.diff-line-context {
+  color: var(--text-secondary);
+}
+
+.split-col.empty-col {
+  background-color: rgba(0, 0, 0, 0.2);
+}

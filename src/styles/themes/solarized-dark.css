@@ -1,0 +1,48 @@
+/* GENERATED from src/theme/registry.ts by `npm run themes:generate`. Do not edit. */
+
+/* Solarized Dark */
+[data-theme="solarized-dark"] {
+  color-scheme: dark;
+
+  --bg-canvas: #00212b;
+  --bg-header: #001920;
+  --bg-surface: #002b36;
+  --bg-surface-elevated: #073642;
+  --bg-surface-sunken: #001920;
+  --bg-overlay: rgba(0, 25, 32, 0.82);
+  --border-subtle: rgba(147, 161, 161, 0.1);
+  --border-default: rgba(147, 161, 161, 0.18);
+  --border-strong: #586e75;
+  --border-accent: rgba(38, 139, 210, 0.45);
+  --text-primary: #b5bfbf;
+  --text-secondary: #a3b0b1;
+  --text-tertiary: #8b9da2;
+  --text-inverse: #002b36;
+  --accent-primary: #359be2;
+  --accent-hover: #2aa198;
+  --accent-subtle: rgba(38, 139, 210, 0.15);
+  --accent-glow: rgba(38, 139, 210, 0.35);
+  --accent-ring: rgba(38, 139, 210, 0.5);
+  --color-success: #98ac0c;
+  --color-success-bg: rgba(133, 153, 0, 0.08);
+  --color-warning: #c89b0a;
+  --color-warning-bg: rgba(181, 137, 0, 0.08);
+  --color-danger: #fa6f6c;
+  --color-danger-bg: rgba(220, 50, 47, 0.08);
+  --color-purple: #969be0;
+  --color-purple-bg: rgba(108, 113, 196, 0.08);
+  --scroll-track: #001920;
+  --scroll-thumb: #073642;
+  --scroll-thumb-hover: #586e75;
+
+  --tab-color-blue: #268bd2;
+  --tab-color-green: #859900;
+  --tab-color-yellow: #b58900;
+  --tab-color-red: #dc322f;
+  --tab-color-purple: #d33682;
+  --tab-color-teal: #2aa198;
+  --tab-color-orange: #cb4b16;
+  --tab-color-gray: #586e75;
+
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23839496' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+}

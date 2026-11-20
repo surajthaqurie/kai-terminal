@@ -1,0 +1,12 @@
+/* GENERATED from src/theme/registry.ts by `npm run themes:generate`. Do not edit. */
+
+@import "./kai-dark.css";
+@import "./catppuccin-mocha.css";
+@import "./tokyo-night.css";
+@import "./nord.css";
+@import "./one-dark.css";
+@import "./dracula.css";
+@import "./solarized-dark.css";
+@import "./gruvbox-dark.css";
+@import "./rose-pine.css";
+@import "./kai-light.css";
