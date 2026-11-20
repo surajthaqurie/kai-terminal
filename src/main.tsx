@@ -1,5 +1,6 @@
 import ReactDOM from "react-dom/client";
 import { isMusicPipWindow } from "./services/musicPip";
+import { isSharedChatWindow } from "./services/sharedChatWindow";
 import { initMusicRelay } from "./services/musicService";
 import "./fonts.css";
 import "./App.css";
@@ -27,6 +28,11 @@ if (isMusicPipWindow()) {
   // (It takes the music relay, if any, from the src the main window sends.)
   void import("./components/MusicPlayer/MusicPipWindow").then(({ MusicPipWindow }) =>
     root.render(<MusicPipWindow />)
+  );
+} else if (isSharedChatWindow()) {
+  // The popped-out Shared Agent chat: only the chat, none of the terminal app.
+  void import("./components/SharedChatWindow").then(({ SharedChatWindow }) =>
+    root.render(<SharedChatWindow />)
   );
 } else {
   // On macOS / Linux the music player hosts YouTube in the app's local relay

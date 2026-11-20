@@ -277,11 +277,6 @@ function App() {
     setAiCliTab("providers");
     setIsAiCliOpen(true);
   }, [effectiveProjectDir]);
-  const openSharedAgent = useCallback(() => {
-    setAiCliDir(effectiveProjectDir);
-    setAiCliTab("shared");
-    setIsAiCliOpen(true);
-  }, [effectiveProjectDir]);
   const openSettings = useCallback(() => setIsSettingsOpen(true), []);
   const openShortcutSettings = useCallback(() => {
     setSettingsTab("shortcuts");
@@ -408,13 +403,7 @@ function App() {
               )}
               onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
               onOpenAiCli={openAiCli}
-              onOpenSharedAgent={openSharedAgent}
               onOpenSettings={openSettings}
-              onOpenEditor={project.openEditor}
-              editorPath={userSettings.editorPath}
-              installedEditors={project.installedEditors}
-              isLoadingEditors={project.isLoadingEditors}
-              onRefreshEditors={project.refreshInstalledEditors}
               updateAvailable={updates.updateInfo?.updateAvailable ?? false}
               latestVersion={updates.updateInfo?.latestVersion ?? null}
               onViewUpdate={updates.viewUpdate}
@@ -610,6 +599,11 @@ function App() {
           currentShell={activePaneShell}
           onChangeShell={changeActiveShell}
           mode={modeDisplay}
+          onOpenEditor={project.openEditor}
+          editorPath={userSettings.editorPath}
+          installedEditors={project.installedEditors}
+          isLoadingEditors={project.isLoadingEditors}
+          onRefreshEditors={project.refreshInstalledEditors}
           music={music.footerState}
           onToggleMusicPanel={toggleMusicPanel}
           musicOpen={music.isOpen}

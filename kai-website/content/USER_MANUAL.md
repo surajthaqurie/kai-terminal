@@ -244,12 +244,12 @@ Chat with the Claude Code or OpenCode installed on another PC, or let your other
 
 ### Share my agent
 
-- **Turn sharing on** with the switch on the **Share my agent** half, or with one click on the header switch. Kai starts a small server on port 8765 (or the next free one of the nine after it) and shows the addresses it listens on. Sharing is never remembered: it is off every time Kai starts.
-- **Agents you share**: Claude Code and OpenCode, each with its own switch. An agent that is not installed is shown with the reason.
-- **Invite a PC**: choose how long the link lives (5, 15 or 60 minutes) and click **Generate invite link**. The link is shown once, works once, and can be cancelled. Send it to the other PC yourself.
+- **Start sharing** from **Share my agent** (the first tab of Shared Agent), or with one click on the header switch. Choose the **Port** first if you like (8765 by default, any number from 1024 to 65535; Kai remembers it): **Check port** tells you whether another program already uses it, and Kai checks again before starting. A taken port is never swapped for another one silently. **Stop sharing** ends every run, closes every connection and releases the port, and Kai confirms it is free again. Sharing is never remembered: it is off every time Kai starts.
+- **Agents you share**: only the coding agents installed on this PC are listed. Claude Code and OpenCode each get their own switch. Any other coding CLI Kai finds (for example Codex CLI, Gemini CLI, Antigravity `agy` or Aider) is listed too, greyed out, with why it can't be shared: sharing needs a mode Kai can hold to read-only. The list is checked again each time you open the panel.
+- **Invite a PC**: choose how long the link lives (5, 15 or 60 minutes, or **Until I turn it off**) and click **Generate invite link**. The link is shown once, works once, and can be cancelled. A link with no time limit stays valid until it is used, you cancel it, or you stop sharing. Send it to the other PC yourself.
 - **Connected PCs**: each PC that joined, with its own **permissions** (which of your shared agents it may use, which model, and how many minutes a run may take, 1 to 240, 10 by default), its token use, its recent tasks, and a way to remove it. Removing a PC ends its access at once; it needs a new link to come back. Up to 50 PCs can join.
 - **Live runs**: what each PC is running right now.
-- **Internet access (optional)**: to let a PC outside your network join, point any HTTPS tunnel or reverse proxy at the port Kai shows, and paste its public `https://` address (just the host name, nothing after it). Invite links then come in two forms, **Same network** and **Internet**. Kai never starts a tunnel for you; **Turn off** forgets the address.
+- **Internet access (optional)**: shows **LAN only** until you set it up, meaning only PCs on your own network (same Wi-Fi or LAN) can join. To let a PC outside your network join, point any HTTPS tunnel or reverse proxy at the port Kai shows, and paste its public `https://` address (just the host name, nothing after it). Invite links then come in two forms, **Same network** and **Internet**. Kai never starts a tunnel for you; **Turn off** forgets the address.
 
 ### Use a shared agent
 

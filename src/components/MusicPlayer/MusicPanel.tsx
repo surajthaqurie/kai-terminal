@@ -64,6 +64,7 @@ import {
   embedSrcForTrack,
   fetchPlaylistVideos,
   hasNextItem,
+  isMixPlaylist,
   isFavoriteTrack,
   loadFavorites,
   parseYouTubePlayerMessage,
@@ -106,6 +107,8 @@ const PAUSED_SEEK_RESTORE_MS = 1500;
 const PIP_HANDOFF_MAX_MS = 8000;
 /** Previous restarts the song once it has played longer than this (seconds). */
 const PREVIOUS_RESTART_SECONDS = 3;
+/** Next shows its "working" state only when finding the song takes longer than this. */
+const NEXT_BUSY_DELAY_MS = 250;
 
 /**
  * Music Time drawer (272px): one search box, the YouTube video, and four
@@ -175,6 +178,18 @@ export const MusicPanel: FC<MusicPanelProps> = ({
   // Set while a paused embed is being nudged to its exact fraction: it is
   // muted for the moment the seek may start it, and this undoes that.
   const restoreAfterPausedSeekRef = useRef<(() => void) | null>(null);
+  // Loop was switched off while the embed carries native loop. Rebuilding the
+  // iframe there and then cut the sound mid-song (YouTube reloads from
+  // scratch), so the song plays on and the switch happens when it ends.
+  const loopOffPendingRef = useRef(false);
+  // When the user last moved the position themselves (seek bar, restart), so a
+  // jump back to the start is not taken for the embed looping on its own.
+  const manualSeekAtRef = useRef(Number.NEGATIVE_INFINITY);
+  // A Next is still finding its song (a list fetch or a related-songs search can
+  // take seconds): further presses are ignored instead of stacking searches
+  // that each reload the player, and the button shows it is working.
+  const nextBusyRef = useRef(false);
+  const [advancing, setAdvancing] = useState(false);
   // Favorite songs, persisted in localStorage; the heart button in the
   // controls and the Favorites tab in the drawer both drive this list.
   const [favorites, setFavorites] = useState<MusicTrack[]>(() => loadFavorites());
@@ -349,6 +364,8 @@ export const MusicPanel: FC<MusicPanelProps> = ({
   // knows it must rebuild (commands cannot cancel YouTube's own looping).
   useEffect(() => {
     nativeLoopRef.current = Boolean(src && loopRef.current && track?.videoId);
+    // A new embed carries the loop setting of the moment: nothing is pending.
+    loopOffPendingRef.current = false;
   }, [src, track?.videoId, track?.playlistId]);
 
   const sendCommand = useCallback((func: YouTubeCommand | string, args: unknown = "") => {
@@ -448,8 +465,32 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     };
     // Telemetry arrives from our own iframe, or — while the video lives in the
     // picture-in-picture window — relayed from that window's iframe.
+    /** The song ended under a deferred loop-off: move on as if loop were never on. */
+    const endDeferredLoop = () => {
+      loopOffPendingRef.current = false;
+      const now = Date.now();
+      if (now - lastAutoNextRef.current <= 1500) return;
+      lastAutoNextRef.current = now;
+      void actionsRef.current.next();
+    };
     const handleData = (t: YouTubePlayerTelemetry) => {
       received = true;
+      // A native-loop embed may restart the song without reporting "ended":
+      // a jump from the last seconds back to the start, not made by the user,
+      // is the end of the song.
+      if (
+        t.currentTime !== undefined &&
+        loopOffPendingRef.current &&
+        !loopRef.current &&
+        knownDuration > 0 &&
+        knownTime >= knownDuration - 2.5 &&
+        t.currentTime < 2 &&
+        performance.now() - manualSeekAtRef.current > 2000
+      ) {
+        knownTime = t.currentTime;
+        endDeferredLoop();
+        return;
+      }
       if (t.videoId) {
         liveVideoIdRef.current = t.videoId;
         // A bare playlist link names no song: its first report is the start.
@@ -510,6 +551,8 @@ export const MusicPanel: FC<MusicPanelProps> = ({
           sendCommand("seekTo", [0, true]);
           sendCommand("playVideo");
           setPlaying(true);
+        } else if (loopOffPendingRef.current) {
+          endDeferredLoop();
         } else if (trackRef.current && !trackRef.current.playlistId) {
           // Song finished: auto-advance exactly like the Next button (queue ->
           // related-song search). Native playlist embeds advance themselves,
@@ -626,23 +669,31 @@ export const MusicPanel: FC<MusicPanelProps> = ({
   const nextInList = async (cur: MusicTrack): Promise<MusicTrack | null> => {
     const listId = cur.playlistId;
     if (!listId) return null;
-    let items: { title: string; videoId?: string | null }[] =
-      playlistIdRef.current === listId ? playlistItemsRef.current : [];
+    const liveId = liveVideoIdRef.current ?? cur.videoId ?? null;
+    const mix = isMixPlaylist(listId);
+    type Item = { title: string; videoId?: string | null };
+    /** The song after `liveId` in `items`; undefined when that is unknown. */
+    const pick = (items: Item[], wrap: boolean): Item | undefined => {
+      const at = items.findIndex((i) => i.videoId === liveId);
+      // Not in what was loaded: guessing would jump back to the list's start.
+      if (at < 0) return undefined;
+      // Past the last song, loop carries on from the top of the list.
+      return items[at + 1] ?? (wrap ? items[0] : undefined);
+    };
+    let items: Item[] = playlistIdRef.current === listId ? playlistItemsRef.current : [];
     if (items.length === 0 && loopListRef.current?.id === listId) {
       items = loopListRef.current.items;
     }
-    if (items.length === 0) {
-      const fetched = await fetchPlaylistVideos(listId, 200);
+    // A mix is endless: at the end of what was loaded, first look again from
+    // the live song before wrapping round.
+    let after = pick(items, !mix);
+    if (!after) {
+      // A mix is built around the song it plays, so ask for the songs around
+      // the live one (YouTube Music links are mixes: `list=RDAMVM…`).
+      const fetched = await fetchPlaylistVideos(listId, 200, mix ? liveId : null);
       if (fetched.length > 0) loopListRef.current = { id: listId, items: fetched };
-      items = fetched;
+      after = pick(fetched, true);
     }
-    const liveId = liveVideoIdRef.current ?? cur.videoId;
-    const at = items.findIndex((i) => i.videoId === liveId);
-    // Not in what was loaded (a mix that differs per listener, a very long
-    // list): guessing would jump back to the list's start, so say "unknown".
-    if (at < 0) return null;
-    // Past the last song, loop carries on from the top of the list.
-    const after = items[at + 1] ?? items[0];
     if (!after?.videoId || after.videoId === liveId) return null;
     return {
       ...cur,
@@ -653,7 +704,21 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     };
   };
 
+  /** Next button / auto-advance: one at a time, showing when it takes a while. */
   const next = async () => {
+    if (nextBusyRef.current) return;
+    nextBusyRef.current = true;
+    const busyTimer = window.setTimeout(() => setAdvancing(true), NEXT_BUSY_DELAY_MS);
+    try {
+      await advance();
+    } finally {
+      window.clearTimeout(busyTimer);
+      nextBusyRef.current = false;
+      setAdvancing(false);
+    }
+  };
+
+  const advance = async () => {
     // After Previous, Next first returns to the songs stepped back from.
     const forward = forwardRef.current.pop();
     if (forward) {
@@ -735,6 +800,15 @@ export const MusicPanel: FC<MusicPanelProps> = ({
       } catch {
         // ignore
       }
+    }
+    // Loop was switched off on this native-loop embed and nothing comes next:
+    // a fresh embed without loop, so the song does not keep repeating.
+    if (nativeLoopRef.current && !loopRef.current) {
+      rebuildStartRef.current = 0;
+      setEmbedReloadNonce((n) => n + 1);
+      setPlaying(true);
+      setCurrentTime(0);
+      return;
     }
     // Fallback: replay current video from start
     replayCurrent();
@@ -918,6 +992,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
       if (!open) onRequestOpen?.();
       return;
     }
+    manualSeekAtRef.current = performance.now();
     sendCommand("seekTo", [0, true]);
     sendCommand("playVideo");
     setPlaying(true);
@@ -953,10 +1028,35 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     // next song instead of ever reporting "ended", so the single-video embed
     // with native loop takes over from the current position.
     const leavesList = next && Boolean(track?.videoId && track?.playlistId);
-    if ((!next && nativeLoopRef.current) || leavesList) {
+    if (!next && nativeLoopRef.current) {
+      // Rebuilding now would cut the sound mid-song: let the song finish, then
+      // move on (see `endDeferredLoop`).
+      loopOffPendingRef.current = true;
+      return;
+    }
+    if (next && loopOffPendingRef.current) {
+      // Back on before the song ended: the embed still loops natively.
+      loopOffPendingRef.current = false;
+      return;
+    }
+    if (leavesList) {
       nativeLoopRef.current = next;
       rebuildStartRef.current = Math.max(0, currentTime);
       setEmbedReloadNonce((n) => n + 1);
+      // Fetch the list now so Next inside the loop does not wait for it.
+      const listId = track?.playlistId;
+      if (listId && loopListRef.current?.id !== listId && playlistIdRef.current !== listId) {
+        const seed = isMixPlaylist(listId) ? (liveVideoIdRef.current ?? track?.videoId) : null;
+        void fetchPlaylistVideos(listId, 200, seed)
+          .then((items) => {
+            if (items.length > 0 && loopListRef.current?.id !== listId) {
+              loopListRef.current = { id: listId, items };
+            }
+          })
+          .catch(() => {
+            // Next fetches it itself.
+          });
+      }
     }
   };
 
@@ -1040,6 +1140,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
   const seekToPercent = (pct: number) => {
     if (!src || duration <= 0 || !Number.isFinite(pct)) return;
     const targetSec = (Math.max(0, Math.min(100, pct)) / 100) * duration;
+    manualSeekAtRef.current = performance.now();
     setCurrentTime(targetSec);
     sendCommand("seekTo", [targetSec, true]);
   };
@@ -1136,7 +1237,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     src: pipSrc,
     title: track?.title ?? null,
     playing,
-    buffering,
+    buffering: buffering || advancing,
     // Silent until it takes over from the docked embed (see `finishHandoff`).
     muted: muted || pipHandoff,
     volume,
@@ -1256,6 +1357,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     track?.title,
     playing,
     buffering,
+    advancing,
     muted,
     volume,
     currentTime,
@@ -2109,8 +2211,9 @@ export const MusicPanel: FC<MusicPanelProps> = ({
               </button>
               <button
                 type="button"
-                className="btn btn-icon music-ctrl-btn"
+                className={`btn btn-icon music-ctrl-btn${advancing ? " music-ctrl-busy" : ""}`}
                 onClick={next}
+                aria-busy={advancing || undefined}
                 disabled={!src && queue.length === 0}
                 title={withKeys(
                   // A song from a list moves on inside that list, not the queue.

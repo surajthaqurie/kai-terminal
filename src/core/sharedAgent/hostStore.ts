@@ -12,8 +12,10 @@ import path from "path";
 import { getKaiHomeDir, atomicWriteJson } from "../registry";
 import { parsePublicUrl } from "./invite";
 import {
+  DEFAULT_SHARE_PORT,
   defaultGrants,
   emptyUsage,
+  parseSharePort,
   type DeviceGrants,
   type DeviceTask,
   type SharedAgentId,
@@ -28,6 +30,7 @@ export interface InviteRecord {
   status: "open" | "used" | "cancelled" | "expired";
   createdMs: number;
   createdAt: string;
+  /** 0 = no time limit: open until used, cancelled or sharing is turned off. */
   ttlSeconds: number;
   usedAt?: string;
   deviceId?: string;
@@ -89,6 +92,8 @@ export interface HostFile {
    * and sharing is on, PCs may also join and connect through it. Absent = LAN only.
    */
   publicUrl?: string;
+  /** The port sharing listens on (absent = {@link DEFAULT_SHARE_PORT}). */
+  port?: number;
 }
 
 export const sharedAgentDir = (): string => path.join(getKaiHomeDir(), "shared-agent");
@@ -157,9 +162,23 @@ export class HostStore {
     this.save();
   }
 
+  get port(): number {
+    return parseSharePort(this.data.port) ?? DEFAULT_SHARE_PORT;
+  }
+
+  setPort(port: number): void {
+    if (port === DEFAULT_SHARE_PORT) delete this.data.port;
+    else this.data.port = port;
+    this.save();
+  }
+
   agentEnabled(agent: SharedAgentId): boolean {
     return this.data.agents[agent]?.enabled ?? true;
   }
 }
+
+/** True once a timed invite has run out. An invite with no time limit never does. */
+export const inviteExpired = (inv: Pick<InviteRecord, "createdMs" | "ttlSeconds">, now: number) =>
+  inv.ttlSeconds > 0 && now - inv.createdMs > inv.ttlSeconds * 1000;
 
 export const newDeviceUsage = (): UsageTotals => emptyUsage();

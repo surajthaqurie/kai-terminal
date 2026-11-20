@@ -20,6 +20,7 @@ const svc = vi.hoisted(() => ({
   stopChat: vi.fn(),
   getShareStatus: vi.fn(),
   setSharing: vi.fn(),
+  checkPort: vi.fn(),
   setAgentShared: vi.fn(),
   createInvite: vi.fn(),
   cancelInvite: vi.fn(),
@@ -33,7 +34,26 @@ const svc = vi.hoisted(() => ({
 }));
 vi.mock("../services/sharedAgentService", () => svc);
 
+const desktop = vi.hoisted(() => ({ tauri: false }));
+vi.mock("../services/ptyService", () => ({ isTauriAvailable: () => desktop.tauri }));
+const chatWindow = vi.hoisted(() => ({
+  popOutChat: vi.fn(),
+  closeChatWindow: vi.fn(),
+  closed: null as null | ((open: boolean) => void),
+}));
+vi.mock("../services/sharedChatWindow", async (orig) => ({
+  ...(await orig<typeof import("../services/sharedChatWindow")>()),
+  popOutChat: chatWindow.popOutChat,
+  closeChatWindow: chatWindow.closeChatWindow,
+  isChatPoppedOut: () => false,
+  onChatPoppedOut: (fn: (open: boolean) => void) => {
+    chatWindow.closed = fn;
+    return () => {};
+  },
+}));
+
 import { SharedAgentPanel } from "../components/SharedAgentPanel";
+import { resetJoinedHostsCache } from "../hooks/useJoinedHosts";
 
 const office = (over: Partial<JoinedHost> = {}): JoinedHost => ({
   id: "h1",
@@ -61,6 +81,7 @@ const laptop = office({
 
 const shareStatus = (over: Partial<ShareStatus> = {}): ShareStatus => ({
   enabled: false,
+  port: 8765,
   listening: null,
   publicUrl: null,
   agents: [
@@ -131,13 +152,11 @@ beforeEach(() => {
     handlers.add(h);
     return () => handlers.delete(h);
   });
-  svc.listHosts.mockResolvedValue({
-    ok: true,
-    value: {
-      hosts: [office(), laptop],
-      ownAgents: [{ id: "claude", name: "Claude Code", available: true }],
-    },
-  });
+  resetJoinedHostsCache();
+  desktop.tauri = false;
+  chatWindow.popOutChat.mockReset().mockResolvedValue(true);
+  chatWindow.closeChatWindow.mockReset().mockResolvedValue(true);
+  svc.listHosts.mockResolvedValue({ ok: true, value: [office(), laptop] });
   svc.getShareStatus.mockResolvedValue({ ok: true, value: shareStatus() });
   svc.sendChat.mockResolvedValue({ ok: true, value: "chat-1" });
   svc.stopChat.mockResolvedValue({ ok: true, value: true });
@@ -153,8 +172,15 @@ afterEach(() => {
 });
 
 describe("Use a shared agent", () => {
-  it("shows each joined PC with the tokens used through it, in Join a PC", async () => {
+  // "Share my agent" is the first tab; these tests start on the other one.
+  async function openReceive() {
     await mount();
+    await click(buttonByText("Use a shared agent"));
+    await flush();
+  }
+
+  it("shows each joined PC with the tokens used through it, in Join a PC", async () => {
+    await openReceive();
     const join = container.querySelector('[aria-labelledby="sa-join-title"]')!;
     expect(join.textContent).toContain("Office-PC");
     expect(join.textContent).toContain("12,480"); // 10,000 + 2,000 + 480
@@ -168,21 +194,53 @@ describe("Use a shared agent", () => {
     expect(text()).not.toContain("host’s Claude");
   });
 
-  it("says which Claude is answering", async () => {
-    await mount();
+  it("shows the joined PC's state, and never this PC's own Claude", async () => {
+    await openReceive();
     const route = container.querySelector(".sa-route")!;
-    expect(route.textContent).toContain("Claude is using the shared agent · Office-PC");
+    expect(route.textContent).toContain("Connected to Office-PC");
     expect(route.textContent).toContain("LIVE");
     expect(route.className).toContain("sa-tone-ok");
     await click(
       container.querySelector<HTMLButtonElement>('button[aria-label="Chat with Amit-Laptop"]')!
     );
-    expect(container.querySelector(".sa-route")!.textContent).toContain("FALLBACK");
+    expect(container.querySelector(".sa-route")!.textContent).toContain("OFFLINE");
     expect(container.querySelector("#sa-chat-title")!.textContent).toBe("Chat with Amit-Laptop");
+    expect(text()).not.toMatch(/own Claude/i);
+  });
+
+  it("offers only a way to join until a PC is joined: no chat before that", async () => {
+    svc.listHosts.mockResolvedValue({ ok: true, value: [] });
+    await openReceive();
+    expect(text()).toContain("Join a shared agent");
+    expect(container.querySelector('input[aria-label="Invite link"]')).toBeTruthy();
+    expect(container.querySelector('textarea[aria-label="Message"]')).toBeNull();
+    expect(container.querySelector(".sa-chat")).toBeNull();
+    expect(text()).not.toMatch(/own Claude/i);
+
+    const studio = office({ id: "h3", name: "Studio-PC", usage: emptyUsage() });
+    svc.joinHost.mockResolvedValue({ ok: true, value: studio });
+    await type(
+      container.querySelector<HTMLInputElement>('input[aria-label="Invite link"]')!,
+      `http://192.168.1.50:8765/join#${"a".repeat(43)}`
+    );
+    await click(buttonByText("Join"));
+    expect(container.querySelector("#sa-chat-title")!.textContent).toBe("Chat with Studio-PC");
+    expect(container.querySelector('textarea[aria-label="Message"]')).toBeTruthy();
+  });
+
+  it("shows joined PCs from the last visit at once, before the service answers", async () => {
+    await openReceive();
+    act(() => root.unmount());
+    root = createRoot(container);
+    svc.listHosts.mockReturnValue(new Promise(() => {})); // never answers
+    await openReceive();
+    const receive = container.querySelector(".sa-mode:not([hidden])")!;
+    expect(receive.textContent).toContain("Office-PC");
+    expect(receive.textContent).not.toContain("Loading…");
   });
 
   it("rejects a bad invite link without calling the service, and joins with a good one", async () => {
-    await mount();
+    await openReceive();
     const input = container.querySelector<HTMLInputElement>('input[aria-label="Invite link"]')!;
     await type(input, "http://8.8.8.8:1/join#abcdefghij");
     await click(buttonByText("Join"));
@@ -198,13 +256,7 @@ describe("Use a shared agent", () => {
     });
     svc.joinHost.mockResolvedValue({ ok: true, value: studio });
     // The service now lists the new PC too.
-    svc.listHosts.mockResolvedValue({
-      ok: true,
-      value: {
-        hosts: [office(), laptop, studio],
-        ownAgents: [{ id: "claude", name: "Claude Code", available: true }],
-      },
-    });
+    svc.listHosts.mockResolvedValue({ ok: true, value: [office(), laptop, studio] });
     await type(input, good);
     await click(buttonByText("Join"));
     expect(svc.joinHost).toHaveBeenCalledWith(good);
@@ -218,7 +270,7 @@ describe("Use a shared agent", () => {
       ok: false,
       error: { code: "rejected", message: "This invite link is already used." },
     });
-    await mount();
+    await openReceive();
     await type(
       container.querySelector<HTMLInputElement>('input[aria-label="Invite link"]')!,
       `http://192.168.1.50:8765/join#${"a".repeat(43)}`
@@ -228,7 +280,7 @@ describe("Use a shared agent", () => {
   });
 
   it("leaves a PC only after a second click", async () => {
-    await mount();
+    await openReceive();
     await click(container.querySelector('button[aria-label="Leave Amit-Laptop"]')!);
     expect(svc.leaveHost).not.toHaveBeenCalled();
     expect(text()).toContain("Confirm leave");
@@ -241,7 +293,7 @@ describe("Use a shared agent", () => {
       ok: false,
       error: { code: "unavailable", message: "Shared Agent is part of the desktop app." },
     });
-    await mount();
+    await openReceive();
     expect(container.querySelector("[role=alert]")!.textContent).toContain("desktop app");
   });
 
@@ -255,7 +307,7 @@ describe("Use a shared agent", () => {
     }
 
     it("sends through the chosen PC and streams the answer", async () => {
-      await mount();
+      await openReceive();
       await send("hello");
       expect(svc.sendChat).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -277,7 +329,7 @@ describe("Use a shared agent", () => {
 
       const log = container.querySelector(".sa-log")!;
       expect(log.textContent).toContain("hello");
-      expect(log.textContent).toContain("Office-PC · claude");
+      expect(log.textContent).toContain("Office-PC · Claude Code");
       expect(log.textContent).toContain("Hi there\n\nMore");
       expect(log.textContent).toContain("Read a.ts");
       expect(buttonByText("Send")).toBeTruthy();
@@ -287,33 +339,43 @@ describe("Use a shared agent", () => {
       expect(svc.sendChat.mock.calls[1][0].session).toBe("sess-1");
     });
 
-    it("labels an answer from this PC's own Claude, and shows failures", async () => {
-      await mount();
+    it("shows the answer as it is written, then the whole block in its place", async () => {
+      await openReceive();
       await send("hi");
       const chatId = svc.sendChat.mock.calls[0][0].chatId as string;
-      await sendEvent(
-        chatEvent(chatId, "log", { text: "Retrying with your own agent on this PC." })
-      );
-      await sendEvent(chatEvent(chatId, "route", { route: "own", hostName: "" }));
-      await sendEvent(chatEvent(chatId, "text", { text: "From here" }));
-      await sendEvent(
-        chatEvent(chatId, "end", { status: "failed", error: "It broke", route: "own" })
-      );
+      // The answer bubble is there before the PC says anything.
+      expect(container.querySelector(".sa-log .sa-typing")).toBeTruthy();
+      await sendEvent(chatEvent(chatId, "delta", { text: "Hel" }));
+      await sendEvent(chatEvent(chatId, "delta", { text: "lo wor" }));
       const log = container.querySelector(".sa-log")!;
-      expect(log.textContent).toContain("My own Claude");
-      expect(log.textContent).toContain("Retrying with your own agent");
+      expect(log.textContent).toContain("Hello wor");
+      expect(log.querySelector(".sa-caret")).toBeTruthy();
+      await sendEvent(chatEvent(chatId, "text", { text: "Hello world" }));
+      expect(log.textContent).toContain("Hello world");
+      expect(log.textContent).not.toContain("Hello worHello");
+      expect(log.querySelector(".sa-caret")).toBeNull();
+    });
+
+    it("shows a failure the PC reports", async () => {
+      await openReceive();
+      await send("hi");
+      const chatId = svc.sendChat.mock.calls[0][0].chatId as string;
+      await sendEvent(chatEvent(chatId, "end", { status: "failed", error: "It broke" }));
+      const log = container.querySelector(".sa-log")!;
       expect(log.textContent).toContain("It broke");
+      expect(log.querySelector(".sa-typing")).toBeNull(); // the empty answer bubble is gone
+      expect(buttonByText("Send")).toBeTruthy();
     });
 
     it("ignores events for another chat", async () => {
-      await mount();
+      await openReceive();
       await send("hi");
       await sendEvent(chatEvent("someone-else", "text", { text: "LEAKED" }));
       expect(container.querySelector(".sa-log")!.textContent).not.toContain("LEAKED");
     });
 
     it("stops a running answer", async () => {
-      await mount();
+      await openReceive();
       await send("hi");
       const chatId = svc.sendChat.mock.calls[0][0].chatId as string;
       await click(buttonByText("Stop"));
@@ -327,14 +389,14 @@ describe("Use a shared agent", () => {
         ok: false,
         error: { code: "busy", message: "Already answering." },
       });
-      await mount();
+      await openReceive();
       await send("hi");
       expect(container.querySelector(".sa-log")!.textContent).toContain("Already answering.");
       expect(buttonByText("Send")).toBeTruthy();
     });
 
     it("is cleared by New chat, which also forgets the host session", async () => {
-      await mount();
+      await openReceive();
       await send("one");
       const chatId = svc.sendChat.mock.calls[0][0].chatId as string;
       await sendEvent(chatEvent(chatId, "session", { sessionId: "sess-1" }));
@@ -345,26 +407,57 @@ describe("Use a shared agent", () => {
       expect(svc.sendChat.mock.calls[1][0].session).toBeNull();
     });
 
-    it("has no routing settings: it switches to the own Claude by itself", async () => {
-      await mount();
-      expect(container.querySelector("#sa-route")).toBeNull();
-      expect(container.querySelector("#sa-fallback")).toBeNull();
-      expect(container.querySelector(".sa-route")!.textContent).toContain(
-        "switches to your own Claude if it stops answering"
-      );
-    });
-
-    it("does not send when no agent is available anywhere", async () => {
-      svc.listHosts.mockResolvedValue({ ok: true, value: { hosts: [], ownAgents: [] } });
-      await mount();
+    it("does not send when the joined PC has no agent", async () => {
+      svc.listHosts.mockResolvedValue({
+        ok: true,
+        value: [office({ agents: [{ id: "claude", name: "Claude Code", available: false }] })],
+      });
+      await openReceive();
       expect(
         container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message"]')!.disabled
       ).toBe(true);
-      expect(container.querySelector(".sa-log")!.textContent).toContain("No agent found");
+      expect(container.querySelector(".sa-log")!.textContent).toContain("no agent to answer");
+    });
+
+    it("pops out into its own window with the conversation, and takes it back", async () => {
+      desktop.tauri = true;
+      await openReceive();
+      await send("first");
+      const chatId = svc.sendChat.mock.calls[0][0].chatId as string;
+      const popOut = () =>
+        container.querySelector<HTMLButtonElement>('button[aria-label="Pop out chat"]')!;
+      expect(popOut().disabled).toBe(true); // not while an answer is coming in
+      await sendEvent(chatEvent(chatId, "session", { sessionId: "sess-1" }));
+      await sendEvent(chatEvent(chatId, "text", { text: "answer" }));
+      await sendEvent(chatEvent(chatId, "end", { status: "completed" }));
+
+      await click(popOut());
+      const handed = chatWindow.popOutChat.mock.calls[0][0];
+      expect(handed.hostId).toBe("h1");
+      expect(handed.sessions).toEqual({ "h1:claude": "sess-1" });
+      expect(handed.messages.map((m: { text: string }) => m.text)).toEqual(["first", "answer"]);
+
+      // The window opened: the panel says where the chat went.
+      await act(async () => chatWindow.closed?.(true));
+      expect(text()).toContain("open in its own window");
+      expect(container.querySelector('textarea[aria-label="Message"]')).toBeNull();
+
+      // The window hands back a longer conversation when it closes.
+      localStorage.setItem(
+        "kai_shared_chat_handoff",
+        JSON.stringify({
+          ...handed,
+          messages: [...handed.messages, { id: 99, kind: "you", text: "from the window" }],
+        })
+      );
+      await act(async () => chatWindow.closed?.(false));
+      expect(container.querySelector(".sa-log")!.textContent).toContain("from the window");
+      await send("again");
+      expect(svc.sendChat.mock.calls[1][0].session).toBe("sess-1");
     });
 
     it("lets the service's exit end a chat in progress", async () => {
-      await mount();
+      await openReceive();
       await send("hi");
       await sendEvent({ event: "service_exit" });
       expect(container.querySelector(".sa-log")!.textContent).toContain("service stopped");
@@ -373,7 +466,7 @@ describe("Use a shared agent", () => {
   });
 
   it("updates joined PCs when the service pushes new state", async () => {
-    await mount();
+    await openReceive();
     await sendEvent({
       event: "hosts",
       hosts: [office({ usage: { ...emptyUsage(), input: 99_999 } })],
@@ -391,7 +484,20 @@ describe("Share my agent", () => {
     await flush();
   }
 
-  it("starts off, and turns on from the switch", async () => {
+  it("is the first tab, and opens first", async () => {
+    await mount();
+    const tabs = [...container.querySelectorAll('[role="tab"]')].map((t) => t.textContent);
+    expect(tabs).toEqual(["Share my agent", "Use a shared agent"]);
+    expect(container.querySelector('[role="tab"][aria-selected="true"]')!.textContent).toBe(
+      "Share my agent"
+    );
+  });
+
+  it("starts off, checks the port, and starts sharing on it", async () => {
+    svc.checkPort.mockResolvedValue({
+      ok: true,
+      value: { port: 8765, available: true, ours: false, message: "Port 8765 is free." },
+    });
     svc.setSharing.mockResolvedValue({
       ok: true,
       value: shareStatus({
@@ -400,22 +506,97 @@ describe("Share my agent", () => {
       }),
     });
     await openShare();
-    expect(text()).toContain("Turn on to let PCs on your network");
+    expect(text()).toContain("Start sharing to let PCs on your network");
     expect(text()).not.toContain("Agents you share");
-    await click(container.querySelector('input[aria-label="Share my agents"]')!);
-    expect(svc.setSharing).toHaveBeenCalledWith(true);
+    expect(container.querySelector<HTMLInputElement>("#sa-port")!.value).toBe("8765");
+    await click(buttonByText("Start sharing"));
+    expect(svc.checkPort).toHaveBeenCalledWith(8765);
+    expect(svc.setSharing).toHaveBeenCalledWith(true, 8765);
+    expect(container.querySelector<HTMLInputElement>("#sa-port")!.disabled).toBe(true);
     expect(text()).toContain("Listening on http://192.168.1.20:8765");
     expect(text()).toContain("Agents you share");
     expect(text()).toContain("Found · 2.1.0");
-    expect(text()).toContain("Not found");
-    expect(
-      container.querySelector<HTMLInputElement>('input[aria-label="Share OpenCode"]')!.disabled
-    ).toBe(true);
+    // Only installed agents are listed: OpenCode is missing here, so it has no row.
+    expect(text()).not.toContain("Not found");
+    expect(container.querySelector('input[aria-label="Share OpenCode"]')).toBeNull();
   });
 
   const on = shareStatus({
     enabled: true,
     listening: { port: 8765, urls: ["http://192.168.1.20:8765"] },
+  });
+
+  it("does not start on a port another program holds, and says why", async () => {
+    svc.checkPort.mockResolvedValue({
+      ok: true,
+      value: {
+        port: 9000,
+        available: false,
+        ours: false,
+        message: "Port 9000 is already in use by another program. Choose another port.",
+      },
+    });
+    await openShare();
+    await type(container.querySelector<HTMLInputElement>("#sa-port")!, "9000");
+    await click(buttonByText("Check port"));
+    expect(svc.checkPort).toHaveBeenCalledWith(9000);
+    expect(text()).toContain("Port 9000 is already in use by another program");
+    await click(buttonByText("Start sharing"));
+    expect(svc.setSharing).not.toHaveBeenCalled();
+  });
+
+  it("rejects a port outside 1024-65535 before asking the service", async () => {
+    await openShare();
+    await type(container.querySelector<HTMLInputElement>("#sa-port")!, "80");
+    expect(text()).toContain("Use a number from 1024 to 65535.");
+    expect(buttonByText("Start sharing")!.disabled).toBe(true);
+  });
+
+  it("stops sharing and confirms the port was released", async () => {
+    svc.getShareStatus.mockResolvedValue({ ok: true, value: on });
+    svc.setSharing.mockResolvedValue({ ok: true, value: shareStatus() });
+    svc.checkPort.mockResolvedValue({
+      ok: true,
+      value: { port: 8765, available: true, ours: false, message: "Port 8765 is free." },
+    });
+    await openShare();
+    await click(buttonByText("Stop sharing"));
+    expect(svc.setSharing).toHaveBeenCalledWith(false);
+    expect(svc.checkPort).toHaveBeenCalledWith(8765);
+    expect(text()).toContain("Sharing stopped. Port 8765 was released.");
+  });
+
+  it("creates an invite that lasts until sharing is turned off", async () => {
+    svc.getShareStatus.mockResolvedValue({ ok: true, value: on });
+    const link = `http://192.168.1.20:8765/join#${"u".repeat(43)}`;
+    svc.createInvite.mockResolvedValue({
+      ok: true,
+      value: {
+        share: {
+          ...on,
+          invites: [{ id: "i9", createdAt: "2026-01-01T00:00:00Z", expiresInSeconds: null }],
+        },
+        invite: { id: "i9", link, expiresInSeconds: null },
+      },
+    });
+    await openShare();
+    const select = container.querySelector<HTMLSelectElement>("#sa-expiry")!;
+    expect([...select.options].map((o) => o.textContent)).toContain("Until I turn it off");
+    await act(async () => {
+      select.value = "0";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await click(buttonByText("Generate invite link"));
+    expect(svc.createInvite).toHaveBeenCalledWith(0);
+    expect(text()).toContain("valid until you cancel it or stop sharing");
+    expect(container.querySelector(".sa-countdown")).toBeNull();
+  });
+
+  it("explains that internet access off means same-network only", async () => {
+    svc.getShareStatus.mockResolvedValue({ ok: true, value: on });
+    await openShare();
+    expect(container.querySelector(".sa-fold summary")!.textContent).toContain("LAN only");
+    expect(text()).toContain("only PCs on your own network (same Wi-Fi or LAN) can join");
   });
 
   it("creates an invite, shows the link once with a countdown, and can cancel it", async () => {
@@ -528,7 +709,7 @@ describe("Share my agent", () => {
     svc.disconnectDevice.mockResolvedValue({ ok: true, value: { ...on, devices } });
     svc.removeDevice.mockResolvedValue({ ok: true, value: on });
     await openShare();
-    const table = container.querySelector(".sa-table")!;
+    const table = container.querySelector(".sa-devices")!;
     expect(table.textContent).toContain("Amit-Laptop");
     expect(table.textContent).toContain("1,000");
     expect(table.textContent).toContain("2 requests");

@@ -111,6 +111,16 @@ export function parseClaude(obj: Record<string, unknown>, state: ParseState): Ev
     return events;
   }
   if (obj.parent_tool_use_id) return events; // inner steps of a sub-agent
+  if (kind === "stream_event") {
+    // `--include-partial-messages`: the answer as it is written, so the person sees it
+    // grow instead of waiting for the whole block. The full block still follows as `text`.
+    const ev = rec(obj.event);
+    const delta = rec(ev.delta);
+    if (ev.type === "content_block_delta" && delta.type === "text_delta" && delta.text) {
+      events.push({ type: "delta", text: String(delta.text) });
+    }
+    return events;
+  }
   const content = rec(obj.message).content;
   const blocks = Array.isArray(content) ? content : [];
   if (kind === "assistant") {

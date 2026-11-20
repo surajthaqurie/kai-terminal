@@ -1570,35 +1570,127 @@ pub fn extract_videos_from_playlist_html(html: &str, limit: usize) -> Vec<YouTub
     items
 }
 
+fn is_valid_video_id(id: &str) -> bool {
+    id.len() == 11
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
+/// A mix (`RD…`, e.g. YouTube Music's `RDAMVM<videoId>`): YouTube's playlist
+/// page does not show these, only the watch page's playlist panel does.
+pub fn is_mix_playlist_id(id: &str) -> bool {
+    id.starts_with("RD")
+}
+
+/// The watch page that lists a mix's songs. The seed is the song to centre the
+/// panel on (the one playing now), else the song the mix's id was made from.
+pub fn mix_watch_url(playlist_id: &str, video_id: Option<&str>) -> String {
+    let derived = playlist_id
+        .strip_prefix("RDAMVM")
+        .or_else(|| playlist_id.strip_prefix("RD"))
+        .filter(|tail| is_valid_video_id(tail));
+    match video_id.filter(|v| is_valid_video_id(v)).or(derived) {
+        Some(v) => format!("https://www.youtube.com/watch?v={v}&list={playlist_id}"),
+        None => format!("https://www.youtube.com/watch?list={playlist_id}"),
+    }
+}
+
+/// Reads a JSON string body starting right after its opening quote.
+fn json_string_at(s: &str) -> Option<&str> {
+    let mut escaped = false;
+    for (i, c) in s.char_indices() {
+        match c {
+            '\\' if !escaped => escaped = true,
+            '"' if !escaped => return Some(&s[..i]),
+            _ => escaped = false,
+        }
+    }
+    None
+}
+
+/// Extracts a mix's songs (videoId + title) IN ORDER from a watch page's
+/// playlist panel (`playlistPanelVideoRenderer` entries).
+pub fn extract_videos_from_mix_html(html: &str, limit: usize) -> Vec<YouTubeVideoItem> {
+    const RENDERER: &str = "\"playlistPanelVideoRenderer\":{";
+    const VIDEO_ID: &str = "\"videoId\":\"";
+    const SIMPLE_TEXT: &str = "\"simpleText\":\"";
+    let mut items: Vec<YouTubeVideoItem> = Vec::new();
+    for entry in html.split(RENDERER).skip(1) {
+        let Some(id) = entry
+            .find(VIDEO_ID)
+            .and_then(|i| entry.get(i + VIDEO_ID.len()..i + VIDEO_ID.len() + 11))
+        else {
+            continue;
+        };
+        if !is_valid_video_id(id) || items.iter().any(|v| v.video_id == id) {
+            continue;
+        }
+        let title = entry
+            .strip_prefix("\"title\":{")
+            .and_then(|t| t.find(SIMPLE_TEXT).map(|i| &t[i + SIMPLE_TEXT.len()..]))
+            .and_then(json_string_at)
+            .map(|t| {
+                t.replace("\\u0026", "&")
+                    .replace("\\\"", "\"")
+                    .replace("\\'", "'")
+            })
+            .filter(|t| !t.trim().is_empty())
+            .unwrap_or_else(|| id.to_string());
+        items.push(YouTubeVideoItem {
+            video_id: id.to_string(),
+            title,
+        });
+        if items.len() >= limit {
+            break;
+        }
+    }
+    items
+}
+
 /// Fetches the ordered video list of a YouTube playlist (videoId + title)
 /// via the backend reqwest client, avoiding browser CORS limitations.
+/// `video_id` centres a mix on that song (mixes have no fixed order).
 #[cfg(feature = "tauri")]
 pub async fn fetch_youtube_playlist(
     playlist_id: &str,
     limit: usize,
+    video_id: Option<&str>,
 ) -> Result<Vec<YouTubeVideoItem>, TerminalError> {
     let clean = playlist_id.trim();
     if !is_valid_playlist_id(clean) {
         return Err(TerminalError::IoError("Invalid playlist id".to_string()));
     }
-    let url = format!("https://www.youtube.com/playlist?list={clean}");
     let client = reqwest::Client::builder()
         .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         .timeout(std::time::Duration::from_secs(8))
         .build()
         .map_err(|e| TerminalError::IoError(format!("Playlist client error: {e}")))?;
+    let get_html = |url: String| {
+        let client = client.clone();
+        async move {
+            let resp = client
+                .get(&url)
+                .send()
+                .await
+                .map_err(|e| TerminalError::IoError(format!("Playlist request failed: {e}")))?;
+            resp.text().await.map_err(|e| {
+                TerminalError::IoError(format!("Failed to read playlist response: {e}"))
+            })
+        }
+    };
+    let limit = limit.clamp(1, 500);
 
-    let resp = client
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| TerminalError::IoError(format!("Playlist request failed: {e}")))?;
-    let html = resp
-        .text()
-        .await
-        .map_err(|e| TerminalError::IoError(format!("Failed to read playlist response: {e}")))?;
-
-    let results = extract_videos_from_playlist_html(&html, limit.clamp(1, 500));
+    let mut results = Vec::new();
+    if is_mix_playlist_id(clean) {
+        if let Ok(html) = get_html(mix_watch_url(clean, video_id)).await {
+            results = extract_videos_from_mix_html(&html, limit);
+        }
+    }
+    if results.is_empty() {
+        let html = get_html(format!("https://www.youtube.com/playlist?list={clean}")).await?;
+        results = extract_videos_from_playlist_html(&html, limit);
+    }
     if results.is_empty() {
         return Err(TerminalError::IoError(
             "No playlist videos found (playlist may be empty or private)".to_string(),
@@ -1862,6 +1954,45 @@ mod tests {
         assert_eq!(
             encode_search_query("the-convenient_2.0~*"),
             "the-convenient_2.0~*"
+        );
+    }
+
+    #[test]
+    fn test_extract_mix_html_reads_the_watch_page_panel_in_order() {
+        let html = concat!(
+            r#"{"playlistPanelVideoRenderer":{"title":{"accessibility":{"accessibilityData":{"label":"x"}},"simpleText":"Rock \"Ñ\" & Roll"},"#,
+            r#""navigationEndpoint":{"watchEndpoint":{"videoId":"dQw4w9WgXcQ"}},"videoId":"dQw4w9WgXcQ"}},"#,
+            r#"{"playlistPanelVideoRenderer":{"title":{"simpleText":"Second"},"videoId":"9bZkp7q5F5I"}},"#,
+            r#"{"playlistPanelVideoRenderer":{"title":{"simpleText":"Again"},"videoId":"dQw4w9WgXcQ"}},"#,
+            r#"{"playlistPanelVideoRenderer":{"title":{"simpleText":"Cut"},"videoId":"ab"#,
+        );
+        let got = extract_videos_from_mix_html(html, 10);
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0].video_id, "dQw4w9WgXcQ");
+        assert_eq!(got[0].title, "Rock \"Ñ\" & Roll");
+        assert_eq!(got[1].video_id, "9bZkp7q5F5I");
+        assert_eq!(extract_videos_from_mix_html(html, 1).len(), 1);
+    }
+
+    #[test]
+    fn test_mix_watch_url_seeds_the_panel() {
+        assert!(is_mix_playlist_id("RDAMVMdQw4w9WgXcQ"));
+        assert!(!is_mix_playlist_id("PLx0sYbCqOb8TBPRdmBHs5Iftvv9TPboYG"));
+        assert_eq!(
+            mix_watch_url("RDAMVMdQw4w9WgXcQ", Some("9bZkp7q5F5I")),
+            "https://www.youtube.com/watch?v=9bZkp7q5F5I&list=RDAMVMdQw4w9WgXcQ"
+        );
+        assert_eq!(
+            mix_watch_url("RDAMVMdQw4w9WgXcQ", None),
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=RDAMVMdQw4w9WgXcQ"
+        );
+        assert_eq!(
+            mix_watch_url("RDdQw4w9WgXcQ", Some("bad id")),
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=RDdQw4w9WgXcQ"
+        );
+        assert_eq!(
+            mix_watch_url("RDCLAK5uy_kmPRjHDECIcuVwnKsx2Ng7fyNgFKWNJFs", None),
+            "https://www.youtube.com/watch?list=RDCLAK5uy_kmPRjHDECIcuVwnKsx2Ng7fyNgFKWNJFs"
         );
     }
 

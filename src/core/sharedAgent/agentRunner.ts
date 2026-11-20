@@ -29,6 +29,8 @@ import {
   DEFAULT_RUN_MINUTES,
   MODEL_RE,
   SHARED_AGENT_NAMES,
+  isSharedAgentId,
+  type ShareOtherCli,
   type SharedAgentId,
   type TokenTotals,
   type UsageTotals,
@@ -42,6 +44,8 @@ const SESSION_RES: Record<SharedAgentId, RegExp> = {
 };
 
 const MAX_EVENTS_PER_RUN = 4000;
+/** Room kept for whole blocks, tools and the end once partial text stops being recorded. */
+const DELTA_HEADROOM = 600;
 const KEEP_FINISHED_RUNS = 40;
 
 export class AgentError extends Error {}
@@ -72,6 +76,7 @@ export function buildCommand(
       "--output-format",
       "stream-json",
       "--verbose",
+      "--include-partial-messages",
       "--permission-prompts",
       "none",
       "--permission-mode",
@@ -164,6 +169,34 @@ export async function probeAgent(
   return info;
 }
 
+/**
+ * Why a CLI agent found on this PC cannot be shared. Each one was checked:
+ * sharing needs a non-interactive mode that reads the prompt from stdin and
+ * can be held to read-only. Anything new in the registry gets the default.
+ */
+const NOT_SHAREABLE_REASONS: Record<string, string> = {
+  agy: "Its print mode still lets it edit files and run commands, so it can't be held to read-only.",
+  aider: "It edits files by design and has no read-only, machine-readable mode.",
+};
+const DEFAULT_NOT_SHAREABLE =
+  "Kai has no verified read-only mode for it yet, so it can't be shared.";
+
+/** Detects every other coding CLI on this PC, from the shared agent registry. Injectable for tests. */
+export type OtherCliDetector = () => ShareOtherCli[];
+
+export const detectOtherClis: OtherCliDetector = () =>
+  AGENT_REGISTRY.filter((def) => def.kind === "cli" && !isSharedAgentId(def.id)).flatMap((def) =>
+    def.binaries.some((bin) => findBinaryOnPath(bin))
+      ? [
+          {
+            id: def.id,
+            name: def.name,
+            reason: NOT_SHAREABLE_REASONS[def.id] ?? DEFAULT_NOT_SHAREABLE,
+          },
+        ]
+      : []
+  );
+
 function killTree(proc: ChildProcess): void {
   if (proc.exitCode !== null || proc.pid === undefined) return;
   if (process.platform === "win32") {
@@ -228,6 +261,8 @@ export class Run {
   }
 
   emit(body: EventBody): void {
+    // Partial text is a nicety: it never pushes out the real output near the cap.
+    if (body.type === "delta" && this.events.length >= MAX_EVENTS_PER_RUN - DELTA_HEADROOM) return;
     let event = body;
     if (this.events.length >= MAX_EVENTS_PER_RUN && body.type !== "end") {
       if (this.events.length > MAX_EVENTS_PER_RUN) return;

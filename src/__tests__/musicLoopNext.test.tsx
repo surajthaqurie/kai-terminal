@@ -91,14 +91,112 @@ describe("Next with loop on", () => {
     expect(playlistFetches).toBe(1);
   });
 
-  it("turning loop off afterwards resumes the list from the new song", async () => {
+  it("keeps going past the songs a mix was first loaded with", async () => {
+    // A mix (`list=RD…`) only lists the songs around the one it is asked about.
+    const urls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        const u = String(url);
+        if (!u.startsWith("/api/youtube-playlist")) return { ok: true, json: async () => [] };
+        urls.push(u);
+        const seed = new URL(u, "http://x").searchParams.get("v");
+        return {
+          ok: true,
+          json: async () =>
+            seed === "kJQP7kiw5Fk"
+              ? [LIST[2], { videoId: "OPf0YbXqDm0", title: "Fourth song" }]
+              : LIST,
+        };
+      })
+    );
+    await playListLink();
+    await click("Enable loop");
+    await click("Next song");
+    await click("Next song");
+    expect(frameSrc()).toContain("/embed/kJQP7kiw5Fk?");
+
+    await click("Next song");
+    expect(frameSrc()).toContain("/embed/OPf0YbXqDm0?");
+    expect(frameSrc()).toContain("loop=1&playlist=OPf0YbXqDm0");
+    expect(urls[0]).toContain("&v=dQw4w9WgXcQ");
+    expect(urls[1]).toContain("&v=kJQP7kiw5Fk");
+  });
+
+  /** A report from the docked embed, as YouTube posts it. */
+  const report = async (data: unknown) => {
+    const frame = $<HTMLIFrameElement>("iframe.music-video");
+    await act(async () => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: JSON.stringify(data),
+          origin: "https://www.youtube-nocookie.com",
+          source: frame.contentWindow,
+        })
+      );
+    });
+  };
+
+  it("turning loop off lets the song play on, then resumes the list after it", async () => {
+    await playListLink();
+    await click("Enable loop");
+    await click("Next song");
+    const looping = frameSrc();
+    await click("Disable loop");
+    // No reload mid-song: reloading YouTube cut the sound for seconds.
+    expect(frameSrc()).toBe(looping);
+
+    await report({ event: "onStateChange", info: 0 });
+    expect(frameSrc()).toContain("/embed/kJQP7kiw5Fk?");
+    expect(frameSrc()).toContain("&list=RDAMVMdQw4w9WgXcQ");
+    expect(frameSrc()).not.toContain("loop=1");
+  });
+
+  it("notices the end of the song when the loop embed restarts it without saying so", async () => {
     await playListLink();
     await click("Enable loop");
     await click("Next song");
     await click("Disable loop");
-    expect(frameSrc()).toContain("/embed/9bZkp7q5F5I?");
-    expect(frameSrc()).toContain("&list=RDAMVMdQw4w9WgXcQ");
+    await report({ event: "infoDelivery", info: { currentTime: 199, duration: 200 } });
+    await report({ event: "infoDelivery", info: { currentTime: 0.4 } });
+    expect(frameSrc()).toContain("/embed/kJQP7kiw5Fk?");
     expect(frameSrc()).not.toContain("loop=1");
+  });
+
+  it("switching loop back on before the song ends keeps looping it", async () => {
+    await playListLink();
+    await click("Enable loop");
+    await click("Next song");
+    const looping = frameSrc();
+    await click("Disable loop");
+    await click("Enable loop");
+    await report({ event: "onStateChange", info: 0 });
+    expect(frameSrc()).toBe(looping);
+  });
+
+  it("ignores more Next presses while the next song is still being found", async () => {
+    const pending: (() => void)[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (!String(url).startsWith("/api/youtube-playlist"))
+          return { ok: true, json: async () => [] };
+        playlistFetches += 1;
+        await new Promise<void>((r) => pending.push(r));
+        return { ok: true, json: async () => LIST };
+      })
+    );
+    await playListLink();
+    await click("Enable loop"); // starts fetching the list ahead (still pending)
+    await act(async () => {
+      for (let i = 0; i < 3; i++) {
+        $<HTMLButtonElement>("button[aria-label='Next song']").click();
+      }
+    });
+    // The look-ahead fetch plus ONE for Next, not one per press.
+    expect(playlistFetches).toBe(2);
+    await act(async () => pending.forEach((r) => r()));
+    expect(frameSrc()).toContain("/embed/9bZkp7q5F5I?");
   });
 
   it("without loop, Next still lets YouTube advance inside the list", async () => {

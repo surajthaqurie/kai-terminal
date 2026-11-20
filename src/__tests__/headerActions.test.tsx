@@ -56,8 +56,6 @@ const base = () => ({
 
 const open = () =>
   act(async () => container.querySelector<HTMLElement>('[aria-label^="More actions"]')!.click());
-const openEditorMenu = () =>
-  act(async () => container.querySelector<HTMLElement>('[aria-label="Choose editor"]')!.click());
 const labels = () =>
   [...container.querySelectorAll('[role^="menuitem"] .popup-menu-label')].map((n) => n.textContent);
 const itemWith = (text: string) =>
@@ -79,33 +77,8 @@ describe("HeaderActions", () => {
     expect(props.onOpenSettings).toHaveBeenCalledTimes(1);
     expect(container.querySelector(".header-palette-kbd")!.textContent).toBe("Ctrl+Shift+P");
     expect(container.querySelectorAll("button.header-icon-btn")).toHaveLength(3);
-    // No editor handler: no editor control either.
-    expect(container.querySelector('[aria-label="Open project in editor"]')).toBeNull();
-  });
-
-  it("puts the icon-only editor button right after the search box and before AI providers", async () => {
-    const onOpenEditor = vi.fn();
-    await mount(
-      <HeaderActions {...base()} actions={makeActions().actions} onOpenEditor={onOpenEditor} />
-    );
-    const order = [
-      ...container.querySelectorAll<HTMLElement>(".header-actions > button, .header-actions > div"),
-    ].map(
-      (el) =>
-        el.getAttribute("aria-label") ??
-        el.querySelector("[aria-label]")?.getAttribute("aria-label")
-    );
-    expect(order.slice(0, 3)).toEqual([
-      "Open command palette",
-      "Open project in editor",
-      "Open AI CLI providers",
-    ]);
-    const editorBtn = container.querySelector<HTMLElement>(
-      '[aria-label="Open project in editor"]'
-    )!;
-    expect(editorBtn.textContent).toBe("");
-    await act(async () => editorBtn.click());
-    expect(onOpenEditor).toHaveBeenCalledWith(undefined);
+    // Opening the project in the editor lives on the status bar's mode pill.
+    expect(container.querySelector('[aria-label*="editor"]')).toBeNull();
   });
 
   it("the more menu reuses the palette's handlers and shortcuts", async () => {
@@ -126,69 +99,10 @@ describe("HeaderActions", () => {
   });
 
   it("keeps Music Time and the editor list out of the more menu", async () => {
-    await mount(
-      <HeaderActions
-        {...base()}
-        actions={makeActions().actions}
-        onOpenEditor={vi.fn()}
-        installedEditors={[
-          { id: "code", name: "VS Code", binary: "code", path: "/bin/code" },
-          { id: "zed", name: "Zed", binary: "zed", path: "/bin/zed" },
-        ]}
-      />
-    );
+    await mount(<HeaderActions {...base()} actions={makeActions().actions} />);
     await open();
     expect(labels()).not.toContain("Music Time");
-    expect(labels()).not.toContain("VS Code");
     expect(labels().some((l) => l?.startsWith("Open project in"))).toBe(false);
-  });
-
-  it("lists every detected editor and opens the chosen one", async () => {
-    const onOpenEditor = vi.fn();
-    const editors = [
-      { id: "code", name: "VS Code", binary: "code", path: "/bin/code" },
-      { id: "zed", name: "Zed", binary: "zed", path: "/bin/zed" },
-    ];
-    await mount(
-      <HeaderActions
-        {...base()}
-        actions={makeActions().actions}
-        onOpenEditor={onOpenEditor}
-        installedEditors={editors}
-      />
-    );
-    await openEditorMenu();
-    expect(labels()).toEqual(expect.arrayContaining(["VS Code", "Zed", "Default (auto-detect)"]));
-    await act(async () => itemWith("Zed").click());
-    expect(onOpenEditor).toHaveBeenCalledWith("/bin/zed");
-  });
-
-  it("opens a single detected editor from one entry", async () => {
-    await mount(
-      <HeaderActions
-        {...base()}
-        actions={makeActions().actions}
-        onOpenEditor={vi.fn()}
-        installedEditors={[{ id: "code", name: "VS Code", binary: "code", path: "/bin/code" }]}
-      />
-    );
-    await openEditorMenu();
-    expect(labels()).toContain("Open project in VS Code");
-    expect(labels()).not.toContain("Default (auto-detect)");
-  });
-
-  it("refreshes the editor list each time the editor menu opens", async () => {
-    const onRefreshEditors = vi.fn();
-    await mount(
-      <HeaderActions
-        {...base()}
-        actions={makeActions().actions}
-        onOpenEditor={vi.fn()}
-        onRefreshEditors={onRefreshEditors}
-      />
-    );
-    await openEditorMenu();
-    expect(onRefreshEditors).toHaveBeenCalledTimes(1);
   });
 
   it("flags an available update with a badge and an install entry instead of the check entry", async () => {

@@ -21,21 +21,24 @@
  */
 import crypto from "crypto";
 import http from "http";
-import type { AddressInfo } from "net";
+import net, { type AddressInfo } from "net";
 import {
   RunManager,
   RunRejected,
   AgentError,
   addUsage,
+  detectOtherClis,
   ensureChatDir,
   probeAgent,
   type AgentLocator,
   type AgentProbe,
+  type OtherCliDetector,
   type Run,
 } from "./agentRunner";
 import {
   digest,
   grantsOf,
+  inviteExpired,
   sameDigest,
   type DeviceRecord,
   type HostStore,
@@ -63,6 +66,7 @@ import {
   type InviteMinutes,
   type SharedAgentId,
   type ShareAgentRow,
+  type ShareOtherCli,
   type ShareDevice,
   type ShareInvite,
   type ShareRun,
@@ -79,7 +83,30 @@ const KEY_MAX_FAILURES = 10; // wrong invite secrets allowed per address ...
 const KEY_FAILURE_WINDOW_MS = 300_000; // ... in this long
 const PROBE_TTL_MS = 60_000;
 const POLL_WAIT_MS = 8_000;
-const PORT_TRIES = 10;
+/** The port is taken by another program. */
+export class PortInUseError extends Error {
+  constructor(readonly port: number) {
+    super(`Port ${port} is already in use by another program. Choose another port.`);
+  }
+}
+
+/**
+ * Opens `port` for a moment and closes it again: true when it is free.
+ * Uses the same address sharing would, so the answer matches what a start would do.
+ */
+export async function isPortFree(port: number, bindHost = "0.0.0.0"): Promise<boolean> {
+  const probe = net.createServer();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      probe.once("error", reject);
+      probe.listen({ port, host: bindHost, exclusive: true }, () => resolve());
+    });
+  } catch {
+    return false;
+  }
+  await new Promise<void>((resolve) => probe.close(() => resolve()));
+  return true;
+}
 
 export class HttpError extends Error {
   constructor(
@@ -93,6 +120,8 @@ export class HttpError extends Error {
 export interface HostServerOptions {
   store: HostStore;
   locate: AgentLocator;
+  /** Finds the other coding CLIs on this PC (listed, not shareable). Defaults to the real PATH. */
+  detectOtherClis?: OtherCliDetector;
   hostName: string;
   version: string;
   /** The empty folder every shared chat runs in. */
@@ -111,6 +140,7 @@ export class HostServer {
   private server: http.Server | null = null;
   private boundPort = 0;
   private probes = new Map<SharedAgentId, AgentProbe>();
+  private others: ShareOtherCli[] = [];
   private probedAt = 0;
   private keyFailures = new Map<string, number[]>();
   private lastPersist = new Map<string, number>();
@@ -165,50 +195,69 @@ export class HostServer {
 
   // ---------------------------------------------------------------- lifecycle
 
-  /** Starts listening on `preferred` (or the next free port). Port 0 picks any free port. */
-  async start(preferred: number, bindHost = "0.0.0.0"): Promise<number> {
+  /**
+   * Starts listening on exactly `port` (0 picks any free port, for tests).
+   * A port another program holds is an error, never silently swapped for another:
+   * the person chose it, and tunnels and firewall rules point at it.
+   */
+  async start(port: number, bindHost = "0.0.0.0"): Promise<number> {
     if (this.server) return this.boundPort;
     await this.refreshProbes(true);
-    const tries = preferred === 0 ? 1 : PORT_TRIES;
-    let lastError: unknown;
-    for (let i = 0; i < tries; i++) {
-      const port = preferred === 0 ? 0 : preferred + i;
-      const server = http.createServer((req, res) => void this.handle(req, res));
-      server.headersTimeout = 15_000;
-      server.requestTimeout = 60_000;
-      try {
-        await new Promise<void>((resolve, reject) => {
-          server.once("error", reject);
-          server.listen(port, bindHost, () => {
-            server.off("error", reject);
-            resolve();
-          });
+    const server = http.createServer((req, res) => void this.handle(req, res));
+    server.headersTimeout = 15_000;
+    server.requestTimeout = 60_000;
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen({ port, host: bindHost, exclusive: true }, () => {
+          server.off("error", reject);
+          resolve();
         });
-      } catch (e) {
-        lastError = e;
-        if ((e as NodeJS.ErrnoException).code === "EADDRINUSE") continue;
-        throw e;
-      }
-      server.on("error", () => {});
-      this.server = server;
-      this.boundPort = (server.address() as AddressInfo).port;
-      return this.boundPort;
+      });
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      if (code === "EADDRINUSE" || code === "EACCES") throw new PortInUseError(port);
+      throw e;
     }
-    throw new Error(
-      `No free port from ${preferred} to ${preferred + PORT_TRIES - 1}: ${(lastError as Error)?.message ?? "in use"}`
-    );
+    server.on("error", () => {});
+    this.server = server;
+    this.boundPort = (server.address() as AddressInfo).port;
+    // A no-time-limit invite lives for one sharing session; drop any left by a crash.
+    this.cancelUntilOffInvites();
+    return this.boundPort;
   }
 
+  /**
+   * Stops listening and releases the port: every run ends, every open connection
+   * (long polls included) is cut, and this resolves only once the socket is closed,
+   * so the port is free for the next start or another program.
+   */
   async stop(): Promise<void> {
     const server = this.server;
     this.server = null;
     this.runs.stopAll("sharing turned off");
     await this.runs.settle(3000);
+    this.cancelUntilOffInvites();
     if (!server) return;
     await new Promise<void>((resolve) => {
       server.close(() => resolve());
       server.closeAllConnections?.();
     });
+  }
+
+  /** "Until I turn it off" invites end when sharing does. */
+  private cancelUntilOffInvites(): void {
+    const changed = this.opts.store.write((d) => {
+      let n = 0;
+      for (const inv of Object.values(d.invites)) {
+        if (inv.status === "open" && inv.ttlSeconds === 0) {
+          inv.status = "cancelled";
+          n++;
+        }
+      }
+      return n > 0;
+    });
+    if (changed) this.opts.onChange?.();
   }
 
   // ---------------------------------------------------------------- admin (called by the service)
@@ -217,7 +266,17 @@ export class HostServer {
     if (!force && Date.now() - this.probedAt < PROBE_TTL_MS) return;
     const probes = await Promise.all(SHARED_AGENT_IDS.map((a) => probeAgent(a, this.opts.locate)));
     this.probes = new Map(probes.map((p) => [p.id, p]));
+    try {
+      this.others = (this.opts.detectOtherClis ?? detectOtherClis)();
+    } catch {
+      this.others = []; // listing extra agents must never break sharing
+    }
     this.probedAt = Date.now();
+  }
+
+  /** Coding CLIs found on this PC that cannot be shared, with the reason. */
+  otherClis(): ShareOtherCli[] {
+    return this.others.map((o) => ({ ...o }));
   }
 
   agentRows(): ShareAgentRow[] {
@@ -245,7 +304,7 @@ export class HostServer {
     const now = Date.now();
     return this.opts.store.write((d) => {
       for (const inv of Object.values(d.invites)) {
-        if (inv.status === "open" && now - inv.createdMs > inv.ttlSeconds * 1000) {
+        if (inv.status === "open" && inviteExpired(inv, now)) {
           inv.status = "expired";
         }
       }
@@ -258,16 +317,20 @@ export class HostServer {
         .map((i) => ({
           id: i.id,
           createdAt: i.createdAt,
-          expiresInSeconds: Math.max(
-            0,
-            Math.round((i.createdMs + i.ttlSeconds * 1000 - now) / 1000)
-          ),
+          expiresInSeconds:
+            i.ttlSeconds === 0
+              ? null
+              : Math.max(0, Math.round((i.createdMs + i.ttlSeconds * 1000 - now) / 1000)),
         }));
     });
   }
 
   /** The secret is returned once; only its hash is kept. */
-  createInvite(minutes: InviteMinutes): { id: string; key: string; expiresInSeconds: number } {
+  createInvite(minutes: InviteMinutes): {
+    id: string;
+    key: string;
+    expiresInSeconds: number | null;
+  } {
     if (this.openInvites().length >= MAX_OPEN_INVITES) {
       throw new HttpError(429, "Too many open invites. Cancel one first.");
     }
@@ -284,7 +347,7 @@ export class HostServer {
       };
     });
     this.opts.onChange?.();
-    return { id, key, expiresInSeconds: minutes * 60 };
+    return { id, key, expiresInSeconds: minutes === 0 ? null : minutes * 60 };
   }
 
   cancelInvite(id: string): boolean {
@@ -514,7 +577,7 @@ export class HostServer {
       const invite = Object.values(d.invites).find(
         (i) => i.status === "open" && sameDigest(i.keyHash, hashed)
       );
-      if (!invite || now - invite.createdMs > invite.ttlSeconds * 1000) return null;
+      if (!invite || inviteExpired(invite, now)) return null;
       // The same PC joining again (same name and address) keeps its row and history.
       const old = Object.values(d.devices).find((x) => x.name === name && x.ip === remote);
       if (!old && Object.keys(d.devices).length >= MAX_DEVICES) return "full" as const;

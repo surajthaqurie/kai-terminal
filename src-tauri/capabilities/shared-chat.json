@@ -1,0 +1,7 @@
+{
+  "$schema": "https://schema.tauri.app/config/capability/2",
+  "identifier": "shared-chat",
+  "description": "Least-privilege scope for the popped-out Shared Agent chat window",
+  "windows": ["shared-chat"],
+  "permissions": ["core:default"]
+}

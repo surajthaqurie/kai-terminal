@@ -709,7 +709,7 @@ describe("App shell: working directory, git and Code Mode footer", () => {
       registry.panes.get(id)!.onCodeModeChange(project);
     });
   const pill = (label: "Code Mode active" | "Terminal mode") =>
-    container.querySelector(`[aria-label="${label}"]`);
+    container.querySelector(`.status-mode-pill[aria-label^="${label}"]`);
 
   it("Code Mode footer is sticky: pane directory reports never flip the pill", async () => {
     await mount();
@@ -1486,21 +1486,15 @@ describe("App shell: header and footer", () => {
     expect(brand.querySelector("svg")).not.toBeNull();
   });
 
-  it("puts the editor button after the search box, then the Shared Agent switch, then AI providers", async () => {
+  it("puts AI providers right after the search box, with no editor or Share button", async () => {
     await mount();
     const labels = [...container.querySelectorAll(".header-actions [aria-label]")].map((el) =>
       el.getAttribute("aria-label")
     );
-    expect(labels.slice(0, 3)).toEqual([
-      "Open command palette",
-      "Open project in editor",
-      "Choose editor",
-    ]);
-    expect(labels.slice(3, 6)).toEqual([
-      "Share my agents",
-      "Shared Agent options",
-      "Open AI CLI providers",
-    ]);
+    expect(labels.slice(0, 2)).toEqual(["Open command palette", "Open AI CLI providers"]);
+    expect(labels).not.toContain("Open project in editor");
+    expect(labels).not.toContain("Choose editor");
+    expect(labels).not.toContain("Share my agents");
   });
 });
 

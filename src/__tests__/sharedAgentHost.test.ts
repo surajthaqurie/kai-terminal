@@ -678,3 +678,40 @@ describe("joined PCs file", () => {
     expect(list[0]).not.toHaveProperty("ip");
   });
 });
+
+describe("host server: other coding CLIs", () => {
+  it("lists CLIs found on this PC that cannot be shared, with the reason", async () => {
+    const other = new HostServer({
+      store,
+      locate,
+      detectOtherClis: () => [{ id: "agy", name: "Antigravity (agy)", reason: "not read-only" }],
+      hostName: "Office-PC",
+      version: "9.9.9",
+      chatDir: path.join(dir, "chat2"),
+      networks: () => [],
+    });
+    await other.refreshProbes(true);
+    expect(other.otherClis()).toEqual([
+      { id: "agy", name: "Antigravity (agy)", reason: "not read-only" },
+    ]);
+    // Shareable agents stay in their own list; the others never get a switch.
+    expect(other.agentRows().map((a) => a.id)).not.toContain("agy");
+  });
+
+  it("keeps sharing working when detection throws", async () => {
+    const other = new HostServer({
+      store,
+      locate,
+      detectOtherClis: () => {
+        throw new Error("PATH unreadable");
+      },
+      hostName: "Office-PC",
+      version: "9.9.9",
+      chatDir: path.join(dir, "chat3"),
+      networks: () => [],
+    });
+    await other.refreshProbes(true);
+    expect(other.otherClis()).toEqual([]);
+    expect(other.agentRows().length).toBeGreaterThan(0);
+  });
+});

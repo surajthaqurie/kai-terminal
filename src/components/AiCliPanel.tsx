@@ -201,7 +201,7 @@ export const AiCliPanel: FC<AiCliPanelProps> = ({
   return (
     <div className="modal-backdrop" onClick={onClose} role="dialog" aria-label="AI CLI providers">
       <div
-        className="settings-modal settings-tabs-modal"
+        className={`settings-modal settings-tabs-modal${activeTab === "shared" ? " is-wide" : ""}`}
         ref={dialogRef}
         onClick={(e) => e.stopPropagation()}
         role="document"

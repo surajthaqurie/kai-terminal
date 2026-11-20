@@ -1,4 +1,5 @@
 import fs from "fs";
+import net from "net";
 import os from "os";
 import path from "path";
 import { PassThrough } from "stream";
@@ -8,7 +9,6 @@ import type { AgentLocator } from "../core/sharedAgent/agentRunner";
 import { SharedAgentService } from "../core/sharedAgent/service";
 import {
   defaultGrants,
-  type AgentView,
   type CreatedInvite,
   type JoinedHost,
   type SharedAgentEvent,
@@ -33,7 +33,10 @@ let dir: string;
 let sides: Side[];
 let chatSeq = 0;
 
-function makeSide(name: string, extra: { heartbeatMs?: number; located?: boolean } = {}): Side {
+function makeSide(
+  name: string,
+  extra: { heartbeatMs?: number; located?: boolean; savedPort?: boolean } = {}
+): Side {
   const events: SharedAgentEvent[] = [];
   const svc = new SharedAgentService({
     emit: (e) => events.push(e),
@@ -48,7 +51,8 @@ function makeSide(name: string, extra: { heartbeatMs?: number; located?: boolean
     heartbeatMs: extra.heartbeatMs ?? 0,
     hostName: name,
     dir: path.join(dir, name),
-    sharePort: 0,
+    // savedPort: use the port saved by the person (share_set's `port`), as the app does.
+    ...(extra.savedPort ? {} : { sharePort: 0 }),
     bindHost: "127.0.0.1",
   });
   const side = { svc, events };
@@ -60,7 +64,6 @@ function makeSide(name: string, extra: { heartbeatMs?: number; located?: boolean
 interface OkAnswer {
   pong?: true;
   hosts: JoinedHost[];
-  ownAgents: AgentView[];
   host: JoinedHost;
   chatId: string;
   share: ShareStatus;
@@ -147,7 +150,7 @@ describe("sharing and joining", () => {
     expect(host.agents.find((x) => x.id === "claude")?.available).toBe(true);
     const list = await ok(b.svc.handle({ op: "hosts_list" }));
     expect(list.hosts).toHaveLength(1);
-    expect(list.ownAgents.find((x) => x.id === "claude")?.available).toBe(true);
+    expect(list).not.toHaveProperty("ownAgents");
   });
 
   it("needs sharing on before an invite can be made", async () => {
@@ -170,7 +173,13 @@ describe("sharing and joining", () => {
     const cut = await ok(a.svc.handle({ op: "device_disconnect", id: device.id }));
     expect(cut.share.devices[0].state).toBe("disconnected");
     // The receiver finds out on its next check, and shows it as needing a new link.
-    const list = await ok(b.svc.handle({ op: "hosts_list", refresh: true }));
+    await ok(b.svc.handle({ op: "hosts_list", refresh: true }));
+    await waitFor(() =>
+      b.events.some(
+        (e) => e.event === "hosts" && (e as { hosts: JoinedHost[] }).hosts[0]?.connected === false
+      )
+    );
+    const list = await ok(b.svc.handle({ op: "hosts_list" }));
     expect(list.hosts[0]).toMatchObject({ id: host.id, connected: false, online: null });
     const gone = await ok(a.svc.handle({ op: "device_remove", id: device.id }));
     expect(gone.share.devices).toHaveLength(0);
@@ -230,6 +239,23 @@ describe("sharing and joining", () => {
     await waitFor(() => a.events.some((e) => e.event === "share"));
   });
 
+  it("lists joined PCs at once, and reports the check that follows as an event", async () => {
+    const { a, b } = await pair();
+    await ok(a.svc.handle({ op: "share_set", enabled: false }));
+    const before = b.events.length;
+    const list = await ok(b.svc.handle({ op: "hosts_list", refresh: true }));
+    // The answer carries what is known; it does not wait for the PC to answer.
+    expect(list.hosts[0].online).toBe(true);
+    const pushed = await waitFor(() =>
+      b.events
+        .slice(before)
+        .find(
+          (e) => e.event === "hosts" && (e as { hosts: JoinedHost[] }).hosts[0]?.online === false
+        )
+    );
+    expect(pushed).toBeTruthy();
+  });
+
   it("notices a host going away by itself (heartbeat)", async () => {
     const { a, b } = await pair({ heartbeatMs: 40 });
     await ok(a.svc.handle({ op: "share_set", enabled: false }));
@@ -275,35 +301,29 @@ describe("chat routing", () => {
     expect(endOf(second.events())).toMatchObject({ status: "completed", sessionId });
   });
 
-  it("falls back to its own agent automatically when the host is gone", async () => {
+  it("says the host is gone, and runs nothing on this PC", async () => {
     const { a, b, host } = await pair();
     await ok(a.svc.handle({ op: "share_set", enabled: false }));
-    const chat = await sendChat(b, host.id, "still there?");
-    const events = chat.events();
-    expect(events.filter((e) => e.kind === "route").map((e) => e.route)).toEqual(["own"]);
-    expect(events.find((e) => e.kind === "text")).toMatchObject({ text: "echo: still there?" });
-    expect(endOf(events)).toMatchObject({ status: "completed", route: "own" });
-    expect(
-      events.some(
-        (e) =>
-          e.kind === "log" && /your own agent on this PC is answering instead/.test(String(e.text))
-      )
-    ).toBe(true);
-    // Own-agent usage is not counted against the host.
+    const events = (await sendChat(b, host.id, "still there?")).events();
+    expect(events.some((e) => e.route === "own")).toBe(false);
+    expect(events.some((e) => e.kind === "text")).toBe(false);
+    expect(endOf(events)).toMatchObject({ status: "failed", route: "shared" });
+    expect(String(endOf(events).error)).toContain("Office-PC");
     expect((await ok(b.svc.handle({ op: "hosts_list" }))).hosts[0].usage.runs).toBe(0);
   });
 
-  it("uses its own agent when no PC is joined", async () => {
+  it("refuses to chat before a PC is joined", async () => {
     const b = makeSide("Laptop");
-    const own = (await sendChat(b, null, "solo")).events();
-    expect(endOf(own)).toMatchObject({ status: "completed", route: "own" });
-  });
-
-  it("says so when its own agent is not installed", async () => {
-    const b = makeSide("Laptop", { located: false });
-    const events = (await sendChat(b, null, "solo")).events();
-    expect(endOf(events)).toMatchObject({ status: "failed", route: "own" });
-    expect(String(endOf(events).error)).toMatch(/not available/);
+    const r = await b.svc.handle({
+      op: "chat_send",
+      chatId: "c1",
+      hostId: null,
+      agent: "claude",
+      message: "solo",
+    });
+    expect(r).toMatchObject({ ok: false, error: { code: "bad_request" } });
+    expect(String((r as { error: { message: string } }).error.message)).toMatch(/Join a PC/);
+    expect(b.events.some((e) => e.event === "chat")).toBe(false);
   });
 
   it("stops a shared run on request", async () => {
@@ -320,41 +340,29 @@ describe("chat routing", () => {
     expect(endOf(next.events())).toMatchObject({ status: "completed", route: "shared" });
   });
 
-  it("stops its own run on request", async () => {
-    const b = makeSide("Laptop");
-    const chat = await sendChat(b, null, "SLOW", { wait: false });
-    await waitFor(() => chat.events().some((e) => e.kind === "route"));
-    await ok(b.svc.handle({ op: "chat_stop", chatId: chat.id }));
-    await waitFor(() => chat.events().some((e) => e.kind === "end"));
-    expect(endOf(chat.events()).status).toBe("stopped");
-  });
-
-  it("switches to its own agent when the host's agent fails before answering", async () => {
+  it("reports the host agent's failure, and counts what it used against that PC", async () => {
     const { b, host } = await pair();
     const events = (await sendChat(b, host.id, "FAIL")).events();
-    // The host was tried first, then this PC's own agent (which fails the same way here).
-    expect(events.filter((e) => e.kind === "route").map((e) => e.route)).toEqual(["shared", "own"]);
-    expect(events.some((e) => e.kind === "log" && /exploded/.test(String(e.text)))).toBe(true);
-    expect(endOf(events)).toMatchObject({ route: "own" });
-    // The failed run on the host still counts against it.
+    expect(events.filter((e) => e.kind === "route").map((e) => e.route)).toEqual(["shared"]);
+    expect(endOf(events)).toMatchObject({ status: "failed", route: "shared" });
+    expect(String(endOf(events).error)).toMatch(/exploded/);
     expect((await ok(b.svc.handle({ op: "hosts_list" }))).hosts[0].usage.runs).toBe(1);
   });
 
-  it("switches to its own agent when the host is busy or refuses", async () => {
+  it("says so when the host refuses, without answering here", async () => {
     const { a, b, host } = await pair();
-    // The host turns its only agent off: the run is refused, and this PC answers instead.
     await ok(a.svc.handle({ op: "share_agent", agent: "claude", enabled: false }));
     const events = (await sendChat(b, host.id, "refused?")).events();
-    expect(events.filter((e) => e.kind === "route").map((e) => e.route)).toEqual(["own"]);
-    expect(endOf(events)).toMatchObject({ status: "completed", route: "own" });
+    expect(events.some((e) => e.kind === "route")).toBe(false);
+    expect(endOf(events)).toMatchObject({ status: "failed", route: "shared" });
   });
 
-  it("goes to its own agent when the host removed this PC", async () => {
+  it("says so when the host removed this PC", async () => {
     const { a, b, host } = await pair();
     const id = (await ok(a.svc.handle({ op: "share_status" }))).share.devices[0].id;
     await ok(a.svc.handle({ op: "device_remove", id }));
     const events = (await sendChat(b, host.id, "after removal")).events();
-    expect(endOf(events)).toMatchObject({ status: "completed", route: "own" });
+    expect(endOf(events)).toMatchObject({ status: "failed", route: "shared" });
   });
 });
 
@@ -415,12 +423,12 @@ describe("request validation", () => {
   });
 
   it("refuses a second chat with the same id", async () => {
-    const b = makeSide("Laptop");
-    const chat = await sendChat(b, null, "SLOW", { wait: false });
+    const { b, host } = await pair();
+    const chat = await sendChat(b, host.id, "SLOW", { wait: false });
     const again = await b.svc.handle({
       op: "chat_send",
       chatId: chat.id,
-      hostId: null,
+      hostId: host.id,
       agent: "claude",
       message: "x",
     });
@@ -537,6 +545,111 @@ describe("sharing on and off", () => {
     const before = a.events.filter((e) => e.event === "share").length;
     await ok(a.svc.handle({ op: "share_set", enabled: false }));
     expect(a.events.filter((e) => e.event === "share").length).toBe(before + 1);
+  });
+});
+
+/** A port nothing is listening on right now (the OS picks it, then it is closed). */
+async function freePort(): Promise<number> {
+  const srv = net.createServer();
+  await new Promise<void>((r) => srv.listen(0, "127.0.0.1", () => r()));
+  const port = (srv.address() as net.AddressInfo).port;
+  await new Promise<void>((r) => srv.close(() => r()));
+  return port;
+}
+
+describe("port", () => {
+  it("shares on the chosen port, remembers it, and releases it when sharing stops", async () => {
+    const port = await freePort();
+    const a = makeSide("Office-PC", { savedPort: true });
+    expect((await ok(a.svc.handle({ op: "share_status" }))).share.port).toBe(8765);
+
+    const on = await ok(a.svc.handle({ op: "share_set", enabled: true, port }));
+    expect(on.share.listening?.port).toBe(port);
+    expect(on.share.port).toBe(port);
+    const ours = (await a.svc.handle({ op: "port_check", port })) as {
+      port: { available: boolean; ours: boolean };
+    };
+    expect(ours.port).toMatchObject({ available: true, ours: true });
+
+    const off = await ok(a.svc.handle({ op: "share_set", enabled: false }));
+    expect(off.share.port).toBe(port); // remembered for the next start
+    const free = (await a.svc.handle({ op: "port_check", port })) as {
+      port: { available: boolean; ours: boolean };
+    };
+    expect(free.port).toMatchObject({ available: true, ours: false });
+    // Really released: another program can take it straight away.
+    const other = net.createServer();
+    await new Promise<void>((r, j) => {
+      other.once("error", j);
+      other.listen(port, "127.0.0.1", () => r());
+    });
+    await new Promise<void>((r) => other.close(() => r()));
+  });
+
+  it("reports a taken port and refuses to share on it, instead of picking another", async () => {
+    const blocker = net.createServer();
+    await new Promise<void>((r) => blocker.listen(0, "127.0.0.1", () => r()));
+    const port = (blocker.address() as net.AddressInfo).port;
+    try {
+      const a = makeSide("Office-PC", { savedPort: true });
+      const check = (await a.svc.handle({ op: "port_check", port })) as {
+        port: { available: boolean; message: string };
+      };
+      expect(check.port.available).toBe(false);
+      expect(check.port.message).toContain(`Port ${port} is already in use`);
+      const r = await a.svc.handle({ op: "share_set", enabled: true, port });
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.error.message).toContain(`Port ${port} is already in use`);
+      expect((await ok(a.svc.handle({ op: "share_status" }))).share.enabled).toBe(false);
+    } finally {
+      await new Promise<void>((r) => blocker.close(() => r()));
+    }
+  });
+
+  it("rejects a port out of range, and a port change while sharing", async () => {
+    const a = makeSide("Office-PC", { savedPort: true });
+    for (const port of [80, 70000, 1.5]) {
+      const r = await a.svc.handle({ op: "port_check", port });
+      expect(r.ok).toBe(false);
+    }
+    const port = await freePort();
+    await ok(a.svc.handle({ op: "share_set", enabled: true, port }));
+    const other = port === 65535 ? port - 1 : port + 1;
+    const r = await a.svc.handle({ op: "share_set", enabled: true, port: other });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error.message).toContain("Stop sharing before changing the port");
+  });
+});
+
+describe("invite with no time limit", () => {
+  it("never expires on its own, and is cancelled when sharing stops", async () => {
+    const a = makeSide("Office-PC");
+    await ok(a.svc.handle({ op: "share_set", enabled: true }));
+    const inv = await ok(a.svc.handle({ op: "invite_create", expiresMinutes: 0 }));
+    expect(inv.invite.expiresInSeconds).toBeNull();
+    expect(inv.share.invites).toEqual([
+      expect.objectContaining({ id: inv.invite.id, expiresInSeconds: null }),
+    ]);
+    await ok(a.svc.handle({ op: "share_set", enabled: false }));
+    await ok(a.svc.handle({ op: "share_set", enabled: true }));
+    expect((await ok(a.svc.handle({ op: "share_status" }))).share.invites).toEqual([]);
+    // The old link no longer works.
+    const b = makeSide("Laptop");
+    const relinked = inv.invite.link.replace(
+      /:\d+\//,
+      `:${(await ok(a.svc.handle({ op: "share_status" }))).share.listening!.port}/`
+    );
+    const r = await b.svc.handle({ op: "host_join", link: relinked });
+    expect(r.ok).toBe(false);
+  });
+
+  it("lets a PC join with it", async () => {
+    const a = makeSide("Office-PC");
+    const b = makeSide("Laptop");
+    await ok(a.svc.handle({ op: "share_set", enabled: true }));
+    const inv = await ok(a.svc.handle({ op: "invite_create", expiresMinutes: 0 }));
+    const joined = await ok(b.svc.handle({ op: "host_join", link: inv.invite.link }));
+    expect(joined.host.hostName).toBe("Office-PC");
   });
 });
 

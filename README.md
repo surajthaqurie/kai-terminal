@@ -26,23 +26,13 @@ Live site: **https://kai-terminal.vercel.app/** · Releases: [latest](https://gi
   <a href="https://kai-terminal.vercel.app/guide"><img alt="Guide" src="https://img.shields.io/badge/Setup-guide-0f172a?style=for-the-badge"></a>
 </p>
 
-<sub>The screenshot follows your GitHub theme: dark (Settings → Appearance) shows the dark hero, light shows the light one.</sub>
-
 ### See it in action
-
-Screens from the desktop app, with sample projects and people:
 
 <p align="center">
   <img alt="Kai Terminal window: tabs and command palette in one header row, kai health, kai integration list and an AI agent session in the terminal, git branch in the status bar" src="docs/screenshot-app.png" width="860">
 </p>
 
-| Microsoft Teams in the terminal (`kai teams`) | Azure DevOps rules for agents |
-| :---: | :---: |
-| <img alt="kai teams: teams, channels and chats on the left, the conversation on the right" src="docs/screenshot-teams.png" width="420"> | <img alt="Integrations tab: Azure DevOps card connected for Payments / web-app, with the merge branch and branch naming rules open" src="docs/screenshot-integrations.png" width="420"> |
-
-| Shared Agent: share your Claude Code with your other PCs |
-| :---: |
-| <img alt="AI Providers, Shared Agent tab, Share my agent: sharing on, Claude Code shared, OpenCode not found, internet access off" src="docs/screenshot-shared-agent.png" width="860"> |
+More screens sit with their features below: [Azure DevOps](#integrations-azure-devops), [Microsoft Teams chat](#microsoft-teams-chat) and [Shared Agent](#shared-agent).
 
 ## Download — you pick the file
 
@@ -228,12 +218,12 @@ Details: [USER_MANUAL.md](USER_MANUAL.md).
 
 ### Shared Agent
 
-Use the Claude Code (or OpenCode) on another PC from this one, or let your other PCs use yours. Open **AI Providers → Shared Agent**, or click the Shared Agent switch in the header.
+Use the Claude Code (or OpenCode) on another PC from this one, or let your other PCs use yours. Open **AI Providers → Shared Agent**. While sharing is on, the AI Providers icon in the header shows a green dot.
 
 ![AI Providers, Shared Agent tab, Share my agent: sharing turned on and listening on the local network, Claude Code shared, OpenCode not found](docs/screenshot-shared-agent.png)
 
-- **Share my agent:** turn sharing on, pick the agents to share, and click **Generate invite link**. A link works once and expires after 5, 15 or 60 minutes. Every connected PC gets its own permissions (which agents, which model, a time limit per run), a usage table and its recent tasks, and you can remove it at any time.
-- **Use a shared agent:** paste the invite link on the other PC and chat. If the shared PC is offline, busy or fails, this PC's own Claude answers instead, and the chat says which one did.
+- **Share my agent:** turn sharing on, pick the agents to share, and click **Generate invite link**. Choose the port it listens on (Kai checks it is free and releases it when you stop). A link works once and expires after 5, 15 or 60 minutes, or stays valid until you turn sharing off. Every connected PC gets its own permissions (which agents, which model, a time limit per run), a usage table and its recent tasks, and you can remove it at any time.
+- **Use a shared agent:** paste the invite link on the other PC, then chat with its agent, in the panel or popped out into its own window. Answers appear as they are written. Only the joined PC answers: if it is offline, busy or fails, the chat says so.
 - **Read-only, always:** a shared agent runs in an empty folder. It cannot read your files, run commands or use MCP tools, and there is no setting that changes this.
 - **Private by default:** sharing is off whenever Kai starts. Only PCs on your own network can join, with a one-time link, and a PC's access stops working off that network. To reach PCs elsewhere, point any HTTPS tunnel at the port Kai shows and paste its address; Kai never opens one for you.
 - **Trusted networks only:** traffic on your network is plain HTTP. Never port-forward the port. See [SECURITY.md](SECURITY.md).
@@ -246,10 +236,10 @@ One header row holds everything you use all the time:
 - **Search box** (`Ctrl+Shift+P`): the command palette. Every action is in it with its shortcut: split, close pane, find, copy, paste, clear, git review, workspaces and more.
 - **Shared Agent** switch: one click turns sharing your agents on or off; its caret opens invites and connected PCs.
 - **AI providers** and **Settings** icons.
-- **`⋯` menu**: workspaces, Music Time, open the project in your editor, review git changes, split right / down, diagnostics and updates. A dot on it means an update is available.
+- **`⋯` menu**: workspaces, review git changes, split right / down, diagnostics and updates. A dot on it means an update is available.
 - **Window buttons** (minimize, maximize, close) on Windows and Linux; on macOS the usual traffic lights stay at the left. Drag the empty part of the tab row to move the window; double-click it to maximize.
 
-The status bar at the bottom only reports: mode, git branch (click to review changes), the working directory (click to copy), the music mini-player while one plays, and an update chip when there is one. The version number and a manual update check are in **Settings → Updates**.
+The status bar at the bottom only reports: mode (click the **Code Mode** / **Terminal** pill to open the project in your editor; the `▴` beside it picks which editor), git branch (click to review changes), the working directory (click to copy), the music mini-player while one plays, and an update chip when there is one. The version number and a manual update check are in **Settings → Updates**.
 
 **Links and pasted files.** Web addresses in the output (sign-in links, build logs, docs) are underlined when you point at them; `Ctrl+click` (`Cmd+click` on macOS) opens them in your browser. Copy files in Explorer, Finder or a file manager and paste: their paths are pasted, quoted when they contain spaces, ready for a command or an AI CLI.
 

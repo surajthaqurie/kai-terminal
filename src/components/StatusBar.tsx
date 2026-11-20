@@ -1,11 +1,14 @@
-import { FC, useEffect, useRef, useState } from "react";
+import { FC, useEffect, useMemo, useRef, useState } from "react";
 import { ShellPicker } from "./ShellPicker";
+import { PopupMenu, type MenuEntry } from "./PopupMenu";
 import type { ShellProfile } from "../types/terminal";
+import type { InstalledEditor } from "../services/projectService";
 import { MUSIC_PROGRESS_EVENT } from "../services/musicService";
 import { withKeys, type MusicHintId } from "../services/shortcuts";
 import {
   GitBranch,
   ArrowUpCircle,
+  ChevronUp,
   Code,
   Terminal,
   RefreshCw,
@@ -62,6 +65,17 @@ interface StatusBarProps {
   onCheckUpdates?: () => void;
   onViewUpdate?: () => void;
   mode?: string;
+  /**
+   * Opens the project in an editor (undefined = Settings default / auto-detect).
+   * When set, the Code Mode / Terminal pill is a button that does this, with a
+   * caret beside it to choose among the detected editors.
+   */
+  onOpenEditor?: (editorBinary?: string) => void;
+  editorPath?: string;
+  installedEditors?: InstalledEditor[];
+  isLoadingEditors?: boolean;
+  /** Re-detects installed editors; called each time the editor menu opens. */
+  onRefreshEditors?: () => void;
   /** Detected shells and the focused terminal's shell (the footer shell picker). */
   shells?: ShellProfile[];
   currentShell?: ShellProfile;
@@ -84,9 +98,47 @@ interface StatusBarProps {
   musicShortcuts?: Record<MusicHintId, string>;
 }
 
+/** Menu entries for the editor picker beside the mode pill. */
+function buildEditorEntries(
+  onOpenEditor: (editorBinary?: string) => void,
+  installedEditors: InstalledEditor[],
+  isLoadingEditors: boolean,
+  editorPath?: string
+): MenuEntry[] {
+  if (installedEditors.length > 1) {
+    return [
+      { kind: "heading", id: "editor-heading", label: "Open project in" },
+      ...installedEditors.map<MenuEntry>((ed) => ({
+        id: `editor-${ed.id}`,
+        label: ed.name,
+        detail: ed.path,
+        icon: <Code size={14} />,
+        onSelect: () => onOpenEditor(ed.path || ed.binary),
+      })),
+      {
+        id: "editor-default",
+        label: editorPath ? `Default (${editorPath})` : "Default (auto-detect)",
+        icon: <Code size={14} />,
+        onSelect: () => onOpenEditor(undefined),
+      },
+    ];
+  }
+  const only = installedEditors[0];
+  return [
+    {
+      id: "editor-default",
+      label: only ? `Open project in ${only.name}` : "Open project in editor",
+      detail: isLoadingEditors ? "Detecting editors…" : only?.path,
+      icon: <Code size={14} />,
+      onSelect: () => onOpenEditor(only ? only.path || only.binary : undefined),
+    },
+  ];
+}
+
 /**
  * Always-visible bottom status bar. It only reports: the focused terminal's shell
- * (click to change it), mode and git branch (click
+ * (click to change it), mode (click to open the project in the editor; the caret
+ * beside it picks the editor) and git branch (click
  * opens the Changes Review & Diff modal) on the left;
  * the music mini-player (while one is active), the app version (or an update chip
  * when an update exists) and the "check for updates" button on the right.
@@ -103,6 +155,11 @@ export const StatusBar: FC<StatusBarProps> = ({
   onCheckUpdates,
   onViewUpdate,
   mode = "terminal",
+  onOpenEditor,
+  editorPath,
+  installedEditors = [],
+  isLoadingEditors = false,
+  onRefreshEditors,
   shells = [],
   currentShell,
   onChangeShell,
@@ -121,6 +178,27 @@ export const StatusBar: FC<StatusBarProps> = ({
   const repoName = gitRepoRoot
     ? gitRepoRoot.split(/[/\\]/).filter(Boolean).pop() || gitRepoRoot
     : null;
+
+  const editorEntries = useMemo<MenuEntry[]>(
+    () =>
+      onOpenEditor
+        ? buildEditorEntries(onOpenEditor, installedEditors, isLoadingEditors, editorPath)
+        : [],
+    [onOpenEditor, installedEditors, isLoadingEditors, editorPath]
+  );
+
+  const isCode = mode === "code";
+  const modeHint = isCode
+    ? "Code Mode — project intelligence active for this terminal. It ends when the agent exits or you run `kai stop`."
+    : "Terminal mode — this folder is not in an active Code Mode project. Run `kai <agent>` (e.g. `kai claude`) or `kai graph init` in a project to enter Code Mode.";
+  const modeLabel = isCode ? "Code Mode active" : "Terminal mode";
+  const modePillClass = `status-mode-pill${isCode ? "" : " status-mode-terminal"}`;
+  const modePillContent = (
+    <>
+      {isCode ? <Code size={12} aria-hidden="true" /> : <Terminal size={12} aria-hidden="true" />}
+      <span>{isCode ? "Code Mode" : "Terminal"}</span>
+    </>
+  );
 
   const [dragX, setDragX] = useState<number>(() => {
     try {
@@ -224,29 +302,46 @@ export const StatusBar: FC<StatusBarProps> = ({
             <span className="status-sep" aria-hidden="true" />
           </>
         )}
-        {mode === "code" ? (
-          // Display only. The agent owns Code Mode (it ends when `kai <agent>` exits or
-          // `kai stop` runs), so a click here must not pretend to leave it.
-          <span
-            className="status-mode-pill"
-            title="Code Mode — project intelligence active for this terminal. It ends when the agent exits or you run `kai stop`."
-            aria-label="Code Mode active"
-          >
-            <Code size={12} aria-hidden="true" />
-            <span>Code Mode</span>
-          </span>
-        ) : (
-          projectDir && (
-            <span
-              className="status-mode-pill status-mode-terminal"
-              title="Terminal mode — this folder is not in an active Code Mode project. Run `kai <agent>` (e.g. `kai claude`) or `kai graph init` in a project to enter Code Mode."
-              aria-label="Terminal mode"
-            >
-              <Terminal size={12} aria-hidden="true" />
-              <span>Terminal</span>
+        {/* The agent owns Code Mode (it ends when `kai <agent>` exits or `kai stop`
+            runs), so the pill never toggles the mode: clicking it opens the
+            project in the editor instead. */}
+        {(isCode || projectDir) &&
+          (onOpenEditor ? (
+            <span className="status-mode-wrap">
+              <button
+                type="button"
+                className={modePillClass}
+                onClick={() => onOpenEditor(undefined)}
+                title={`${modeHint}\nClick to open the project in your editor.`}
+                aria-label={`${modeLabel}. Open project in editor`}
+              >
+                {modePillContent}
+              </button>
+              <PopupMenu
+                label="Choose editor"
+                align="start"
+                side="up"
+                entries={editorEntries}
+                onOpen={onRefreshEditors}
+                trigger={({ open, toggle, props }) => (
+                  <button
+                    type="button"
+                    className={`status-mode-caret${open ? " is-open" : ""}`}
+                    onClick={toggle}
+                    title="Choose which editor to open"
+                    aria-label="Choose editor"
+                    {...props}
+                  >
+                    <ChevronUp size={10} aria-hidden="true" />
+                  </button>
+                )}
+              />
             </span>
-          )
-        )}
+          ) : (
+            <span className={modePillClass} title={modeHint} aria-label={modeLabel}>
+              {modePillContent}
+            </span>
+          ))}
         {gitBranch ? (
           <div className="status-git-wrap">
             {onOpenGitChanges ? (

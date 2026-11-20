@@ -1,12 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import { isTauriAvailable } from "./ptyService";
 import type {
-  AgentView,
   CreatedInvite,
   DeviceGrants,
   DeviceHistory,
   InviteMinutes,
   JoinedHost,
+  PortCheck,
   SharedAgentErrorBody,
   SharedAgentEvent,
   SharedAgentId,
@@ -85,16 +85,14 @@ const done = (res: SharedAgentResponse): SharedResult<true> =>
 // Receive: PCs this PC has joined, and chat
 // ---------------------------------------------------------------------------
 
-export async function listHosts(
-  refresh = false
-): Promise<SharedResult<{ hosts: JoinedHost[]; ownAgents: AgentView[] }>> {
+export async function listHosts(refresh = false): Promise<SharedResult<JoinedHost[]>> {
   const res = await sharedAgentRpc({ op: "hosts_list", refresh });
   if (!res.ok) return res;
-  const b = res as { hosts?: JoinedHost[]; ownAgents?: AgentView[] };
-  if (!Array.isArray(b.hosts) || !Array.isArray(b.ownAgents)) {
+  const b = res as { hosts?: JoinedHost[] };
+  if (!Array.isArray(b.hosts)) {
     return unavailable("The Shared Agent service returned an unexpected response.");
   }
-  return { ok: true, value: { hosts: b.hosts, ownAgents: b.ownAgents } };
+  return { ok: true, value: b.hosts };
 }
 
 export async function joinHost(link: string, name?: string): Promise<SharedResult<JoinedHost>> {
@@ -107,7 +105,7 @@ export async function leaveHost(hostId: string): Promise<SharedResult<true>> {
 
 export interface ChatSendInput {
   chatId: string;
-  hostId: string | null;
+  hostId: string;
   agent: SharedAgentId;
   message: string;
   session: string | null;
@@ -130,7 +128,8 @@ const share = async (req: SharedAgentRequest) =>
   pick<ShareStatus>(await sharedAgentRpc(req), "share");
 
 export const getShareStatus = (refresh = false) => share({ op: "share_status", refresh });
-export const setSharing = (enabled: boolean) => share({ op: "share_set", enabled });
+export const setSharing = (enabled: boolean, port?: number) =>
+  share(port === undefined ? { op: "share_set", enabled } : { op: "share_set", enabled, port });
 export const setAgentShared = (agent: SharedAgentId, enabled: boolean) =>
   share({ op: "share_agent", agent, enabled });
 export const setPublicUrl = (url: string | null) => share({ op: "share_public_url", url });
@@ -140,6 +139,11 @@ export const removeDevice = (id: string) => share({ op: "device_remove", id });
 export const stopHostRun = (runId: string) => share({ op: "run_stop", runId });
 export const setDeviceGrants = (id: string, grants: DeviceGrants) =>
   share({ op: "device_grants", id, grants });
+
+/** Whether a port is free to share on (the service opens it for a moment, then releases it). */
+export async function checkPort(port: number): Promise<SharedResult<PortCheck>> {
+  return pick<PortCheck>(await sharedAgentRpc({ op: "port_check", port }), "port");
+}
 
 export async function getDeviceHistory(id: string): Promise<SharedResult<DeviceHistory>> {
   return pick<DeviceHistory>(await sharedAgentRpc({ op: "device_history", id }), "history");

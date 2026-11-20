@@ -224,6 +224,8 @@ describe("agent command lines", () => {
     expect(args).toEqual(expect.arrayContaining(["--permission-mode", "dontAsk", "--restricted"]));
     expect(args).toEqual(expect.arrayContaining(["--allowedTools", "Read", "Glob", "Grep"]));
     expect(args).toContain("--strict-mcp-config");
+    // The answer streams as it is written.
+    expect(args).toContain("--include-partial-messages");
     // Nothing that could write, run commands or skip permissions.
     for (const bad of ["Bash", "Edit", "Write", "bypassPermissions", "acceptEdits"]) {
       expect(args, bad).not.toContain(bad);
@@ -312,6 +314,25 @@ describe("agent output parsing", () => {
     expect(st.error).toBe("too long");
   });
 
+  it("turns partial text into deltas, and ignores other partial events", () => {
+    const st = newParseState();
+    const delta = (d: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({
+      type: "stream_event",
+      event: { type: "content_block_delta", index: 0, delta: d },
+      ...extra,
+    });
+    expect(parseClaude(delta({ type: "text_delta", text: "Hel" }), st)).toEqual([
+      { type: "delta", text: "Hel" },
+    ]);
+    expect(parseClaude(delta({ type: "input_json_delta", partial_json: "{" }), st)).toEqual([]);
+    expect(parseClaude(delta({ type: "text_delta", text: "" }), st)).toEqual([]);
+    expect(parseClaude({ type: "stream_event", event: { type: "message_start" } }, st)).toEqual([]);
+    // A sub-agent's partial text stays hidden like the rest of its steps.
+    expect(
+      parseClaude(delta({ type: "text_delta", text: "x" }, { parent_tool_use_id: "p" }), st)
+    ).toEqual([]);
+  });
+
   it("ignores sub-agent chatter and malformed blocks", () => {
     const st = newParseState();
     expect(parseClaude({ type: "assistant", parent_tool_use_id: "p", message: {} }, st)).toEqual(
@@ -394,5 +415,19 @@ describe("usage formatting", () => {
     expect(formatCost(1.234)).toBe("$1.23");
     expect(formatDuration(7.25)).toBe("7s");
     expect(formatDuration(125)).toBe("2m 05s");
+  });
+});
+
+describe("detectOtherClis", () => {
+  it("only lists registry CLIs that are not shareable, never IDE agents or shared ones", async () => {
+    const { detectOtherClis } = await import("../core/sharedAgent/agentRunner");
+    const { AGENT_REGISTRY } = await import("../core/agents");
+    const { isSharedAgentId } = await import("../core/sharedAgent/types");
+    for (const row of detectOtherClis()) {
+      const def = AGENT_REGISTRY.find((d) => d.id === row.id);
+      expect(def?.kind).toBe("cli");
+      expect(isSharedAgentId(row.id)).toBe(false);
+      expect(row.reason.length).toBeGreaterThan(0);
+    }
   });
 });

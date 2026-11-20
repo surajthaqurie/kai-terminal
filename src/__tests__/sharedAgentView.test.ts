@@ -31,8 +31,6 @@ const host = (over: Partial<JoinedHost> = {}): JoinedHost => ({
   ...over,
 });
 
-const own = (available = true): AgentView[] => [{ id: "claude", name: "Claude Code", available }];
-
 describe("token wording", () => {
   it("groups digits and sums every kind of token", () => {
     expect(formatTokens(13072)).toBe("13,072");
@@ -63,51 +61,45 @@ describe("token wording", () => {
   });
 });
 
-describe("which Claude answers", () => {
-  const base = { ownAvailable: true };
-
+describe("the joined PC's state", () => {
   it("is live on a reachable host, with latency", () => {
-    expect(describeRoute({ ...base, host: host() })).toMatchObject({
+    expect(describeRoute(host())).toMatchObject({
       tone: "ok",
       badge: "LIVE",
-      title: "Claude is using the shared agent · Office-PC",
-      detail: "latency 38 ms · switches to your own Claude if it stops answering",
+      title: "Connected to Office-PC",
+      detail: "latency 38 ms",
     });
   });
 
-  it("switches to its own Claude by itself when the host is offline", () => {
-    const off = host({ online: false, latencyMs: null });
-    expect(describeRoute({ ...base, host: off })).toMatchObject({ tone: "own", badge: "FALLBACK" });
-    expect(describeRoute({ ...base, ownAvailable: false, host: off })).toMatchObject({
-      tone: "bad",
-      badge: "OFFLINE",
-    });
+  it("says the host is offline and never mentions this PC's own agent", () => {
+    const view = describeRoute(host({ online: false, latencyMs: null }));
+    expect(view).toMatchObject({ tone: "bad", badge: "OFFLINE" });
+    expect(JSON.stringify(view)).not.toMatch(/own/i);
   });
 
-  it("uses its own Claude when no PC is joined", () => {
-    expect(describeRoute({ ...base, host: null })).toMatchObject({ badge: "OWN" });
-    expect(describeRoute({ ownAvailable: false, host: null })).toMatchObject({
-      badge: "NO AGENT",
-    });
+  it("asks to join when no PC is joined", () => {
+    const view = describeRoute(null);
+    expect(view).toMatchObject({ badge: "NOT JOINED" });
+    expect(JSON.stringify(view)).not.toMatch(/own Claude/i);
   });
 
   it("says so when it is still checking, or the host removed this PC", () => {
-    expect(describeRoute({ ...base, host: host({ online: null }) })).toMatchObject({
-      badge: "CHECKING",
-    });
-    const removed = describeRoute({ ...base, host: host({ connected: false, online: null }) });
+    expect(describeRoute(host({ online: null }))).toMatchObject({ badge: "CHECKING" });
+    const removed = describeRoute(host({ connected: false, online: null }));
     expect(removed).toMatchObject({ tone: "bad", badge: "REMOVED" });
     expect(removed.detail).toContain("new invite link");
   });
 });
 
 describe("agent choices and status pills", () => {
-  it("offers the host's agents, or its own when there is no usable host", () => {
+  it("offers only the joined PC's agents", () => {
     const ids = (a: AgentView[]) => a.map((x) => x.id);
-    expect(ids(agentChoices({ host: host(), ownAgents: own() }))).toEqual(["claude"]);
-    expect(ids(agentChoices({ host: host({ agents: [] }), ownAgents: own() }))).toEqual(["claude"]);
-    expect(ids(agentChoices({ host: host(), ownAgents: own(false) }))).toEqual(["claude"]);
-    expect(ids(agentChoices({ host: null, ownAgents: own() }))).toEqual(["claude"]);
+    expect(ids(agentChoices(host()))).toEqual(["claude"]);
+    expect(agentChoices(null)).toEqual([]);
+    expect(agentChoices(host({ connected: false }))).toEqual([]);
+    expect(agentChoices(host({ agents: [], online: false }))).toEqual([]);
+    // Still being checked: Claude is assumed so the first message need not wait.
+    expect(ids(agentChoices(host({ agents: [], online: null })))).toEqual(["claude"]);
   });
 
   it("labels each state", () => {
@@ -137,9 +129,9 @@ describe("desktop IPC wrapper", () => {
 
   it("sends one JSON request through the shell and returns the parsed answer", async () => {
     const svc = await import("../services/sharedAgentService");
-    invoke.mockResolvedValue(JSON.stringify({ ok: true, hosts: [], ownAgents: [] }));
+    invoke.mockResolvedValue(JSON.stringify({ ok: true, hosts: [] }));
     const res = await svc.listHosts(true);
-    expect(res).toEqual({ ok: true, value: { hosts: [], ownAgents: [] } });
+    expect(res).toEqual({ ok: true, value: [] });
     expect(invoke.mock.calls[0][0]).toBe("shared_agent_request_cmd");
     expect(JSON.parse(invoke.mock.calls[0][1].requestJson)).toEqual({
       op: "hosts_list",

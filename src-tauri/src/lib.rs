@@ -126,6 +126,14 @@ const MUSIC_PIP_LABEL: &str = "music-pip";
 #[cfg(feature = "tauri")]
 const MUSIC_PIP_CLOSED_EVENT: &str = "kai-pip:closed";
 
+/// Label of the Shared Agent chat when it is popped out into its own window.
+#[cfg(feature = "tauri")]
+const SHARED_CHAT_LABEL: &str = "shared-chat";
+
+/// Sent to every window once the popped-out Shared Agent chat is gone.
+#[cfg(feature = "tauri")]
+const SHARED_CHAT_CLOSED_EVENT: &str = "kai-shared-chat:closed";
+
 /// The Windows window configuration, the single place the WebView2 arguments are
 /// written down (`app.windows[0].additionalBrowserArgs`).
 #[cfg(any(all(feature = "tauri", target_os = "windows"), test))]
@@ -255,6 +263,46 @@ async fn open_music_pip(
     Ok(())
 }
 
+/// Opens the Shared Agent chat in its own window, or raises it when it is
+/// already open. A normal, resizable window with the system title bar.
+#[cfg(feature = "tauri")]
+#[tauri::command]
+async fn open_shared_chat_window(app_handle: AppHandle) -> Result<(), String> {
+    if let Some(window) = app_handle.get_webview_window(SHARED_CHAT_LABEL) {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+        return Ok(());
+    }
+    let builder = tauri::WebviewWindowBuilder::new(
+        &app_handle,
+        SHARED_CHAT_LABEL,
+        // Same bundle as the main window; `main.tsx` picks the chat view.
+        tauri::WebviewUrl::App("index.html?window=shared-chat".into()),
+    )
+    .title("Kai · Shared Agent chat")
+    .inner_size(460.0, 640.0)
+    .min_inner_size(340.0, 360.0)
+    .resizable(true)
+    .focused(true);
+    #[cfg(target_os = "windows")]
+    let builder = match webview2_browser_args() {
+        Some(args) => builder.additional_browser_args(&args),
+        None => builder,
+    };
+    builder.build().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Closes the popped-out Shared Agent chat (a no-op when it is not open).
+#[cfg(feature = "tauri")]
+#[tauri::command]
+async fn close_shared_chat_window(app_handle: AppHandle) {
+    if let Some(window) = app_handle.get_webview_window(SHARED_CHAT_LABEL) {
+        let _ = window.destroy();
+    }
+}
+
 /// URL of the local page that hosts the YouTube embed where the app's own
 /// origin cannot control it (macOS / Linux; see `music_relay.rs`).
 #[cfg(feature = "tauri")]
@@ -344,8 +392,9 @@ async fn search_youtube_videos_cmd(
 async fn fetch_youtube_playlist_cmd(
     playlist_id: String,
     limit: Option<usize>,
+    video_id: Option<String>,
 ) -> Result<Vec<shell::YouTubeVideoItem>, error::TerminalError> {
-    shell::fetch_youtube_playlist(&playlist_id, limit.unwrap_or(24)).await
+    shell::fetch_youtube_playlist(&playlist_id, limit.unwrap_or(24), video_id.as_deref()).await
 }
 
 #[cfg(feature = "tauri")]
@@ -432,7 +481,11 @@ fn shared_agent_request_cmd(
 ) -> Result<String, String> {
     let emitter = app_handle.clone();
     let sink: shared_agent::EventSink = Arc::new(move |line| {
-        let _ = emitter.emit_to("main", "kai-shared-agent:event", line);
+        // The popped-out chat window, when open, needs the chat text too.
+        let _ = emitter.emit_to("main", "kai-shared-agent:event", line.clone());
+        if emitter.get_webview_window(SHARED_CHAT_LABEL).is_some() {
+            let _ = emitter.emit_to(SHARED_CHAT_LABEL, "kai-shared-agent:event", line);
+        }
     });
     let bundled = app_handle
         .path()
@@ -763,6 +816,9 @@ pub fn run() {
             tauri::WindowEvent::Destroyed if window.label() == MUSIC_PIP_LABEL => {
                 let _ = window.app_handle().emit(MUSIC_PIP_CLOSED_EVENT, ());
             }
+            tauri::WindowEvent::Destroyed if window.label() == SHARED_CHAT_LABEL => {
+                let _ = window.app_handle().emit(SHARED_CHAT_CLOSED_EVENT, ());
+            }
             _ => {}
         })
         .invoke_handler(tauri::generate_handler![
@@ -770,6 +826,8 @@ pub fn run() {
             set_maximize_button_rect,
             open_music_pip,
             close_music_pip,
+            open_shared_chat_window,
+            close_shared_chat_window,
             music_relay_url,
             get_available_shells,
             get_ai_cli_status,

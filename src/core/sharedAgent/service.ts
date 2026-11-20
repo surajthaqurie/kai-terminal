@@ -2,7 +2,7 @@
  * The Shared Agent service: one long-lived Node process (the engine,
  * `dist/cli/shared-agent.js`) that the desktop app supervises. It owns:
  *  - the joined PCs (and a heartbeat that tells the UI which are reachable),
- *  - chat routing: the shared agent first, then this PC's own agent, automatically,
+ *  - chat with a joined PC's agent (only ever a joined PC: there is no local fallback),
  *  - the optional host server that shares this PC's agents.
  * Requests are one JSON object each; answers and pushed events are one JSON
  * line each (see `types.ts`). Nothing here touches the UI.
@@ -13,13 +13,10 @@ import type { SecretStore } from "../integrations/secretStore";
 import { defaultSecretStore } from "../integrations/secretStore";
 import {
   AgentError,
-  RunManager,
   RunRejected,
   defaultLocator,
-  ensureChatDir,
-  probeAgent,
   type AgentLocator,
-  type Run,
+  type OtherCliDetector,
 } from "./agentRunner";
 import {
   ClientError,
@@ -30,14 +27,16 @@ import {
 } from "./client";
 import { fromWireTokens } from "./events";
 import { HostStore, sharedAgentDir } from "./hostStore";
-import { HostServer, HttpError } from "./hostServer";
+import { HostServer, HttpError, PortInUseError, isPortFree } from "./hostServer";
 import { allowedOrigin, buildInviteLink, parseInviteLink, parsePublicUrl } from "./invite";
 import { lanAddresses, type LocalNetwork } from "./netcheck";
 import {
-  DEFAULT_SHARE_PORT,
   INVITE_MINUTES,
   MAX_MESSAGE_CHARS,
-  SHARED_AGENT_NAMES,
+  MAX_SHARE_PORT,
+  MIN_SHARE_PORT,
+  parseSharePort,
+  type PortCheck,
   GrantsError,
   isSharedAgentId,
   parseGrants,
@@ -49,7 +48,6 @@ import {
   type SharedAgentResponse,
   type ShareStatus,
   type SharedAgentErrorCode,
-  type SharedAgentId,
   type TokenTotals,
 } from "./types";
 
@@ -59,6 +57,8 @@ export interface ServiceDeps {
   secrets?: SecretStore;
   fetchImpl?: typeof fetch;
   locate?: AgentLocator;
+  /** Finds the other (not shareable) coding CLIs; defaults to the real PATH. */
+  detectOtherClis?: OtherCliDetector;
   networks?: () => LocalNetwork[];
   /** Heartbeat period; 0 turns it off (tests). */
   heartbeatMs?: number;
@@ -66,7 +66,7 @@ export interface ServiceDeps {
   hostName?: string;
   /** Overrides `~/.kai/shared-agent` (tests). */
   dir?: string;
-  /** First port the host tries (tests pass 0 for any free port). */
+  /** Overrides the saved port (tests pass 0 for any free port). */
   sharePort?: number;
   /** Address the host listens on (default: every interface, so the LAN can reach it). */
   bindHost?: string;
@@ -85,15 +85,8 @@ interface ChatState {
   aborter: AbortController;
   stopped: boolean;
   hostId: string | null;
-  /** True once the agent has said anything, so a later failure is not answered twice. */
-  answered?: boolean;
   runId?: string;
-  localRun?: Run;
 }
-
-type Outcome =
-  | { kind: "done"; status: string; error: string; tokens: TokenTotals; costUsd: unknown }
-  | { kind: "dropped"; reason: string };
 
 const POLL_FAILURES_BEFORE_DROP = 3;
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -113,13 +106,12 @@ function str(v: unknown, field: string, max = 200): string {
 export class SharedAgentService {
   private readonly client: HostsClient;
   private readonly host: HostServer;
-  private readonly localRuns: RunManager;
+  private readonly store: HostStore;
   private readonly locate: AgentLocator;
   private readonly chatDir: string;
   private readonly chats = new Map<string, ChatState>();
   private readonly status = new Map<string, HostStatus>();
-  private ownAgents: AgentView[] | null = null;
-  private ownAt = 0;
+  private checking: Promise<void> | null = null;
   private heartbeat: NodeJS.Timeout | null = null;
   private shareTimer: NodeJS.Timeout | null = null;
   private lastHostsJson = "";
@@ -133,16 +125,17 @@ export class SharedAgentService {
       fetchImpl: deps.fetchImpl,
       file: path.join(dir, "hosts.json"),
     });
+    this.store = new HostStore(path.join(dir, "host.json"));
     this.host = new HostServer({
-      store: new HostStore(path.join(dir, "host.json")),
+      store: this.store,
       locate: this.locate,
+      detectOtherClis: deps.detectOtherClis,
       hostName: deps.hostName ?? (os.hostname() || "PC"),
       version: deps.version ?? "0.0.0",
       chatDir: this.chatDir,
       networks: deps.networks,
       onChange: () => this.shareChanged(),
     });
-    this.localRuns = new RunManager({ locate: this.locate, maxConcurrent: 2 });
     const period = deps.heartbeatMs ?? 15_000;
     if (period > 0) {
       this.heartbeat = setInterval(() => void this.checkHosts().catch(() => {}), period);
@@ -170,8 +163,11 @@ export class SharedAgentService {
       case "ping":
         return { ok: true, pong: true };
       case "hosts_list": {
-        if (req.refresh || this.status.size === 0) await this.checkHosts();
-        return { ok: true, hosts: this.hostsView(), ownAgents: await this.ownAgentViews() };
+        // Answer at once with what is known; the check runs in the background and its
+        // result arrives as a `hosts` event. Waiting on every PC (an offline one takes
+        // seconds to time out) is what made the panel sit on "Loading…".
+        if (req.refresh || this.status.size === 0) void this.checkHosts().catch(() => {});
+        return { ok: true, hosts: this.hostsView() };
       }
       case "host_join": {
         const target = parseInviteLink(str(req.link, "link", 600));
@@ -196,6 +192,7 @@ export class SharedAgentService {
         if (req.refresh) await this.host.refreshProbes(true);
         return { ok: true, share: this.shareStatus() };
       case "share_set": {
+        if (req.port !== undefined) this.setPort(req.port);
         if (req.enabled) await this.startSharing();
         else {
           await this.host.stop();
@@ -203,6 +200,8 @@ export class SharedAgentService {
         }
         return { ok: true, share: this.shareStatus() };
       }
+      case "port_check":
+        return { ok: true, port: await this.checkPort(req.port) };
       case "share_agent": {
         if (!isSharedAgentId(req.agent)) throw new BadRequest("Unknown agent.");
         this.host.setAgentEnabled(req.agent, req.enabled === true);
@@ -224,7 +223,9 @@ export class SharedAgentService {
       }
       case "invite_create": {
         if (!(INVITE_MINUTES as readonly number[]).includes(req.expiresMinutes)) {
-          throw new BadRequest("Invite lifetime must be 5, 15 or 60 minutes.");
+          throw new BadRequest(
+            "Invite lifetime must be 5, 15 or 60 minutes, or until you turn it off."
+          );
         }
         const port = this.host.port;
         if (port === null) throw new BadRequest("Turn sharing on first.");
@@ -282,8 +283,6 @@ export class SharedAgentService {
     if (this.heartbeat) clearInterval(this.heartbeat);
     if (this.shareTimer) clearTimeout(this.shareTimer);
     for (const chat of this.chats.values()) this.abortChat(chat);
-    this.localRuns.stopAll("service closing");
-    await this.localRuns.settle(3000);
     await this.host.stop();
   }
 
@@ -353,24 +352,23 @@ export class SharedAgentService {
     }
   }
 
-  private async checkHosts(): Promise<void> {
+  /** Checks every joined PC. Overlapping calls share one check. */
+  private checkHosts(): Promise<void> {
+    if (this.checking) return this.checking;
     const ids = this.client
       .list()
       .filter((h) => h.connected)
       .map((h) => h.id);
-    if (ids.length) await Promise.all(ids.map((id) => this.checkOne(id)));
-    this.pushHosts();
-  }
-
-  private async ownAgentViews(): Promise<AgentView[]> {
-    if (!this.ownAgents || Date.now() - this.ownAt > 60_000) {
-      const probes = await Promise.all(
-        (Object.keys(SHARED_AGENT_NAMES) as SharedAgentId[]).map((a) => probeAgent(a, this.locate))
-      );
-      this.ownAgents = probes.map((p) => ({ id: p.id, name: p.name, available: p.available }));
-      this.ownAt = Date.now();
-    }
-    return this.ownAgents;
+    const run = async () => {
+      if (ids.length) await Promise.all(ids.map((id) => this.checkOne(id)));
+      this.pushHosts();
+    };
+    // `.finally` always runs after this assignment, even when `run` finishes at once.
+    const check = run().finally(() => {
+      if (this.checking === check) this.checking = null;
+    });
+    this.checking = check;
+    return check;
   }
 
   // ---------------------------------------------------------------- chat
@@ -392,6 +390,9 @@ export class SharedAgentService {
     if (this.chats.has(chatId))
       return fail("busy", "That chat is already answering. Stop it first.");
     const hostId = req.hostId === null ? null : str(req.hostId, "hostId");
+    if (!hostId || !this.client.get(hostId)?.connected) {
+      throw new BadRequest("Join a PC first: paste its invite link, then chat with its agent.");
+    }
     const chat: ChatState = { id: chatId, aborter: new AbortController(), stopped: false, hostId };
     this.chats.set(chatId, chat);
     void this.runChat(chat, req)
@@ -403,37 +404,32 @@ export class SharedAgentService {
     return { ok: true, chatId };
   }
 
-  /**
-   * The joined PC's agent answers first. If there is no usable PC, or it does
-   * not answer (offline, removed this PC, busy, failed), this PC's own agent
-   * takes over on its own and the chat says so. Nothing to configure.
-   */
+  /** Chat with the joined PC's agent. Only ever that PC: nothing runs on this one. */
   private async runChat(
     chat: ChatState,
     req: Extract<SharedAgentRequest, { op: "chat_send" }>
   ): Promise<void> {
     const host = chat.hostId ? this.client.get(chat.hostId) : undefined;
-    if (host?.connected) {
-      const outcome = await this.runShared(chat, req, host);
-      if (outcome.kind === "done") return;
-      if (chat.stopped) {
-        this.emitChat(chat.id, "end", { status: "stopped", route: "shared", error: "" });
-        return;
-      }
-      this.emitChat(chat.id, "log", { text: outcome.reason });
-      this.emitChat(chat.id, "log", {
-        text: `${host.name} didn't answer, so your own agent on this PC is answering instead.`,
+    if (!host?.connected) {
+      this.emitChat(chat.id, "end", {
+        status: "failed",
+        route: "shared",
+        error: "That PC is not joined any more. Join it again with a new invite link.",
       });
+      return;
     }
-    await this.runLocal(chat, req);
+    await this.runShared(chat, req, host);
   }
 
   /** Forwards one wire event to the UI. Returns the `end` payload when it is the last one. */
   private forward(chat: ChatState, ev: WireEvent): WireEvent | null {
     switch (ev.type) {
       case "text":
-        if (String(ev.text ?? "").trim()) chat.answered = true;
         this.emitChat(chat.id, "text", { text: String(ev.text ?? "") });
+        break;
+      case "delta":
+        // A piece of the answer as it is written (newer hosts); `text` follows with the whole block.
+        this.emitChat(chat.id, "delta", { text: String(ev.text ?? "") });
         break;
       case "tool":
         this.emitChat(chat.id, "tool", {
@@ -467,29 +463,28 @@ export class SharedAgentService {
 
   private finishChat(
     chat: ChatState,
-    routeName: "shared" | "own",
     end: WireEvent | null,
     sessionId?: string
-  ): Outcome {
+  ): { status: string; tokens: TokenTotals; costUsd: unknown } {
     const tokens = fromWireTokens(end?.tokens);
     const status = chat.stopped ? "stopped" : String(end?.status ?? "failed");
     const error = String(end?.error ?? "");
     this.emitChat(chat.id, "end", {
       status,
       error,
-      route: routeName,
+      route: "shared",
       tokens,
       costUsd: end?.cost_usd ?? null,
       ...(sessionId ? { sessionId } : {}),
     });
-    return { kind: "done", status, error, tokens, costUsd: end?.cost_usd ?? null };
+    return { status, tokens, costUsd: end?.cost_usd ?? null };
   }
 
   private async runShared(
     chat: ChatState,
     req: Extract<SharedAgentRequest, { op: "chat_send" }>,
     host: HostRecord
-  ): Promise<Outcome> {
+  ): Promise<void> {
     let started: { runId: string; sessionId: string };
     try {
       started = await this.client.startRun(host.id, {
@@ -501,9 +496,13 @@ export class SharedAgentService {
       if (e instanceof ClientError && (e.code === "unreachable" || e.code === "removed")) {
         this.markOffline(host.id, e);
       }
-      // Busy, refused, agent missing on the host, a bad answer: all mean "use your own".
       const why = e instanceof Error && e.message ? e.message : "it could not start the chat";
-      return { kind: "dropped", reason: `${host.name}: ${why}` };
+      this.emitChat(chat.id, "end", {
+        status: chat.stopped ? "stopped" : "failed",
+        route: "shared",
+        error: `${host.name}: ${why}`,
+      });
+      return;
     }
     chat.runId = started.runId;
     this.emitChat(chat.id, "route", { route: "shared", hostId: host.id, hostName: host.name });
@@ -516,7 +515,8 @@ export class SharedAgentService {
       if (chat.stopped) {
         await this.client.stop(host.id, started.runId);
         await this.waitForHostToEnd(host.id, started.runId, after);
-        return this.finishChat(chat, "shared", null, started.sessionId);
+        this.finishChat(chat, null, started.sessionId);
+        return;
       }
       let batch: { events: WireEvent[]; finished: boolean };
       try {
@@ -530,7 +530,12 @@ export class SharedAgentService {
             continue;
           }
           this.markOffline(host.id, e);
-          return { kind: "dropped", reason: `${host.name} stopped answering.` };
+          this.emitChat(chat.id, "end", {
+            status: "failed",
+            route: "shared",
+            error: `${host.name} stopped answering. Send your message again when it is back.`,
+          });
+          return;
         }
         throw e;
       }
@@ -540,22 +545,12 @@ export class SharedAgentService {
       }
       if (batch.finished) break;
     }
-    // Failed before saying a word (agent crashed, refused, misconfigured): let your own agent answer.
-    const endStatus = String(end?.status ?? "failed");
-    if (!chat.stopped && !chat.answered && (endStatus === "failed" || endStatus === "timeout")) {
-      const why =
-        String(end?.error ?? "") || `its agent ${endStatus === "timeout" ? "timed out" : "failed"}`;
-      // Whatever the failed run used still counts against that PC.
-      this.client.addUsage(host.id, fromWireTokens(end?.tokens), end?.cost_usd ?? null);
-      this.pushHosts(true);
-      return { kind: "dropped", reason: `${host.name}: ${why}` };
-    }
-    const outcome = this.finishChat(chat, "shared", end, started.sessionId);
-    if (outcome.kind === "done" && outcome.status !== "stopped") {
+    const outcome = this.finishChat(chat, end, started.sessionId);
+    if (outcome.status !== "stopped") {
+      // Whatever the run used (a failed one too) counts against that PC.
       this.client.addUsage(host.id, outcome.tokens, outcome.costUsd);
       this.pushHosts(true);
     }
-    return outcome;
   }
 
   /**
@@ -589,43 +584,6 @@ export class SharedAgentService {
     this.pushHosts();
   }
 
-  private async runLocal(
-    chat: ChatState,
-    req: Extract<SharedAgentRequest, { op: "chat_send" }>
-  ): Promise<void> {
-    let run: Run;
-    try {
-      run = this.localRuns.start({
-        agent: req.agent,
-        prompt: req.message,
-        cwd: ensureChatDir(this.chatDir),
-        deviceId: "local",
-        deviceName: os.hostname() || "this PC",
-      });
-    } catch (e) {
-      const why = e instanceof Error ? e.message : "could not start";
-      this.emitChat(chat.id, "end", {
-        status: "failed",
-        route: "own",
-        error: `Your own ${SHARED_AGENT_NAMES[req.agent]} is not available: ${why}`,
-      });
-      return;
-    }
-    chat.localRun = run;
-    this.emitChat(chat.id, "route", { route: "own", hostId: null, hostName: "" });
-    let after = 0;
-    let end: WireEvent | null = null;
-    for (;;) {
-      const batch = await run.wait(after, 2000);
-      for (const ev of batch.events) {
-        after = Math.max(after, ev.seq);
-        end = this.forward(chat, ev as WireEvent) ?? end;
-      }
-      if (batch.finished && after >= run.events.length) break;
-    }
-    this.finishChat(chat, "own", end);
-  }
-
   private stopChat(chatId: string): void {
     const chat = this.chats.get(chatId);
     if (!chat) return;
@@ -634,7 +592,6 @@ export class SharedAgentService {
 
   private abortChat(chat: ChatState): void {
     chat.stopped = true;
-    if (chat.localRun) this.localRuns.stop(chat.localRun.id, "stopped by you");
     chat.aborter.abort();
   }
 
@@ -643,8 +600,9 @@ export class SharedAgentService {
   private async startSharing(): Promise<void> {
     if (this.host.port !== null) return;
     try {
-      await this.host.start(this.deps.sharePort ?? DEFAULT_SHARE_PORT, this.deps.bindHost);
+      await this.host.start(this.deps.sharePort ?? this.store.port, this.deps.bindHost);
     } catch (e) {
+      if (e instanceof PortInUseError) throw new ClientError("unavailable", e.message);
       throw new ClientError(
         "unavailable",
         `Could not start sharing: ${e instanceof Error ? e.message : "unknown error"}`
@@ -653,10 +611,42 @@ export class SharedAgentService {
     this.deps.emit({ event: "share" });
   }
 
+  /** Changes the port sharing uses next. Only while sharing is off. */
+  private setPort(value: unknown): void {
+    const port = parseSharePort(value);
+    if (port === null) {
+      throw new BadRequest(`Port must be a number from ${MIN_SHARE_PORT} to ${MAX_SHARE_PORT}.`);
+    }
+    if (this.host.port !== null && this.host.port !== port) {
+      throw new BadRequest("Stop sharing before changing the port.");
+    }
+    this.store.setPort(port);
+  }
+
+  private async checkPort(value: unknown): Promise<PortCheck> {
+    const port = parseSharePort(value);
+    if (port === null) {
+      throw new BadRequest(`Port must be a number from ${MIN_SHARE_PORT} to ${MAX_SHARE_PORT}.`);
+    }
+    if (this.host.port === port) {
+      return { port, available: true, ours: true, message: `Kai is sharing on port ${port}.` };
+    }
+    const available = await isPortFree(port, this.deps.bindHost);
+    return {
+      port,
+      available,
+      ours: false,
+      message: available
+        ? `Port ${port} is free.`
+        : `Port ${port} is already in use by another program. Choose another port.`,
+    };
+  }
+
   shareStatus(): ShareStatus {
     const port = this.host.port;
     return {
       enabled: port !== null,
+      port: port ?? this.store.port,
       listening:
         port === null
           ? null
@@ -666,6 +656,7 @@ export class SharedAgentService {
             },
       publicUrl: this.host.publicUrl,
       agents: this.host.agentRows(),
+      otherClis: this.host.otherClis(),
       invites: this.host.openInvites(),
       devices: this.host.devices(),
       runs: this.host.activeRuns(),

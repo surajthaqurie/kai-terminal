@@ -139,6 +139,12 @@ export function relatedSearchSeed(track: MusicTrack | null): string | null {
   return null;
 }
 
+/** A YouTube mix (`RD…`, e.g. a YouTube Music link's `RDAMVM<id>`): an
+ *  endless list YouTube builds around a song, with no playlist page. */
+export function isMixPlaylist(playlistId: string | null | undefined): boolean {
+  return Boolean(playlistId?.startsWith("RD"));
+}
+
 /** True when YouTube can move to a next item (playlists only). */
 export function hasNextItem(track: MusicTrack | null): boolean {
   return Boolean(track?.playlistId);
@@ -375,13 +381,17 @@ export async function searchYouTubeVideos(query: string, limit = 8): Promise<You
  * Uses the backend Tauri command first (video/ playlist page), falls back to
  * the Vite dev-server middleware when Tauri is not available (browser/dev).
  * Returns [] when the playlist cannot be fetched (private, empty, blocked).
+ * `videoId` centres a mix (see `isMixPlaylist`) on that song: a mix has no
+ * fixed list, only the songs around the one it is playing.
  */
 export async function fetchPlaylistVideos(
   playlistId: string,
-  limit = 48
+  limit = 48,
+  videoId?: string | null
 ): Promise<YouTubeVideoResult[]> {
   const clean = playlistId.trim();
   if (!/^[A-Za-z0-9_-]{10,64}$/.test(clean)) return [];
+  const seed = videoId && /^[\w-]{11}$/.test(videoId) ? videoId : null;
   const toResults = (rows: { video_id?: string; videoId?: string; title?: string }[]) =>
     rows
       .filter((r) => r?.title && (r.video_id ?? r.videoId))
@@ -398,7 +408,7 @@ export async function fetchPlaylistVideos(
       const { invoke } = await import("@tauri-apps/api/core");
       const list = await invoke<{ video_id: string; title: string }[]>(
         "fetch_youtube_playlist_cmd",
-        { playlistId: clean, limit }
+        { playlistId: clean, limit, videoId: seed }
       );
       const mapped = toResults(Array.isArray(list) ? list : []);
       if (mapped.length > 0) return mapped;
@@ -411,7 +421,7 @@ export async function fetchPlaylistVideos(
   try {
     if (typeof fetch !== "undefined") {
       const res = await fetch(
-        `/api/youtube-playlist?list=${encodeURIComponent(clean)}&limit=${limit}`
+        `/api/youtube-playlist?list=${encodeURIComponent(clean)}&limit=${limit}${seed ? `&v=${seed}` : ""}`
       );
       if (res.ok) {
         const mapped = toResults((await res.json()) as { videoId: string; title: string }[]);

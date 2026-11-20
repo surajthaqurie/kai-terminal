@@ -3,8 +3,6 @@ import {
   Activity,
   ArrowUpCircle,
   Bot,
-  ChevronDown,
-  Code,
   Columns,
   FolderOpen,
   GitCompare,
@@ -13,11 +11,10 @@ import {
   Search,
   Settings,
 } from "lucide-react";
-import type { InstalledEditor } from "../services/projectService";
 import type { CommandAction } from "./CommandPalette";
 import { PopupMenu, type MenuEntry } from "./PopupMenu";
 import { useShortcutTitle } from "../hooks/useShortcutHints";
-import { SharedAgentToggle } from "./SharedAgentToggle";
+import { useSharingStatus } from "../hooks/useSharingStatus";
 
 interface HeaderActionsProps {
   /** The palette's action list: the "more" menu reuses its handlers and shortcuts. */
@@ -25,14 +22,7 @@ interface HeaderActionsProps {
   paletteShortcut: string;
   onOpenCommandPalette: () => void;
   onOpenAiCli: () => void;
-  /** Shows the Shared Agent switch; opens AI Providers on the Shared Agent tab. */
-  onOpenSharedAgent?: () => void;
   onOpenSettings: () => void;
-  onOpenEditor?: (editorBinary?: string) => void;
-  editorPath?: string;
-  installedEditors?: InstalledEditor[];
-  isLoadingEditors?: boolean;
-  onRefreshEditors?: () => void;
   updateAvailable?: boolean;
   latestVersion?: string | null;
   onViewUpdate?: () => void;
@@ -40,66 +30,33 @@ interface HeaderActionsProps {
 
 /**
  * Right side of the tab row. Only what is used all the time is on screen: the
- * search box that opens the command palette, "open project in editor" (an icon
- * right after it), the Shared Agent on/off switch, AI providers and Settings. Everything occasional lives in the
- * "more" menu, and the rest stays reachable through the palette and keyboard
+ * search box that opens the command palette, AI providers (with a green dot
+ * while this PC shares its agents) and Settings. Everything occasional lives in
+ * the "more" menu, and the rest stays reachable through the palette and keyboard
  * shortcuts (Music Time, for one, via Settings and its shortcut).
  *
  * Not repeated here (single source of truth lives elsewhere): new tab in a
  * given shell (the "+ ▾" menu on the tab strip), the shell of the focused
- * terminal, git branch / cwd / Code Mode (status bar).
+ * terminal, git branch / cwd / Code Mode and "open project in editor" (the
+ * status bar's mode pill).
  */
 export const HeaderActions: FC<HeaderActionsProps> = ({
   actions,
   paletteShortcut,
   onOpenCommandPalette,
   onOpenAiCli,
-  onOpenSharedAgent,
   onOpenSettings,
-  onOpenEditor,
-  editorPath,
-  installedEditors = [],
-  isLoadingEditors = false,
-  onRefreshEditors,
   updateAvailable = false,
   latestVersion,
   onViewUpdate,
 }) => {
   const shortcutTitle = useShortcutTitle();
-  const editorEntries = useMemo<MenuEntry[]>(() => {
-    const editorEntries: MenuEntry[] = [];
-    if (onOpenEditor) {
-      if (installedEditors.length > 1) {
-        editorEntries.push({ kind: "heading", id: "editor-heading", label: "Open project in" });
-        for (const ed of installedEditors) {
-          editorEntries.push({
-            id: `editor-${ed.id}`,
-            label: ed.name,
-            detail: ed.path,
-            icon: <Code size={14} />,
-            onSelect: () => onOpenEditor(ed.path || ed.binary),
-          });
-        }
-        editorEntries.push({
-          id: "editor-default",
-          label: editorPath ? `Default (${editorPath})` : "Default (auto-detect)",
-          icon: <Code size={14} />,
-          onSelect: () => onOpenEditor(undefined),
-        });
-      } else {
-        const only = installedEditors[0];
-        editorEntries.push({
-          id: "editor-default",
-          label: only ? `Open project in ${only.name}` : "Open project in editor",
-          detail: isLoadingEditors ? "Detecting editors…" : only?.path,
-          icon: <Code size={14} />,
-          onSelect: () => onOpenEditor(only ? only.path || only.binary : undefined),
-        });
-      }
-    }
-
-    return editorEntries;
-  }, [onOpenEditor, installedEditors, isLoadingEditors, editorPath]);
+  const sharing = useSharingStatus();
+  const aiCliTitle = sharing.on
+    ? `AI CLI providers · Sharing your agents · ${sharing.connected} PC${
+        sharing.connected === 1 ? "" : "s"
+      } connected${sharing.internet ? " · internet on" : ""}`
+    : "AI CLI providers";
 
   const entries = useMemo<MenuEntry[]>(() => {
     const byId = new Map(actions.map((a) => [a.id, a]));
@@ -144,46 +101,17 @@ export const HeaderActions: FC<HeaderActionsProps> = ({
         <span className="header-palette-text">Search commands…</span>
         <kbd className="header-palette-kbd">{paletteShortcut}</kbd>
       </button>
-      {onOpenEditor && (
-        <div className="header-editor">
-          <button
-            type="button"
-            className="header-icon-btn"
-            onClick={() => onOpenEditor(undefined)}
-            title="Open project in editor"
-            aria-label="Open project in editor"
-          >
-            <Code size={15} aria-hidden="true" />
-          </button>
-          <PopupMenu
-            label="Choose editor"
-            align="end"
-            entries={editorEntries}
-            onOpen={onRefreshEditors}
-            trigger={({ open, toggle, props }) => (
-              <button
-                type="button"
-                className={`header-caret-btn${open ? " is-open" : ""}`}
-                onClick={toggle}
-                title="Choose which editor to open"
-                aria-label="Choose editor"
-                {...props}
-              >
-                <ChevronDown size={10} aria-hidden="true" />
-              </button>
-            )}
-          />
-        </div>
-      )}
-      {onOpenSharedAgent && <SharedAgentToggle onOpenSharedAgent={onOpenSharedAgent} />}
       <button
         type="button"
         className="header-icon-btn"
         onClick={onOpenAiCli}
-        title="AI CLI providers"
+        title={aiCliTitle}
         aria-label="Open AI CLI providers"
       >
         <Bot size={15} aria-hidden="true" />
+        {sharing.on && (
+          <span className="header-status-dot" role="status" aria-label="Sharing your agents" />
+        )}
       </button>
       <button
         type="button"
@@ -198,7 +126,6 @@ export const HeaderActions: FC<HeaderActionsProps> = ({
         label="More actions"
         align="end"
         entries={entries}
-        onOpen={onRefreshEditors}
         trigger={({ open, toggle, props }) => (
           <button
             type="button"

@@ -45,6 +45,35 @@ function parseYouTubeItems(html: string, rendererPattern: string, limit: number)
   return items;
 }
 
+/** A mix's songs, read from a watch page's playlist panel (mirrors the Rust
+ *  `extract_videos_from_mix_html`): mixes (`RD…`) have no playlist page. */
+function parseMixItems(html: string, limit: number): YouTubeItem[] {
+  const items: YouTubeItem[] = [];
+  for (const entry of html.split('"playlistPanelVideoRenderer":{').slice(1)) {
+    const videoId = /"videoId":"([\w-]{11})"/.exec(entry)?.[1];
+    if (!videoId || items.some((i) => i.videoId === videoId)) continue;
+    const raw = entry.startsWith('"title":{')
+      ? /"simpleText":"((?:[^"\\]|\\.)*)"/.exec(entry)?.[1]
+      : undefined;
+    const title = raw?.replace(/\\u0026/g, '&').replace(/\\"/g, '"').trim();
+    items.push({ videoId, title: title || videoId });
+    if (items.length >= limit) break;
+  }
+  return items;
+}
+
+async function fetchMixItems(listId: string, seed: string | null, limit: number) {
+  const derived = /^RD(?:AMVM)?([\w-]{11})$/.exec(listId)?.[1];
+  const v = seed ?? derived;
+  const url = `https://www.youtube.com/watch?${v ? `v=${v}&` : ''}list=${encodeURIComponent(listId)}`;
+  try {
+    const resp = await fetch(url, { headers: { 'User-Agent': YOUTUBE_USER_AGENT } });
+    return parseMixItems(await resp.text(), limit);
+  } catch {
+    return [];
+  }
+}
+
 async function fetchYouTubeItems(
   url: string,
   rendererPattern: string,
@@ -87,14 +116,18 @@ function youtubeMediaPlugin(): Plugin {
         if (url.pathname.startsWith('/api/youtube-playlist')) {
           const listId = url.searchParams.get('list')?.trim();
           const limit = Math.max(1, Math.min(500, parseInt(url.searchParams.get('limit') ?? '24', 10) || 24));
+          if (!listId || !/^[A-Za-z0-9_-]{10,64}$/.test(listId)) return respond([]);
+          const v = url.searchParams.get('v');
+          const seed = v && /^[\w-]{11}$/.test(v) ? v : null;
+          const mix = listId.startsWith('RD') ? await fetchMixItems(listId, seed, limit) : [];
           return respond(
-            listId && /^[A-Za-z0-9_-]{10,64}$/.test(listId)
-              ? await fetchYouTubeItems(
+            mix.length > 0
+              ? mix
+              : await fetchYouTubeItems(
                   `https://www.youtube.com/playlist?list=${encodeURIComponent(listId)}`,
                   '"playlistVideoRenderer":{"videoId":"',
                   limit
                 )
-              : []
           );
         }
 

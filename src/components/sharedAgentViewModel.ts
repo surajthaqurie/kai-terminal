@@ -1,6 +1,6 @@
 /**
- * Pure view logic for the Shared Agent panel: which Claude is answering and
- * how to say so. No React, no IPC, so the wording and the rules are unit tested.
+ * Pure view logic for the Shared Agent panel: the joined PC's state and how
+ * to say so. No React, no IPC, so the wording and the rules are unit tested.
  */
 import {
   totalTokens,
@@ -10,7 +10,7 @@ import {
   type TokenTotals,
 } from "../core/sharedAgent/types";
 
-export type RouteTone = "ok" | "warn" | "own" | "bad" | "idle";
+export type RouteTone = "ok" | "warn" | "bad" | "idle";
 
 export interface RouteView {
   tone: RouteTone;
@@ -46,36 +46,24 @@ export function formatAgo(iso: string | null | undefined, now = Date.now()): str
 }
 
 /**
- * Which Claude answers right now, and what to tell the person about it.
- * Routing is automatic: the joined PC first, this PC's own agent whenever that
- * PC can't answer.
+ * The state of the PC being chatted with, and what to tell the person about it.
+ * Chat only ever goes to a joined PC: nothing answers on this one.
  */
-export function describeRoute(input: {
-  host: JoinedHost | null;
-  ownAvailable: boolean;
-}): RouteView {
-  const { host, ownAvailable } = input;
+export function describeRoute(host: JoinedHost | null): RouteView {
   if (!host) {
-    return ownAvailable
-      ? {
-          tone: "own",
-          badge: "OWN",
-          title: "Using your own Claude",
-          detail: "No PC joined yet. Join one below to use its Claude.",
-        }
-      : {
-          tone: "idle",
-          badge: "NO AGENT",
-          title: "No agent yet",
-          detail: "Join a PC below to chat with its Claude.",
-        };
+    return {
+      tone: "idle",
+      badge: "NOT JOINED",
+      title: "No PC joined",
+      detail: "Paste an invite link to chat with another PC's agent.",
+    };
   }
   if (!host.connected) {
     return {
       tone: "bad",
       badge: "REMOVED",
       title: `${host.name} removed this PC`,
-      detail: `Join again with a new invite link.${ownAvailable ? " Your own Claude answers meanwhile." : ""}`,
+      detail: "Join again with a new invite link.",
     };
   }
   if (host.online === null) {
@@ -85,41 +73,28 @@ export function describeRoute(input: {
     return {
       tone: "ok",
       badge: "LIVE",
-      title: `Claude is using the shared agent · ${host.name}`,
-      detail: [
-        host.latencyMs === null ? "" : `latency ${host.latencyMs} ms`,
-        ownAvailable ? "switches to your own Claude if it stops answering" : "",
-      ]
-        .filter(Boolean)
-        .join(" · "),
-    };
-  }
-  if (ownAvailable) {
-    return {
-      tone: "own",
-      badge: "FALLBACK",
-      title: "Host offline: your own Claude is answering",
-      detail: `${host.name} is not responding. It switches back when ${host.name} returns.`,
+      title: `Connected to ${host.name}`,
+      detail: host.latencyMs === null ? "" : `latency ${host.latencyMs} ms`,
     };
   }
   return {
     tone: "bad",
     badge: "OFFLINE",
     title: `${host.name} is offline`,
-    detail: "Claude isn't installed on this PC, so messages wait until it is back.",
+    detail: "Send your message again when it is back.",
   };
 }
 
-/** The agents the person can pick for the next message. */
-export function agentChoices(input: {
-  host: JoinedHost | null;
-  ownAgents: AgentView[];
-}): AgentView[] {
-  const own = input.ownAgents.filter((a) => a.available);
-  if (!input.host?.connected) return own;
-  const shared = input.host.agents.filter((a) => a.available);
-  // A host that has not answered yet, or is offline, still lets a fallback agent be chosen.
-  return shared.length ? shared : own;
+/** Assumed while a PC is still being checked, so the first message need not wait for it. */
+const ASSUMED_AGENT: AgentView = { id: "claude", name: "Claude Code", available: true };
+
+/** The agents the person can pick for the next message: only the joined PC's. */
+export function agentChoices(host: JoinedHost | null): AgentView[] {
+  if (!host?.connected) return [];
+  const shared = host.agents.filter((a) => a.available);
+  if (shared.length) return shared;
+  // Not checked yet: let the person type and send; the PC says if it can't answer.
+  return host.online === null ? [ASSUMED_AGENT] : [];
 }
 
 export const hostStatusPill = (h: JoinedHost): { label: string; tone: RouteTone } => {
@@ -144,3 +119,18 @@ export const TASK_STATUS_LABELS: Record<TaskStatus, { label: string; cls: string
   stopped: { label: "Stopped", cls: "sa-badge-warn" },
   timeout: { label: "Timed out", cls: "sa-badge-warn" },
 };
+
+/** 184_213 -> "184k", 1_250_000 -> "1.3M" */
+export function formatCompact(n: number): string {
+  const v = Math.max(0, Math.round(n));
+  if (v < 1000) return String(v);
+  if (v < 1_000_000) return `${(v / 1000).toFixed(v < 10_000 ? 1 : 0).replace(/\.0$/, "")}k`;
+  return `${(v / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
+}
+
+/** "Amit-Laptop" -> "AL", "office" -> "OF" */
+export function initials(name: string): string {
+  const parts = name.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+  const out = parts.length > 1 ? `${parts[0][0]}${parts[1][0]}` : (parts[0] ?? name).slice(0, 2);
+  return out.toUpperCase() || "?";
+}

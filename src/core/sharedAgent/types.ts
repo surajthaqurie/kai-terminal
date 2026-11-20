@@ -25,10 +25,30 @@ export function isSharedAgentId(value: unknown): value is SharedAgentId {
   return typeof value === "string" && (SHARED_AGENT_IDS as readonly string[]).includes(value);
 }
 
-/** First port tried by the host server; the next nine are tried if it is taken. */
+/** The port the host server listens on until the person picks another. */
 export const DEFAULT_SHARE_PORT = 8765;
-export const INVITE_MINUTES = [5, 15, 60] as const;
+/** Lowest and highest port a person may choose (below 1024 needs admin rights). */
+export const MIN_SHARE_PORT = 1024;
+export const MAX_SHARE_PORT = 65535;
+
+/** A valid share port, or null. Accepts a number or the text typed in the port box. */
+export function parseSharePort(value: unknown): number | null {
+  const n =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && /^\s*\d{1,5}\s*$/.test(value)
+        ? Number(value)
+        : NaN;
+  return Number.isInteger(n) && n >= MIN_SHARE_PORT && n <= MAX_SHARE_PORT ? n : null;
+}
+
+/**
+ * How long an invite link lives, in minutes. 0 = "until I turn it off": the
+ * link stays valid until it is used, cancelled, or sharing is turned off.
+ */
+export const INVITE_MINUTES = [5, 15, 60, 0] as const;
 export type InviteMinutes = (typeof INVITE_MINUTES)[number];
+export const INVITE_UNTIL_OFF = 0;
 export const MAX_MESSAGE_CHARS = 20_000;
 
 /*
@@ -112,10 +132,22 @@ export interface ShareAgentRow {
   enabled: boolean;
 }
 
+/**
+ * A coding CLI found on this PC that Kai cannot share yet, because it has no
+ * non-interactive, read-only mode Kai can enforce. Listed so the person sees
+ * every agent they have, and why some cannot be switched on.
+ */
+export interface ShareOtherCli {
+  id: string;
+  name: string;
+  reason: string;
+}
+
 export interface ShareInvite {
   id: string;
   createdAt: string;
-  expiresInSeconds: number;
+  /** null = no time limit: valid until used, cancelled or sharing is turned off. */
+  expiresInSeconds: number | null;
 }
 
 export type DeviceState = "connected" | "offline" | "disconnected";
@@ -142,7 +174,10 @@ export interface DeviceGrants {
 }
 
 export const defaultGrants = (): DeviceGrants => ({
-  agents: { claude: true, opencode: true },
+  agents: Object.fromEntries(SHARED_AGENT_IDS.map((id) => [id, true])) as Record<
+    SharedAgentId,
+    boolean
+  >,
   models: {},
   maxMinutes: DEFAULT_RUN_MINUTES,
 });
@@ -243,6 +278,8 @@ export interface ShareRun {
 
 export interface ShareStatus {
   enabled: boolean;
+  /** The port sharing uses (the one listening now, or the next start's). */
+  port: number;
   /** Present while the server is listening. */
   listening: { port: number; urls: string[] } | null;
   /**
@@ -251,6 +288,8 @@ export interface ShareStatus {
    */
   publicUrl: string | null;
   agents: ShareAgentRow[];
+  /** Other coding CLIs installed here that cannot be shared (missing = none found / older service). */
+  otherClis?: ShareOtherCli[];
   invites: ShareInvite[];
   devices: ShareDevice[];
   runs: ShareRun[];
@@ -262,7 +301,17 @@ export interface CreatedInvite {
   link: string;
   /** The same invite through the internet address, when one is set. */
   internetLink?: string;
-  expiresInSeconds: number;
+  /** null = no time limit (see {@link INVITE_UNTIL_OFF}). */
+  expiresInSeconds: number | null;
+}
+
+/** Whether a port is free to share on. */
+export interface PortCheck {
+  port: number;
+  available: boolean;
+  /** True when it is taken by this PC's own sharing (so it is fine to keep). */
+  ours: boolean;
+  message: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -284,7 +333,10 @@ export type SharedAgentRequest =
     }
   | { op: "chat_stop"; chatId: string }
   | { op: "share_status"; refresh?: boolean }
-  | { op: "share_set"; enabled: boolean }
+  /** Turns sharing on or off; `port` (only while off) changes the port it listens on. */
+  | { op: "share_set"; enabled: boolean; port?: number }
+  /** Is this port free? (Tries to open it for a moment, then releases it.) */
+  | { op: "port_check"; port: number }
   | { op: "share_agent"; agent: SharedAgentId; enabled: boolean }
   /** Sets (or with null, removes) the internet address PCs may join through. */
   | { op: "share_public_url"; url: string | null }
@@ -298,12 +350,13 @@ export type SharedAgentRequest =
 
 export type SharedAgentResponse =
   | { ok: true; pong?: true }
-  | { ok: true; hosts: JoinedHost[]; ownAgents: AgentView[] }
+  | { ok: true; hosts: JoinedHost[] }
   | { ok: true; host: JoinedHost }
   | { ok: true; chatId: string }
   | { ok: true; share: ShareStatus }
   | { ok: true; share: ShareStatus; invite: CreatedInvite }
   | { ok: true; history: DeviceHistory }
+  | { ok: true; port: PortCheck }
   | { ok: false; error: SharedAgentErrorBody };
 
 /** Things the service says without being asked (a line with an `event` key). */
@@ -314,4 +367,4 @@ export type SharedAgentEvent =
   | { event: "service_exit" };
 
 export type ChatEventKind =
-  "route" | "session" | "text" | "tool" | "tool_result" | "denied" | "log" | "end";
+  "route" | "session" | "text" | "delta" | "tool" | "tool_result" | "denied" | "log" | "end";
