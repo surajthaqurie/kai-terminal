@@ -638,7 +638,7 @@ pub fn ensure_kai_cli(resource_dir: Option<PathBuf>) -> KaiCliStatus {
 
 /// Tauri command: report bundled-CLI status (writes nothing).
 #[cfg(feature = "tauri")]
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_kai_cli_status_cmd(app: tauri::AppHandle) -> KaiCliStatus {
     let resource_dir = app
         .path()
@@ -670,7 +670,7 @@ pub fn get_kai_cli_status_cmd(app: tauri::AppHandle) -> KaiCliStatus {
 
 /// Tauri command: run the first-run repair (idempotent).
 #[cfg(feature = "tauri")]
-#[tauri::command]
+#[tauri::command(async)]
 pub fn ensure_kai_cli_cmd(app: tauri::AppHandle) -> KaiCliStatus {
     let resource_dir = app.path().resource_dir().ok();
     ensure_kai_cli(resource_dir)

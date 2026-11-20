@@ -107,6 +107,27 @@ export function describeBroadRoot(
   return null;
 }
 
+/**
+ * The folder whose code map a path belongs to: the top of the git work tree
+ * that contains it, so starting an agent (or `kai open`, `kai graph`, the MCP
+ * server) from any subfolder of one repo reuses that repo's single graph
+ * instead of indexing a second, overlapping one. A path outside any git work
+ * tree is its own project. A work tree that is too broad to index (a home
+ * directory kept under git for dotfiles, a drive root) is ignored.
+ */
+export function resolveProjectRoot(targetPath: string): string {
+  const canonical = resolveCanonicalPath(targetPath);
+  let dir = canonical;
+  for (;;) {
+    if (fs.existsSync(path.join(dir, ".git"))) {
+      return dir === canonical || describeBroadRoot(dir) ? canonical : dir;
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) return canonical;
+    dir = parent;
+  }
+}
+
 export function ensureKaiDirectories(): void {
   const dirs = [getKaiHomeDir(), getProjectsDir(), getSessionsDir(), getCacheDir()];
   for (const dir of dirs) {
@@ -479,7 +500,93 @@ export function registerProject(projectPath: string): ProjectMeta {
 
   atomicWriteJson(metaPath, meta);
   cleanupDanglingTempFiles(getProjectStorageDir(id));
+  removeSubsumedRegistrations(meta);
   return meta;
+}
+
+/**
+ * One graph per project location: when `parent` is registered, drop older
+ * graphs registered for its own subfolders (e.g. `repo/src`, created when an
+ * agent was once started there). They describe a subset of the same tree and
+ * only went stale. A nested folder that is a project of its own (its own git
+ * repo) keeps its graph. Graphs a live process is building are left alone.
+ */
+export function removeSubsumedRegistrations(parent: ProjectMeta): string[] {
+  const removed: string[] = [];
+  let all: ProjectMeta[];
+  try {
+    all = listRegisteredProjects();
+  } catch {
+    return removed;
+  }
+  for (const proj of all) {
+    if (proj.id === parent.id || !/^[0-9a-f]{16}$/.test(proj.id)) continue;
+    if (!isWithinProjectBoundary(proj.canonicalPath, parent.canonicalPath)) continue;
+    if (fs.existsSync(proj.canonicalPath)) {
+      const ownRoot = resolveProjectRoot(proj.canonicalPath);
+      if (normalizePathForIdentity(ownRoot) !== normalizePathForIdentity(parent.canonicalPath)) {
+        continue;
+      }
+    }
+    if (isProjectLockHeld(proj.id)) continue;
+    if (deleteProjectData(proj.id).success) removed.push(proj.canonicalPath);
+  }
+  return removed;
+}
+
+/**
+ * Remove registrations that can no longer be used: the project folder is gone
+ * (deleted repo, temp folder), or the metadata is unreadable. Storage dirs
+ * that hold other files (an integration binding) keep those files.
+ */
+export function pruneProjectRegistrations(): { removed: string[]; kept: number } {
+  ensureKaiDirectories();
+  const projectsDir = getProjectsDir();
+  const removed: string[] = [];
+  let kept = 0;
+  for (const entry of fs.readdirSync(projectsDir, { withFileTypes: true })) {
+    if (!entry.isDirectory() || !/^[0-9a-f]{16}$/.test(entry.name)) continue;
+    const metaPath = path.join(projectsDir, entry.name, "meta.json");
+    let label = entry.name;
+    let usable = false;
+    try {
+      const meta = JSON.parse(fs.readFileSync(metaPath, "utf-8"));
+      if (
+        meta &&
+        meta.id === entry.name &&
+        typeof meta.canonicalPath === "string" &&
+        typeof meta.status === "string"
+      ) {
+        label = meta.canonicalPath;
+        usable = fs.existsSync(meta.canonicalPath);
+      }
+    } catch {
+      // No meta (integration binding only) or corrupt meta.
+      if (!fs.existsSync(metaPath)) {
+        kept++;
+        continue;
+      }
+    }
+    if (usable || isProjectLockHeld(entry.name)) {
+      kept++;
+      continue;
+    }
+    if (deleteProjectData(entry.name).success) removed.push(label);
+  }
+  // Graphs of a repo's own subfolders, left from before one-graph-per-repo,
+  // once that repo has its own graph.
+  for (const proj of listRegisteredProjects()) {
+    if (!fs.existsSync(proj.canonicalPath)) continue;
+    const root = resolveProjectRoot(proj.canonicalPath);
+    if (normalizePathForIdentity(root) === normalizePathForIdentity(proj.canonicalPath)) continue;
+    const owner = getProjectMetaPath(computeProjectId(root));
+    if (!fs.existsSync(owner) || isProjectLockHeld(proj.id)) continue;
+    if (deleteProjectData(proj.id).success) {
+      removed.push(proj.canonicalPath);
+      kept--;
+    }
+  }
+  return { removed, kept };
 }
 
 /**

@@ -1,5 +1,5 @@
 {
   "bundle": {
-    "resources": ["../dist/cli/index.js", "../dist/cli/chunks/*.js", "resources/node/*"]
+    "resources": ["../dist/cli/index.js", "../dist/cli/shared-agent.js", "../dist/cli/chunks/*.js", "resources/node/*"]
   }
 }

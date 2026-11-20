@@ -1,5 +1,186 @@
 # Changelog
 
+## 0.2.3
+
+### Patch Changes
+
+- Website and README refresh for 0.2.3: new screenshots of the window, the Integrations tab and the Shared Agent tab, Shared Agent in the README, user manual, `SECURITY.md` (new section 5), `KNOWN_LIMITATIONS.md` and the site (feature card, FAQ, gallery), new feature cards for the music mini player and Kai in your editor's terminal menu, and `kai graph prune` in `kai --help`. The download page now lists every published file (Intel `.dmg`, Windows ARM64 `.exe`, `.rpm` for x64 and ARM64) and matches each by its exact name: the Windows x64 button could pick the ARM64 installer, which GitHub lists first. The README download table, `INSTALL.md` (new `.rpm` steps) and the FAQ were corrected to the same file list, and the FAQ no longer mentions commit or pull request title rules that do not exist.
+
+- d3553a1: Azure DevOps agents with write tools turned on can now create and update tasks, and link work items when they open a pull request.
+
+  - New `kai_work_item_create` makes a work item in the connected project (a `Task` unless you name another type) with a title, description, assignee (`me`, an email or a name), tags, priority, remaining hours, area and sprint, and can place it under a parent item.
+  - New `kai_work_item_update` changes only the fields it is given. It refuses to overwrite an edit made since the item was read, and its answer lists which fields changed, never their values. Changing the state is still `kai_work_item_set_state`.
+  - `kai_pr_create` takes `workItemIds` to link up to 20 work items to the new pull request, `reviewers` and `requiredReviewers` (an email or a name each) and `labels`, and its answer lists what was attached. Every linked item, and a parent given to `kai_work_item_create`, must be in the connected project: one from another project fails with `not_found` before anything is created. A reviewer who matches nobody, or several people, also stops the call before the pull request exists.
+  - Same safety rules as the other write tools: off until a person runs `kai integration azure --allow-writes`, checked on every call, inputs validated and length-capped (never silently cut), description text escaped. Nothing merges or deletes.
+
+- d3553a1: Azure DevOps accounts are grouped by who signed in, and the Azure DevOps Server button is gone for now.
+
+  - **Grouped accounts**: the card lists each signed-in user once, with their organizations underneath. A user with several organizations gets a **Sign out all** that asks first.
+  - **Add account**: opens Microsoft's account picker. Afterwards Kai says which organizations were added, when an organization now uses a different user than before, and when you were already signed in with that account. If another account is already active for the folder it stays active.
+  - **Azure DevOps Server…** is removed from the card. A server account that was set up from the terminal still shows **Enter token** when its token is missing.
+  - **No sign-in app form**: **Connect** generates one Microsoft sign-in address, opens it in your browser and finishes by itself. Nobody enters an app ID or a directory; Kai signs in through one Microsoft Entra app that ships with the build (`KAI_AZURE_CLIENT_ID` / `KAI_AZURE_TENANT_ID` override it for CI and testing). A build that does not have that app yet turns **Connect** off, says why and points to `kai integration azure --az` / `--pat-stdin`. Teams uses the same app.
+  - **Clearer sign-in failures**: Microsoft errors for a single-tenant app, an unknown client ID, a missing redirect URI, a missing consent or a non-public client now say what to change.
+
+- ae7049b: The merge branch and branch naming pattern of an Azure DevOps folder can now be set from the command line, not only from the desktop card.
+
+  - `kai integration azure --merge-branch <name>` and `--branch-pattern "<regex>"` set them; `--clear-merge-branch` and `--clear-branch-pattern` remove them. They use the same checks and storage as the desktop: a branch the repository does not have is refused (offline, it is accepted as typed), and a broken pattern is explained and not saved, with a tip for a pattern without `^` and `$`.
+  - They run on their own in an already connected folder, without signing in again, and are refused when mixed with the options that connect a folder. They stay guidance for agents (`kai_workflow_rules`): Kai still never checks a branch name or blocks a commit.
+  - `kai integration azure --help` and `kai --help` list the new options.
+
+- ae7049b: Azure DevOps Server can now be set up from the desktop Integrations tab.
+
+  - **Server form**: **Azure DevOps Server…** on the Azure DevOps card asks for the server URL (with the collection, such as `https://tfs.contoso.com/DefaultCollection`), an optional project and an access token. A server signs in with a token only, so there is no Azure CLI or browser option here. Problems with the address or token are explained next to the field before anything is sent.
+  - **Token handling**: the token is verified against the server first and kept in your operating system's secret store only when the server accepts it. It reaches the CLI on stdin, never in a command line, and the form keeps no copy once you are connected.
+  - **Like any account**: a Server account shows as `collection @ host` with **Make active**, **Sign out** and, if its token is lost, **Enter token**. Leave the project empty to use the folder's git remote when it is on that server, or to pick from a list. Two servers that both have a `DefaultCollection` are no longer mistaken for each other.
+
+- ae7049b: Azure DevOps Server projects are now recognized from their SSH git remotes too (`ssh://user@host/<collection>/<project>/_git/<repo>`, `user@host:<collection>/<project>/_git/<repo>` and `user@host:v3/<collection>/<project>/<repo>`).
+
+  - An SSH address does not say the server's web address, so Kai derives `https://<host>/<collection>` (no SSH port, no credentials) as a suggestion and asks you to confirm it before signing in to it. In a script it stops and prints the exact `kai integration azure --server-url … --project … --pat-stdin` command instead. Nothing is sent to a guessed host.
+  - It does not ask when you are already signed in to that exact address or pass `--server-url` yourself. A Server remote now goes straight to the access-token sign-in instead of trying browser sign-in, which only reaches Azure DevOps Services.
+  - Remotes of GitHub, GitLab, Bitbucket and similar hosts are never mistaken for Azure DevOps Server.
+
+- ae7049b: Azure DevOps agents can now write, but only where you turn it on. Write tools are off by default and are not even listed until you run `kai integration azure --allow-writes` in a folder (`--no-writes` turns them off again).
+
+  - Four new MCP tools: `kai_work_item_comment`, `kai_work_item_set_state`, `kai_pr_create` and `kai_pr_comment`. They add a work item comment, change a work item's state, open a pull request between two branches that already exist (it never creates a branch, and defaults to the merge branch rule), and comment on a pull request as a new thread, on a file line, or as a reply. Each tool's description says it writes to the remote service.
+  - Only a person decides: `--allow-writes` asks first (`-y/--yes` answers in a script) and refuses to run inside an AI agent's session, and no MCP tool can change the setting. The setting lives in the folder's private connection file, not in the repository, and is dropped if the folder is connected to a different account or project.
+  - Checked on every call, not just when the tool list is built, so an agent that kept an old tool list cannot write after you turn writes off. Inputs are validated and length-capped (too long is refused, never cut), a work item or pull request of another project fails closed, a state change refuses to overwrite an edit made since it was read, comment text is escaped, and tokens are redacted from errors.
+  - Nothing new to sign in with: browser and Azure CLI sign-ins use your own Azure DevOps permissions. A personal access token needs Work Items (Read & write) and Code (Read & write); a refused write names the missing scopes. `kai integration list` and `kai_integration_status` show when write tools are on, and the desktop app can read and set it through the new `set_write_tools` request.
+
+- 0ccea8f: A terminal tab left idle no longer comes back blank or full of random symbols.
+
+  - **No more garbled glyphs**: a tab hidden for more than a few seconds now rebuilds its GPU glyph atlas before it is painted again, so rows no longer draw as random symbols. Quick flips between tabs skip this and stay instant.
+  - **No more blank pane**: if the WebView drops a hidden tab's GPU context, the pane repaints immediately instead of staying empty until the next switch, and a tab that was idle gets one extra re-fit and repaint a frame after it is shown.
+
+- ae7049b: Exact token counts for OpenAI models.
+
+  - **Added**: Kai now bundles the OpenAI BPE vocabularies (`o200k_base` for GPT-4o, GPT-4.1, GPT-5 and o-series; `cl100k_base` for GPT-4 and GPT-3.5). `estimateModelTokensAsync(text, model)` counts with the vocabulary for that model and reports it as exact. They load on first use, so startup is unchanged.
+  - **Unchanged**: Any other model (Claude, Gemini, ...) has no public offline tokenizer, so it keeps the labeled estimate unless you register your own with `registerModelTokenizer`. Counts without a model name are still estimates.
+  - **Clarified**: Without a tokenizer, the built-in estimate counts about 1.3 to 1.4 times what the OpenAI tokenizers count on code and Markdown (measured on this repository; it was 1.7 to 1.9 before the heuristic was calibrated). It stays on the high side so budgets are not overrun.
+
+- 0ed5a07: Switching tabs no longer shows scrambled glyph fragments in the terminal.
+
+  - **No more garbled text on switch**: the GPU glyph atlas is now rebuilt every time a tab is shown again, not only after it sat idle for several seconds, so even a quick flip between tabs paints clean text.
+
+- d3553a1: A tidier Integrations tab.
+
+  - **One header per card**: an icon and name on the left, the status and a **+** button on the right (**Add account** for Azure DevOps, **Switch account** for Teams). Cards that are connected get a green outline.
+  - **Accounts read at a glance**: an avatar with the signed-in user, their organizations in a list with an **Active** tag on the one this project uses, and **Sign out** and **Make active** on each row.
+  - **Branch rules** opens from a **Branch rules** toggle in its own section, with **Save** and **Saved** side by side and errors shown in a red box.
+
+- 45ca817: Kai Terminal now lists itself in the terminal dropdown of VS Code, Cursor, VSCodium and Windsurf, next to PowerShell and bash, and splitting a pane moves keyboard focus into the new pane.
+
+  - **Automatic, no extension**: on launch Kai adds a "Kai Terminal" profile to each installed editor's user settings. It opens your usual shell with `KAI_TERMINAL=1`, so `kai <agent>` and the other in-Kai commands work there. Reload the editor window to see it.
+  - **Respectful of your settings**: each editor is offered it once, so deleting the entry sticks. Comments and other settings are kept, the original file is saved once as `settings.json.kai-backup`, and a settings file that does not parse is left alone. Set `KAI_NO_EDITOR_PROFILE=1` to turn it off.
+  - **Split focus**: a new split (shortcut or command palette) used to leave the cursor in the old terminal, so typing went to the wrong shell.
+
+- d3553a1: Switching back to a tab left for a while is smooth again.
+
+  - **No stall or garbled frame on tab switch**: a hidden tab used to drop its GPU renderer after 15 seconds, so switching back rebuilt it on the spot (a brief freeze, sometimes a frame of scrambled text). Hidden tabs now keep it; only when more than six tabs are hidden does the longest-hidden one give its renderer back.
+
+- 4a85fd5: Fixes for several known limitations.
+
+  - **Large pastes**: pastes over 1 MB are no longer refused. They are sent in ordered 256 KB chunks, and a keystroke typed during a big paste goes out after it.
+  - **Mini music player**: the window reopens at the size you left it, the progress bar holds still while YouTube buffers, and moving the video between windows resumes at the exact spot instead of the last whole second.
+  - **Exact token counts**: `kai_get_context` takes an optional `model`; with an OpenAI model the context is sized with its real tokenizer. The desktop app now ships the tokenizer vocabularies, and `estimateChatTokensAsync` counts chat-message framing.
+  - **Microsoft Teams card**: paste the Microsoft app ID right in the card, see and copy the sign-in link while it waits, cancel a stuck sign-in, and sign in without channel messages when admin approval blocks it.
+  - **Integrations tab**: runs the CLI bundled with the app, so an older `kai` on PATH no longer breaks it.
+
+- d3553a1: The Merge branch is typed, not picked from a loaded list.
+
+  - **No branch list**: opening **More** on the Azure DevOps card no longer fetches the repository's branches. **Merge branch** is a text box; leave it empty for the repository's default branch.
+  - **A wrong name is refused clearly**: **Save** checks that one name and says `The repository has no branch named "x"` (names are case-sensitive). Opening a pull request does the same for both the source and the target branch, before anything is created: `The source branch "x" does not exist in api` / `The target branch "x" does not exist in api`. If the repository cannot be reached, a typed merge branch is still saved.
+  - **One "Connected" heading**: the Azure DevOps card heading says `Connected` instead of `Active for this project`, so "active" is not repeated; the project in use is shown on its own line below.
+  - **No refresh buttons**: the Azure DevOps and Microsoft Teams cards no longer have a circular refresh button. They re-read their status when you open the tab and whenever the window regains focus.
+  - **Simpler card**: no **Switch project** button (the project comes from the git remote; **Choose project** remains for a folder without one). The active account is marked **Active** in its row, with **Make active** on the others. The second sign-in button is **Add account**. Shorter text throughout: the intro, the card descriptions and the sign-in waiting message.
+  - **Long branch naming patterns**: the pattern field is now a box that wraps and grows with the text (a few lines, then it scrolls) with a live `n / 200` count that turns amber near the limit and red over it. A longer pattern is never cut off: it is marked, explained and cannot be saved. Line breaks cannot be typed or pasted.
+
+- 45ca817: Microsoft sign-in no longer needs the app ID edited into source, and Teams can remember one on this computer.
+
+  - **Built into releases**: the Entra app ID is set at build time from the `KAI_AZURE_CLIENT_ID` / `KAI_TEAMS_CLIENT_ID` repository variables, so Azure DevOps and Teams sign-in work with one click. A malformed ID fails the build; `KAI_REQUIRE_SIGNIN_APP=1` fails a build that has none.
+  - **Teams on a build without an app ID**: `kai integration teams --client-id <ID>` saves it in `~/.kai/config.json` (kept when you sign out), and the command asks for it when run at a keyboard with none set. The environment variable still wins.
+
+- cf88d65: More known limitations fixed.
+
+  - **Large Teams files**: a file over 4 MB is now read from disk one 5 MiB piece at a time while it uploads, instead of being held in memory whole. The 250 MB per-file limit and the 250 MB per-message total are gone; one file can now be up to 2 GB, and four of them can go in one message.
+  - **Commands that leave processes behind (Linux and macOS)**: when `kai run` stops a command on a timeout or Ctrl+C, it now also stops processes the command started and detached from it (`setsid`, a double fork). Every run carries a random token in its environment, and anything still carrying it is stopped, with SIGKILL for what ignores SIGTERM. The result says nothing survived only when that is true. Windows cannot read another process's environment, so there a detached process can still survive and Kai still says so.
+  - **Azure DevOps Server over SSH**: an SSH remote does not say the web address, so Kai now asks the likely addresses (`https` and `http`, with and without `/tfs`, and the old port `8080`) whether an Azure DevOps Server answers, without sending any credential, and offers the one that does. It still asks before signing in. Only tested against a fake server.
+  - **Token estimate**: the built-in estimate was about 1.7 to 1.9 times a real tokenizer's count; it is now about 1.3 to 1.4 times, and no file in this repository came out lower than the real count. A lone space no longer costs a token and a line break with its indentation costs one. Context budgets now hold more.
+  - **Context budgets**: a prompt sitting exactly at its budget no longer has its metrics footer cut off by the caveat line added afterwards; another optional item is dropped first.
+  - **Secret filter**: `src/core/indexer.ts` can be read through the index and `kai_read_range` again; the detector no longer matches its own source.
+  - **Music mini window (Windows)**: the WebView2 arguments live only in `tauri.windows.conf.json`; the mini window reads them from there instead of keeping a copy that has to stay in step.
+
+- 8affb71: The music player can now pop out into a small always-on-top mini player window.
+
+  - **Pop out**: a new button in the player header moves the video into a separate window that stays on top of other apps, so music and its controls remain visible when you switch away or minimize Kai. It opens in the bottom-right of the screen, can be dragged and resized, and the song resumes from where it was (a paused song stays paused).
+  - **Same player**: the mini window has previous, play/pause, next, mute and a seek bar. They run through the main player, so the queue, history and keyboard shortcuts behave exactly as before.
+  - **Coming back**: the mini window's expand button returns the video to the player and opens it; its close button does the same without raising Kai, and the music keeps playing. Closing the mini window never closes the terminal.
+
+- 4a85fd5: Mini music player fixes.
+
+  - **Keeps playing**: popping the player out no longer stops the song. The new window had not been clicked yet, so Windows blocked the video from starting with sound.
+  - **Drag anywhere**: the mini window can be dragged from anywhere on the video, not only its title strip, and it reopens where you last left it (or bottom-right if that spot is no longer on a screen).
+  - **Dim opacity**: the player's Dim Opacity now applies to the mini window too, and the desktop shows through it (Windows and Linux). It returns to full opacity while the pointer is over it.
+  - **Smoother**: the mini window's time and progress bar move smoothly between YouTube's updates, and dragging its seek bar no longer jumps back while you drag.
+  - **Dim preview**: in the docked player, moving the Dim slider now previews the level on the panel right away instead of only after the popover closes.
+
+- cf88d65: Four limits removed.
+
+  - **No Node.js to install**: release installers now carry their own Node.js for the bundled `kai` CLI, so the Integrations tab and the `kai` launcher work on a machine without Node.
+  - **`az` found from the Dock or a menu**: on macOS and Linux the app reads your login shell's PATH at startup, so Azure CLI sign-in works when the app is not started from a terminal.
+  - **Mini player dim on macOS**: Dim Opacity now shows the desktop through the mini window on macOS too.
+  - **Autoplay note corrected**: macOS and Linux webviews already allow the mini window's video to start without a click.
+
+- One code map per git repository.
+
+  - Starting an agent, `kai open`, `kai graph` or the MCP server from any subfolder of a repository now uses that repository's single map instead of indexing a second, overlapping one for the subfolder. A folder outside any git work tree is still its own project, and a work tree too broad to index (a home folder kept under git for dotfiles, a drive root) is ignored.
+  - When a repository gets its map, older maps of its own subfolders are removed. A nested folder that is a repository of its own keeps its map, and a map a running process is building is left alone.
+  - New `kai graph prune`: removes maps of folders that no longer exist and leftover subfolder maps, and prints what it removed.
+
+- cf88d65: Two small limits removed.
+
+  - **Pastes of any size**: a keyboard paste is no longer cut off at 32 MB. The app reads the clipboard once and hands it to the terminal in 4 MB pieces, so a very large paste never travels as one huge message.
+  - **Mini player resume**: a paused song moved between the docked player and the mini window now resumes at its exact position (not the last whole second) and stays paused. While the video reloads, the mini window shows buffering instead of a running progress bar.
+
+- 4604e56: Microsoft sign-in refuses example app IDs instead of sending you to a Microsoft error page.
+
+  - **Example IDs are rejected**: the RFC 4122 example UUID (`f81d4fae-…`) and the all-zero ID are well-formed GUIDs, so they used to be saved and used, and Microsoft answered `AADSTS700016` on its own page (Kai never saw it and the sign-in just waited). `kai integration teams --client-id`, `KAI_TEAMS_CLIENT_ID`, `KAI_AZURE_CLIENT_ID` and the build-time IDs now refuse them with a message saying what to copy instead.
+  - **Self-healing**: an example ID that an earlier Kai saved in `~/.kai/config.json` is ignored, so `kai teams` asks for a real one.
+  - **Clearer prompt**: when Kai asks for the Application (client) ID it now says where to find it in Microsoft Entra, and that the Directory and Object IDs do not work. The "app not found" explanation also mentions the saved ID.
+
+- Shared Agent: chat with another PC's Claude Code or OpenCode, or share yours, over your own network.
+
+  - **Where**: AI Providers → **Shared Agent**, with two halves: **Use a shared agent** and **Share my agent**. A switch in the header turns sharing on or off in one click; its caret opens the panel for invites and connected PCs.
+  - **Use a shared agent**: paste an invite link (`http://192.168.1.20:8765/join#…` on the same network, or `https://<tunnel address>/join#…` over the internet) and chat. A message goes to the joined PC's agent first; when that PC is offline, busy, has removed this PC or fails, this PC's own Claude answers instead, and the chat says which one did. Tokens used through each PC are counted. The chat clears when the window closes.
+  - **Share my agent**: turn sharing on, choose which agents to share, then **Generate invite link** (it works once and expires after 5, 15 or 60 minutes). Each connected PC has its own permissions (which agents, which model, a time limit per run from 1 to 240 minutes, 10 by default), a usage table and its recent tasks, and can be removed. **Live runs** shows what is running now.
+  - **Read-only, always**: a shared agent runs in an empty folder and cannot read your files, run commands or use MCP tools. A prompt goes to the agent on stdin, never on its command line, and no shell is used.
+  - **Off by default**: sharing is never remembered, so restarting Kai always leaves the PC private. Only PCs on a subnet this PC is attached to can join, and a PC's token only works from the subnet it joined on. Invite secrets (256-bit, sent in the link's `#fragment`) and device tokens are stored only as hashes, and at most 50 PCs can join.
+  - **Internet access (optional)**: point any HTTPS tunnel or reverse proxy at the port shown and paste its public `https` address. Kai never starts a tunnel itself, and a tunnelled PC never gets the trust of a LAN PC.
+  - Traffic on the LAN is plain HTTP: use it only on a network you trust, and never port-forward. It speaks the Agent Bridge device protocol. See `SECURITY.md` and `KNOWN_LIMITATIONS.md`.
+
+- Smoother terminal output and keyboard focus that lands where you expect.
+
+  - **Less work per frame**: the PTY output thread now gathers the many tiny reads an AI CLI produces while redrawing (spinners, status lines, streamed text) into one event every few milliseconds, instead of one event per read. A character split across reads is kept whole, and all output still arrives before the exit event.
+  - **One listener for all panes**: each output chunk crosses the IPC bridge once and is fanned out in the page. Before, with N panes open, every chunk of any terminal crossed N times.
+  - **Resizes in order**: dragging a split sends resizes one at a time and keeps only the newest pending size, so the shell no longer ends up at a stale size.
+  - **Focus**: clicking a tab puts the keyboard in its terminal (a double-click still opens rename), and re-activating the window (Alt+Tab, or a click on the window) puts focus back in the active terminal unless a dialog, the search bar or a field already has it. On Windows, typing sometimes did not reach the terminal until it was clicked again.
+
+- ae7049b: Windows 11 snap layouts on the maximize button, and the real font list on macOS.
+
+  - **Snap layouts (Windows 11)**: hovering the maximize button now opens the snap-layouts popup, as on a normal Windows window, and the button keeps its hover and pressed look. A click still maximizes or restores. Windows 10, macOS and Linux are unchanged. The popup and a quick click were checked on Windows 11 (build 26300); the first click while the popup is already open was not reliable in that test, so please report it if it does not maximize.
+  - **macOS font list**: Settings → Font & Display now asks macOS for the real font family names, so names such as SF Mono are no longer left out. The font folders are still read as a fallback if the lookup fails. This has not been run on a Mac.
+
+- d3553a1: Microsoft Teams in the Integrations tab.
+
+  - **A Teams card next to Azure DevOps**: connect, test the connection and sign out from the desktop app. Channel messages are asked for by default, so the card shows only your account. If an administrator has to approve them, Kai signs in without them and the card adds `Channel messages need admin approval.` with a **Try again** button. **Switch account** replaces the signed-in account (Teams keeps one).
+  - **Still your account only**: Teams is not tied to a folder and is never handed to an AI agent. The card talks to the CLI over the same private channel as Azure DevOps, the token stays in the OS secret store and never reaches the window, and every Teams request is refused when an AI agent's session is running it.
+  - **Clear when it cannot work**: a build with no Microsoft Entra app registered shows "Not set up" with a pointer to `docs/teams-sign-in.md` and keeps the Connect button disabled, instead of failing after you click.
+
+- ae7049b: Microsoft Teams: send files larger than 4 MB.
+
+  - **Bigger files**: `kai teams` now uploads a file up to 250 MB to your OneDrive in chunks through an upload session, shows the progress while it goes, and carries on from where it stopped if a chunk fails. Files up to 4 MB are sent as before.
+  - **Pictures**: a picture over 4 MB, which cannot ride inside a message, is uploaded and sent as a link instead of being refused.
+  - **Limits**: up to 4 items per message and 250 MB in total, because what is attached is held in memory while it is sent.
+
 ## 0.2.2
 
 ### Patch Changes

@@ -1,5 +1,5 @@
 import fs from "fs";
-import { registerProject, resolveCanonicalPath } from "../../core/registry";
+import { registerProject, resolveCanonicalPath, resolveProjectRoot } from "../../core/registry";
 import { saveActiveProjectState } from "../activeProject";
 import { closeKaiApp, findKaiAppBinary, launchKaiApp } from "../desktopApp";
 
@@ -16,7 +16,7 @@ export async function runOpen(args: string[]): Promise<number> {
     return 1;
   }
 
-  const meta = registerProject(canonicalPath);
+  const meta = registerProject(resolveProjectRoot(canonicalPath));
   const stateSaved = saveActiveProjectState(meta.canonicalPath, meta.name, meta.id, "code");
 
   const appBinary = findKaiAppBinary();

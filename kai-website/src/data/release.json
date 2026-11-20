@@ -1,8 +1,15 @@
 {
-  "version": "0.2.2",
-  "tag": "v0.2.2",
-  "generatedAt": "2026-11-04T08:34:29.459Z",
+  "version": "0.2.3",
+  "tag": "v0.2.3",
+  "generatedAt": "2026-11-20T05:39:28.821Z",
   "releases": [
+    {
+      "tag": "v0.2.3",
+      "name": "Kai v0.2.3 — Shared Agent between your PCs, music mini player, Azure DevOps write tools, Kai in your editor's terminal menu",
+      "date": "2026-11-20T05:39:28.821Z",
+      "url": "https://github.com/surajthaqurie/kai-terminal/releases/tag/v0.2.3",
+      "notes": "- Website and README refresh for 0.2.3: new screenshots of the window, the Integrations tab and the Shared Agent tab, Shared Agent in the README, user manual, `SECURITY.md` (new section 5), `KNOWN_LIMITATIONS.md` and the site (feature card, FAQ, gallery), new feature cards for the music mini player and Kai in your editor's terminal menu, and `kai graph prune` in `kai --help`. The download page now lists every published file (Intel `.dmg`, Windows ARM64 `.exe`, `.rpm` for x64 and ARM64) and matches each by its exact name: the Windows x64 button could pick the ARM64 installer, which GitHub lists first. The README download table, `INSTALL.md` (new `.rpm` steps) and the FAQ were corrected to the same file list, and the FAQ no longer mentions commit or pull request title rules that do not exist.\n- Azure DevOps agents with write tools turned on can now create and update tasks, and link work items when they open a pull request.\n- Azure DevOps accounts are grouped by who signed in, and the Azure DevOps Server button is gone for now.\n- The merge branch and branch naming pattern of an Azure DevOps folder can now be set from the command line, not only from the desktop card.\n- Azure DevOps Server can now be set up from the desktop Integrations tab.\n- Azure DevOps Server projects are now recognized from their SSH git remotes too (`ssh://user@host/<collection>/<project>/_git/<repo>`, `user@host:<collection>/<project>/_git/<repo>` and `user@host:v3/<collection>/<project>/<repo>`).\n- Azure DevOps agents can now write, but only where you turn it on. Write tools are off by default and are not even listed until you run `kai integration azure --allow-writes` in a folder (`--no-writes` turns them off again).\n- A terminal tab left idle no longer comes back blank or full of random symbols.\n- Exact token counts for OpenAI models.\n- Switching tabs no longer shows scrambled glyph fragments in the terminal.\n- A tidier Integrations tab.\n- Kai Terminal now lists itself in the terminal dropdown of VS Code, Cursor, VSCodium and Windsurf, next to PowerShell and bash, and splitting a pane moves keyboard focus into the new pane.\n- Switching back to a tab left for a while is smooth again.\n- Fixes for several known limitations.\n- The Merge branch is typed, not picked from a loaded list.\n- Microsoft sign-in no longer needs the app ID edited into source, and Teams can remember one on this computer.\n- More known limitations fixed.\n- The music player can now pop out into a small always-on-top mini player window.\n- Mini music player fixes.\n- Four limits removed."
+    },
     {
       "tag": "v0.2.2",
       "name": "Kai v0.2.2 — Microsoft Teams chat, clickable links and file paste, Azure DevOps branch rules",

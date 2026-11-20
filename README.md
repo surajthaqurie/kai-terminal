@@ -10,7 +10,7 @@ Tauri 2 + Rust (`portable-pty`) + WebGL GPU terminal renderer (`xterm.js`). MIT 
 
 Live site: **https://kai-terminal.vercel.app/** · Releases: [latest](https://github.com/surajthaqurie/kai-terminal/releases/latest)
 
-> Status: v0.2.2 is an active release. If something breaks, please open an issue with OS, version and steps to reproduce.
+> Status: v0.2.3 is an active release. If something breaks, please open an issue with OS, version and steps to reproduce.
 
 <a href="https://kai-terminal.vercel.app/">
   <picture>
@@ -38,20 +38,27 @@ Screens from the desktop app, with sample projects and people:
 
 | Microsoft Teams in the terminal (`kai teams`) | Azure DevOps rules for agents |
 | :---: | :---: |
-| <img alt="kai teams: teams, channels and chats on the left, the conversation on the right" src="docs/screenshot-teams.png" width="420"> | <img alt="Integrations tab: Azure DevOps card with a merge branch list and a branch naming regex" src="docs/screenshot-integrations.png" width="420"> |
+| <img alt="kai teams: teams, channels and chats on the left, the conversation on the right" src="docs/screenshot-teams.png" width="420"> | <img alt="Integrations tab: Azure DevOps card connected for Payments / web-app, with the merge branch and branch naming rules open" src="docs/screenshot-integrations.png" width="420"> |
+
+| Shared Agent: share your Claude Code with your other PCs |
+| :---: |
+| <img alt="AI Providers, Shared Agent tab, Share my agent: sharing on, Claude Code shared, OpenCode not found, internet access off" src="docs/screenshot-shared-agent.png" width="860"> |
 
 ## Download — you pick the file
 
 No auto-detection here. All installers are published on [GitHub Releases](https://github.com/surajthaqurie/kai-terminal/releases/latest). Pick your own:
 
-| OS                  | File                                | Install                                            |
-| ------------------- | ----------------------------------- | -------------------------------------------------- |
-| macOS 12+ (M1–M4)   | `kai_0.2.2_aarch64.dmg`             | Open the `.dmg`, drag `Kai.app` to `/Applications` |
-| Linux x64           | `kai_0.2.2_amd64.deb`               | `sudo dpkg -i kai_0.2.2_amd64.deb`                 |
-| Linux (any distro)  | `kai_0.2.2_amd64.AppImage`          | `chmod +x kai_*.AppImage && ./kai_*.AppImage`      |
-| Linux ARM64         | `kai_0.2.2_arm64.deb` / `.AppImage` | Same as above, ARM build                           |
-| Windows 10/11 x64   | `kai_0.2.2_x64-setup.exe`           | Download and run                                   |
-| Windows x64 (admin) | `kai_0.2.2_x64_en-US.msi`           | For silent/admin installs                          |
+| OS                      | File                                                  | Install                                            |
+| ----------------------- | ----------------------------------------------------- | -------------------------------------------------- |
+| macOS 12+ (M1–M4)       | `kai_0.2.3_aarch64.dmg`                               | Open the `.dmg`, drag `Kai.app` to `/Applications` |
+| macOS 12+ (Intel)       | `kai_0.2.3_x64.dmg`                                   | Same as above                                      |
+| Windows 10/11 x64       | `kai_0.2.3_x64-setup.exe`                             | Download and run                                   |
+| Windows x64 (admin)     | `kai_0.2.3_x64_en-US.msi`                             | For silent/admin installs                          |
+| Windows 11 ARM64        | `kai_0.2.3_arm64-setup.exe`                           | Download and run                                   |
+| Linux x64 (Debian/Ubuntu) | `kai_0.2.3_amd64.deb`                               | `sudo apt install ./kai_0.2.3_amd64.deb`           |
+| Linux x64 (Fedora/RHEL) | `kai-0.2.3-1.x86_64.rpm`                              | `sudo dnf install ./kai-0.2.3-1.x86_64.rpm`        |
+| Linux x64 (any distro)  | `kai_0.2.3_amd64.AppImage`                            | `chmod +x kai_*.AppImage && ./kai_*.AppImage`      |
+| Linux ARM64             | `kai_0.2.3_arm64.deb` / `kai-0.2.3-1.aarch64.rpm` / `kai_0.2.3_aarch64.AppImage` | Same as above, ARM build |
 
 The website lists the same files and does not choose for you. If your browser guessed wrong, just click another tab — nothing is locked in.
 
@@ -102,6 +109,7 @@ kai agent remove <agent>  # un-wire tool from Kai MCP (or kai remove -a/-m)
 kai graph init .          # initialize the symbol index and import graph
 kai graph update .        # force update and rebuild of project graph
 kai graph status .        # show graph index status and symbol counts
+kai graph prune           # remove maps of deleted folders and of a repo's subfolders
 kai stop                  # clear Code Mode and return to plain terminal
 kai lsp                   # probe locally installed Language Server Protocol servers
 kai metrics               # view local performance and token diagnostics
@@ -192,7 +200,7 @@ kai remove --name contoso  # remove the account everywhere: token and every fold
 - **Branch rules from the command line:** `kai integration azure --merge-branch main --branch-pattern "^feature/[0-9]+$"` (and `--clear-merge-branch`, `--clear-branch-pattern`) set the same guidance as the desktop card. Text from Azure is returned as untrusted data. A running agent is told when the tool list changes, so one that honors MCP `tools/list_changed` picks the tools up on its own; restart any that does not.
 - **Desktop app:** the **Integrations** tab of the AI CLI providers panel (robot icon) offers the same actions. Accounts are grouped by person (with **Sign out all** and **Add account**), the active one is marked **Active**, **Connect** just opens one Microsoft sign-in address in your browser (it is turned off, with the reason, in a build that has no Microsoft app yet), and a **Microsoft Teams** card sits next to it. The cards re-read their status when the window regains focus (there is no refresh button); that never changes any MCP configuration.
 
-![The Integrations tab: Azure DevOps card with a merge branch list and a branch naming pattern](docs/screenshot-integrations.png)
+![The Integrations tab: Azure DevOps card connected for Payments / web-app, with the merge branch and branch naming rules open](docs/screenshot-integrations.png)
 
 Details: [MCP.md](MCP.md) · [USER_MANUAL.md](USER_MANUAL.md).
 
@@ -218,12 +226,25 @@ kai integration teams remove       # sign out and forget the account
 
 Details: [USER_MANUAL.md](USER_MANUAL.md).
 
+### Shared Agent
+
+Use the Claude Code (or OpenCode) on another PC from this one, or let your other PCs use yours. Open **AI Providers → Shared Agent**, or click the Shared Agent switch in the header.
+
+![AI Providers, Shared Agent tab, Share my agent: sharing turned on and listening on the local network, Claude Code shared, OpenCode not found](docs/screenshot-shared-agent.png)
+
+- **Share my agent:** turn sharing on, pick the agents to share, and click **Generate invite link**. A link works once and expires after 5, 15 or 60 minutes. Every connected PC gets its own permissions (which agents, which model, a time limit per run), a usage table and its recent tasks, and you can remove it at any time.
+- **Use a shared agent:** paste the invite link on the other PC and chat. If the shared PC is offline, busy or fails, this PC's own Claude answers instead, and the chat says which one did.
+- **Read-only, always:** a shared agent runs in an empty folder. It cannot read your files, run commands or use MCP tools, and there is no setting that changes this.
+- **Private by default:** sharing is off whenever Kai starts. Only PCs on your own network can join, with a one-time link, and a PC's access stops working off that network. To reach PCs elsewhere, point any HTTPS tunnel at the port Kai shows and paste its address; Kai never opens one for you.
+- **Trusted networks only:** traffic on your network is plain HTTP. Never port-forward the port. See [SECURITY.md](SECURITY.md).
+
 ### The window
 
 One header row holds everything you use all the time:
 
 - **Tabs**, with `+` for a new tab and `▾` beside it to open a tab with a specific shell (your choice becomes the default for new tabs).
 - **Search box** (`Ctrl+Shift+P`): the command palette. Every action is in it with its shortcut: split, close pane, find, copy, paste, clear, git review, workspaces and more.
+- **Shared Agent** switch: one click turns sharing your agents on or off; its caret opens invites and connected PCs.
 - **AI providers** and **Settings** icons.
 - **`⋯` menu**: workspaces, Music Time, open the project in your editor, review git changes, split right / down, diagnostics and updates. A dot on it means an update is available.
 - **Window buttons** (minimize, maximize, close) on Windows and Linux; on macOS the usual traffic lights stay at the left. Drag the empty part of the tab row to move the window; double-click it to maximize.
@@ -276,9 +297,9 @@ Hover any music button (in the player or the status bar) to see the key for it, 
 - Retrieval checks file hashes and warns on stale indexes.
 - Indexes live in `~/.kai/`; `kai remove` deletes them.
 - Local diagnostics go to `~/.kai/metrics.jsonl`. No account, no telemetry in the app.
-- The code-map tools never touch the network. Integrations are opt-in: `kai integration azure` (per folder) and `kai integration teams` (your own account) are the only things that contact an outside service, only with the sign-in you give them. `kai remove --name <id>` deletes an Azure DevOps sign-in and its stored token, and `kai integration teams remove` does the same for Teams.
+- The code-map tools never touch the network. Integrations are opt-in: `kai integration azure` (per folder) and `kai integration teams` (your own account) are the only things that contact an outside service, only with the sign-in you give them. **Shared Agent** opens a listener on your network only while you have sharing turned on in this session. `kai remove --name <id>` deletes an Azure DevOps sign-in and its stored token, and `kai integration teams remove` does the same for Teams.
 
-See [KNOWN_LIMITATIONS](KNOWN_LIMITATIONS.md) for what v0.2.2 does not do yet.
+See [KNOWN_LIMITATIONS](KNOWN_LIMITATIONS.md) for what v0.2.3 does not do yet.
 
 ## Docs
 

@@ -1,6 +1,6 @@
 [package]
 name = "kai"
-version = "0.2.2"
+version = "0.2.3"
 description = "Kai Terminal Rust Backend"
 authors = ["surajthaqurie"]
 license = "MIT"

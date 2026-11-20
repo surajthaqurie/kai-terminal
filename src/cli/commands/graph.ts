@@ -1,4 +1,9 @@
-import { registerProject, getProjectMeta } from "../../core/registry";
+import {
+  registerProject,
+  getProjectMeta,
+  pruneProjectRegistrations,
+  resolveProjectRoot,
+} from "../../core/registry";
 import { indexProject } from "../../core/indexer";
 import { installCommitMsgHook } from "../../core/githooks";
 import type { ProjectIndex } from "../../core/types";
@@ -26,7 +31,7 @@ export async function runGraph(args: string[]): Promise<number> {
   const sub = args[1];
   if (sub === "init") {
     const targetPath = args[2] || process.cwd();
-    const meta = registerProject(targetPath);
+    const meta = registerProject(resolveProjectRoot(targetPath));
     const stateSaved = saveActiveProjectState(meta.canonicalPath, meta.name, meta.id, "code");
     try {
       installCommitMsgHook(meta.canonicalPath);
@@ -54,7 +59,7 @@ export async function runGraph(args: string[]): Promise<number> {
   }
   if (sub === "update" || sub === "rebuild") {
     const targetPath = args[2] || process.cwd();
-    const meta = registerProject(targetPath);
+    const meta = registerProject(resolveProjectRoot(targetPath));
     console.log(`[kai] Updating index for "${meta.name}"...`);
     const index = await indexProject(meta, { forceRebuild: true });
     console.log(
@@ -73,7 +78,7 @@ export async function runGraph(args: string[]): Promise<number> {
   }
   if (!sub || sub === "status" || sub === "." || sub.startsWith("/") || sub.startsWith("~")) {
     const targetPath = (sub && sub !== "status" ? sub : args[2]) || process.cwd();
-    const meta = getProjectMeta(targetPath);
+    const meta = getProjectMeta(resolveProjectRoot(targetPath));
     if (!meta) {
       console.log(`[kai] No project registered for: ${targetPath}`);
       console.log(`Run 'kai graph init ${targetPath}' to index.`);
@@ -87,7 +92,14 @@ export async function runGraph(args: string[]): Promise<number> {
     return 0;
   }
 
+  if (sub === "prune") {
+    const { removed, kept } = pruneProjectRegistrations();
+    for (const p of removed) console.log(`  removed ${p}`);
+    console.log(`[kai] Pruned ${removed.length} stale graph(s); ${kept} kept.`);
+    return 0;
+  }
+
   console.error(`[kai] Error: Unknown graph subcommand "${sub || ""}".`);
-  console.error(`Usage: kai graph <init|update|status> [path]`);
+  console.error(`Usage: kai graph <init|update|status|prune> [path]`);
   return 1;
 }

@@ -17,6 +17,7 @@ import type { InstalledEditor } from "../services/projectService";
 import type { CommandAction } from "./CommandPalette";
 import { PopupMenu, type MenuEntry } from "./PopupMenu";
 import { useShortcutTitle } from "../hooks/useShortcutHints";
+import { SharedAgentToggle } from "./SharedAgentToggle";
 
 interface HeaderActionsProps {
   /** The palette's action list: the "more" menu reuses its handlers and shortcuts. */
@@ -24,6 +25,8 @@ interface HeaderActionsProps {
   paletteShortcut: string;
   onOpenCommandPalette: () => void;
   onOpenAiCli: () => void;
+  /** Shows the Shared Agent switch; opens AI Providers on the Shared Agent tab. */
+  onOpenSharedAgent?: () => void;
   onOpenSettings: () => void;
   onOpenEditor?: (editorBinary?: string) => void;
   editorPath?: string;
@@ -38,7 +41,7 @@ interface HeaderActionsProps {
 /**
  * Right side of the tab row. Only what is used all the time is on screen: the
  * search box that opens the command palette, "open project in editor" (an icon
- * right after it), AI providers and Settings. Everything occasional lives in the
+ * right after it), the Shared Agent on/off switch, AI providers and Settings. Everything occasional lives in the
  * "more" menu, and the rest stays reachable through the palette and keyboard
  * shortcuts (Music Time, for one, via Settings and its shortcut).
  *
@@ -51,6 +54,7 @@ export const HeaderActions: FC<HeaderActionsProps> = ({
   paletteShortcut,
   onOpenCommandPalette,
   onOpenAiCli,
+  onOpenSharedAgent,
   onOpenSettings,
   onOpenEditor,
   editorPath,
@@ -171,6 +175,7 @@ export const HeaderActions: FC<HeaderActionsProps> = ({
           />
         </div>
       )}
+      {onOpenSharedAgent && <SharedAgentToggle onOpenSharedAgent={onOpenSharedAgent} />}
       <button
         type="button"
         className="header-icon-btn"

@@ -53,3 +53,43 @@ export function createPtySizeSync(
     },
   };
 }
+
+/**
+ * Serialize an async sender so calls reach the backend in order, keeping only
+ * the newest pending call. PTY resizes run on a thread pool, so two quick
+ * resizes sent at once (dragging a split) could otherwise land out of order
+ * and leave the shell at a stale size; intermediate sizes are not worth
+ * sending anyway.
+ */
+export function serializeLatest<A extends unknown[]>(
+  send: (...args: A) => Promise<unknown>
+): (...args: A) => void {
+  let inFlight = false;
+  let pending: A | null = null;
+  const run = (args: A) => {
+    inFlight = true;
+    let done: Promise<unknown>;
+    try {
+      done = send(...args);
+    } catch (err) {
+      done = Promise.reject(err);
+    }
+    void done
+      .catch(() => {})
+      .finally(() => {
+        inFlight = false;
+        if (pending) {
+          const next = pending;
+          pending = null;
+          run(next);
+        }
+      });
+  };
+  return (...args: A) => {
+    if (inFlight) {
+      pending = args;
+      return;
+    }
+    run(args);
+  };
+}

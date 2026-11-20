@@ -36,6 +36,18 @@ type PlatformGroup = {
 
 export function Downloads({ rel: serverRel, showHead = true }: { rel: SerializableRelease; showHead?: boolean }) {
   const rel = useResolvedRelease(serverRel);
+  // Match each file by its exact architecture suffix: several assets share an
+  // extension (`_arm64-setup.exe` and `_x64-setup.exe`, two `.dmg`s, two `.rpm`s),
+  // and the first one GitHub lists is not necessarily the one a card means.
+  const file = (fileName: string) => {
+    const lower = fileName.toLowerCase();
+    const asset = rel.assets.find((a) => a.name.toLowerCase() === lower);
+    return {
+      name: fileName,
+      url: assetUrl(rel, (n) => n.toLowerCase() === lower, fileName),
+      size: asset?.size ?? 0,
+    };
+  };
   // Show everything by default — the user picks, we don't guess.
   const [platformFilter, setPlatformFilter] = useState<'all' | OsId>('all');
 
@@ -43,18 +55,23 @@ export function Downloads({ rel: serverRel, showHead = true }: { rel: Serializab
     {
       id: 'macos',
       os: 'macOS',
-      badge: 'M1–M4 · ARM64',
-      sub: 'macOS 12 or newer · For M1, M2, M3 and M4 Macs',
+      badge: 'Apple Silicon & Intel',
+      sub: 'macOS 12 or newer · M1–M4 and Intel Macs',
       installers: [
         {
-          name: `kai_${rel.short}_aarch64.dmg`,
-          url: assetUrl(rel, (n) => n.toLowerCase().endsWith('.dmg'), `kai_${rel.short}_aarch64.dmg`),
-          size: rel.assets.find((a) => a.name.toLowerCase().endsWith('.dmg'))?.size ?? 0,
+          ...file(`kai_${rel.short}_aarch64.dmg`),
           label: 'Mac Installer',
           format: '.dmg',
           arch: 'ARM64',
-          desc: 'Open the file and drag Kai to Applications. Unsigned build — see Gatekeeper fix below.',
+          desc: 'For M1, M2, M3 and M4 Macs. Open the file and drag Kai to Applications. Unsigned build — see Gatekeeper fix below.',
           recommended: true,
+        },
+        {
+          ...file(`kai_${rel.short}_x64.dmg`),
+          label: 'Mac Installer (Intel)',
+          format: '.dmg',
+          arch: 'x86_64',
+          desc: 'For Intel Macs. Same steps as above.',
         },
       ],
       cmd: `open kai_${rel.short}_aarch64.dmg`,
@@ -68,9 +85,7 @@ export function Downloads({ rel: serverRel, showHead = true }: { rel: Serializab
       sub: 'Ubuntu, Debian, Fedora and more',
       installers: [
         {
-          name: `kai_${rel.short}_amd64.deb`,
-          url: assetUrl(rel, (n) => n.toLowerCase().includes('amd64') && n.toLowerCase().endsWith('.deb'), `kai_${rel.short}_amd64.deb`),
-          size: rel.assets.find((a) => a.name.toLowerCase().includes('amd64') && a.name.toLowerCase().endsWith('.deb'))?.size ?? 0,
+          ...file(`kai_${rel.short}_amd64.deb`),
           label: 'Linux Installer',
           format: '.deb',
           arch: 'x86_64',
@@ -78,28 +93,36 @@ export function Downloads({ rel: serverRel, showHead = true }: { rel: Serializab
           recommended: true,
         },
         {
-          name: `kai_${rel.short}_amd64.AppImage`,
-          url: assetUrl(rel, (n) => n.toLowerCase().includes('amd64') && n.toLowerCase().endsWith('.appimage'), `kai_${rel.short}_amd64.AppImage`),
-          size: rel.assets.find((a) => a.name.toLowerCase().includes('amd64') && a.name.toLowerCase().endsWith('.appimage'))?.size ?? 0,
+          ...file(`kai-${rel.short}-1.x86_64.rpm`),
+          label: 'Linux Installer (RPM)',
+          format: '.rpm',
+          arch: 'x86_64',
+          desc: 'For Fedora, RHEL and openSUSE: sudo dnf install ./kai-*.rpm',
+        },
+        {
+          ...file(`kai_${rel.short}_amd64.AppImage`),
           label: 'Portable App',
           format: '.AppImage',
           arch: 'x86_64',
           desc: 'Works on most Linux systems. No install needed.',
         },
         {
-          name: `kai_${rel.short}_arm64.deb`,
-          url: assetUrl(rel, (n) => n.toLowerCase().includes('arm64') && n.toLowerCase().endsWith('.deb'), `kai_${rel.short}_arm64.deb`),
-          size: rel.assets.find((a) => a.name.toLowerCase().includes('arm64') && a.name.toLowerCase().endsWith('.deb'))?.size ?? 0,
+          ...file(`kai_${rel.short}_arm64.deb`),
           label: 'Linux Installer (ARM)',
           format: '.deb',
           arch: 'ARM64',
           desc: 'For ARM computers like Raspberry Pi.',
         },
         {
+          ...file(`kai-${rel.short}-1.aarch64.rpm`),
+          label: 'Linux Installer (ARM, RPM)',
+          format: '.rpm',
+          arch: 'ARM64',
+          desc: 'RPM package for ARM systems.',
+        },
+        {
           // Published as `kai_<v>_aarch64.AppImage` (the .deb is `_arm64`).
-          name: `kai_${rel.short}_aarch64.AppImage`,
-          url: assetUrl(rel, (n) => n.toLowerCase().includes('aarch64') && n.toLowerCase().endsWith('.appimage'), `kai_${rel.short}_aarch64.AppImage`),
-          size: rel.assets.find((a) => a.name.toLowerCase().includes('aarch64') && a.name.toLowerCase().endsWith('.appimage'))?.size ?? 0,
+          ...file(`kai_${rel.short}_aarch64.AppImage`),
           label: 'Portable App (ARM)',
           format: '.AppImage',
           arch: 'ARM64',
@@ -113,13 +136,11 @@ export function Downloads({ rel: serverRel, showHead = true }: { rel: Serializab
     {
       id: 'windows',
       os: 'Windows',
-      badge: '64-bit · ConPTY',
-      sub: 'Windows 10 and 11 · 64-bit',
+      badge: 'x64 & ARM64 · ConPTY',
+      sub: 'Windows 10 and 11 · 64-bit, and Windows 11 on ARM',
       installers: [
         {
-          name: `kai_${rel.short}_x64-setup.exe`,
-          url: assetUrl(rel, (n) => n.toLowerCase().endsWith('setup.exe'), `kai_${rel.short}_x64-setup.exe`),
-          size: rel.assets.find((a) => a.name.toLowerCase().endsWith('setup.exe'))?.size ?? 0,
+          ...file(`kai_${rel.short}_x64-setup.exe`),
           label: 'Windows Setup',
           format: '.exe',
           arch: 'x64',
@@ -127,13 +148,18 @@ export function Downloads({ rel: serverRel, showHead = true }: { rel: Serializab
           recommended: true,
         },
         {
-          name: `kai_${rel.short}_x64_en-US.msi`,
-          url: assetUrl(rel, (n) => n.toLowerCase().endsWith('.msi'), `kai_${rel.short}_x64_en-US.msi`),
-          size: rel.assets.find((a) => a.name.toLowerCase().endsWith('.msi'))?.size ?? 0,
+          ...file(`kai_${rel.short}_x64_en-US.msi`),
           label: 'Windows Installer',
           format: '.msi',
           arch: 'x64',
           desc: 'For office or silent installs.',
+        },
+        {
+          ...file(`kai_${rel.short}_arm64-setup.exe`),
+          label: 'Windows Setup (ARM)',
+          format: '.exe',
+          arch: 'ARM64',
+          desc: 'For Windows 11 on ARM PCs (Snapdragon).',
         },
       ],
       cmd: `kai_${rel.short}_x64-setup.exe`,

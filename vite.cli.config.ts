@@ -60,13 +60,16 @@ export default defineConfig({
     reportCompressedSize: false,
     chunkSizeWarningLimit: 300,
     lib: {
-      entry: path.resolve(import.meta.dirname, "src/cli/index.ts"),
+      entry: {
+        index: path.resolve(import.meta.dirname, "src/cli/index.ts"),
+        // The Shared Agent engine: started only by the desktop app, not a `kai` command.
+        "shared-agent": path.resolve(import.meta.dirname, "src/cli/sharedAgentMain.ts"),
+      },
       formats: ["es"],
-      fileName: () => "index.js",
     },
     rollupOptions: {
       output: {
-        entryFileNames: "index.js",
+        entryFileNames: "[name].js",
         // Unhashed: listed in `tauri.conf.json` resources.
         chunkFileNames: "chunks/[name].js",
         banner: "#!/usr/bin/env node",

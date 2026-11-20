@@ -118,6 +118,8 @@ export default defineConfig({
   },
   test: {
     exclude: ['**/node_modules/**', '**/.git/**', 'scripts/**/*.live.test.ts'],
+    // Never touch the developer's real ~/.kai (see the helper).
+    setupFiles: ['src/__tests__/helpers/isolateKaiHome.ts'],
     // Lock-contention and crash-recovery tests block synchronously for ~6 s by
     // design (bounded retry loops); Vitest 5 enforces the timeout on elapsed
     // time even for synchronous blocking, so the 5 s default is too tight.

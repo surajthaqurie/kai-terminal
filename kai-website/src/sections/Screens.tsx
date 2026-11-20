@@ -6,7 +6,7 @@ const SHOTS = [
   {
     src: '/screens/app.png',
     title: 'One window, one header',
-    body: 'Tabs, a command palette, AI providers and settings in a single row. The status bar shows your git branch and the version.',
+    body: 'Tabs, a command palette, the Shared Agent switch, AI providers and settings in a single row. The status bar shows the mode and your git branch.',
     alt: 'Kai Terminal window running kai health, kai integration list and an AI agent session',
   },
   {
@@ -19,17 +19,24 @@ const SHOTS = [
     src: '/screens/integrations.png',
     title: 'Azure DevOps rules for agents',
     body: 'Type the merge branch and a branch naming pattern. Kai checks the branch exists when you save. Agents follow them for every work item; nothing is blocked.',
-    alt: 'The Integrations tab with the Azure DevOps card showing a merge branch field and a branch naming regex field',
+    alt: 'The Integrations tab with the Azure DevOps card connected, its merge branch and branch naming regex fields open',
+  },
+  {
+    src: '/screens/shared-agent.png',
+    wide: true,
+    title: 'Share your agent between PCs',
+    body: 'Turn sharing on, pick the agents to share and send a one-time invite link: your other PC chats with this one\'s Claude Code. Read-only, in an empty folder.',
+    alt: 'AI Providers, Shared Agent tab, Share my agent: sharing on, Claude Code shared, OpenCode not found',
   },
 ];
 
 export function Screens() {
   return (
     <Section id="screens">
-      <SectionHead title="See it in action" sub="Real screens from Kai 0.2. Sample projects and people." />
+      <SectionHead title="See it in action" sub="Real screens from Kai 0.2.3. Sample projects and people." />
       <div className="t-shots">
         {SHOTS.map((s) => (
-          <figure key={s.src} className="t-shot">
+          <figure key={s.src} className={'wide' in s && s.wide ? 't-shot t-shot--wide' : 't-shot'}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={s.src} alt={s.alt} width={1280} height={760} loading="lazy" decoding="async" />
             <figcaption>

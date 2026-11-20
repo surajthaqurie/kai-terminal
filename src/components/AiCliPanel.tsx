@@ -11,9 +11,11 @@ import {
   BookOpen,
   Bot,
   Plug,
+  Share2,
   Trash2,
 } from "lucide-react";
 import { IntegrationsPanel } from "./IntegrationsPanel";
+import { SharedAgentPanel } from "./SharedAgentPanel";
 import {
   getAiCliDetails,
   checkCustomAiCliPath,
@@ -32,16 +34,27 @@ interface AiCliPanelProps {
   onClose: () => void;
   projectDir: string;
   onLaunchInTerminal?: (projectDir: string) => void;
+  /** The tab to show each time the panel opens (default: AI providers). Remount (`key`) to change it. */
+  initialTab?: AiCliTab;
 }
+
+export type AiCliTab = "providers" | "integrations" | "shared";
 
 /**
  * AI Provider overview & configuration.
  * Local detection of installed AI CLI binaries, versions, auth status,
  * and kai MCP configuration with one-click Configure / Reconfigure.
  */
-export const AiCliPanel: FC<AiCliPanelProps> = ({ isOpen, onClose, projectDir }) => {
+export const AiCliPanel: FC<AiCliPanelProps> = ({
+  isOpen,
+  onClose,
+  projectDir,
+  initialTab = "providers",
+}) => {
   const dialogRef = useModalBehavior(isOpen, onClose);
-  const [activeTab, setActiveTab] = useState<"providers" | "integrations">("providers");
+  const [activeTab, setActiveTab] = useState<AiCliTab>(initialTab);
+  // The Shared Agent tab is mounted on first visit and then kept (hidden), so a chat survives tab switches.
+  const [sharedVisited, setSharedVisited] = useState(initialTab === "shared");
   const [details, setDetails] = useState<AiCliDetails[]>([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [customPaths, setCustomPaths] = useState<Record<string, string>>({});
@@ -73,9 +86,10 @@ export const AiCliPanel: FC<AiCliPanelProps> = ({ isOpen, onClose, projectDir })
     } else {
       // Reset while hidden: doing it on open paints the previous tab for a
       // frame before switching, which reads as the modal flickering open.
-      setActiveTab("providers");
+      setActiveTab(initialTab);
+      setSharedVisited(initialTab === "shared");
     }
-  }, [isOpen, refresh]);
+  }, [isOpen, refresh, initialTab]);
 
   if (!isOpen) return null;
 
@@ -226,8 +240,23 @@ export const AiCliPanel: FC<AiCliPanelProps> = ({ isOpen, onClose, projectDir })
             <Plug size={16} />
             <span>Integrations</span>
           </button>
+          <button
+            type="button"
+            id="ai-cli-tab-shared"
+            className={`modal-tab-btn ${activeTab === "shared" ? "active" : ""}`}
+            onClick={() => {
+              setSharedVisited(true);
+              setActiveTab("shared");
+            }}
+            role="tab"
+            aria-selected={activeTab === "shared"}
+          >
+            <Share2 size={16} />
+            <span>Shared Agent</span>
+          </button>
         </div>
         {activeTab === "integrations" && <IntegrationsPanel projectDir={projectDir} />}
+        {sharedVisited && <SharedAgentPanel active={activeTab === "shared"} />}
         {/* Kept mounted but hidden on the other tab so detection state survives a tab switch. */}
         <div
           className="modal-body"

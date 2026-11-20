@@ -9,6 +9,18 @@ interface WindowRefitOptions {
   tabsRef: MutableRefObject<TerminalTab[]>;
   activeTabIdRef: MutableRefObject<string>;
   terminalRefs: MutableRefObject<Record<string, TerminalViewRef | null>>;
+  /** The active pane's terminal, refocused when the window is re-activated. */
+  getActiveTerminal?: () => TerminalViewRef | null | undefined;
+}
+
+/**
+ * Whether re-activating the window may move keyboard focus into the terminal:
+ * only when nothing else owns it (the page body) or a terminal already did.
+ * An open dialog, the search bar or a settings field keeps its focus.
+ */
+export function shouldRestoreTerminalFocus(active: Element | null): boolean {
+  if (!active || active === document.body || active === document.documentElement) return true;
+  return active.classList.contains("xterm-helper-textarea");
 }
 
 /**
@@ -24,7 +36,12 @@ interface WindowRefitOptions {
  * intermediate sizes while a window-restore animation runs, which a single
  * synchronous fit misses.
  */
-export function useWindowRefit({ tabsRef, activeTabIdRef, terminalRefs }: WindowRefitOptions) {
+export function useWindowRefit({
+  tabsRef,
+  activeTabIdRef,
+  terminalRefs,
+  getActiveTerminal,
+}: WindowRefitOptions) {
   const refitVisibleTerminals = useCallback(() => {
     const liveTabs = tabsRef.current;
     const tab = liveTabs.find((t) => t.id === activeTabIdRef.current) || liveTabs[0];
@@ -46,12 +63,31 @@ export function useWindowRefit({ tabsRef, activeTabIdRef, terminalRefs }: Window
     for (const delay of REFIT_FOLLOW_UP_MS) setTimeout(pass, delay);
   }, [tabsRef, activeTabIdRef, terminalRefs]);
 
+  // Multi-click fix (Windows WebView2 especially): after Alt+Tab or a click
+  // that re-activates the window, keyboard input did not reach the terminal
+  // until it was clicked again. Put focus back in the active pane's terminal.
+  const restoreFocus = useCallback(() => {
+    if (!getActiveTerminal || typeof document === "undefined") return;
+    if (!shouldRestoreTerminalFocus(document.activeElement)) return;
+    requestAnimationFrame(() => {
+      if (shouldRestoreTerminalFocus(document.activeElement)) getActiveTerminal()?.focus();
+    });
+  }, [getActiveTerminal]);
+
+  useEffect(() => {
+    const onWindowFocus = () => {
+      refitVisibleTerminals();
+      restoreFocus();
+    };
+    window.addEventListener("focus", onWindowFocus);
+    return () => window.removeEventListener("focus", onWindowFocus);
+  }, [refitVisibleTerminals, restoreFocus]);
+
   useEffect(() => {
     const onVisibility = () => {
       if (!document.hidden) refitVisibleTerminals();
     };
     document.addEventListener("visibilitychange", onVisibility);
-    window.addEventListener("focus", refitVisibleTerminals);
     let cancelled = false;
     const unlistens: Array<() => void> = [];
     // The listen promises resolve asynchronously: if the effect already
@@ -79,7 +115,10 @@ export function useWindowRefit({ tabsRef, activeTabIdRef, terminalRefs }: Window
             .catch(() => {});
           void win
             .onFocusChanged((e) => {
-              if (e.payload) refitVisibleTerminals();
+              if (e.payload) {
+                refitVisibleTerminals();
+                restoreFocus();
+              }
             })
             .then(track)
             .catch(() => {});
@@ -93,7 +132,6 @@ export function useWindowRefit({ tabsRef, activeTabIdRef, terminalRefs }: Window
     return () => {
       cancelled = true;
       document.removeEventListener("visibilitychange", onVisibility);
-      window.removeEventListener("focus", refitVisibleTerminals);
       for (const u of unlistens) {
         try {
           u();
@@ -102,5 +140,5 @@ export function useWindowRefit({ tabsRef, activeTabIdRef, terminalRefs }: Window
         }
       }
     };
-  }, [refitVisibleTerminals]);
+  }, [refitVisibleTerminals, restoreFocus]);
 }

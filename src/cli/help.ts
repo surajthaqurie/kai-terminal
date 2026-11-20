@@ -96,8 +96,9 @@ Manage & Integrate:
                         setup/install, remove = rm/unlink/unregister)
   setup <agent|all>       Connect Kai to a tool (alias for kai agent add)
   mcp [agent|list|remove] Manage MCP server & agent connections (e.g. kai mcp claude)
-  graph <init|update|status> [path]
-                        Build, rebuild, or inspect the code-map
+  graph <init|update|status|prune> [path]
+                        Build, rebuild, or inspect the code-map; prune removes
+                        maps of deleted folders and of repo subfolders
 
 Diagnostics:
   lsp                     Check installed language servers

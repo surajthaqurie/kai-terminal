@@ -10,6 +10,56 @@ import {
 } from "../types/terminal";
 import { createPtyWriteQueue } from "./ptyWriteQueue";
 
+/**
+ * One Tauri listener per PTY event, shared by every pane. Each `listen` is a
+ * separate registration the backend dispatches to on every event, so with N
+ * panes each output chunk of ANY terminal was delivered N times across the
+ * IPC bridge. Now it crosses once and fans out in JS. The Tauri listener is
+ * registered on the first subscriber and removed with the last.
+ */
+function sharedTauriEvent<T>(name: string) {
+  const subscribers = new Set<(payload: T) => void>();
+  let registration: Promise<UnlistenFn> | null = null;
+  return async (callback: (payload: T) => void): Promise<UnlistenFn> => {
+    subscribers.add(callback);
+    if (!registration) {
+      registration = listen<T>(name, (event) => {
+        for (const fn of subscribers) {
+          try {
+            fn(event.payload);
+          } catch (err) {
+            console.error(`[pty] ${name} handler failed:`, err);
+          }
+        }
+      });
+      registration.catch(() => {
+        registration = null;
+      });
+    }
+    try {
+      await registration;
+    } catch (err) {
+      subscribers.delete(callback);
+      throw err;
+    }
+    let active = true;
+    return () => {
+      if (!active) return;
+      active = false;
+      subscribers.delete(callback);
+      if (subscribers.size === 0 && registration) {
+        const pending = registration;
+        registration = null;
+        void pending.then((unlisten) => unlisten()).catch(() => {});
+      }
+    };
+  };
+}
+
+const subscribePtyOutput = sharedTauriEvent<PtyOutputPayload>("pty-output");
+const subscribePtyExit = sharedTauriEvent<PtyExitPayload>("pty-exit");
+const subscribePtyCwd = sharedTauriEvent<{ id: string; cwd: string }>("pty-cwd");
+
 const queuedPtyWrite = createPtyWriteQueue((id, data) =>
   invoke<void>("write_to_pty", { id, data })
 );
@@ -156,18 +206,14 @@ class PtyServiceImpl implements IPtyService {
     if (!isTauriAvailable()) {
       return () => {};
     }
-    return await listen<PtyOutputPayload>("pty-output", (event) => {
-      callback(event.payload);
-    });
+    return subscribePtyOutput(callback);
   }
 
   static async onPtyExit(callback: (payload: PtyExitPayload) => void): Promise<UnlistenFn> {
     if (!isTauriAvailable()) {
       return () => {};
     }
-    return await listen<PtyExitPayload>("pty-exit", (event) => {
-      callback(event.payload);
-    });
+    return subscribePtyExit(callback);
   }
 
   static async getPtyCwd(id: string): Promise<string | null> {
@@ -187,9 +233,7 @@ class PtyServiceImpl implements IPtyService {
     if (!isTauriAvailable()) {
       return () => {};
     }
-    return await listen<{ id: string; cwd: string }>("pty-cwd", (event) => {
-      callback(event.payload);
-    });
+    return subscribePtyCwd(callback);
   }
 
   static async getSystemTerminalConfig(): Promise<{

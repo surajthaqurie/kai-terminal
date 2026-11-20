@@ -1486,7 +1486,7 @@ describe("App shell: header and footer", () => {
     expect(brand.querySelector("svg")).not.toBeNull();
   });
 
-  it("puts the icon-only editor button right after the search box, before AI providers", async () => {
+  it("puts the editor button after the search box, then the Shared Agent switch, then AI providers", async () => {
     await mount();
     const labels = [...container.querySelectorAll(".header-actions [aria-label]")].map((el) =>
       el.getAttribute("aria-label")
@@ -1496,7 +1496,11 @@ describe("App shell: header and footer", () => {
       "Open project in editor",
       "Choose editor",
     ]);
-    expect(labels[3]).toBe("Open AI CLI providers");
+    expect(labels.slice(3, 6)).toEqual([
+      "Share my agents",
+      "Shared Agent options",
+      "Open AI CLI providers",
+    ]);
   });
 });
 

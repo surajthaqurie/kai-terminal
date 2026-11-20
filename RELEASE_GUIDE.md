@@ -74,9 +74,10 @@ Before releasing a new version tag:
 - [ ] **Run Quality Checks:** Pass all frontend checks (`npm run check`).
 - [ ] **Run Backend Unit Tests:** Pass all Rust tests (`cargo test --no-default-features --manifest-path src-tauri/Cargo.toml --lib`).
 - [ ] **Run PTY Integration Tests:** Pass integration scenarios (`cargo test --no-default-features --manifest-path src-tauri/Cargo.toml --test pty_integration_tests`).
-- [ ] **Update Version:** Update version numbers in `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json`.
-- [ ] **Tag & Push:** Create git tag (`v0.2.2`) and push to trigger automated release publishing on GitHub:
+- [ ] **Update Version:** Run `npx changeset version` (bumps `package.json` and writes `CHANGELOG.md` from `.changeset/`), then set the same version in `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, `src-tauri/tauri.conf.json`, `kai-website/package.json` (and its lock file) and `kai-website/scripts/release-titles.json`, and the file names in `README.md` and `INSTALL.md`.
+- [ ] **Refresh the website data:** `node kai-website/scripts/sync-changesets.mjs && node kai-website/scripts/sync-docs.mjs`, then `npm run build:website`.
+- [ ] **Tag & Push:** Create git tag (`v0.2.3`) and push to trigger automated release publishing on GitHub:
   ```bash
-  git tag v0.2.2
-  git push origin v0.2.2
+  git tag v0.2.3
+  git push origin v0.2.3
   ```

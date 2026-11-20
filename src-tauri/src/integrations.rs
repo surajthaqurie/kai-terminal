@@ -95,8 +95,7 @@ fn last_non_empty_line(text: &str) -> Option<String> {
 /// Program and arguments that run `<launcher> azure rpc`. On Windows the npm
 /// shims (`.cmd`/`.bat`/`.ps1`) cannot be started by `CreateProcess` directly,
 /// so they go through their interpreter; everything else is spawned as is.
-fn launch_plan(launcher: &str, windows: bool) -> (String, Vec<String>) {
-    let tail = ["azure", "rpc"];
+fn launch_plan_with(launcher: &str, windows: bool, tail: &[&str]) -> (String, Vec<String>) {
     if windows {
         let lower = launcher.to_lowercase();
         if lower.ends_with(".cmd") || lower.ends_with(".bat") {
@@ -113,7 +112,7 @@ fn launch_plan(launcher: &str, windows: bool) -> (String, Vec<String>) {
                     "-NoProfile".to_string(),
                     "-NonInteractive".to_string(),
                     "-Command".to_string(),
-                    format!("& '{}' azure rpc", quoted),
+                    format!("& '{}' {}", quoted, tail.join(" ")),
                 ],
             );
         }
@@ -171,21 +170,29 @@ pub struct BundledCli {
 
 /// Prefers the app's bundled CLI (always matches the app) over `kai` on PATH.
 fn command_for(bundled: Option<&BundledCli>) -> Result<(String, Vec<String>), String> {
+    command_with_tail(bundled, &["azure", "rpc"])
+}
+
+/// The program and arguments that run `kai <tail...>`: the bundled CLI when the
+/// app ships one, otherwise the `kai` launcher found on this PC.
+pub(crate) fn command_with_tail(
+    bundled: Option<&BundledCli>,
+    tail: &[&str],
+) -> Result<(String, Vec<String>), String> {
     if let Some(cli) = bundled {
-        return Ok((
-            cli.node.clone(),
-            vec![
-                cli.script.to_string_lossy().into_owned(),
-                "azure".to_string(),
-                "rpc".to_string(),
-            ],
-        ));
+        let mut args = vec![cli.script.to_string_lossy().into_owned()];
+        args.extend(tail.iter().map(|s| s.to_string()));
+        return Ok((cli.node.clone(), args));
     }
     let launcher = crate::ai_cli::get_kai_cli_launch()?
         .into_iter()
         .next()
         .ok_or_else(|| "kai CLI not found.".to_string())?;
-    Ok(launch_plan(&launcher, cfg!(target_os = "windows")))
+    Ok(launch_plan_with(
+        &launcher,
+        cfg!(target_os = "windows"),
+        tail,
+    ))
 }
 
 /// [`run_integration_rpc`] with an optional bundled CLI and sign-in URL callback.
@@ -393,24 +400,25 @@ mod tests {
 
     #[test]
     fn spawns_real_launchers_directly() {
-        let (program, args) = launch_plan("/usr/local/bin/kai", false);
+        let (program, args) = launch_plan_with("/usr/local/bin/kai", false, &["azure", "rpc"]);
         assert_eq!(program, "/usr/local/bin/kai");
         assert_eq!(args, ["azure", "rpc"]);
-        let (program, args) = launch_plan("C:\\kai\\kai.exe", true);
+        let (program, args) = launch_plan_with("C:\\kai\\kai.exe", true, &["azure", "rpc"]);
         assert_eq!(program, "C:\\kai\\kai.exe");
         assert_eq!(args, ["azure", "rpc"]);
     }
 
     #[test]
     fn routes_windows_shims_through_their_interpreter() {
-        let (program, args) = launch_plan("C:\\Users\\me\\.kai\\bin\\kai.cmd", true);
+        let (program, args) =
+            launch_plan_with("C:\\Users\\me\\.kai\\bin\\kai.cmd", true, &["azure", "rpc"]);
         assert_eq!(program, "cmd");
         assert_eq!(
             args,
             ["/c", "C:\\Users\\me\\.kai\\bin\\kai.cmd", "azure", "rpc"]
         );
 
-        let (program, args) = launch_plan("C:\\o'neil\\kai.ps1", true);
+        let (program, args) = launch_plan_with("C:\\o'neil\\kai.ps1", true, &["azure", "rpc"]);
         assert_eq!(program, "powershell");
         assert_eq!(args[..3], ["-NoProfile", "-NonInteractive", "-Command"]);
         assert_eq!(args[3], "& 'C:\\o''neil\\kai.ps1' azure rpc");
@@ -418,7 +426,7 @@ mod tests {
 
     #[test]
     fn shim_extensions_are_ignored_off_windows() {
-        let (program, args) = launch_plan("/home/me/kai.cmd", false);
+        let (program, args) = launch_plan_with("/home/me/kai.cmd", false, &["azure", "rpc"]);
         assert_eq!(program, "/home/me/kai.cmd");
         assert_eq!(args, ["azure", "rpc"]);
     }

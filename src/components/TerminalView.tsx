@@ -16,7 +16,7 @@ import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
-import { canFitPane, createPtySizeSync, type PtySizeSync } from "./terminalFit";
+import { canFitPane, createPtySizeSync, serializeLatest, type PtySizeSync } from "./terminalFit";
 import { createHiddenGpuBudget } from "./gpuBudget";
 import { ptyService, PtyService } from "../services/ptyService";
 import { describeCwdFallback, isWorkingDirectoryError } from "../services/spawnRecovery";
@@ -310,9 +310,11 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
     // Remembers the grid the PTY has, so no-op resizes are skipped (a tab flip
     // re-fits to the same grid, and a ConPTY resize forces a reflow).
     const ptySizeSyncRef = useRef<PtySizeSync | null>(null);
-    ptySizeSyncRef.current ??= createPtySizeSync((id, cols, rows) => {
-      ptyService.resizePty(id, cols, rows).catch(() => {});
-    });
+    ptySizeSyncRef.current ??= createPtySizeSync(
+      serializeLatest((id: string, cols: number, rows: number) =>
+        ptyService.resizePty(id, cols, rows)
+      )
+    );
     const pushPtySize = (term: Terminal) =>
       ptySizeSyncRef.current?.push(backendPtyIdRef.current, term.cols, term.rows);
     // PTY events that arrive while `create_pty` is still in flight: the pane has

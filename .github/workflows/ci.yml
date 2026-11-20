@@ -116,6 +116,7 @@ jobs:
           set -euo pipefail
           npm run build:cli
           test -f dist/cli/index.js
+          test -f dist/cli/shared-agent.js
           node ./bin/kai.js --version
           node ./bin/kai.js --help
           # Functional smoke that always succeeds cross-OS (status returns 1

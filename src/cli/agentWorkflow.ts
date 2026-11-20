@@ -1,6 +1,6 @@
 import path from "path";
 import fs from "fs";
-import { registerProject, loadProjectIndex } from "../core/registry";
+import { registerProject, loadProjectIndex, resolveProjectRoot } from "../core/registry";
 import { indexProject } from "../core/indexer";
 import { PROVIDER_CATALOG } from "../core/integrations/providerCatalog";
 import { getStatus } from "../core/integrations/service";
@@ -152,7 +152,7 @@ export async function executeAgentWorkflow(
     timeoutMs?: number;
   } = {}
 ): Promise<number> {
-  const meta = registerProject(targetPath);
+  const meta = registerProject(resolveProjectRoot(targetPath));
 
   // 1. Enter Code Mode & ensure commit-msg hook
   saveActiveProjectState(meta.canonicalPath, meta.name, meta.id, "code");

@@ -196,8 +196,15 @@ pub struct PtyManager {
     pub sessions: Arc<Mutex<HashMap<String, PtySessionHandle>>>,
 }
 
-// Maximum output batch size before flushing to event emitter (16 KB)
-const MAX_OUTPUT_BATCH_BYTES: usize = 16_384;
+// Maximum output batch size before flushing to event emitter (64 KB, the
+// frontend's per-write slice).
+const MAX_OUTPUT_BATCH_BYTES: usize = 65_536;
+// How long the output thread gathers further reads after the first one before
+// emitting. ConPTY and TUIs (AI CLIs redrawing a spinner, status line and
+// streamed text) deliver many tiny reads per frame; each emit is a script
+// evaluation in the WebView. Coalescing them for a few ms turns dozens of IPC
+// events per frame into one, well under a frame of added latency.
+const OUTPUT_COALESCE_WINDOW: std::time::Duration = std::time::Duration::from_millis(4);
 // Buffer read chunk size (32 KB). `read()` returns whatever is available, so
 // interactive latency is unchanged; under floods (`cat bigfile`, installs)
 // each read drains up to 8x more bytes per IPC event than the old 4 KB
@@ -452,9 +459,21 @@ impl PtyManager {
         let mut last_cwd_check = std::time::Instant::now();
         const CWD_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
 
+        // Output thread: coalesces raw reads into few, larger IPC events.
+        let (out_tx, out_rx) = std::sync::mpsc::channel::<Vec<u8>>();
+        let emitter_out = emitter.clone();
+        let id_out = session_id.clone();
+        let output_thread = std::thread::spawn(move || {
+            coalesce_output(out_rx, OUTPUT_COALESCE_WINDOW, |text| {
+                emitter_out.emit_output(PtyOutputPayload {
+                    id: id_out.clone(),
+                    data: text,
+                });
+            });
+        });
+
         let reader_thread = std::thread::spawn(move || {
             let mut read_buf = [0u8; READ_BUFFER_CHUNK_BYTES];
-            let mut batch_buf = Vec::with_capacity(MAX_OUTPUT_BATCH_BYTES);
             // Raw-byte window for OSC 7 / 9;9 cwd reports (primary Windows
             // mechanism — see the prompt integration in `create_pty`). The
             // retained tail reassembles sequences split across 4 KB reads;
@@ -465,16 +484,7 @@ impl PtyManager {
                 match reader.read(&mut read_buf) {
                     Ok(0) => break, // EOF reached
                     Ok(n) => {
-                        batch_buf.extend_from_slice(&read_buf[..n]);
-
-                        // Flush buffered UTF-8 text immediately when read
-                        let text = split_valid_utf8(&mut batch_buf);
-                        if !text.is_empty() {
-                            emitter_reader.emit_output(PtyOutputPayload {
-                                id: id_clone.clone(),
-                                data: text,
-                            });
-                        }
+                        let _ = out_tx.send(read_buf[..n].to_vec());
 
                         // OSC 7 / OSC 9;9 cwd reports sniffed from shell output.
                         // This is what keeps `handle.cwd` (and therefore
@@ -538,17 +548,11 @@ impl PtyManager {
                 }
             }
 
-            // Flush remaining data in batch buffer before exit
-            if !batch_buf.is_empty() {
-                let text = String::from_utf8_lossy(&batch_buf).to_string();
-                batch_buf.clear();
-                if !text.is_empty() {
-                    emitter_reader.emit_output(PtyOutputPayload {
-                        id: id_clone,
-                        data: text,
-                    });
-                }
-            }
+            // Closing the channel makes the output thread flush what it holds;
+            // joining it keeps "all output before the exit event" (the waiter
+            // joins this thread before emitting exit).
+            drop(out_tx);
+            let _ = output_thread.join();
         });
 
         // 2. Dedicated waiter thread monitors child process lifecycle.
@@ -1386,6 +1390,52 @@ fn write_bytes_chunked_generic(writer: &mut dyn Write, bytes: &[u8]) -> std::io:
 /// Drain-based (no full-buffer clones): the reader thread calls this on
 /// every 4 KB chunk, so the old `buf.clone()` + `to_vec()` copies turned
 /// high-volume output (e.g. `npm install` floods) into O(n^2) copying.
+/// Gather raw PTY reads into batches and hand each batch to `emit` as text.
+/// Blocks for the first read after idle, then keeps collecting for at most
+/// `window` (or until `MAX_OUTPUT_BATCH_BYTES`). An incomplete UTF-8 sequence
+/// at the end of a batch waits for the next one. Returns once the sender is
+/// dropped and everything received has been emitted.
+fn coalesce_output(
+    rx: std::sync::mpsc::Receiver<Vec<u8>>,
+    window: std::time::Duration,
+    mut emit: impl FnMut(String),
+) {
+    use std::sync::mpsc::RecvTimeoutError;
+    let mut batch: Vec<u8> = Vec::with_capacity(MAX_OUTPUT_BATCH_BYTES);
+    let mut closed = false;
+    while !closed {
+        match rx.recv() {
+            Ok(chunk) => batch.extend_from_slice(&chunk),
+            Err(_) => break,
+        }
+        let deadline = std::time::Instant::now() + window;
+        while batch.len() < MAX_OUTPUT_BATCH_BYTES {
+            let now = std::time::Instant::now();
+            if now >= deadline {
+                break;
+            }
+            match rx.recv_timeout(deadline - now) {
+                Ok(chunk) => batch.extend_from_slice(&chunk),
+                Err(RecvTimeoutError::Timeout) => break,
+                Err(RecvTimeoutError::Disconnected) => {
+                    closed = true;
+                    break;
+                }
+            }
+        }
+        let text = split_valid_utf8(&mut batch);
+        if !text.is_empty() {
+            emit(text);
+        }
+    }
+    if !batch.is_empty() {
+        let text = String::from_utf8_lossy(&batch).to_string();
+        if !text.is_empty() {
+            emit(text);
+        }
+    }
+}
+
 fn split_valid_utf8(buf: &mut Vec<u8>) -> String {
     if buf.is_empty() {
         return String::new();
@@ -1417,6 +1467,41 @@ fn split_valid_utf8(buf: &mut Vec<u8>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn coalesce_output_merges_bursts_and_flushes_on_close() {
+        let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
+        for part in [&b"hel"[..], b"lo ", b"wor", b"ld"] {
+            tx.send(part.to_vec()).unwrap();
+        }
+        // A multi-byte character split across reads, then close.
+        let accented = "é".as_bytes().to_vec();
+        tx.send(vec![accented[0]]).unwrap();
+        tx.send(vec![accented[1]]).unwrap();
+        drop(tx);
+        let mut out = Vec::new();
+        coalesce_output(rx, std::time::Duration::from_millis(50), |t| out.push(t));
+        assert_eq!(out.concat(), "hello worldé");
+        assert_eq!(out.len(), 1, "one burst becomes one event: {:?}", out);
+    }
+
+    #[test]
+    fn coalesce_output_emits_after_the_window_without_waiting_for_close() {
+        let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
+        let (seen_tx, seen_rx) = std::sync::mpsc::channel::<String>();
+        let worker = std::thread::spawn(move || {
+            coalesce_output(rx, std::time::Duration::from_millis(5), |t| {
+                let _ = seen_tx.send(t);
+            });
+        });
+        tx.send(b"$ ".to_vec()).unwrap();
+        let first = seen_rx
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .expect("echo is emitted while the session stays open");
+        assert_eq!(first, "$ ");
+        drop(tx);
+        worker.join().unwrap();
+    }
     use std::sync::atomic::{AtomicBool, Ordering};
 
     struct TestEventEmitter {

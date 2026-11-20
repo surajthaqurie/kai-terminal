@@ -71,19 +71,27 @@ See [USER_MANUAL.md](USER_MANUAL.md) for full syntax and command reference.
 1. Download the `.deb` package from [GitHub Releases](https://github.com/surajthaqurie/kai-terminal/releases/latest).
 2. Install via terminal:
    ```bash
-   sudo apt install ./kai_0.2.2_amd64.deb
+   sudo apt install ./kai_0.2.3_amd64.deb
    ```
-   *(Or using dpkg: `sudo dpkg -i ./kai_0.2.2_amd64.deb && sudo apt-get install -f`)*
+   *(Or using dpkg: `sudo dpkg -i ./kai_0.2.3_amd64.deb && sudo apt-get install -f`)*
 3. Launch **Kai Terminal** from your application menu.
 
 #### Option 2: AppImage
 1. Download the `.AppImage` file.
 2. Make it executable and run:
    ```bash
-   chmod +x ./kai_0.2.2_amd64.AppImage
-   ./kai_0.2.2_amd64.AppImage
+   chmod +x ./kai_0.2.3_amd64.AppImage
+   ./kai_0.2.3_amd64.AppImage
    ```
-   *(If FUSE is not installed on your system, extract and run: `./kai_0.2.2_amd64.AppImage --appimage-extract && ./squashfs-root/AppRun`)*
+   *(If FUSE is not installed on your system, extract and run: `./kai_0.2.3_amd64.AppImage --appimage-extract && ./squashfs-root/AppRun`)*
+
+#### Option 3: Fedora / RHEL / openSUSE package (`.rpm`)
+1. Download the `.rpm` package (`kai-0.2.3-1.x86_64.rpm`, or `kai-0.2.3-1.aarch64.rpm` on ARM64).
+2. Install via terminal:
+   ```bash
+   sudo dnf install ./kai-0.2.3-1.x86_64.rpm
+   ```
+   *(On openSUSE: `sudo zypper install ./kai-0.2.3-1.x86_64.rpm`)*
 
 #### Other Linux Packaging
 Manifests for non-Debian formats are located in the `packaging/` folder. Snap and Flatpak repackage the Tauri-built `.deb`; their header comments give the build steps:
@@ -233,7 +241,7 @@ To generate and attach build artifacts to a GitHub Release:
    ```
 2. Tag a release version and push to GitHub:
    ```bash
-   git tag v0.2.2
-   git push origin v0.2.2
+   git tag v0.2.3
+   git push origin v0.2.3
    ```
 3. GitHub Actions will automatically compile `.deb`, `.AppImage`, `.exe`, `.msi`, and `.dmg` installers and publish them to the release page.

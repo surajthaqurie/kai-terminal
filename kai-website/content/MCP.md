@@ -2,6 +2,8 @@
 
 Kai includes a local MCP server that runs automatically over stdio for connected AI coding tools. It lets a coding tool read your code map: project info, search, symbols, dependencies, context, task planning, graph sync, language servers, and refresh. The code-map tools run entirely on your machine; connecting an external service is opt-in per project (see External services).
 
+The server serves the project it is started in. Inside a git repository that is the repository's top folder, so an agent started in any subfolder shares the one code map of its repository (see `kai graph` in `USER_MANUAL.md`).
+
 ## Commands
 
 ### 1. Connect an Agent
@@ -44,7 +46,7 @@ Option: `--dry-run` to preview changes without modifying files.
 | `kai_read_range` | Read one symbol or line range (max 400 lines) |
 | `kai_find_symbol` | Find a symbol by name |
 | `kai_get_dependencies` | Imports of a file (`includeDependents: true` also lists importers, paged with `limit` / `offset`) |
-| `kai_get_context` | Context package for a task (`tokenBudget` optional: the default depends on task type, 1,700 to 4,000, or set `KAI_CONTEXT_BUDGETS`). Name a symbol exactly (`cancelOrder`) and the file that defines it ranks first; refactor, debug, implement and test tasks without an explicit budget also get its callers (refactor only) and up to two tests that import its file, labelled and capped |
+| `kai_get_context` | Context package for a task (`tokenBudget` optional: the default depends on task type, 1,700 to 4,000, or set `KAI_CONTEXT_BUDGETS`; `model` optional: an OpenAI model such as `gpt-4o` sizes the budget with its exact tokenizer, any other model keeps the heuristic). Name a symbol exactly (`cancelOrder`) and the file that defines it ranks first; refactor, debug, implement and test tasks without an explicit budget also get its callers (refactor only) and up to two tests that import its file, labelled and capped |
 | `kai_refresh_index` | Rebuild the map now (incremental unless forced) |
 | `kai_get_lsp_status` | Language server state |
 | `kai_plan_task` | Task plan with file priorities |

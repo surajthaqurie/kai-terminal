@@ -1,5 +1,5 @@
 import fs from "fs";
-import { resolveCanonicalPath } from "../../core/registry";
+import { resolveCanonicalPath, resolveProjectRoot } from "../../core/registry";
 import { startMcpServer } from "../../core/mcp";
 import { AGENT_REGISTRY, findDynamicAgentBinary, listAgentIds } from "../../core/agents";
 import { AGENT_FLAGS, flagValue } from "../args";
@@ -29,7 +29,8 @@ async function serveMcp(projectDir: string, watch: boolean): Promise<number> {
     printMcpStdioNote();
     return 0;
   }
-  await startMcpServer(projectDir, process.stdin, process.stdout, { watch });
+  // One graph per repo: an agent started in a subfolder shares the repo's map.
+  await startMcpServer(resolveProjectRoot(projectDir), process.stdin, process.stdout, { watch });
   return 0;
 }
 

@@ -16,6 +16,7 @@ pub mod kai_cli;
 pub mod login_path;
 pub mod music_relay;
 pub mod pty;
+pub mod shared_agent;
 pub mod shell;
 pub mod shutdown;
 pub mod snap_layouts;
@@ -88,6 +89,14 @@ pub(crate) fn exit_now(app_handle: &AppHandle) -> ! {
     for window in app_handle.webview_windows().values() {
         let _ = window.hide();
     }
+    // The Shared Agent service ends its runs and stops sharing. On its own thread so
+    // it never delays the terminals; the closed pipe ends it anyway if the process
+    // exits first.
+    let service_handle = app_handle.clone();
+    std::thread::spawn(move || {
+        let service: State<'_, shared_agent::SharedAgentService> = service_handle.state();
+        service.stop();
+    });
     let handle = app_handle.clone();
     let _ = shutdown::finish_within(REAP_BUDGET, move || {
         let state: State<'_, PtyManager> = handle.state();
@@ -411,6 +420,37 @@ fn cancel_integration_sign_in_cmd() -> bool {
     integrations::cancel_browser_sign_in()
 }
 
+/// One request to the Shared Agent service (started on first use). Answers come
+/// back here; events the service pushes (chat text, joined-PC changes) reach the
+/// window as `kai-shared-agent:event`.
+#[cfg(feature = "tauri")]
+#[tauri::command(async)]
+fn shared_agent_request_cmd(
+    app_handle: AppHandle,
+    service: State<'_, shared_agent::SharedAgentService>,
+    request_json: String,
+) -> Result<String, String> {
+    let emitter = app_handle.clone();
+    let sink: shared_agent::EventSink = Arc::new(move |line| {
+        let _ = emitter.emit_to("main", "kai-shared-agent:event", line);
+    });
+    let bundled = app_handle
+        .path()
+        .resource_dir()
+        .ok()
+        .and_then(|dir| kai_cli::find_bundled_cli(&dir))
+        .zip(kai_cli::find_node_exe())
+        .map(|(script, node)| integrations::BundledCli { node, script });
+    service.request(&request_json, bundled.as_ref(), sink)
+}
+
+/// Stops the Shared Agent service (sharing ends, every run is stopped).
+#[cfg(feature = "tauri")]
+#[tauri::command(async)]
+fn shared_agent_stop_cmd(service: State<'_, shared_agent::SharedAgentService>) -> bool {
+    service.stop()
+}
+
 #[cfg(feature = "tauri")]
 #[tauri::command(async)]
 fn get_git_info_cmd(cwd: String) -> GitInfo {
@@ -465,13 +505,13 @@ fn get_project_intelligence_cmd(cwd: String) -> intelligence::ProjectIntelligenc
 /// use a different localStorage file, so the CLI's state file + launch
 /// env are authoritative — not a SQLite localStorage hack).
 #[cfg(feature = "tauri")]
-#[tauri::command]
+#[tauri::command(async)]
 fn get_active_project_cmd() -> active_project::ActiveProject {
     active_project::get_active_project()
 }
 
 #[cfg(feature = "tauri")]
-#[tauri::command]
+#[tauri::command(async)]
 fn clear_active_project_cmd() {
     active_project::clear_active_project();
 }
@@ -542,7 +582,7 @@ fn detect_installed_editors_cmd() -> Vec<EditorInfo> {
 }
 
 #[cfg(feature = "tauri")]
-#[tauri::command]
+#[tauri::command(async)]
 fn get_diagnostics(state: State<'_, PtyManager>) -> diagnostics::DiagnosticsReport {
     let sessions = state.list_sessions();
     let shells = detect_available_shells();
@@ -558,7 +598,12 @@ fn get_diagnostics(state: State<'_, PtyManager>) -> diagnostics::DiagnosticsRepo
 }
 
 #[cfg(feature = "tauri")]
-#[tauri::command]
+// PTY and file/registry commands run off the main thread (`async`): Tauri runs
+// plain sync commands ON the UI thread, so every keystroke write, resize and
+// shell spawn (ConPTY creation takes 50-200 ms) blocked painting and input.
+// Per-terminal ordering is kept by the frontend: writes are awaited in a
+// queue and resizes go through a latest-wins serializer.
+#[tauri::command(async)]
 fn create_pty(
     app_handle: AppHandle,
     state: State<'_, PtyManager>,
@@ -569,7 +614,7 @@ fn create_pty(
 }
 
 #[cfg(feature = "tauri")]
-#[tauri::command]
+#[tauri::command(async)]
 fn write_to_pty(
     state: State<'_, PtyManager>,
     id: String,
@@ -579,7 +624,7 @@ fn write_to_pty(
 }
 
 #[cfg(feature = "tauri")]
-#[tauri::command]
+#[tauri::command(async)]
 fn resize_pty(
     state: State<'_, PtyManager>,
     id: String,
@@ -590,37 +635,37 @@ fn resize_pty(
 }
 
 #[cfg(feature = "tauri")]
-#[tauri::command]
+#[tauri::command(async)]
 fn close_pty(state: State<'_, PtyManager>, id: String) -> Result<(), error::TerminalError> {
     state.close_pty(&id)
 }
 
 #[cfg(feature = "tauri")]
-#[tauri::command]
+#[tauri::command(async)]
 fn get_autostart_enabled() -> bool {
     autostart::is_autostart_enabled()
 }
 
 #[cfg(feature = "tauri")]
-#[tauri::command]
+#[tauri::command(async)]
 fn set_autostart_enabled(enabled: bool) -> Result<(), error::TerminalError> {
     autostart::set_autostart_enabled(enabled)
 }
 
 #[cfg(feature = "tauri")]
-#[tauri::command]
+#[tauri::command(async)]
 fn get_session_info(state: State<'_, PtyManager>, id: String) -> Option<PtySessionInfo> {
     state.get_session_info(&id)
 }
 
 #[cfg(feature = "tauri")]
-#[tauri::command]
+#[tauri::command(async)]
 fn get_pty_cwd(state: State<'_, PtyManager>, id: String) -> Option<String> {
     state.get_session_cwd(&id)
 }
 
 #[cfg(feature = "tauri")]
-#[tauri::command]
+#[tauri::command(async)]
 fn get_system_terminal_config() -> shell::SystemTerminalConfig {
     shell::detect_system_terminal_config()
 }
@@ -632,7 +677,7 @@ fn get_app_version() -> String {
 }
 
 #[cfg(feature = "tauri")]
-#[tauri::command]
+#[tauri::command(async)]
 fn list_sessions(state: State<'_, PtyManager>) -> Vec<PtySessionInfo> {
     state.list_sessions()
 }
@@ -653,6 +698,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .manage(pty_manager)
+        .manage(shared_agent::SharedAgentService::default())
         // Single-instance enforcement (Windows / Linux / macOS): a second
         // `kai` / `kai <path>` launch must NEVER open a duplicate ("ghost")
         // window. The plugin routes the second process here in the FIRST
@@ -734,6 +780,8 @@ pub fn run() {
             get_agent_setup_snippet_cmd,
             run_integration_rpc_cmd,
             cancel_integration_sign_in_cmd,
+            shared_agent_request_cmd,
+            shared_agent_stop_cmd,
             get_git_info_cmd,
             run_git_action_cmd,
             get_git_changes_cmd,

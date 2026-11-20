@@ -1265,7 +1265,11 @@ describe("AiCliPanel tabs", () => {
       root.render(<AiCliPanel isOpen={true} onClose={() => {}} projectDir="/repo" />);
     });
     const tabs = [...container.querySelectorAll<HTMLElement>('[role="tab"]')];
-    expect(tabs.map((t) => t.textContent)).toEqual(["AI Providers", "Integrations"]);
+    expect(tabs.map((t) => t.textContent)).toEqual([
+      "AI Providers",
+      "Integrations",
+      "Shared Agent",
+    ]);
     expect(tabs[0].getAttribute("aria-selected")).toBe("true");
     expect(container.querySelector("[data-state]")).toBeNull();
     expect(container.textContent).toContain("AI CLI Providers");

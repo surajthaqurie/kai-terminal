@@ -23,6 +23,7 @@ import {
 import { useAppShortcuts } from "./hooks/useAppShortcuts";
 import { ShortcutHintsProvider, buildShortcutHints } from "./hooks/useShortcutHints";
 import type { SettingsTab } from "./components/SettingsModal";
+import type { AiCliTab } from "./components/AiCliPanel";
 import { useAppUpdates } from "./hooks/useAppUpdates";
 import { useCodeMode } from "./hooks/useCodeMode";
 import { useGitStatus } from "./hooks/useGitStatus";
@@ -74,6 +75,7 @@ function App() {
   const [settingsTab, setSettingsTab] = useState<SettingsTab | undefined>(undefined);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [isAiCliOpen, setIsAiCliOpen] = useState(false);
+  const [aiCliTab, setAiCliTab] = useState<AiCliTab>("providers");
   const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState(false);
   const [isWorkspaceOpen, setIsWorkspaceOpen] = useState(false);
   // AI providers panel is scoped to a specific pane's directory, so each
@@ -226,7 +228,7 @@ function App() {
     setLastError: reportError,
     notify,
   });
-  useWindowRefit({ tabsRef, activeTabIdRef, terminalRefs });
+  useWindowRefit({ tabsRef, activeTabIdRef, terminalRefs, getActiveTerminal });
   usePrefetchPanels();
 
   /** Session exited (Ctrl+C / `exit` / kill): close the pane, then hand
@@ -272,6 +274,12 @@ function App() {
   const toggleSearch = useCallback(() => getActiveTerminal()?.toggleSearch(), [getActiveTerminal]);
   const openAiCli = useCallback(() => {
     setAiCliDir(effectiveProjectDir);
+    setAiCliTab("providers");
+    setIsAiCliOpen(true);
+  }, [effectiveProjectDir]);
+  const openSharedAgent = useCallback(() => {
+    setAiCliDir(effectiveProjectDir);
+    setAiCliTab("shared");
     setIsAiCliOpen(true);
   }, [effectiveProjectDir]);
   const openSettings = useCallback(() => setIsSettingsOpen(true), []);
@@ -380,6 +388,7 @@ function App() {
             tabs={tabs}
             activeTabId={activeTabId}
             onSelectTab={setActiveTabId}
+            onTabClicked={focusActiveTerminalSoon}
             onCloseTab={tabsState.closeTab}
             onNewTab={() => newTabAndFocus()}
             onRenameTab={tabsState.renameTab}
@@ -399,6 +408,7 @@ function App() {
               )}
               onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
               onOpenAiCli={openAiCli}
+              onOpenSharedAgent={openSharedAgent}
               onOpenSettings={openSettings}
               onOpenEditor={project.openEditor}
               editorPath={userSettings.editorPath}
@@ -521,6 +531,8 @@ function App() {
           />
 
           <AiCliPanel
+            key={aiCliTab}
+            initialTab={aiCliTab}
             isOpen={isAiCliOpen}
             onClose={() => setIsAiCliOpen(false)}
             projectDir={aiCliDir || effectiveProjectDir}

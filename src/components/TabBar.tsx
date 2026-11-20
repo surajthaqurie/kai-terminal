@@ -12,6 +12,12 @@ interface TabBarProps {
   tabs: TerminalTab[];
   activeTabId: string;
   onSelectTab: (id: string) => void;
+  /**
+   * A mouse click picked a tab: typing should land in its terminal, not on the
+   * tab button. Keyboard roving (arrow keys) does not call this, so focus stays
+   * in the tab strip while the user moves through it.
+   */
+  onTabClicked?: (id: string) => void;
   onCloseTab: (id: string) => void;
   onNewTab: () => void;
   onRenameTab?: (id: string, title: string) => void;
@@ -58,6 +64,7 @@ export const TabBar: FC<TabBarProps> = ({
   tabs,
   activeTabId,
   onSelectTab,
+  onTabClicked,
   onCloseTab,
   onNewTab,
   onRenameTab,
@@ -375,13 +382,16 @@ export const TabBar: FC<TabBarProps> = ({
     }, LONG_PRESS_MS);
   };
 
-  const handleTabClick = (tabId: string) => {
+  const handleTabClick = (tabId: string, clickCount = 1) => {
     if (suppressClickRef.current) {
       suppressClickRef.current = false;
       return;
     }
     if (dragIdRef.current) return;
     onSelectTab(tabId);
+    // Only a single click: the second click of a double-click opens rename,
+    // whose input must keep focus.
+    if (clickCount <= 1) onTabClicked?.(tabId);
   };
 
   const shellEntries: MenuEntry[] = [
@@ -433,7 +443,7 @@ export const TabBar: FC<TabBarProps> = ({
                 style={tab.color ? ({ "--tab-color": tab.color } as CSSProperties) : undefined}
                 onPointerDown={(e) => beginPotentialDrag(e, tab)}
                 onContextMenu={(e) => openMenu(e, tab)}
-                onClick={() => handleTabClick(tab.id)}
+                onClick={(e) => handleTabClick(tab.id, e.detail)}
                 onKeyDown={(e) => handleTabKeyDown(e, index)}
               >
                 <TerminalIcon size={14} className="tab-icon" />

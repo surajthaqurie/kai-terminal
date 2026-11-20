@@ -2,6 +2,8 @@
 
 Kai includes a local MCP server that runs automatically over stdio for connected AI coding tools. It lets a coding tool read your code map: project info, search, symbols, dependencies, context, task planning, graph sync, language servers, and refresh. The code-map tools run entirely on your machine; connecting an external service is opt-in per project (see External services).
 
+The server serves the project it is started in. Inside a git repository that is the repository's top folder, so an agent started in any subfolder shares the one code map of its repository (see `kai graph` in `USER_MANUAL.md`).
+
 ## Commands
 
 ### 1. Connect an Agent

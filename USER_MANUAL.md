@@ -26,7 +26,7 @@ kai health
 
 Output:
 ```text
-✔ Kai v0.2.2 is ready
+✔ Kai v0.2.3 is ready
 
 ✔ Fast and private · Free
 ```
@@ -236,6 +236,34 @@ kai integration teams remove       # sign out and forget this account
 kai teams                          # open the chat here (first time: kai integration teams)
 ```
 
+## Shared Agent
+
+Chat with the Claude Code or OpenCode installed on another PC, or let your other PCs use yours. It lives in the desktop app only: **AI Providers → Shared Agent** (or the Shared Agent switch in the header). There is no `kai` command for it.
+
+> Traffic on your network is plain HTTP. Use Shared Agent only on a network you trust, and never port-forward its port.
+
+### Share my agent
+
+- **Turn sharing on** with the switch on the **Share my agent** half, or with one click on the header switch. Kai starts a small server on port 8765 (or the next free one of the nine after it) and shows the addresses it listens on. Sharing is never remembered: it is off every time Kai starts.
+- **Agents you share**: Claude Code and OpenCode, each with its own switch. An agent that is not installed is shown with the reason.
+- **Invite a PC**: choose how long the link lives (5, 15 or 60 minutes) and click **Generate invite link**. The link is shown once, works once, and can be cancelled. Send it to the other PC yourself.
+- **Connected PCs**: each PC that joined, with its own **permissions** (which of your shared agents it may use, which model, and how many minutes a run may take, 1 to 240, 10 by default), its token use, its recent tasks, and a way to remove it. Removing a PC ends its access at once; it needs a new link to come back. Up to 50 PCs can join.
+- **Live runs**: what each PC is running right now.
+- **Internet access (optional)**: to let a PC outside your network join, point any HTTPS tunnel or reverse proxy at the port Kai shows, and paste its public `https://` address (just the host name, nothing after it). Invite links then come in two forms, **Same network** and **Internet**. Kai never starts a tunnel for you; **Turn off** forgets the address.
+
+### Use a shared agent
+
+- **Join a PC**: paste the invite link (`http://192.168.1.20:8765/join#…` on the same network, `https://<tunnel address>/join#…` over the internet). The PC is added to **Joined PCs**, with whether it is online, how fast it answers, which agents it shares and the tokens you have used through it.
+- **Chat**: type and press Enter (Shift+Enter for a new line). **New chat** starts over. The chat clears when you close the window.
+- **Fallback, automatic**: a message goes to the joined PC's agent first. If that PC is offline, busy, has removed you or fails, your own Claude Code answers instead, and the chat says which one answered.
+
+### What a shared agent can do
+
+- It **only chats**. It runs in an empty folder, read-only, and cannot read or change your files, run commands or use MCP tools. There is no setting that widens this. A tool the agent tries to use is blocked, and the chat says so.
+- Your message reaches the agent on its standard input, never on a command line, and no shell is involved.
+- Only PCs on a network this PC is attached to (or PCs coming through the tunnel address you set) can join or chat. A PC's access only works from the network it joined on.
+- Kai Terminal speaks the same protocol as Agent Bridge, so the two can join each other.
+
 ## Project graph
 
 Build, rebuild, inspect, or remove the symbol index and import graph.
@@ -246,16 +274,19 @@ Build, rebuild, inspect, or remove the symbol index and import graph.
 
 - **What**: Generates a symbol index (from a deterministic text-based scan, not a full parser), an import graph, and a project intelligence map for your codebase.
 - **Where**: Stored locally and privately in `~/.kai/projects/<project-id>/`. Your repository code is never modified.
+- **One map per repository**: a path inside a git repository always uses the map of the repository's top folder, so `kai graph`, `kai open`, `kai <agent>` and the MCP server started from any subfolder share one map. A nested folder that is a repository of its own gets its own map; a folder outside any repository is its own project. A git work tree too broad to index (a home folder kept under git, a drive root) is not used as the top.
 - **How**:
   - `kai graph init [path]` — Build the map from scratch. Automatically installs a self-contained `commit-msg` git hook to prevent co-author trailers.
   - `kai graph update [path]` — Rebuild and refresh the map with incremental change detection.
   - `kai graph status [path]` — Inspect map size, symbol counts, file counts, and index freshness.
+  - `kai graph prune` — Remove maps of folders that no longer exist, and old maps of a repository's subfolders (left from before one map per repository). Maps being built by a running process are kept. Prints each map it removed.
   - `kai remove -i [path]` — Remove a project's map from `~/.kai/projects/` (`--dry-run` previews first).
 
 ```bash
 kai graph init .                # build the map from scratch
 kai graph update .              # rebuild and refresh map
 kai graph status .              # show map size, symbol counts, and freshness
+kai graph prune                 # remove maps of deleted folders and of repo subfolders
 kai remove -i .                 # remove project code map (--dry-run previews first)
 ```
 

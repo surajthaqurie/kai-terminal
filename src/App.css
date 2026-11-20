@@ -1108,6 +1108,31 @@ body.tab-dragging * {
   color: var(--text-primary);
 }
 
+/* Shared Agent switch: accent colour and a dot while sharing is on. */
+.header-share .header-icon-btn.is-on {
+  color: var(--color-success);
+}
+
+.header-share .header-icon-btn.is-error {
+  color: var(--color-warning);
+}
+
+.header-share .header-icon-btn:disabled {
+  cursor: progress;
+  opacity: 0.6;
+}
+
+.header-share-dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-success);
+  box-shadow: 0 0 0 2px var(--bg-surface);
+}
+
 /* "Open project in editor": an icon right after the search box, with a small
    caret that lists the installed editors. */
 .header-editor {
@@ -6457,4 +6482,624 @@ html.music-pip-window #root {
 .music-pip-return:hover {
   background: var(--accent-primary);
   color: var(--text-inverse);
+}
+
+/* ===== Shared Agent (AI CLI Providers → Shared Agent) ===== */
+.sa-panel {
+  gap: 12px;
+}
+
+.sa-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sa-muted {
+  color: var(--text-tertiary);
+  font-size: var(--text-sm);
+}
+
+.sa-line {
+  margin: 0;
+  font-size: var(--text-sm);
+}
+
+.sa-seg {
+  display: inline-flex;
+  align-self: flex-start;
+  padding: 3px;
+  background: var(--bg-surface-sunken);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+}
+
+.sa-seg button {
+  padding: 6px 14px;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.sa-seg button:hover {
+  color: var(--text-primary);
+}
+
+.sa-seg button.active {
+  background: var(--accent-subtle);
+  color: var(--accent-primary);
+  font-weight: 600;
+}
+
+.sa-notice {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+}
+
+.sa-notice-warn {
+  background: var(--color-warning-bg);
+  color: var(--color-warning);
+}
+
+.sa-card,
+.sa-route {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px;
+  background: var(--bg-surface-elevated);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+}
+
+.sa-card h4,
+.sa-route h4 {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: 600;
+}
+
+.sa-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 12px;
+}
+
+/* Which Claude answers: the border and dot take the colour of the state. */
+.sa-route {
+  --sa-tone: var(--text-tertiary);
+}
+
+.sa-tone-ok {
+  --sa-tone: var(--color-success);
+}
+
+.sa-tone-own {
+  --sa-tone: var(--color-purple);
+}
+
+.sa-tone-warn {
+  --sa-tone: var(--color-warning);
+}
+
+.sa-tone-bad {
+  --sa-tone: var(--color-danger);
+}
+
+.sa-route {
+  border-color: var(--sa-tone);
+  border-color: color-mix(in srgb, var(--sa-tone) 55%, var(--border-default));
+}
+
+.sa-route-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.sa-route-detail {
+  margin-left: auto;
+}
+
+.sa-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--sa-tone, var(--text-tertiary));
+}
+
+.sa-route .sa-dot {
+  box-shadow: 0 0 8px var(--sa-tone);
+}
+
+.sa-dot-ok {
+  background: var(--color-success);
+}
+
+.sa-dot-bad {
+  background: var(--color-danger);
+}
+
+.sa-dot-warn {
+  background: var(--color-warning);
+}
+
+.sa-dot-idle {
+  background: var(--text-tertiary);
+}
+
+.sa-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-full);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.sa-badge-tone {
+  border-color: transparent;
+  background: var(--bg-surface-sunken);
+  color: var(--sa-tone);
+}
+
+.sa-badge-ok {
+  border-color: transparent;
+  background: var(--color-success-bg);
+  color: var(--color-success);
+}
+
+.sa-badge-warn {
+  border-color: transparent;
+  background: var(--color-warning-bg);
+  color: var(--color-warning);
+}
+
+.sa-badge-bad {
+  border-color: transparent;
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+}
+
+.sa-badge-own {
+  border-color: transparent;
+  background: var(--color-purple-bg);
+  color: var(--color-purple);
+}
+
+.sa-chat-tools label,
+.sa-invite-row label {
+  font-size: var(--text-sm);
+  color: var(--text-tertiary);
+}
+
+.sa-field .select-input {
+  width: 100%;
+}
+
+.sa-join-row {
+  display: flex;
+  gap: 8px;
+}
+
+.sa-join-row .text-input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Joined PCs: one row each, with the tokens used through that PC. */
+.sa-hosts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sa-host {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding-right: 10px;
+  background: var(--bg-surface-sunken);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+}
+
+.sa-host:hover {
+  border-color: var(--border-strong);
+}
+
+.sa-host.is-active {
+  border-color: var(--accent-primary);
+  background: var(--accent-subtle);
+}
+
+.sa-host-select {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 0 10px 12px;
+  background: none;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sa-host-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.sa-host-agents {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.sa-tokens {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  line-height: 1.25;
+  text-align: right;
+}
+
+.sa-tokens b {
+  font-size: var(--text-md);
+  font-variant-numeric: tabular-nums;
+}
+
+.sa-danger {
+  color: var(--color-danger);
+}
+
+.sa-danger:hover {
+  border-color: var(--color-danger);
+}
+
+.sa-empty {
+  margin: 0;
+  padding: 18px;
+  text-align: center;
+  border: 1px dashed var(--border-default);
+  border-radius: var(--radius-md);
+  color: var(--text-tertiary);
+  font-size: var(--text-sm);
+}
+
+/* Chat */
+.sa-chat-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+
+.sa-chat-title,
+.sa-chat-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.sa-log {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: 300px;
+  padding: 12px;
+  overflow-y: auto;
+  background: var(--bg-surface-sunken);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+}
+
+.sa-log-hint {
+  margin: auto;
+  max-width: 34ch;
+  text-align: center;
+  color: var(--text-tertiary);
+  font-size: var(--text-sm);
+}
+
+.sa-msg {
+  max-width: 88%;
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.sa-msg small {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+
+.sa-msg-you {
+  align-self: flex-end;
+  background: var(--accent-subtle);
+  border: 1px solid var(--accent-primary);
+}
+
+.sa-msg-agent {
+  align-self: flex-start;
+  background: var(--bg-surface-elevated);
+  border: 1px solid var(--border-subtle);
+}
+
+.sa-msg-tool,
+.sa-msg-note {
+  align-self: flex-start;
+  padding: 0 4px;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.sa-msg-error {
+  align-self: center;
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+  font-size: var(--text-sm);
+}
+
+.sa-composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.sa-composer .text-input {
+  flex: 1;
+  min-width: 0;
+  resize: none;
+}
+
+/* Share side */
+.sa-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.sa-switch {
+  position: relative;
+  display: inline-block;
+  flex: none;
+  width: 38px;
+  height: 22px;
+}
+
+.sa-switch input {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.sa-switch span {
+  position: absolute;
+  inset: 0;
+  background: var(--bg-surface-sunken);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-full);
+  transition: all var(--transition-fast);
+}
+
+.sa-switch span::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  background: var(--text-secondary);
+  border-radius: 50%;
+  transition: all var(--transition-fast);
+}
+
+.sa-switch input:checked + span {
+  background: var(--accent-subtle);
+  border-color: var(--accent-primary);
+}
+
+.sa-switch input:checked + span::before {
+  background: var(--accent-primary);
+  transform: translateX(16px);
+}
+
+.sa-switch input:focus-visible + span {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+}
+
+.sa-switch input:disabled {
+  cursor: not-allowed;
+}
+
+.sa-switch input:disabled + span {
+  opacity: 0.45;
+}
+
+.sa-invite-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.sa-invite-row .text-input {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+.sa-invite-actions .sa-invite-link,
+.sa-row .sa-tunnel-url {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+
+.sa-invite-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sa-invite-link,
+.sa-tunnel-url {
+  padding: 8px 10px;
+  background: var(--bg-surface-sunken);
+  border: 1px dashed var(--accent-primary);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  word-break: break-all;
+  user-select: all;
+}
+
+.sa-invite-actions,
+.sa-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.sa-table-wrap {
+  overflow-x: auto;
+}
+
+.sa-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+.sa-table th {
+  padding: 6px 8px;
+  text-align: left;
+  border-bottom: 1px solid var(--border-default);
+  color: var(--text-tertiary);
+  font-weight: 500;
+}
+
+.sa-table td {
+  padding: 8px;
+  vertical-align: middle;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.sa-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.sa-table-compact td {
+  padding: 6px 8px;
+  vertical-align: top;
+}
+
+.sa-table .sa-detail-row > td {
+  padding: 0 0 12px;
+}
+
+.sa-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  background: var(--bg-surface-sunken);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.sa-detail-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+}
+
+.sa-perm-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+
+.sa-perm-agent {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 12rem;
+}
+
+.sa-perm-model {
+  flex: 1 1 14rem;
+  max-width: 22rem;
+  font-family: var(--font-mono);
+}
+
+.sa-perm-minutes {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sa-perm-minutes .text-input {
+  width: 6rem;
+}
+
+.sa-task-list {
+  max-height: 320px;
+  overflow: auto;
+}
+
+.sa-task-title {
+  max-width: 28rem;
+  overflow-wrap: anywhere;
+}
+
+.sa-nowrap {
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .sa-host-select {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .sa-host-agents,
+  .sa-tokens {
+    grid-column: 2;
+    align-items: flex-start;
+    text-align: left;
+  }
 }
