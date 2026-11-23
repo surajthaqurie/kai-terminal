@@ -38,7 +38,7 @@ import { useSessionExit } from "./hooks/useSessionExit";
 import { useSessionPersistence } from "./hooks/useSessionPersistence";
 import { useTabs } from "./hooks/useTabs";
 import { useTerminalConfig } from "./hooks/useTerminalConfig";
-import { useWindowRefit } from "./hooks/useWindowRefit";
+import { shouldRestoreTerminalFocus, useWindowRefit } from "./hooks/useWindowRefit";
 import { resolvePaneShell } from "./services/paneShell";
 import { SettingsService } from "./services/settingsService";
 import { resolveEffectiveProjectDir } from "./services/projectService";
@@ -149,6 +149,18 @@ function App() {
     };
     focusRafRef.current = requestAnimationFrame(() => attempt(3));
   }, [getActiveTerminal, cancelPendingFocus]);
+
+  // Whatever switched the tab (Ctrl+Tab, Ctrl+1-9, palette, closing a tab,
+  // a restored session) the terminal that comes to the front takes the
+  // keyboard, so the user can type straight away. Skipped when focus sits on
+  // a real control (tab-bar arrow keys, an open dialog's field): only an
+  // empty focus or the previous terminal's own input is handed over.
+  const lastActiveTabIdRef = useRef(activeTabId);
+  useEffect(() => {
+    if (lastActiveTabIdRef.current === activeTabId) return;
+    lastActiveTabIdRef.current = activeTabId;
+    if (shouldRestoreTerminalFocus(document.activeElement)) focusActiveTerminalSoon();
+  }, [activeTabId, focusActiveTerminalSoon]);
 
   const newTabAndFocus = useCallback(
     (opts?: { cwd?: string }) => {
