@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/capability/2",
   "identifier": "default",
-  "description": "Least-privilege capability scope for the main window",
-  "windows": ["main"],
+  "description": "Least-privilege capability scope for the terminal windows (main and the extra term-N windows)",
+  "windows": ["main", "term-*"],
   "permissions": [
     "core:default",
     "core:window:allow-close",

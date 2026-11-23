@@ -191,7 +191,14 @@ export class SharedAgentService {
         this.stopChat(str(req.chatId, "chatId"));
         return { ok: true };
       case "share_status":
-        if (req.refresh) await this.host.refreshProbes(true);
+        if (req.refresh) {
+          // Looking for installed agents runs each one's `--version` (seconds on Windows).
+          // Once they have been found, answer at once with what is known and push the
+          // re-check's result as a `share` event; only the very first look has to wait.
+          const check = this.host.refreshProbes(true).then(() => this.shareChanged());
+          if (this.host.probed) check.catch(() => {});
+          else await check.catch(() => {});
+        }
         return { ok: true, share: this.shareStatus() };
       case "share_set": {
         if (req.port !== undefined) this.setPort(req.port);

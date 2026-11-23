@@ -1,4 +1,4 @@
-import { FC, FormEvent, useEffect, useState } from "react";
+import { ClipboardEvent, FC, FormEvent, useEffect, useState } from "react";
 import { ExternalLink, Link2, PictureInPicture2 } from "lucide-react";
 import { parseInviteLink } from "../core/sharedAgent/invite";
 import { joinHost, leaveHost } from "../services/sharedAgentService";
@@ -79,6 +79,23 @@ export const SharedAgentReceive: FC<ReceiveProps> = ({ active }) => {
     if (!busy) setActiveId(res.value.id);
   };
 
+  // A pasted link replaces the box (stray spaces and newlines dropped) and is checked at once,
+  // so a wrong one is flagged before Join is pressed.
+  const onPasteLink = (ev: ClipboardEvent<HTMLInputElement>) => {
+    const pasted = ev.clipboardData.getData("text").trim();
+    if (!pasted) return;
+    ev.preventDefault();
+    setLink(pasted);
+    const target = parseInviteLink(pasted);
+    if (!target) {
+      setNotice(null);
+      setJoinError(BAD_LINK);
+      return;
+    }
+    setJoinError(null);
+    setNotice(`Valid invite link for ${target.origin}. Press Join.`);
+  };
+
   const selectHost = (id: string) => {
     if (id === activeId || busy) return;
     setActiveId(id);
@@ -110,9 +127,15 @@ export const SharedAgentReceive: FC<ReceiveProps> = ({ active }) => {
         value={link}
         autoComplete="off"
         spellCheck={false}
+        aria-invalid={joinError === BAD_LINK}
         onChange={(e) => {
           setLink(e.target.value);
           setJoinError(null);
+          setNotice(null);
+        }}
+        onPaste={onPasteLink}
+        onBlur={() => {
+          if (link.trim() && !parseInviteLink(link)) setJoinError(BAD_LINK);
         }}
       />
       <button

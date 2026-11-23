@@ -353,16 +353,33 @@ export class HostServer {
 
   // ---------------------------------------------------------------- admin (called by the service)
 
+  /** True once the installed agents have been looked for at least once. */
+  get probed(): boolean {
+    return this.probedAt > 0;
+  }
+
+  /** A probe already running, so overlapping callers share it instead of spawning again. */
+  private probing: Promise<void> | null = null;
+
   async refreshProbes(force = false): Promise<void> {
+    if (this.probing) return this.probing;
     if (!force && Date.now() - this.probedAt < PROBE_TTL_MS) return;
-    const probes = await Promise.all(SHARED_AGENT_IDS.map((a) => probeAgent(a, this.opts.locate)));
-    this.probes = new Map(probes.map((p) => [p.id, p]));
-    try {
-      this.others = (this.opts.detectOtherClis ?? detectOtherClis)();
-    } catch {
-      this.others = []; // listing extra agents must never break sharing
-    }
-    this.probedAt = Date.now();
+    const run = (async () => {
+      const probes = await Promise.all(
+        SHARED_AGENT_IDS.map((a) => probeAgent(a, this.opts.locate))
+      );
+      this.probes = new Map(probes.map((p) => [p.id, p]));
+      try {
+        this.others = (this.opts.detectOtherClis ?? detectOtherClis)();
+      } catch {
+        this.others = []; // listing extra agents must never break sharing
+      }
+      this.probedAt = Date.now();
+    })();
+    this.probing = run.finally(() => {
+      this.probing = null;
+    });
+    return this.probing;
   }
 
   /** Coding CLIs found on this PC that cannot be shared, with the reason. */

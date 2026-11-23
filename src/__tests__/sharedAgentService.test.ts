@@ -138,6 +138,54 @@ afterEach(async () => {
   fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
+describe("share_status refresh", () => {
+  it("waits for the first look at the installed agents, then answers at once and pushes the re-check", async () => {
+    let slow = false;
+    const events: SharedAgentEvent[] = [];
+    const svc = new SharedAgentService({
+      emit: (e) => events.push(e),
+      secrets: new MemorySecrets(),
+      // After the first look, `--version` takes 1.5 s (as it can on Windows).
+      locate: () =>
+        slow
+          ? [
+              process.execPath,
+              "-e",
+              "setTimeout(() => console.log('fake-agent 2.0.0'), 1500)",
+              "--",
+            ]
+          : [process.execPath, FAKE],
+      networks: () => loopback,
+      heartbeatMs: 0,
+      hostName: "Slow-PC",
+      dir: path.join(dir, "Slow-PC"),
+      sharePort: 0,
+      bindHost: "127.0.0.1",
+    });
+    sides.push({ svc, events });
+    const claude = (s: ShareStatus) => s.agents.find((a) => a.id === "claude");
+
+    // The very first look has nothing to show yet, so it waits for the answer.
+    const first = await ok(svc.handle({ op: "share_status", refresh: true }));
+    expect(claude(first.share)).toMatchObject({ available: true, version: "fake-agent 1.0.0" });
+
+    // Later looks answer at once with what is known...
+    await waitFor(() => events.some((e) => e.event === "share")); // the first look's own event
+    events.length = 0;
+    slow = true;
+    const started = Date.now();
+    const again = await ok(svc.handle({ op: "share_status", refresh: true }));
+    expect(Date.now() - started).toBeLessThan(1000);
+    expect(claude(again.share)?.version).toBe("fake-agent 1.0.0");
+
+    // ...and the re-check's result arrives as a `share` event.
+    await waitFor(() => events.some((e) => e.event === "share"));
+    expect(claude((await ok(svc.handle({ op: "share_status" }))).share)?.version).toBe(
+      "fake-agent 2.0.0"
+    );
+  });
+});
+
 describe("sharing and joining", () => {
   it("shares, creates an invite, and another PC joins", async () => {
     const { a, b, host } = await pair();

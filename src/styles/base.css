@@ -25,6 +25,26 @@ html,
   text-rendering: optimizeLegibility;
 }
 
+/* Dark text on a light surface renders visibly thinner than light-on-dark, so
+   regular-weight UI text looks spindly in the light theme. Inter is a variable
+   font, so nudge the default weight up (450) and stop forcing grayscale
+   smoothing. Explicit weights (500/600/700) are untouched; form controls get
+   the same default via :where() so any class rule still wins. */
+:where([data-theme="kai-light"]) {
+  font-weight: 450;
+}
+
+/* Needs real specificity to beat the `body, html, #root` smoothing above. */
+html[data-theme="kai-light"],
+html[data-theme="kai-light"] body,
+html[data-theme="kai-light"] #root {
+  -webkit-font-smoothing: auto;
+}
+
+:where([data-theme="kai-light"]) :where(button, input, select, textarea) {
+  font-weight: inherit;
+}
+
 /* Accessible focus visible */
 :focus-visible {
   outline: var(--focus-ring-width) solid var(--focus-ring-color);

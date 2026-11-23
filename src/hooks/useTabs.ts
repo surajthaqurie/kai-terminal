@@ -14,6 +14,8 @@ import {
   splitTab,
 } from "../services/paneLayout";
 import { createDefaultTab, deriveTabStatus } from "../services/tabFactory";
+import { tabFromSeed } from "../services/tabHandoff";
+import type { TabSeed } from "../services/terminalWindows";
 import type { SessionStatus, SplitDirection, TerminalTab } from "../types/terminal";
 import { useLatest } from "./useLatest";
 import { applyTabsUpdate } from "./tabsSync";
@@ -25,6 +27,11 @@ interface TabsOptions {
   /** Effective shell binary for new sessions (custom path wins over profile). */
   effectiveShellPath: string | undefined;
   setLastError: (message: string | null) => void;
+  /**
+   * A tab moved here from another window: the window opens with it (shells that
+   * were running keep running) instead of a fresh starter tab. Read once.
+   */
+  initialSeed?: TabSeed | null;
 }
 
 /**
@@ -33,14 +40,18 @@ interface TabsOptions {
  * values for long-lived callbacks (pty-exit, Tauri events) that must never
  * see a stale `tabs` snapshot.
  */
-export function useTabs({ effectiveShellPath, setLastError }: TabsOptions) {
+export function useTabs({ effectiveShellPath, setLastError, initialSeed }: TabsOptions) {
   // Fast startup: always open with a single fresh tab so the window paints
   // immediately (one PTY). A previous session, if any, is offered via an
   // explicit "Restore session" banner instead of auto-spawning N shells —
   // unless the user opted into auto-restore in settings.
   const initialTabsRef = useRef<TerminalTab[] | null>(null);
   if (initialTabsRef.current === null) {
-    initialTabsRef.current = [createDefaultTab("Terminal 1")];
+    initialTabsRef.current = [
+      initialSeed && initialSeed.panes.length > 0
+        ? tabFromSeed(initialSeed)
+        : createDefaultTab("Terminal 1"),
+    ];
   }
   const [tabs, setTabs] = useState<TerminalTab[]>(initialTabsRef.current);
   const [activeTabId, setActiveTabId] = useState<string>(
@@ -281,8 +292,17 @@ export function useTabs({ effectiveShellPath, setLastError }: TabsOptions) {
       setTabs((prev) =>
         prev.map((t) => {
           if (t.id !== tabId) return t;
+          // Once a moved shell has attached (or failed to), its screen snapshot is
+          // spent: drop it so a large string is not kept in state for good.
           const panes = t.panes.map((p) =>
-            p.id === paneId ? { ...p, status, errorMessage: message } : p
+            p.id === paneId
+              ? {
+                  ...p,
+                  status,
+                  errorMessage: message,
+                  adopt: status === "connecting" ? p.adopt : undefined,
+                }
+              : p
           );
           return { ...t, panes, ...deriveTabStatus(panes) };
         })

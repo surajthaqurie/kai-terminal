@@ -56,9 +56,19 @@ describe("music picture-in-picture", () => {
     expect(pip.permissions).toEqual(["core:default", "core:window:allow-start-dragging"]);
   });
 
-  it("only lets the main window end the app", () => {
+  it("only a terminal window (never the music window) can end the app, and only the last one", () => {
     const rs = fs.readFileSync(path.resolve(__dirname, "../../src-tauri/src/lib.rs"), "utf-8");
-    expect(rs).toMatch(/CloseRequested \{ \.\. \} if window\.label\(\) == "main"/);
+    expect(rs).toMatch(
+      /CloseRequested \{ \.\. \}\s*if terminal_windows::is_terminal_label\(window\.label\(\)\)/
+    );
+    expect(rs).toContain("terminal_windows::closing_ends_app(open)");
+    // The music window is not a terminal window, so closing it leaves the app running.
+    const windows = fs.readFileSync(
+      path.resolve(__dirname, "../../src-tauri/src/terminal_windows.rs"),
+      "utf-8"
+    );
+    expect(windows).toContain('"music-pip"');
+    expect(windows).toMatch(/for other in \[[^\]]*"music-pip"/);
     expect(rs).toContain("open_music_pip,");
     expect(rs).toContain("close_music_pip,");
   });

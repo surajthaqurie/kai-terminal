@@ -20,6 +20,7 @@ pub mod shared_agent;
 pub mod shell;
 pub mod shutdown;
 pub mod snap_layouts;
+pub mod terminal_windows;
 pub mod updater;
 
 #[cfg(test)]
@@ -111,10 +112,18 @@ pub(crate) fn shutdown_app(app_handle: &AppHandle) {
     exit_now(app_handle)
 }
 
+/// Closes the window that asked: the whole app when it is the last terminal window,
+/// otherwise only that window (its shells are ended when it is destroyed).
 #[cfg(feature = "tauri")]
 #[tauri::command]
-fn close_app_window(app_handle: AppHandle) {
-    shutdown_app(&app_handle);
+async fn close_app_window(window: tauri::WebviewWindow) {
+    let app_handle = window.app_handle().clone();
+    let open = terminal_windows::terminal_window_count(&app_handle);
+    if terminal_windows::closing_ends_app(open) {
+        shutdown_app(&app_handle);
+    } else {
+        let _ = window.destroy();
+    }
 }
 
 /// Label of the detached music picture-in-picture window.
@@ -320,7 +329,7 @@ async fn close_music_pip(app_handle: AppHandle, focus_main: bool) {
         let _ = window.destroy();
     }
     if focus_main {
-        if let Some(main) = app_handle.get_webview_window("main") {
+        if let Some(main) = terminal_windows::primary_terminal_window(&app_handle) {
             let _ = main.unminimize();
             let _ = main.show();
             let _ = main.set_focus();
@@ -356,7 +365,8 @@ fn set_maximize_button_rect(
         };
         let target = window.clone();
         snap_layouts::set_maximize_button_rect(hwnd.0 as isize, rect, move |state| {
-            let _ = target.emit("kai-maximize-button-state", state.as_str());
+            // Only the window that owns the overlay hears its button's state.
+            let _ = target.emit_to(target.label(), "kai-maximize-button-state", state.as_str());
         })
     }
     #[cfg(not(windows))]
@@ -447,10 +457,16 @@ fn get_agent_setup_snippet_cmd(id: String, project_arg: String) -> Result<String
 
 #[cfg(feature = "tauri")]
 #[tauri::command(async)]
-fn run_integration_rpc_cmd(app_handle: AppHandle, request_json: String) -> Result<String, String> {
+fn run_integration_rpc_cmd(
+    app_handle: AppHandle,
+    window: tauri::WebviewWindow,
+    request_json: String,
+) -> Result<String, String> {
     let emitter = app_handle.clone();
+    // The sign-in link goes back to the window whose Integrations tab asked for it.
+    let asker = window.label().to_string();
     let sink: integrations::SignInUrlSink = Box::new(move |url| {
-        let _ = emitter.emit_to("main", "kai-integration:signin-url", url);
+        let _ = emitter.emit_to(asker.as_str(), "kai-integration:signin-url", url);
     });
     let bundled = app_handle
         .path()
@@ -482,7 +498,11 @@ fn shared_agent_request_cmd(
     let emitter = app_handle.clone();
     let sink: shared_agent::EventSink = Arc::new(move |line| {
         // The popped-out chat window, when open, needs the chat text too.
-        let _ = emitter.emit_to("main", "kai-shared-agent:event", line.clone());
+        terminal_windows::emit_to_terminal_windows(
+            &emitter,
+            "kai-shared-agent:event",
+            line.clone(),
+        );
         if emitter.get_webview_window(SHARED_CHAT_LABEL).is_some() {
             let _ = emitter.emit_to(SHARED_CHAT_LABEL, "kai-shared-agent:event", line);
         }
@@ -659,11 +679,15 @@ fn get_diagnostics(state: State<'_, PtyManager>) -> diagnostics::DiagnosticsRepo
 #[tauri::command(async)]
 fn create_pty(
     app_handle: AppHandle,
+    window: tauri::WebviewWindow,
     state: State<'_, PtyManager>,
     options: PtyCreateOptions,
 ) -> Result<PtySessionInfo, error::TerminalError> {
     let emitter = Arc::new(pty::TauriEventEmitter { app_handle });
-    state.create_pty(emitter, options)
+    let info = state.create_pty(emitter, options)?;
+    // Remember which window shows it: closing that window ends the session.
+    state.set_owner(&info.id, window.label());
+    Ok(info)
 }
 
 #[cfg(feature = "tauri")]
@@ -751,30 +775,46 @@ pub fn run() {
 
     tauri::Builder::default()
         .manage(pty_manager)
+        .manage(terminal_windows::WindowSeeds::default())
         .manage(shared_agent::SharedAgentService::default())
         // Single-instance enforcement (Windows / Linux / macOS): a second
-        // `kai` / `kai <path>` launch must NEVER open a duplicate ("ghost")
-        // window. The plugin routes the second process here in the FIRST
-        // (already running) process; we focus its main window, forward an
-        // optional path via `kai-open-project` (the frontend re-syncs Code
-        // Mode from the state file the CLI already wrote), and the second
-        // process exits without creating a window. The Node
-        // `isKaiAppRunning()` fast-path avoids the spawn in the common case;
-        // this is the authoritative cross-OS guarantee that closes the
-        // check-then-launch race (two rapid `kai code .` calls) and the
-        // process-name false-negative (AppImage/snap/renamed binaries,
-        // localized `tasklist`, truncated `comm`).
+        // launch never starts a second process (no duplicate "ghost" app).
+        // The plugin routes it here in the FIRST (already running) process.
+        // A `kai <path>` / `kai code` launch focuses a terminal window and
+        // forwards the path via `kai-open-project` (the frontend re-syncs Code
+        // Mode from the state file the CLI already wrote). A plain launch of
+        // the app (Start menu, Dock, desktop icon) opens one more window, the
+        // way an editor does, so the user can have several. The second process
+        // exits either way. The Node `isKaiAppRunning()` fast-path avoids the
+        // spawn in the common case; this is the authoritative cross-OS
+        // guarantee that closes the check-then-launch race (two rapid
+        // `kai code .` calls) and the process-name false-negative
+        // (AppImage/snap/renamed binaries, localized `tasklist`, truncated
+        // `comm`).
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.unminimize();
-                let _ = window.show();
-                let _ = window.set_focus();
-                if let Some(path) = crate::cli_guard::gui_path_from_args(&args) {
-                    let _ = window.emit("kai-open-project", serde_json::json!({ "path": path }));
+            if let Some(window) = terminal_windows::primary_terminal_window(app) {
+                if crate::cli_guard::is_bare_launch(&args) {
+                    // Off this callback's thread: building a window waits on the
+                    // main thread.
+                    let handle = app.clone();
+                    std::thread::spawn(move || {
+                        let _ = terminal_windows::open_window(&handle, None, &[], None);
+                    });
                 } else {
-                    // Bare re-launch: still wake the frontend so it re-syncs
-                    // Code Mode state (covers `kai code` written externally).
-                    let _ = window.emit("kai-open-project", serde_json::json!({}));
+                    let _ = window.unminimize();
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+                if let Some(path) = crate::cli_guard::gui_path_from_args(&args) {
+                    let _ = app.emit_to(
+                        window.label(),
+                        "kai-open-project",
+                        serde_json::json!({ "path": path }),
+                    );
+                } else {
+                    // Still wake the frontend so it re-syncs Code Mode state
+                    // (covers `kai code` written externally).
+                    let _ = app.emit_to(window.label(), "kai-open-project", serde_json::json!({}));
                 }
             } else {
                 // If there is no main window (e.g. stale/zombie process), terminate
@@ -807,11 +847,32 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| match event {
-            // Only the main window ends the app; closing the music
-            // picture-in-picture window must leave the terminal running.
-            tauri::WindowEvent::CloseRequested { .. } if window.label() == "main" => {
-                // Hide at once, reap PTY children within a time limit, then exit.
-                exit_now(window.app_handle());
+            // Closing the LAST terminal window ends the app; closing the music
+            // picture-in-picture window, or one of several terminal windows,
+            // leaves the rest running.
+            tauri::WindowEvent::CloseRequested { .. }
+                if terminal_windows::is_terminal_label(window.label()) =>
+            {
+                let open = terminal_windows::terminal_window_count(window.app_handle());
+                if terminal_windows::closing_ends_app(open) {
+                    // Hide at once, reap PTY children within a time limit, then exit.
+                    exit_now(window.app_handle());
+                }
+                // Otherwise the window just closes; `Destroyed` ends its shells.
+            }
+            // A closed terminal window takes its shells with it. React cleanup is
+            // not guaranteed once a webview is torn down, so the backend does it,
+            // off the event thread (closing a Windows pseudo-console can block).
+            tauri::WindowEvent::Destroyed
+                if terminal_windows::is_terminal_label(window.label()) =>
+            {
+                let app = window.app_handle().clone();
+                let label = window.label().to_string();
+                std::thread::spawn(move || {
+                    app.state::<terminal_windows::WindowSeeds>().discard(&label);
+                    let pty: State<'_, PtyManager> = app.state();
+                    pty.close_sessions_owned_by(&label);
+                });
             }
             tauri::WindowEvent::Destroyed if window.label() == MUSIC_PIP_LABEL => {
                 let _ = window.app_handle().emit(MUSIC_PIP_CLOSED_EVENT, ());
@@ -861,6 +922,10 @@ pub fn run() {
             search_youtube_videos_cmd,
             fetch_youtube_playlist_cmd,
             get_diagnostics,
+            terminal_windows::open_terminal_window,
+            terminal_windows::take_window_seed,
+            terminal_windows::pty_handoff_begin,
+            terminal_windows::pty_handoff_finish,
             create_pty,
             write_to_pty,
             resize_pty,

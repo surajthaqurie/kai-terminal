@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
   <!-- Kai mark: flat charcoal tile, off-white prompt, one cyan block cursor.
-       Master artwork for src-tauri/icons, the website and src/components/AppIcon.tsx. -->
+       Master artwork for src-tauri/icons, the website and kai-website/src/components/BrandMark.tsx. -->
   <rect width="1024" height="1024" rx="228" fill="#111317" />
   <rect x="6" y="6" width="1012" height="1012" rx="222" fill="none" stroke="#ffffff" stroke-opacity="0.08" stroke-width="12" />
   <path d="M300 344 L480 512 L300 680" fill="none" stroke="#f4f4f5" stroke-width="88" stroke-linecap="round" stroke-linejoin="round" />

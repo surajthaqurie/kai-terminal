@@ -73,6 +73,7 @@
 }
 
 .palette-item {
+  position: relative;
   display: flex;
   align-items: center;
   padding: 8px 12px;
@@ -83,22 +84,28 @@
 }
 
 /* Pointer movement moves the selection, so one style covers both: the accent
-   tint plus a stripe (a shape cue, not only a colour). Primary text stays. */
+   tint plus a stripe (a shape cue, not only a colour). Primary text stays.
+   The stripe is a pseudo-element, not an inset shadow: a shadow bends with the
+   row's rounded corners and looks ragged, a short rounded bar stays clean. */
 .palette-item.selected {
   background-color: var(--accent-subtle);
-  box-shadow: inset 2px 0 0 var(--accent-primary);
+}
+
+.palette-item.selected::before {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 2px;
+  background-color: var(--accent-primary);
 }
 
 /* Recently used commands end with a hairline before the full list. */
 .palette-item-last-recent {
   margin-bottom: 4px;
   box-shadow: 0 1px 0 var(--border-subtle);
-}
-
-.palette-item-last-recent.selected {
-  box-shadow:
-    inset 2px 0 0 var(--accent-primary),
-    0 1px 0 var(--border-subtle);
 }
 
 .palette-item-icon {

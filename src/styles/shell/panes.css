@@ -52,33 +52,6 @@
   z-index: 4;
 }
 
-/* Split-only header: which folder each pane is in (live from OSC 7), so a
- * split no longer depends on the status bar, which shows the active pane only. */
-.pane-label {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  height: 20px;
-  padding: 0 8px;
-  font-size: var(--text-xs);
-  line-height: 1;
-  color: var(--text-tertiary);
-  background-color: var(--bg-surface);
-  border-bottom: 1px solid var(--border-subtle);
-  user-select: none;
-}
-
-.pane-label-name {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.pane-item.active-pane .pane-label {
-  color: var(--text-primary);
-}
-
 /* Split Pane Divider: `--border-strong` (not `--border-subtle`) so the seam
  * between two same-background terminals stays visible in every theme. The old
  * 8%-white subtle token composited to ~1.3:1 on dark terminals (kai-dark) — the

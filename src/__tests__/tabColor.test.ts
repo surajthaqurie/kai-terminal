@@ -47,8 +47,9 @@ describe("TabBar tab color", () => {
     expect((items[0] as HTMLElement).style.getPropertyValue("--tab-color")).toBe(
       "var(--tab-color-red)"
     );
-    expect(container.querySelector(".tab-color-dot")).not.toBeNull();
-    // Plain tab: no marker, no dot.
+    // The colour lives in the top strip / active pill only; no separate dot.
+    expect(container.querySelector(".tab-color-dot")).toBeNull();
+    // Plain tab: no marker.
     expect(items[1]?.classList.contains("has-color")).toBe(false);
 
     root.unmount();

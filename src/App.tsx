@@ -36,6 +36,7 @@ import { usePrefetchPanels } from "./hooks/usePrefetchPanels";
 import { useProjectActions } from "./hooks/useProjectActions";
 import { useSessionExit } from "./hooks/useSessionExit";
 import { useSessionPersistence } from "./hooks/useSessionPersistence";
+import { useTabDetach } from "./hooks/useTabDetach";
 import { useTabs } from "./hooks/useTabs";
 import { useTerminalConfig } from "./hooks/useTerminalConfig";
 import { shouldRestoreTerminalFocus, useWindowRefit } from "./hooks/useWindowRefit";
@@ -44,6 +45,11 @@ import { SettingsService } from "./services/settingsService";
 import { resolveEffectiveProjectDir } from "./services/projectService";
 import { isMacPlatform, musicShortcutHints, platformLabel } from "./services/shortcuts";
 import { RELEASES_PAGE_URL } from "./services/updateService";
+import {
+  isSecondaryTerminalWindow,
+  openTerminalWindow,
+  type TabSeed,
+} from "./services/terminalWindows";
 import type { ShellProfile, SplitDirection, TerminalTab } from "./types/terminal";
 
 /**
@@ -52,7 +58,11 @@ import type { ShellProfile, SplitDirection, TerminalTab } from "./types/terminal
  * pane grid, lazy modals and status bar. State lives in `src/hooks`; this
  * component only composes it.
  */
-function App() {
+function App({ initialSeed = null }: { initialSeed?: TabSeed | null }) {
+  // An extra window (opened with Ctrl+Shift+N, or by dragging a tab out) shares
+  // this process with the first one. What must stay single belongs to the first
+  // window only: the saved layout, the music player and the update checks.
+  const secondary = useMemo(() => isSecondaryTerminalWindow(), []);
   const [lastError, setLastError] = useState<string | null>(null);
   const { notices, notify, dismiss: dismissNotice } = useNotices();
   /**
@@ -87,11 +97,12 @@ function App() {
     isSettingsOpen,
   });
   const { userSettings } = config;
-  const music = useMusicPlayer({ showMusicPlayer: userSettings.showMusicPlayer });
+  const music = useMusicPlayer({ showMusicPlayer: !secondary && userSettings.showMusicPlayer });
 
   const tabsState = useTabs({
     effectiveShellPath: config.effectiveShellPath,
     setLastError,
+    initialSeed,
   });
   const {
     tabs,
@@ -233,14 +244,29 @@ function App() {
     setTabs,
     setActiveTabId,
     autoRestoreSession: userSettings.autoRestoreSession,
+    enabled: !secondary,
   });
   const updates = useAppUpdates({
-    autoCheckUpdates: userSettings.autoCheckUpdates,
+    autoCheckUpdates: secondary ? false : userSettings.autoCheckUpdates,
     setLastError: reportError,
     notify,
   });
   useWindowRefit({ tabsRef, activeTabIdRef, terminalRefs, getActiveTerminal });
   usePrefetchPanels();
+
+  /** Another terminal window, like opening a second editor window. */
+  const openNewWindow = useCallback(() => {
+    openTerminalWindow().catch((err: unknown) =>
+      reportError(err instanceof Error ? err.message : "Could not open a new window.")
+    );
+  }, [reportError]);
+  /** Moves a tab, running shells included, into a new window. */
+  const detachTab = useTabDetach({
+    tabsRef,
+    terminalRefs,
+    removeTab: tabsState.closeTab,
+    notify,
+  });
 
   /** Session exited (Ctrl+C / `exit` / kill): close the pane, then hand
    * keyboard focus to whatever terminal is active now so typing continues
@@ -304,6 +330,7 @@ function App() {
     config.saveSettings(next);
   };
   const toggleMusicPanel = () => {
+    if (secondary) return; // the player lives in the first window
     const opening = !music.isOpen;
     music.togglePanel();
     if (opening) enableMusicPlayer();
@@ -318,6 +345,7 @@ function App() {
   // after: turn the player on and open it to choose a song, rather than doing
   // nothing.
   const musicCommand = (name: string) => {
+    if (secondary) return;
     if (!userSettings.showMusicPlayer) {
       enableMusicPlayer();
       music.openPanel();
@@ -346,6 +374,7 @@ function App() {
     // press never pops it up; Show / hide (above) is the key that turns it on.
     musicEvent: music.transport,
     reviewChanges: () => project.reviewChanges(),
+    newWindow: openNewWindow,
   });
 
   const pasteFromClipboard = useCallback(async () => {
@@ -371,6 +400,8 @@ function App() {
     toggleMusic: toggleMusicPanel,
     musicCommand,
     renameActiveTab: () => setRenameTarget(activeTab),
+    newWindow: openNewWindow,
+    moveTabToNewWindow: () => void detachTab(activeTabId),
     openEditor: () => void project.openEditor(),
     showGitStatus: () => void project.showGit("status"),
     reviewChanges: () => project.reviewChanges(true),
@@ -402,6 +433,7 @@ function App() {
             onReorderTabs={tabsState.reorderTabs}
             onMoveTabToIndex={tabsState.moveTabToIndex}
             onSetTabColor={tabsState.setTabColor}
+            onDetachTab={(id, x, y) => void detachTab(id, x, y)}
             shells={config.shells}
             selectedShellId={config.selectedShellId}
             onNewTabWithShell={newTabWithShell}
@@ -564,17 +596,19 @@ function App() {
             lastError={lastError}
           />
 
-          <MusicHost
-            mounted={Boolean(userSettings.showMusicPlayer) || music.isOpen}
-            startMuted={music.muted}
-            open={music.isOpen}
-            onClose={music.closePanel}
-            onRequestOpen={music.openPanel}
-            onTrackChange={music.handleTrackChange}
-            onMutedChange={music.setMuted}
-            onProgressChange={music.setProgress}
-            shortcutHints={musicHints}
-          />
+          {!secondary && (
+            <MusicHost
+              mounted={Boolean(userSettings.showMusicPlayer) || music.isOpen}
+              startMuted={music.muted}
+              open={music.isOpen}
+              onClose={music.closePanel}
+              onRequestOpen={music.openPanel}
+              onTrackChange={music.handleTrackChange}
+              onMutedChange={music.setMuted}
+              onProgressChange={music.setProgress}
+              shortcutHints={musicHints}
+            />
+          )}
         </Suspense>
 
         {renameTarget && (

@@ -339,6 +339,9 @@ export function findConflicts(
 /** The review-changes shortcut; handled before user bindings, so it is not remappable. */
 export const REVIEW_CHANGES_BINDING = "Ctrl+Shift+G";
 
+/** Opens another terminal window; handled before user bindings, so it is not remappable. */
+export const NEW_WINDOW_BINDING = "Ctrl+Shift+N";
+
 /**
  * Combos the app claims before it looks at user bindings (see useAppShortcuts).
  * A user binding on one of these would never fire, so Settings rejects it.
@@ -351,6 +354,7 @@ export const RESERVED_SHORTCUTS: ReadonlyArray<{
   ownedBy?: ShortcutActionId;
 }> = [
   { binding: REVIEW_CHANGES_BINDING, label: "Review git changes" },
+  { binding: NEW_WINDOW_BINDING, label: "New window" },
   { binding: "Ctrl+T", label: "New tab", ownedBy: "newTab" },
   { binding: "Ctrl+Shift+T", label: "New tab", ownedBy: "newTab" },
 ];
@@ -625,6 +629,7 @@ export const FIXED_SHORTCUT_HELP: ReadonlyArray<{ keys: string; label: string }>
   { keys: "Ctrl+click", label: "Open a link in the terminal" },
   { keys: "Shift+PageUp / PageDown", label: "Scroll one page" },
   { keys: REVIEW_CHANGES_BINDING, label: "Review git changes" },
+  { keys: NEW_WINDOW_BINDING, label: "New window" },
   { keys: "Ctrl+T / Ctrl+Shift+T", label: "New tab (always available)" },
 ];
 

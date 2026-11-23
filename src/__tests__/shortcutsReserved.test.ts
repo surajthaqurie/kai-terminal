@@ -3,6 +3,7 @@ import { buildCommandActions, type CommandActionContext } from "../components/co
 import { DEFAULT_KEYBINDINGS } from "../services/settingsService";
 import {
   FIXED_SHORTCUT_HELP,
+  NEW_WINDOW_BINDING,
   REVIEW_CHANGES_BINDING,
   RESERVED_SHORTCUTS,
   findReservedConflicts,
@@ -27,6 +28,16 @@ describe("reserved shortcuts", () => {
         (c) => c.action
       )
     ).toEqual(["settings"]);
+  });
+
+  it("rejects a binding on the new-window combo, which the app handles first", () => {
+    expect(
+      findReservedConflicts({ ...DEFAULT_KEYBINDINGS, search: "Ctrl+Shift+N" }).map((c) => ({
+        action: c.action,
+        reservedFor: c.reservedFor,
+      }))
+    ).toEqual([{ action: "search", reservedFor: "New window" }]);
+    expect(FIXED_SHORTCUT_HELP.map((r) => r.keys)).toContain(NEW_WINDOW_BINDING);
   });
 
   it("rejects Ctrl+T for anything but New tab, since the universal new-tab accelerator wins", () => {
@@ -68,6 +79,8 @@ describe("command palette", () => {
     keybindings: DEFAULT_KEYBINDINGS,
     isMac,
     newTab: noop,
+    newWindow: noop,
+    moveTabToNewWindow: noop,
     cycleTab: noop,
     focusNextPane: noop,
     focusPrevPane: noop,
@@ -90,6 +103,20 @@ describe("command palette", () => {
     openAiCli: noop,
     openDiagnostics: noop,
     openSettings: noop,
+  });
+
+  it("offers New Window (with its key) and Move Tab to New Window", () => {
+    const actions = buildCommandActions(ctx(false));
+    expect(actions.find((a) => a.id === "new-window")).toMatchObject({
+      label: "New Window",
+      shortcut: "Ctrl+Shift+N",
+    });
+    expect(actions.find((a) => a.id === "move-tab-to-new-window")?.label).toBe(
+      "Move Tab to New Window"
+    );
+    expect(buildCommandActions(ctx(true)).find((a) => a.id === "new-window")?.shortcut).toBe(
+      "Cmd+Shift+N"
+    );
   });
 
   it("no longer offers the manual ghost-typing reset", () => {

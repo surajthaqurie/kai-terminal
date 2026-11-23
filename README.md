@@ -2,303 +2,296 @@
   <img src="docs/logo.svg" alt="Kai logo" width="96" height="96">
 </p>
 
-# kai — One terminal. Every platform.
-
-[![CI](https://github.com/surajthaqurie/kai-terminal/actions/workflows/ci.yml/badge.svg)](https://github.com/surajthaqurie/kai-terminal/actions)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Release](https://img.shields.io/github/v/release/surajthaqurie/kai-terminal?label=download)](https://github.com/surajthaqurie/kai-terminal/releases/latest)
-[![Website](https://img.shields.io/badge/site-kai--terminal.vercel.app-06b6d4)](https://kai-terminal.vercel.app/)
-
-Desktop terminal for **Windows · Linux · macOS**, plus a local CLI for AI context.
-Tauri 2 + Rust (`portable-pty`) + WebGL GPU terminal renderer (`xterm.js`). MIT licensed, no account.
-
-Live site: **https://kai-terminal.vercel.app/** · Releases: [latest](https://github.com/surajthaqurie/kai-terminal/releases/latest)
-
-> Status: v0.2.3 is an active release. If something breaks, please open an issue with OS, version and steps to reproduce.
-
-<a href="https://kai-terminal.vercel.app/">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/screenshot-dark.png">
-    <source media="(prefers-color-scheme: light)" srcset="docs/screenshot-light.png">
-    <img alt="kai — One terminal. Every platform." src="docs/screenshot-light.png">
-  </picture>
-</a>
+<h1 align="center">Kai Terminal</h1>
 
 <p align="center">
-  <a href="https://github.com/surajthaqurie/kai-terminal/releases/latest"><img alt="Download" src="https://img.shields.io/badge/Download-latest-06b6d4?style=for-the-badge&logo=github"></a>
-  <a href="https://kai-terminal.vercel.app/"><img alt="Website" src="https://img.shields.io/badge/Website-open-0f172a?style=for-the-badge"></a>
-  <a href="https://kai-terminal.vercel.app/guide"><img alt="Guide" src="https://img.shields.io/badge/Setup-guide-0f172a?style=for-the-badge"></a>
+  One terminal. Every platform.<br>
+  A fast desktop terminal for Windows, Linux and macOS, with a local CLI that gives your AI coding tools project context.
 </p>
-
-### See it in action
 
 <p align="center">
-  <img alt="Kai Terminal window: tabs and command palette in one header row, kai health, kai integration list and an AI agent session in the terminal, git branch in the status bar" src="docs/screenshot-app.png" width="860">
+  <a href="https://github.com/surajthaqurie/kai-terminal/actions"><img alt="CI" src="https://github.com/surajthaqurie/kai-terminal/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-blue.svg"></a>
+  <a href="https://github.com/surajthaqurie/kai-terminal/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/surajthaqurie/kai-terminal?label=release"></a>
+  <a href="https://kai-terminal.vercel.app/"><img alt="Website" src="https://img.shields.io/badge/site-kai--terminal.vercel.app-06b6d4"></a>
 </p>
 
-More screens sit with their features below: [Azure DevOps](#integrations-azure-devops), [Microsoft Teams chat](#microsoft-teams-chat) and [Shared Agent](#shared-agent).
+<p align="center">
+  <a href="https://github.com/surajthaqurie/kai-terminal/releases/latest">Download</a> ·
+  <a href="https://kai-terminal.vercel.app/">Website</a> ·
+  <a href="https://kai-terminal.vercel.app/guide">Setup guide</a> ·
+  <a href="USER_MANUAL.md">User manual</a> ·
+  <a href="CHANGELOG.md">Changelog</a>
+</p>
 
-## Download — you pick the file
+---
 
-No auto-detection here. All installers are published on [GitHub Releases](https://github.com/surajthaqurie/kai-terminal/releases/latest). Pick your own:
+## Contents
 
-| OS                      | File                                                  | Install                                            |
-| ----------------------- | ----------------------------------------------------- | -------------------------------------------------- |
-| macOS 12+ (M1–M4)       | `kai_0.2.3_aarch64.dmg`                               | Open the `.dmg`, drag `Kai.app` to `/Applications` |
-| macOS 12+ (Intel)       | `kai_0.2.3_x64.dmg`                                   | Same as above                                      |
-| Windows 10/11 x64       | `kai_0.2.3_x64-setup.exe`                             | Download and run                                   |
-| Windows x64 (admin)     | `kai_0.2.3_x64_en-US.msi`                             | For silent/admin installs                          |
-| Windows 11 ARM64        | `kai_0.2.3_arm64-setup.exe`                           | Download and run                                   |
-| Linux x64 (Debian/Ubuntu) | `kai_0.2.3_amd64.deb`                               | `sudo apt install ./kai_0.2.3_amd64.deb`           |
-| Linux x64 (Fedora/RHEL) | `kai-0.2.3-1.x86_64.rpm`                              | `sudo dnf install ./kai-0.2.3-1.x86_64.rpm`        |
-| Linux x64 (any distro)  | `kai_0.2.3_amd64.AppImage`                            | `chmod +x kai_*.AppImage && ./kai_*.AppImage`      |
-| Linux ARM64             | `kai_0.2.3_arm64.deb` / `kai-0.2.3-1.aarch64.rpm` / `kai_0.2.3_aarch64.AppImage` | Same as above, ARM build |
+- [Overview](#overview)
+- [Installation](#installation)
+- [Quick start](#quick-start)
+- [Kai CLI](#kai-cli)
+- [MCP server](#mcp-server)
+- [Integrations](#integrations)
+- [Shared Agent](#shared-agent)
+- [Using the app](#using-the-app)
+- [Privacy and security](#privacy-and-security)
+- [Development](#development)
+- [Documentation](#documentation)
+- [Support](#support)
+- [License](#license)
 
-The website lists the same files and does not choose for you. If your browser guessed wrong, just click another tab — nothing is locked in.
+## Overview
 
-## Run from source
+Kai is a desktop terminal built on **Tauri 2**, **Rust** (`portable-pty`) and a WebGL-accelerated renderer (`xterm.js`). It ships with a companion CLI that indexes your projects locally and serves compact, budgeted context to AI coding tools over the Model Context Protocol (MCP).
+
+- **Cross-platform:** Windows 10/11, macOS 12+ and Linux (x64 and ARM64), one consistent experience.
+- **AI-ready:** `kai <agent>` wires your AI CLI to Kai MCP, builds a symbol and import graph, and runs the agent in your project.
+- **Local and private:** indexes live in `~/.kai/`, source files are never modified or executed, and there is no account and no telemetry.
+- **Integrated workflow:** Azure DevOps work items, pull requests and builds for your agents; Microsoft Teams chat in a tab; encrypted agent sharing between your own PCs.
+- **Themeable:** a design system with a theme registry, bundled Inter and JetBrains Mono fonts, and remappable shortcuts.
+
+## Installation
+
+Download the installer for your system from the [latest release](https://github.com/surajthaqurie/kai-terminal/releases/latest).
+
+| OS                        | File                                                                              | Install                                            |
+| ------------------------- | --------------------------------------------------------------------------------- | -------------------------------------------------- |
+| macOS 12+ (Apple silicon) | `kai_0.2.3_aarch64.dmg`                                                           | Open the `.dmg`, drag `Kai.app` to `/Applications` |
+| macOS 12+ (Intel)         | `kai_0.2.3_x64.dmg`                                                               | Same as above                                      |
+| Windows 10/11 x64         | `kai_0.2.3_x64-setup.exe`                                                         | Download and run                                   |
+| Windows x64 (admin)       | `kai_0.2.3_x64_en-US.msi`                                                         | Silent and administrator installs                  |
+| Windows 11 ARM64          | `kai_0.2.3_arm64-setup.exe`                                                       | Download and run                                   |
+| Linux x64 (Debian/Ubuntu) | `kai_0.2.3_amd64.deb`                                                             | `sudo apt install ./kai_0.2.3_amd64.deb`           |
+| Linux x64 (Fedora/RHEL)   | `kai-0.2.3-1.x86_64.rpm`                                                          | `sudo dnf install ./kai-0.2.3-1.x86_64.rpm`        |
+| Linux x64 (any distro)    | `kai_0.2.3_amd64.AppImage`                                                        | `chmod +x kai_*.AppImage && ./kai_*.AppImage`      |
+| Linux ARM64               | `kai_0.2.3_arm64.deb` · `kai-0.2.3-1.aarch64.rpm` · `kai_0.2.3_aarch64.AppImage` | Same as above, ARM build                           |
+
+See [INSTALL.md](INSTALL.md) for details and troubleshooting. Kai checks for updates itself (**Settings → Updates**).
+
+## Quick start
+
+1. Install and open Kai Terminal.
+2. Check your setup: `kai health` (or `kai doctor` for PATH and desktop diagnostics).
+3. Start an AI tool in your project:
+
+   ```bash
+   cd your-project
+   kai claude .        # or: kai opencode . · kai cursor . · kai codex .
+   ```
+
+   Kai wires the MCP configuration if needed, enters Code Mode, builds the project graph, runs the agent, and syncs graph changes when it exits.
+
+4. From any other terminal, `kai open [path]` launches or focuses the desktop app.
+
+## Kai CLI
+
+The CLI indexes projects into `~/.kai/` (outside your repository) and is read-only on your sources. Project intelligence and agent commands run inside Kai Terminal (`KAI_TERMINAL=1`); the commands in the first block work from any terminal. Full syntax is in [USER_MANUAL.md](USER_MANUAL.md).
+
+**Any terminal**
 
 ```bash
-git clone https://github.com/surajthaqurie/kai-terminal.git
-cd kai-terminal
-npm install
-npm run tauri dev   # desktop, hot reload
+kai open [path]                    # launch or focus Kai Terminal (defaults to current dir)
+kai health                         # system readiness
+kai doctor                         # environment, PATH and desktop diagnostics
+kai list [-a|-m|-i|-s|-c]          # tools (-a), MCP (-m), projects (-i), sessions (-s), config (-c)
+kai integration [list|azure|teams] # inspect or connect integrations
+kai azure [list|active|remove]     # Azure DevOps projects for this folder
+kai remove [-m|-a|-i|-s]           # un-wire tools, or delete index/session data
+kai remove --name <id>             # remove an integration account everywhere
+kai close                          # close active Kai Terminal instances
 ```
 
-Prereqs: Node 20+ · Rust 1.75+. Linux also needs:
+**Inside Kai Terminal**
+
+```bash
+kai <agent> [path]         # run an AI tool: wire MCP, enter Code Mode, build and sync the graph
+kai agent add <agent|all>  # wire tools to Kai MCP (aliases: kai setup, kai mcp)
+kai agent remove <agent>   # un-wire a tool
+kai graph init .           # build the symbol index and import graph
+kai graph update .         # force a rebuild
+kai graph status .         # index status and symbol counts
+kai graph prune            # drop maps of deleted folders and sub-folders
+kai teams                  # Microsoft Teams chat in this tab
+kai stop                   # leave Code Mode
+kai lsp                    # probe installed language servers
+kai metrics                # local performance and token diagnostics
+kai bench .                # measure query speed on this machine
+```
+
+### Supported agents
+
+All ten agents share one registry (`src/core/agents.ts`). Detection is dynamic: `kai list` probes your `PATH` and known config files at runtime.
+
+| Agent             | Config file                                                   | Entry                                         |
+| ----------------- | ------------------------------------------------------------- | --------------------------------------------- |
+| Claude Code       | `~/.claude.json` (global) or `.mcp.json` (project)            | `mcpServers["kai-terminal"]` stdio            |
+| Cursor            | `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` (project) | uses `${workspaceFolder}`                     |
+| Codex             | `~/.codex/config.toml`                                        | `[mcp_servers.kai-terminal]`                  |
+| Gemini CLI        | `~/.muse/settings.json`                                       | `mcpServers["kai-terminal"]` stdio            |
+| Copilot / VS Code | `.vscode/mcp.json` (project)                                  | `servers["kai-terminal"]`, `"type": "stdio"`  |
+| Windsurf          | `~/.codeium/windsurf/mcp_config.json`                         | `mcpServers["kai-terminal"]` stdio            |
+| Cline             | VS Code global storage `cline_mcp_settings.json`              | skipped with manual steps if VS Code is absent |
+| opencode          | `~/.config/opencode/opencode.json`                            | `mcp["kai-terminal"]`, `"type": "local"`      |
+| Aider             | `~/.config/aider/mcp.json`                                    | `mcpServers["kai-terminal"]` stdio            |
+| Antigravity (agy) | `~/.gemini/antigravity-cli/settings.json`                     | `mcpServers["kai-terminal"]` stdio            |
+
+The desktop app also lists installed CLIs without running them, shows each one's wiring state, and offers one-click **Auto-wire Kai MCP**.
+
+## MCP server
+
+Kai serves project context over stdio MCP. All tools are read-only on project sources.
+
+| Tool                   | Purpose                                                                                                   |
+| ---------------------- | --------------------------------------------------------------------------------------------------------- |
+| `kai_project_info`     | Metadata, file counts, language breakdown                                                                 |
+| `kai_search_code`      | Ranked symbol search (metadata only; `includeSource: true` adds snippets)                                 |
+| `kai_read_range`       | Read one symbol or line range                                                                             |
+| `kai_find_symbol`      | Function, class and struct locations with line ranges                                                     |
+| `kai_get_dependencies` | Import graph                                                                                              |
+| `kai_get_context`      | Budgeted context for a task; an exact symbol name anchors it, with callers and tests added within a cap   |
+| `kai_refresh_index`    | Re-index after changes                                                                                    |
+| `kai_get_lsp_status`   | Status of local language servers (`typescript-language-server`, `rust-analyzer`, `pyright`, `gopls`)      |
+| `kai_plan_task`        | Code Mode task planning with project context                                                              |
+| `kai_sync_graph`       | Guarded post-change graph validation and freshness sync                                                   |
+
+Entering Code Mode (`kai <agent>` or `kai graph init .`) also installs a self-contained `commit-msg` hook so commits from any agent carry no `Co-authored-by:` trailers. The hook is POSIX sh, works on every platform, fails open, and chains any existing hook. To remove it, delete `.git/hooks/commit-msg` (and rename `commit-msg.kai-orig` back if your own hook was preserved).
+
+Reference: [MCP.md](MCP.md).
+
+## Integrations
+
+Integrations are opt-in and are the only features that contact an outside service, using only the sign-in you provide.
+
+### Azure DevOps
+
+Connect a folder so your AI tools can read its work items, pull requests and builds through the same MCP server. The setup is one command and is safe to re-run.
+
+```bash
+kai integration list                 # every integration and its state for this folder
+kai integration azure                # sign in, connect this folder, wire agents, verify with real calls
+kai azure list                       # accounts and projects; * marks this folder's active project
+kai azure active --name Payments     # switch this folder's active project
+kai azure remove                     # disconnect this folder (your sign-in stays)
+kai remove --name contoso            # remove the account everywhere
+```
+
+- **Auto-detected:** organization, project and repository come from the folder's git remotes (Azure DevOps Services and Server HTTPS remotes) and are verified against Azure.
+- **One active project per folder.** Sign-in is per user. The connection is a private file under `~/.kai/projects/`, never in your repository.
+- **Tokens stay safe:** the Azure CLI is used when installed; otherwise the token goes to the OS secret store (Windows DPAPI, macOS Keychain, Linux Secret Service), never to a repository or agent config. Work item searches are scoped to the active project.
+- **Read-only tools, only where connected:** `kai_integration_status`, `kai_workflow_rules`, `kai_work_item_search`, `kai_work_item_get`, `kai_pr_list`, `kai_pr_get`, `kai_build_list`, `kai_build_log`.
+- **Write tools, off by default:** `kai integration azure --allow-writes` (run by you; refused inside an agent session) adds `kai_work_item_comment`, `kai_work_item_set_state`, `kai_work_item_create`, `kai_work_item_update`, `kai_pr_create` and `kai_pr_comment`. They never create branches, merge or delete. `--no-writes` removes them.
+- **Workflow rules:** set a merge branch and a branch-naming regex per folder (`--merge-branch`, `--branch-pattern`, plus `--clear-merge-branch` and `--clear-branch-pattern`). Agents read them via `kai_workflow_rules`; Kai never blocks a commit or push.
+- **Desktop app:** the **Integrations** tab of the AI Providers panel (robot icon) offers the same actions, grouped by account.
+
+### Microsoft Teams
+
+Read and answer your Teams chats without leaving the terminal. It uses your own account, shared by every terminal, and is not tied to a folder or an agent.
+
+```bash
+kai integration teams              # sign in with your Microsoft account, check access
+kai integration teams --channels   # add channel messages once an administrator approved them
+kai teams                          # open the chat in this tab
+kai integration teams remove       # sign out and forget the account
+```
+
+- Fully clickable and keyboard driven: `Enter` sends, `Ctrl+J` adds a new line, `Up`/`Down` switch conversation, `PageUp`/`PageDown` scroll, `Esc` leaves.
+- Images show inline in capable terminals (iTerm2, WezTerm, mintty, Kai Terminal). Paste an image or file with `Ctrl+V` or click **Attach**; up to 4 items, files up to 2 GB are shared as OneDrive links.
+- The open conversation refreshes every few seconds, the chat list every 20 seconds, and **●** marks unread chats.
+- Uses Microsoft Graph with your own permissions. The token goes to the OS secret store.
+- Teams is not an MCP integration: no agent tool exists for it, and both Teams commands refuse to run inside an agent session.
+- Sign-in needs a build that carries Kai's Microsoft Entra client ID. Maintainers: [docs/microsoft-sign-in-setup.md](docs/microsoft-sign-in-setup.md).
+
+## Shared Agent
+
+Use the Claude Code or OpenCode on another PC from this one, or let your other PCs use yours. Open **AI Providers → Shared Agent**. A green dot on the AI Providers icon shows while sharing is on.
+
+- **Share my agent:** turn sharing on, choose agents and port, and generate an invite link. A link works once and expires after 5, 15 or 60 minutes, or stays valid until sharing stops. Each connected PC has its own permissions (agents, model, time limit per run), usage table and recent tasks, and can be removed at any time.
+- **Use a shared agent:** paste the invite link on the other PC and chat in the panel or a pop-out window. Answers stream as they are written.
+- **Encrypted, Kai to Kai only:** peers handshake with X25519 keys and traffic is end-to-end encrypted.
+- **Read-only, always:** a shared agent runs in an empty folder. It cannot read your files, run commands or use MCP tools, and no setting changes this.
+- **Private by default:** sharing is off whenever Kai starts, and only PCs on your own network can join. To reach PCs elsewhere, point an HTTPS tunnel at the port Kai shows; Kai never opens one for you.
+- **Never port-forward** the sharing port. See [SECURITY.md](SECURITY.md).
+
+## Using the app
+
+The window has three bands: a header row, the terminal panes, and a status bar.
+
+- **Header:** tabs (`+` for a new tab, `▾` to pick a shell), the command palette (`Ctrl+Shift+P`), AI Providers, Settings (`Ctrl+,`), and the `⋯` menu for workspaces, git review, splits, diagnostics and updates.
+- **Several windows:** `Ctrl+Shift+N` (or **New window** in the `⋯` menu and the palette) opens another Kai window, like a second editor window; launching the app again does the same. Drag a tab out of the tab bar and release to move it into its own window, **with its shell still running** (scrollback and any running command come along). **Move tab to new window** in the tab's right-click menu does the same without dragging. Closing a window ends only its shells; the app quits when the last window closes. The first window keeps the saved layout, the music player and update checks.
+- **Status bar:** shell picker, Code Mode / Terminal pill with an editor menu, git branch (click or `Ctrl+Shift+G` to review changes), the music mini-player while one plays, and the version with update check.
+- **Open in editor:** click the mode pill or pick an editor from its menu (VS Code, Cursor, Windsurf, VSCodium, Sublime Text, Zed, Atom, IntelliJ IDEA, Fleet, WebStorm, CLion). Set the default in **Settings → Shell & Tools**. Kai also adds a **Kai Terminal** profile to VS Code, Cursor, VSCodium and Windsurf (`KAI_NO_EDITOR_PROFILE=1` disables it).
+- **Appearance:** **Settings → Font & Display** and **Appearance** control font, size, scrollback, padding, theme and opacity. See [docs/THEMES.md](docs/THEMES.md) and [docs/DESIGN_SYSTEM.md](docs/DESIGN_SYSTEM.md).
+- **Links and files:** `Ctrl+click` (`Cmd+click` on macOS) opens links. Pasting copied files inserts their quoted paths.
+
+### Keyboard shortcuts
+
+On macOS use `Cmd` where `Ctrl` is shown. Plain `Ctrl+C` and `Ctrl+V` always reach the shell. Every shortcut is remappable in **Settings → Shortcuts**, except `Ctrl/Shift+Insert`, `Shift+PageUp`/`PageDown`, `Ctrl+Shift+G` and `Ctrl+Shift+N`.
+
+| Keys                              | Action                                         |
+| :-------------------------------- | :--------------------------------------------- |
+| `Ctrl+Shift+C` / `Ctrl+Shift+V`   | Copy / paste                                   |
+| `Ctrl+Shift+A` / `Ctrl+Shift+K`   | Select all / clear the terminal                |
+| `Ctrl+Shift+F`                    | Find in output                                 |
+| `Ctrl+Shift+P`                    | Command palette                                |
+| `Ctrl+Shift+T` / `Ctrl+Shift+W`   | New tab / close tab                            |
+| `Ctrl+Tab` / `Ctrl+Shift+Tab`     | Next / previous tab                            |
+| `Ctrl+1` … `8`, `Ctrl+9`          | Jump to a tab / the last tab                   |
+| `Alt+Shift+=` / `Alt+Shift+-`     | Split side by side / stacked                   |
+| `Alt+Shift+W`                     | Close the active pane                          |
+| `Alt+Shift+]` / `Alt+Shift+[`     | Focus next / previous pane                     |
+| `Ctrl+=` / `Ctrl+-` / `Ctrl+0`    | Zoom in / out / reset                          |
+| `Ctrl+Shift+G`                    | Review git changes                             |
+| `Ctrl+Shift+N`                    | New window                                     |
+| `Ctrl+,`                          | Settings                                       |
+| `Ctrl+Shift+M`                    | Show / hide the music player                   |
+
+Defaults follow Windows Terminal and avoid `Ctrl+Alt`, which Windows reports as AltGr. Upgrading users keep any shortcut they set themselves; unchanged defaults move to the new keys once.
+
+## Privacy and security
+
+- Indexed source files are never executed. `.env*`, keys and binaries are skipped by default.
+- MCP input is size-capped before parsing, and retrieval checks file hashes and warns on stale indexes.
+- Indexes live in `~/.kai/`; `kai remove` deletes them. Diagnostics go to `~/.kai/metrics.jsonl`.
+- No account and no telemetry in the app. The code-map tools never touch the network.
+- Shared Agent opens a listener only while you have sharing turned on in the current session. `kai remove --name <id>` deletes an Azure DevOps sign-in and token; `kai integration teams remove` does the same for Teams.
+
+To report a vulnerability, see [SECURITY.md](SECURITY.md).
+
+## Development
+
+**Prerequisites:** Node 20+ and Rust 1.75+. Linux also needs:
 
 ```bash
 sudo apt-get install -y build-essential pkg-config libssl-dev libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
 ```
 
-Other scripts: `npm run dev` (browser mock PTY) · `npm run tauri build` (bundles in `src-tauri/target/release/bundle/`) · `npm run check` (lint+types+tests).
-
-## Kai CLI — local index + MCP
-
-Kai ships a CLI that indexes projects into `~/.kai/` (outside your repo) and serves context to AI tools over stdio MCP. Read-only — your source code is never modified.
-
-> **Environment Note**: Project intelligence and agent execution commands run inside Kai Terminal (`KAI_TERMINAL=1`). Outside Kai Terminal, use `kai open [path]` to launch or focus Kai Terminal. See [USER_MANUAL.md](USER_MANUAL.md) for full documentation.
-
-### External Commands (Any Terminal)
-
 ```bash
-kai open [path]              # launch or focus Kai Terminal desktop app (defaults to current dir)
-kai health                   # check system readiness and health
-kai doctor                   # run environment, PATH, and desktop diagnostics
-kai list [-a|-m|-i|-s|-c]    # look up tools (-a), MCP (-m), projects (-i), sessions (-s), config (-c)
-kai integration [list|azure|teams] # inspect or connect integrations (Azure DevOps, Microsoft Teams)
-kai azure [list|active|remove] # list projects, switch active project, or disconnect folder
-kai remove [-m|-a|-i|-s]     # un-wire tools (-m/-a <name>) or delete index (-i)/session (-s) data
-kai remove --name <id>       # remove an integration account everywhere (token + every folder)
-kai close                    # close active Kai Terminal instances
+git clone https://github.com/surajthaqurie/kai-terminal.git
+cd kai-terminal
+npm install
+npm run tauri dev      # desktop app with hot reload
 ```
 
-### Inside Kai Terminal
+| Script                 | Purpose                                                    |
+| ---------------------- | ---------------------------------------------------------- |
+| `npm run dev`          | Browser build with a mock PTY                              |
+| `npm run tauri build`  | Production bundles in `src-tauri/target/release/bundle/`   |
+| `npm run check`        | Type check, formatting and tests                           |
+| `npm run prepush`      | Full pre-push gate, including Rust fmt, clippy and tests   |
+| `npm run test:docker`  | Run the suites in Docker                                   |
 
-```bash
-kai teams                 # Microsoft Teams chat in this tab (sign in first: kai integration teams)
-kai <agent> [path]        # run an AI tool: auto-wires MCP, enters Code Mode, builds & syncs graph
-kai agent add <agent|all> # wire tool(s) to Kai MCP (aliases: kai setup, kai mcp)
-kai agent remove <agent>  # un-wire tool from Kai MCP (or kai remove -a/-m)
-kai graph init .          # initialize the symbol index and import graph
-kai graph update .        # force update and rebuild of project graph
-kai graph status .        # show graph index status and symbol counts
-kai graph prune           # remove maps of deleted folders and of a repo's subfolders
-kai stop                  # clear Code Mode and return to plain terminal
-kai lsp                   # probe locally installed Language Server Protocol servers
-kai metrics               # view local performance and token diagnostics
-```
+More in [DEVELOPMENT.md](DEVELOPMENT.md), [ARCHITECTURE.md](ARCHITECTURE.md) and [TEST_PLAN.md](TEST_PLAN.md).
 
-`kai <agent> [path]` (e.g. `kai claude .`, `kai opencode .`, `kai cursor .`) automatically
-wires Kai MCP configuration if needed, activates Code Mode, generates the
-project graph, runs the agent inside the project directory, and auto-syncs graph changes on exit.
-Detailed guide and syntax: see [USER_MANUAL.md](USER_MANUAL.md).
+## Documentation
 
-### Supported agents
+[INSTALL](INSTALL.md) · [USER_MANUAL](USER_MANUAL.md) · [MCP](MCP.md) · [DEVELOPMENT](DEVELOPMENT.md) · [ARCHITECTURE](ARCHITECTURE.md) · [SECURITY](SECURITY.md) · [TEST_PLAN](TEST_PLAN.md) · [KNOWN_LIMITATIONS](KNOWN_LIMITATIONS.md) · [RELEASE_GUIDE](RELEASE_GUIDE.md) · [CHANGELOG](CHANGELOG.md)
 
-| Agent             | Config file                                                   | Notes                                            |
-| ----------------- | ------------------------------------------------------------- | ------------------------------------------------ |
-| Claude Code       | `~/.claude.json` (global) or `.mcp.json` (project)            | `mcpServers["kai-terminal"]` stdio entry         |
-| Cursor            | `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` (project) | uses `${workspaceFolder}`                        |
-| Codex             | `~/.codex/config.toml`                                        | `[mcp_servers.kai-terminal]` section             |
-| Gemini CLI        | `~/.muse/settings.json`                                       | `mcpServers["kai-terminal"]` stdio entry                     |
-| Copilot / VS Code | `.vscode/mcp.json` (project)                                  | `servers["kai-terminal"]` with `"type": "stdio"`             |
-| Windsurf          | `~/.codeium/windsurf/mcp_config.json`                         | `mcpServers["kai-terminal"]` stdio entry                     |
-| Cline             | VS Code global storage `cline_mcp_settings.json`              | skipped with manual steps when VS Code is absent |
-| opencode          | `~/.config/opencode/opencode.json`                            | `mcp["kai-terminal"]` with `"type": "local"`                 |
-| Aider             | `~/.config/aider/mcp.json`                                    | `mcpServers["kai-terminal"]` stdio entry                     |
-| Antigravity (agy) | `~/.gemini/antigravity-cli/settings.json`                     | `mcpServers["kai-terminal"]` stdio entry                     |
+## Support
 
-Agent detection is dynamic: `kai list` probes the live system
-PATH plus known config files at runtime, so newly installed agents show
-up without any code changes. All 10 agents share one registry
-(`src/core/agents.ts`).
-
-The desktop app also lists locally installed CLIs
-(`codex`, `claude`, `gemini`, `opencode`, `copilot`, `aider`, `cursor`,
-`windsurf`, `cline`, `agy`) without
-running them — missing tools report `available: false`. Each provider row
-shows its kai wiring state and offers one-click **Auto-wire Kai MCP** for
-system-installed tools.
-
-### Notes on speed
-
-Measured on the maintainer's machine: local queries typically complete in a few ms.
-Your numbers will differ by repo size and hardware — run `kai bench .` to check.
-
-### MCP tools (stdio)
-
-- `kai_project_info` — metadata, file counts, language breakdown.
-- `kai_search_code` — ranked symbol search (metadata only; `includeSource: true` adds snippets).
-- `kai_read_range` — read one symbol or line range.
-- `kai_find_symbol` — function/class/struct locations with line ranges.
-- `kai_get_dependencies` — import graph.
-- `kai_get_context` — budgeted context for a task (an exact symbol name anchors it; callers and tests of that symbol are added within a cap for refactor, debug, implement and test tasks).
-- `kai_refresh_index` — re-index after changes.
-- `kai_get_lsp_status` — local language server status (`typescript-language-server`, `rust-analyzer`, `pyright`, `gopls`).
-- `kai_plan_task` — Code Mode task planning with project context and prompt options.
-- `kai_sync_graph` — guarded post-change graph validation and freshness sync.
-
-All tools are read-only on project sources. Hands-free co-author prevention needs no tool:
-entering Code Mode (e.g. `kai <agent>` or `kai graph init .`) installs a self-contained `commit-msg`
-hook into the repo, so every future commit from any agent lands without
-`Co-authored-by:` trailers. The hook is POSIX sh only (Linux, macOS,
-Windows), fails open, and preserves/chains any pre-existing hook.
-To remove the hook later, delete
-`.git/hooks/commit-msg` (and rename `commit-msg.kai-orig` back to
-`commit-msg` if your own hook was preserved there).
-
-The status bar in the app shows the indexed project, file/symbol counts and last query cost.
-
-### Integrations (Azure DevOps)
-
-Connect a folder to Azure DevOps and your AI tools can read its work items, pull requests and builds through the same `kai mcp` server. One command does the setup, and it is safe to run again:
-
-```bash
-# Can run in any terminal (or inside Kai Terminal). Organization, project and repository are auto-detected.
-kai integration list       # every integration and its state for this folder
-kai integration azure      # sign in, connect this folder, wire your agents, verify with real calls
-kai azure list             # accounts and their projects; * marks this folder's active project
-kai azure active --name Payments   # switch this folder's active project
-kai azure remove           # disconnect this folder (your sign-in stays)
-kai remove --name contoso  # remove the account everywhere: token and every folder's connection
-```
-
-- **Auto-detected:** organization, project and repository come from the folder's git remotes (Azure DevOps Services and Azure DevOps Server HTTPS remotes), from any sub-folder. Names are checked against what Azure really has.
-- **One active project per folder.** Sign-in is per user and shared by every folder. The connection is a private file under `~/.kai/projects/`, never in your repository.
-- **Tokens stay safe:** the Azure CLI is used when installed (with in-flight request deduplication), so Kai stores nothing; otherwise (and always for Azure DevOps Server) an access token goes to the OS secret store (Windows DPAPI, macOS Keychain piped via stdin without argv exposure, Linux Secret Service), never to a repository or an agent config. Work item searches are strictly scoped to the active project boundary.
-- **Merge branch:** type the branch new work starts from and pull requests target, per folder (Kai checks that one name when you save and when a pull request is opened, and says if it does not exist; no branch list is loaded). Agents read it through `kai_workflow_rules`; with none set they use the repository's default branch. It guides the agent; Kai never validates or blocks a commit or push. In the desktop app it sits behind **More** on the Azure DevOps card.
-- **Branch naming (regex):** an optional regular expression new branch names should match, for example `^(feature|bugfix)/\d+-[a-z0-9-]+$`. It is checked when you save (a broken pattern gets a plain error, an unanchored one a tip) and agents read it through `kai_workflow_rules`. Both rules have a **Remove** button. Kai never checks a branch name or blocks a commit or push.
-- **Read-only tools, added only where connected:** `kai_integration_status`, `kai_workflow_rules`, `kai_work_item_search`, `kai_work_item_get`, `kai_pr_list`, `kai_pr_get`, `kai_build_list`, `kai_build_log`. A folder that is not connected sees exactly the tools listed above.
-- **Write tools, off by default:** `kai integration azure --allow-writes` (you, in a terminal; it asks first and refuses inside an AI agent's session) adds `kai_work_item_comment`, `kai_work_item_set_state`, `kai_work_item_create`, `kai_work_item_update`, `kai_pr_create` and `kai_pr_comment` for that folder. They never create branches, merge or delete; `--no-writes` removes them. See `MCP.md`.
-- **Branch rules from the command line:** `kai integration azure --merge-branch main --branch-pattern "^feature/[0-9]+$"` (and `--clear-merge-branch`, `--clear-branch-pattern`) set the same guidance as the desktop card. Text from Azure is returned as untrusted data. A running agent is told when the tool list changes, so one that honors MCP `tools/list_changed` picks the tools up on its own; restart any that does not.
-- **Desktop app:** the **Integrations** tab of the AI CLI providers panel (robot icon) offers the same actions. Accounts are grouped by person (with **Sign out all** and **Add account**), the active one is marked **Active**, **Connect** just opens one Microsoft sign-in address in your browser (it is turned off, with the reason, in a build that has no Microsoft app yet), and a **Microsoft Teams** card sits next to it. The cards re-read their status when the window regains focus (there is no refresh button); that never changes any MCP configuration.
-
-![The Integrations tab: Azure DevOps card connected for Payments / web-app, with the merge branch and branch naming rules open](docs/screenshot-integrations.png)
-
-Details: [MCP.md](MCP.md) · [USER_MANUAL.md](USER_MANUAL.md).
-
-### Microsoft Teams chat
-
-Read and answer your Teams chats without leaving the terminal. It is your own account, shared by every terminal, and not tied to a folder or an AI agent.
-
-![Kai Terminal running kai teams: teams, channels and chats on the left, the open conversation on the right, a message box below](docs/screenshot-teams.png)
-
-```bash
-kai integration teams              # sign in with your Microsoft account in the browser, check access
-kai integration teams --channels   # add channel messages later, once an administrator approved them (asked for by default)
-kai teams                          # open the chat in this tab
-kai integration teams remove       # sign out and forget the account
-```
-
-- **Everything is clickable and works from the keyboard.** Teams, channels and chats on the left, the conversation on the right, a message box at the bottom. `Enter` sends, `Ctrl+J` starts a new line, `Up` / `Down` switch conversation, `PageUp` / `PageDown` scroll, `Esc` leaves.
-- **Pictures and files.** Images show inline where the terminal draws them (iTerm2, WezTerm, mintty, Kai Terminal) and open in your image viewer elsewhere. Paste a copied image or file with `Ctrl+V`, or click **Attach**; images go inline, other files are uploaded to your OneDrive and shared as a link. Up to 4 items, each file up to 2 GB.
-- **It keeps itself up to date.** The open conversation refreshes every few seconds, the chat list every 20 seconds, and a **●** marks chats with messages you have not seen.
-- **You see only what you could see in Teams.** Kai uses Microsoft Graph with your own permissions. The sign-in token goes to the OS secret store, never to a repository or an agent config.
-- **For you, not your AI agents.** Teams is not an MCP integration: no agent tool exists for it, the sign-in is never handed to an agent, and both Teams commands refuse to run inside an agent's session.
-- **Needs an app registration.** Sign-in works in builds that carry Kai's Microsoft Entra client ID. Without one, `kai integration teams` says so and opens nothing. Maintainers: see [docs/microsoft-sign-in-setup.md](docs/microsoft-sign-in-setup.md).
-
-Details: [USER_MANUAL.md](USER_MANUAL.md).
-
-### Shared Agent
-
-Use the Claude Code (or OpenCode) on another PC from this one, or let your other PCs use yours. Open **AI Providers → Shared Agent**. While sharing is on, the AI Providers icon in the header shows a green dot.
-
-![AI Providers, Shared Agent tab, Share my agent: sharing turned on and listening on the local network, Claude Code shared, OpenCode not found](docs/screenshot-shared-agent.png)
-
-- **Share my agent:** turn sharing on, pick the agents to share, and click **Generate invite link**. Choose the port it listens on (Kai checks it is free and releases it when you stop). A link works once and expires after 5, 15 or 60 minutes, or stays valid until you turn sharing off. Every connected PC gets its own permissions (which agents, which model, a time limit per run), a usage table and its recent tasks, and you can remove it at any time.
-- **Use a shared agent:** paste the invite link on the other PC, then chat with its agent, in the panel or popped out into its own window. Answers appear as they are written. Only the joined PC answers: if it is offline, busy or fails, the chat says so.
-- **Read-only, always:** a shared agent runs in an empty folder. It cannot read your files, run commands or use MCP tools, and there is no setting that changes this.
-- **Private by default:** sharing is off whenever Kai starts. Only PCs on your own network can join, with a one-time link, and a PC's access stops working off that network. To reach PCs elsewhere, point any HTTPS tunnel at the port Kai shows and paste its address; Kai never opens one for you.
-- **Trusted networks only:** traffic on your network is plain HTTP. Never port-forward the port. See [SECURITY.md](SECURITY.md).
-
-### The window
-
-One header row holds everything you use all the time:
-
-- **Tabs**, with `+` for a new tab and `▾` beside it to open a tab with a specific shell (your choice becomes the default for new tabs).
-- **Search box** (`Ctrl+Shift+P`): the command palette. Every action is in it with its shortcut: split, close pane, find, copy, paste, clear, git review, workspaces and more.
-- **Shared Agent** switch: one click turns sharing your agents on or off; its caret opens invites and connected PCs.
-- **AI providers** and **Settings** icons.
-- **`⋯` menu**: workspaces, review git changes, split right / down, diagnostics and updates. A dot on it means an update is available.
-- **Window buttons** (minimize, maximize, close) on Windows and Linux; on macOS the usual traffic lights stay at the left. Drag the empty part of the tab row to move the window; double-click it to maximize.
-
-The status bar at the bottom only reports: mode (click the **Code Mode** / **Terminal** pill to open the project in your editor; the `▴` beside it picks which editor), git branch (click to review changes), the working directory (click to copy), the music mini-player while one plays, and an update chip when there is one. The version number and a manual update check are in **Settings → Updates**.
-
-**Links and pasted files.** Web addresses in the output (sign-in links, build logs, docs) are underlined when you point at them; `Ctrl+click` (`Cmd+click` on macOS) opens them in your browser. Copy files in Explorer, Finder or a file manager and paste: their paths are pasted, quoted when they contain spaces, ready for a command or an AI CLI.
-
-Kai ships its own fonts, Inter for the interface and JetBrains Mono for the terminal, so it looks the same on every OS. Pick another terminal font in **Settings → Font & Display**: the list shows the bundled font, the clean monospace fonts installed on your PC and a custom field. A font you chose is never replaced.
-
-### Keyboard shortcuts
-
-On macOS use `Cmd` where `Ctrl` is shown. Plain `Ctrl+C` always stays the shell interrupt, and plain `Ctrl+V` always reaches the shell.
-
-| Keys | Action |
-| :--- | :--- |
-| `Ctrl+Shift+C` (or `Ctrl+Insert`) | Copy the selection |
-| `Ctrl+Shift+V` (or `Shift+Insert`) | Paste |
-| `Ctrl+Shift+A` | Select all output |
-| `Ctrl+Shift+K` | Clear the terminal |
-| `Ctrl+Shift+Home` / `End` | Scroll to the top / bottom |
-| `Shift+PageUp` / `PageDown` | Scroll one page |
-| `Ctrl+=` / `Ctrl+-` / `Ctrl+0` | Zoom the font in / out / back to the saved size (this session only) |
-| `Ctrl+1` … `8`, `Ctrl+9` | Jump to that tab, or to the last tab |
-| `Ctrl+Shift+T` / `W` | New tab / close tab |
-| `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous tab |
-| `Alt+Shift+=` / `Alt+Shift+-` | Split the pane side by side / stacked |
-| `Alt+Shift+W` | Close the active pane |
-| `Alt+Shift+]` / `Alt+Shift+[` | Focus the next / previous pane |
-| `Ctrl+Shift+P` | Command palette |
-| `Ctrl+Shift+F` | Find in output |
-| `Ctrl+Shift+G` | Review git changes |
-| `Ctrl+,` | Settings |
-| `Ctrl+Shift+M` | Show / hide the music player |
-| `Ctrl+Shift+Space` | Music: play / pause |
-| `Ctrl+Shift+,` / `Ctrl+Shift+.` | Music: previous song / next song (the `<` and `>` keys) |
-| `Ctrl+Shift+0` | Music: mute / unmute |
-
-The defaults follow Windows Terminal: `Ctrl+Shift` for tabs and app panels, `Alt+Shift` for panes. None of them needs `Ctrl+Alt`, which Windows reports as AltGr and many keyboard layouts use to type characters. On macOS, `Alt` is the `Option` key.
-
-**Upgrading from an older version?** Shortcuts you never changed move to the new defaults once. Any shortcut you set yourself keeps its key, and an old default stays put if its new key would clash with one of yours. The old `Ctrl+Alt+…` pane and music keys (and Mute on `Ctrl+Shift+,`, which is now Previous song), `Ctrl+Shift+]` / `[` for tabs and `Ctrl+Shift+,` for Settings are replaced, so rebind them in **Settings → Shortcuts** if you prefer them.
-
-Hover any music button (in the player or the status bar) to see the key for it, and find every music action by typing "music" in the command palette (`Ctrl+Shift+P`). **Settings → Shortcuts** has a search box: type a name (`split`), a group (`music`) or a key chord (`Ctrl+Shift+W`) to find a shortcut fast. Every shortcut above is remappable in **Settings → Shortcuts** (grouped as Tabs, Panes, App, Music Time and Terminal keys, with a reset button on each one you changed, and conflicts that name the other action) except `Ctrl/Shift+Insert`, `Shift+PageUp` / `PageDown` and `Ctrl+Shift+G`, which stay fixed and are listed there read-only. `Ctrl+T` also always opens a new tab, so Settings will not let you bind `Ctrl+T`, `Ctrl+Shift+T` (other than to New tab) or `Ctrl+Shift+G` to anything else. Music Time pauses for calls automatically.
-
-### Privacy and limits
-
-- Indexed source files are never executed.
-- `.env*`, keys and binaries are skipped by default.
-- MCP input is size-capped before parsing.
-- Retrieval checks file hashes and warns on stale indexes.
-- Indexes live in `~/.kai/`; `kai remove` deletes them.
-- Local diagnostics go to `~/.kai/metrics.jsonl`. No account, no telemetry in the app.
-- The code-map tools never touch the network. Integrations are opt-in: `kai integration azure` (per folder) and `kai integration teams` (your own account) are the only things that contact an outside service, only with the sign-in you give them. **Shared Agent** opens a listener on your network only while you have sharing turned on in this session. `kai remove --name <id>` deletes an Azure DevOps sign-in and its stored token, and `kai integration teams remove` does the same for Teams.
-
-See [KNOWN_LIMITATIONS](KNOWN_LIMITATIONS.md) for what v0.2.3 does not do yet.
-
-## Docs
-
-[INSTALL](INSTALL.md) · [DEVELOPMENT](DEVELOPMENT.md) · [ARCHITECTURE](ARCHITECTURE.md) · [SECURITY](SECURITY.md) · [TEST_PLAN](TEST_PLAN.md) · [KNOWN_LIMITATIONS](KNOWN_LIMITATIONS.md)
+Found a bug or have a request? [Open an issue](https://github.com/surajthaqurie/kai-terminal/issues) with your OS, Kai version and steps to reproduce. Run `kai doctor` and include its output when the problem is environment related. Current gaps are listed in [KNOWN_LIMITATIONS](KNOWN_LIMITATIONS.md).
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Free for personal + commercial use.
+[MIT](LICENSE). Free for personal and commercial use.

@@ -885,6 +885,8 @@ describe("App shell: settings, themes and terminal actions", () => {
     const actions = modal("palette").actions as Array<{ id: string; shortcut?: string }>;
     expect(actions.map((a) => a.id)).toEqual([
       "new-tab",
+      "new-window",
+      "move-tab-to-new-window",
       "next-tab",
       "prev-tab",
       "next-pane",
@@ -918,6 +920,7 @@ describe("App shell: settings, themes and terminal actions", () => {
     expect(actions.find((a) => a.id === "next-tab")!.shortcut).toBe("Ctrl+Tab");
     expect(actions.find((a) => a.id === "open-settings")!.shortcut).toBe("Ctrl+,");
     expect(actions.find((a) => a.id === "review-changes")!.shortcut).toBe("Ctrl+Shift+G");
+    expect(actions.find((a) => a.id === "new-window")!.shortcut).toBe("Ctrl+Shift+N");
     // Every music action in the palette shows the key that does the same thing.
     expect(actions.find((a) => a.id === "toggle-music")!.shortcut).toBe("Ctrl+Shift+M");
     expect(actions.find((a) => a.id === "music-play-pause")!.shortcut).toBe("Ctrl+Shift+Space");
@@ -1478,12 +1481,11 @@ describe("App shell: window refit", () => {
 });
 
 describe("App shell: header and footer", () => {
-  it("shows only the app icon (no name) at the far left of the header", async () => {
+  it("has no app icon at the far left: the tab list starts the header", async () => {
     await mount();
-    const brand = container.querySelector(".tab-bar")!.firstElementChild!;
-    expect(brand.classList.contains("tab-brand")).toBe(true);
-    expect(brand.textContent).toBe("");
-    expect(brand.querySelector("svg")).not.toBeNull();
+    expect(container.querySelector(".tab-brand")).toBeNull();
+    const first = container.querySelector(".tab-bar")!.firstElementChild!;
+    expect(first.getAttribute("role")).toBe("tablist");
   });
 
   it("puts AI providers right after the search box, with no editor or Share button", async () => {

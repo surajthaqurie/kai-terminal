@@ -1078,17 +1078,30 @@
 /* Playing-state rows: the song that is live right now (pinned "Now" row,
    or a duplicate inside the queue/search list) gets a persistent accent
    treatment with an animated equalizer instead of the play glyph. */
-.music-queue-now {
+.music-queue-now,
+.music-drawer-list .music-track-item.music-item-playing {
+  position: relative;
   background: color-mix(in srgb, var(--accent-primary) 14%, transparent);
-  border-left: 2px solid var(--accent-primary);
-  border-radius: 0 4px 4px 0;
+  border-color: color-mix(in srgb, var(--accent-primary) 28%, transparent);
 }
 
 .music-drawer-list .music-track-item.music-item-playing {
-  background: color-mix(in srgb, var(--accent-primary) 14%, transparent);
-  border-left: 2px solid var(--accent-primary);
-  border-radius: 0 4px 4px 0;
   color: var(--text-primary);
+}
+
+/* The accent stripe is an overlay, not a border-left: a thicker left border
+   made the row lopsided (flat left, round right) and nudged the content. */
+.music-queue-now::before,
+.music-drawer-list .music-track-item.music-item-playing::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 5px;
+  bottom: 5px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--accent-primary);
+  pointer-events: none;
 }
 
 .music-now-tag {

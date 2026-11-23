@@ -2,6 +2,7 @@ import ReactDOM from "react-dom/client";
 import { isMusicPipWindow } from "./services/musicPip";
 import { isSharedChatWindow } from "./services/sharedChatWindow";
 import { initMusicRelay } from "./services/musicService";
+import { isSecondaryTerminalWindow, takeWindowSeed } from "./services/terminalWindows";
 import "./fonts.css";
 import "./styles/index.css";
 
@@ -41,5 +42,11 @@ if (isMusicPipWindow()) {
   void initMusicRelay();
   // Fetch the app's code while the fonts load.
   const app = import("./App");
-  void Promise.all([app, preloadFonts()]).then(([{ default: App }]) => root.render(<App />));
+  // A window opened by dragging a tab out starts with that tab (its shells are
+  // already running), so the seed is read BEFORE the app renders: otherwise a
+  // starter tab would spawn a shell nobody asked for.
+  const seed = isSecondaryTerminalWindow() ? takeWindowSeed() : Promise.resolve(null);
+  void Promise.all([app, preloadFonts(), seed]).then(([{ default: App }, , initialSeed]) =>
+    root.render(<App initialSeed={initialSeed} />)
+  );
 }

@@ -1,6 +1,7 @@
 import { FC, ReactNode, useMemo } from "react";
 import {
   Activity,
+  AppWindow,
   ArrowUpCircle,
   Bot,
   Columns,
@@ -66,6 +67,7 @@ export const HeaderActions: FC<HeaderActionsProps> = ({
     };
 
     const out: MenuEntry[] = [
+      ...act("new-window", "New window", <AppWindow size={14} />),
       ...act("manage-workspaces", "Workspaces & sessions", <FolderOpen size={14} />),
       ...act("review-changes", "Review git changes", <GitCompare size={14} />),
       { kind: "separator", id: "sep-panes" },

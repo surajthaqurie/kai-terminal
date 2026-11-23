@@ -100,6 +100,26 @@ export interface TerminalPane {
    * layout tree, which references panes by id, stays intact).
    */
   resetKey?: number;
+  /**
+   * A shell that was already running in another window and moves into this pane:
+   * the pane attaches to it instead of starting a new one. Transient (never saved).
+   */
+  adopt?: PaneAdoption;
+}
+
+/**
+ * The state of a running shell handed from one window to another: which backend
+ * session it is, and a snapshot of the screen (scrollback included) to redraw
+ * before live output continues.
+ */
+export interface PaneAdoption {
+  /** Backend PTY session id of the running shell. */
+  ptyId: string;
+  /** Serialized terminal contents (escape sequences that redraw the screen). */
+  snapshot: string;
+  /** Grid the snapshot was taken at. */
+  cols: number;
+  rows: number;
 }
 
 /**

@@ -8,14 +8,24 @@
   left: 0;
   right: 0;
   bottom: 0;
+  /* Frosted glass: a light tint derived from the theme's overlay colour (so it
+     follows every theme) with a heavy blur, so the app behind stays visible but
+     softened. Browsers without backdrop-filter get the solid overlay instead. */
   background-color: var(--bg-overlay);
-  backdrop-filter: blur(6px);
   z-index: var(--z-modal);
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 24px;
   animation: fadeIn var(--transition-fast);
+}
+
+@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+  .modal-backdrop {
+    background-color: color-mix(in srgb, var(--bg-overlay) 45%, transparent);
+    backdrop-filter: blur(18px) saturate(150%);
+    -webkit-backdrop-filter: blur(18px) saturate(150%);
+  }
 }
 
 @keyframes fadeIn {

@@ -1,5 +1,6 @@
 import {
   Activity,
+  AppWindow,
   ArrowLeft,
   ArrowRight,
   Bot,
@@ -19,12 +20,14 @@ import {
   Settings,
   SkipBack,
   SkipForward,
+  SquareArrowOutUpRight,
   Trash2,
   VolumeX,
   XCircle,
 } from "lucide-react";
 import {
   DEFAULT_FIXED_SHORTCUTS,
+  NEW_WINDOW_BINDING,
   REVIEW_CHANGES_BINDING,
   platformLabel,
 } from "../services/shortcuts";
@@ -38,6 +41,10 @@ export interface CommandActionContext {
   fixedKeybindings?: Partial<FixedShortcutsConfig>;
   isMac: boolean;
   newTab: () => void;
+  /** Opens another terminal window. */
+  newWindow: () => void;
+  /** Moves the active tab, running shells included, into a new window. */
+  moveTabToNewWindow: () => void;
   cycleTab: (step: 1 | -1) => void;
   focusNextPane: () => void;
   focusPrevPane: () => void;
@@ -78,6 +85,21 @@ export function buildCommandActions(ctx: CommandActionContext): CommandAction[] 
       shortcut: key(kb.newTab),
       icon: <Plus size={16} />,
       perform: ctx.newTab,
+    },
+    {
+      id: "new-window",
+      label: "New Window",
+      category: "Terminal",
+      shortcut: key(NEW_WINDOW_BINDING),
+      icon: <AppWindow size={16} />,
+      perform: ctx.newWindow,
+    },
+    {
+      id: "move-tab-to-new-window",
+      label: "Move Tab to New Window",
+      category: "Terminal",
+      icon: <SquareArrowOutUpRight size={16} />,
+      perform: ctx.moveTabToNewWindow,
     },
     {
       id: "next-tab",

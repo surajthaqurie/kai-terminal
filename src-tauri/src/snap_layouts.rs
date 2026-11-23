@@ -141,7 +141,7 @@ mod imp {
 mod imp {
     use super::{snap_layouts_supported, transition, ButtonRect, ButtonState, PointerEvent};
     use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, Ordering};
-    use std::sync::OnceLock;
+    use std::sync::{Mutex, OnceLock};
     use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows_sys::Win32::System::SystemInformation::OSVERSIONINFOW;
@@ -149,7 +149,7 @@ mod imp {
         TrackMouseEvent, TME_LEAVE, TME_NONCLIENT, TRACKMOUSEEVENT,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        CreateWindowExW, DefWindowProcW, GetParent, IsZoomed, RegisterClassW,
+        CreateWindowExW, DefWindowProcW, GetParent, IsWindow, IsZoomed, RegisterClassW,
         SetLayeredWindowAttributes, SetWindowPos, ShowWindow, HTMAXBUTTON, HWND_TOP, LWA_ALPHA,
         MA_NOACTIVATE, SWP_NOACTIVATE, SWP_SHOWWINDOW, SW_HIDE, SW_MAXIMIZE, SW_RESTORE,
         WM_ERASEBKGND, WM_MOUSEACTIVATE, WM_NCDESTROY, WM_NCHITTEST, WM_NCLBUTTONDBLCLK,
@@ -167,9 +167,14 @@ mod imp {
 
     type Notify = Box<dyn Fn(ButtonState) + Send + Sync>;
 
-    static NOTIFY: OnceLock<Notify> = OnceLock::new();
+    // Who hears the button's state: the window that owns the overlay.
+    static NOTIFY: Mutex<Option<Notify>> = Mutex::new(None);
     static SUPPORTED: OnceLock<bool> = OnceLock::new();
     static OVERLAY: AtomicIsize = AtomicIsize::new(0);
+    // The one window the overlay belongs to. There is a single overlay, so with
+    // several terminal windows only one of them gets the snap-layouts popup; the
+    // others keep their in-page maximize button.
+    static OWNER: AtomicIsize = AtomicIsize::new(0);
     static STATE: AtomicU32 = AtomicU32::new(0);
     static TRACKING: AtomicBool = AtomicBool::new(false);
 
@@ -192,8 +197,10 @@ mod imp {
             Ordering::Relaxed,
         );
         if previous != next {
-            if let Some(notify) = NOTIFY.get() {
-                notify(next);
+            if let Ok(guard) = NOTIFY.lock() {
+                if let Some(notify) = guard.as_ref() {
+                    notify(next);
+                }
             }
         }
     }
@@ -359,7 +366,23 @@ mod imp {
         if !supported || hwnd == 0 {
             return false;
         }
-        let _ = NOTIFY.set(Box::new(notify));
+        let owner = OWNER.load(Ordering::Relaxed);
+        if owner != 0 && owner != hwnd {
+            // SAFETY: `IsWindow` accepts any handle value.
+            if unsafe { IsWindow(owner as HWND) } != 0 {
+                // Another window owns the single overlay: leave it alone, and let
+                // this window's own button handle its pointer.
+                return false;
+            }
+            // The owner is gone and took its overlay with it: this window takes over.
+            OVERLAY.store(0, Ordering::Relaxed);
+            TRACKING.store(false, Ordering::Relaxed);
+            STATE.store(0, Ordering::Relaxed);
+        }
+        OWNER.store(hwnd, Ordering::Relaxed);
+        if let Ok(mut guard) = NOTIFY.lock() {
+            *guard = Some(Box::new(notify));
+        }
         let parent = hwnd as HWND;
         match new_rect {
             Some(r) => {

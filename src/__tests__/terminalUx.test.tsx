@@ -137,12 +137,16 @@ describe("split panes", () => {
     expect(el.querySelector(".pane-label")).toBeNull();
   });
 
-  it("a split marks the grid, labels each pane with its folder, and flags the active one", () => {
+  it("a split shows no folder heading, but names each pane for screen readers", () => {
     const el = render(createElement(TabPanes, props(tab("t1", "connected", ["a", "b"]))));
     expect(el.querySelector(".pane-grid")!.getAttribute("data-split")).toBe("true");
-    const labels = [...el.querySelectorAll(".pane-label-name")].map((n) => n.textContent);
-    expect(labels).toEqual(["proj0", "proj1"]);
-    expect(el.querySelector(".active-pane .pane-label")!.textContent).toContain("active pane");
+    expect(el.querySelector(".pane-label")).toBeNull();
+    const names = [...el.querySelectorAll(".pane-grid-pane")].map((n) =>
+      n.getAttribute("aria-label")
+    );
+    expect(names.length).toBe(2);
+    expect(names.every((n) => n?.startsWith("proj"))).toBe(true);
+    expect(el.querySelector(".active-pane")!.getAttribute("aria-label")).toContain("(active pane)");
   });
 
   it("splitting and unsplitting never remounts the existing terminal", () => {

@@ -11,7 +11,6 @@ import {
 } from "lucide-react";
 import { TAB_COLORS, tabColorName, tabColorValue } from "../theme/registry";
 import { PopupMenu, type MenuEntry } from "./PopupMenu";
-import { AppIcon } from "./AppIcon";
 import { WindowControls } from "./WindowControls";
 import { isTauriAvailable } from "../services/ptyService";
 import { useShortcutTitle } from "../hooks/useShortcutHints";
@@ -35,6 +34,12 @@ interface TabBarProps {
   /** Preferred reorder path: move tab to an absolute index. Works on all OSes. */
   onMoveTabToIndex?: (id: string, toIndex: number) => void;
   onSetTabColor?: (id: string, color: string | undefined) => void;
+  /**
+   * Move a tab, with its running shells, into a new window. Called when a tab is
+   * dragged out of the strip and released (`screenX/Y` is where, for placing the
+   * window), and from the tab's menu (no position). Needs at least two tabs.
+   */
+  onDetachTab?: (id: string, screenX?: number, screenY?: number) => void;
   /** Shell profiles for the "+ ▾" picker; the picker is hidden without them. */
   shells?: ShellProfile[];
   selectedShellId?: string;
@@ -87,6 +92,26 @@ const HOLD_SLOP_PX = 12;
  *  — using the standard press-and-drag gesture everyone expects. The slop
  *  keeps a plain click (or a few pixels of wiggle) selecting the tab. */
 const MOUSE_DRAG_SLOP_PX = 8;
+/** A dragged tab this far above or below the tab strip (or outside the window) opens a new window on release. */
+const DETACH_MARGIN_PX = 48;
+
+/**
+ * Whether a drag at this pointer position should tear the tab off into its own
+ * window: clearly above or below the strip, or beyond the window's sides.
+ * Moving along the header (toward the buttons) stays an ordinary reorder.
+ */
+export function isTearOffZone(
+  pointer: { clientX: number; clientY: number },
+  strip: { top: number; bottom: number },
+  viewportWidth: number
+): boolean {
+  return (
+    pointer.clientY > strip.bottom + DETACH_MARGIN_PX ||
+    pointer.clientY < strip.top - DETACH_MARGIN_PX ||
+    pointer.clientX < 0 ||
+    pointer.clientX > viewportWidth
+  );
+}
 
 export const TabBar: FC<TabBarProps> = ({
   tabs,
@@ -100,6 +125,7 @@ export const TabBar: FC<TabBarProps> = ({
   onReorderTabs,
   onMoveTabToIndex,
   onSetTabColor,
+  onDetachTab,
   shells = [],
   selectedShellId,
   onNewTabWithShell,
@@ -111,6 +137,11 @@ export const TabBar: FC<TabBarProps> = ({
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
   const [dropIndex, setDropIndex] = useState<number | null>(null);
+  // The dragged tab is far enough outside the strip that releasing opens a new window.
+  const [detachArmed, setDetachArmed] = useState(false);
+  const detachArmedRef = useRef(false);
+  const onDetachTabRef = useRef(onDetachTab);
+  onDetachTabRef.current = onDetachTab;
   const menuRef = useRef<HTMLDivElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const pendingRef = useRef<{
@@ -134,8 +165,10 @@ export const TabBar: FC<TabBarProps> = ({
     pendingRef.current = null;
     dragIdRef.current = null;
     dropIndexRef.current = null;
+    detachArmedRef.current = false;
     setDragId(null);
     setDropIndex(null);
+    setDetachArmed(false);
     document.body.classList.remove("tab-dragging");
     if (holdTimerRef.current) {
       clearTimeout(holdTimerRef.current);
@@ -234,33 +267,54 @@ export const TabBar: FC<TabBarProps> = ({
         // slop — the standard press-and-drag gesture. Touch/pen keeps the
         // hold-to-lift path below so a swipe/scroll can't reorder by accident.
         if (pending.pointerType === "mouse") {
-          if (Math.hypot(dx, dy) > MOUSE_DRAG_SLOP_PX) {
-            if (holdTimerRef.current) {
-              clearTimeout(holdTimerRef.current);
-              holdTimerRef.current = null;
-            }
-            armDrag(pending.id);
-          }
-          return;
-        }
-        // Long-press only: moving before the hold completes is NOT a drag
-        // (a plain swipe/click-and-wiggle must never reorder). Once the
-        // pointer leaves the press slop, drop the pending hold so the tab
-        // can't lift later from a press the user already moved away from.
-        if (Math.hypot(dx, dy) > HOLD_SLOP_PX) {
+          if (Math.hypot(dx, dy) <= MOUSE_DRAG_SLOP_PX) return;
           if (holdTimerRef.current) {
             clearTimeout(holdTimerRef.current);
             holdTimerRef.current = null;
           }
-          pendingRef.current = null;
+          armDrag(pending.id);
+          // No return: this same move already counts for where the drop lands
+          // (a quick flick straight out of the bar is a tear-off at once).
+        } else {
+          // Long-press only: moving before the hold completes is NOT a drag
+          // (a plain swipe/click-and-wiggle must never reorder). Once the
+          // pointer leaves the press slop, drop the pending hold so the tab
+          // can't lift later from a press the user already moved away from.
+          if (Math.hypot(dx, dy) > HOLD_SLOP_PX) {
+            if (holdTimerRef.current) {
+              clearTimeout(holdTimerRef.current);
+              holdTimerRef.current = null;
+            }
+            pendingRef.current = null;
+          }
+          return;
         }
+      }
+      // Dragged well clear of the strip: releasing here opens a new window, so
+      // stop offering a reorder slot and say what will happen instead. Needs a
+      // handler and a second tab (a window cannot be left with none).
+      const container = containerRef.current;
+      const canDetach = Boolean(onDetachTabRef.current) && tabsRef.current.length > 1;
+      const armed =
+        canDetach &&
+        isTearOffZone(
+          e,
+          container?.getBoundingClientRect() ?? { top: 0, bottom: 0 },
+          window.innerWidth
+        );
+      if (armed !== detachArmedRef.current) {
+        detachArmedRef.current = armed;
+        setDetachArmed(armed);
+      }
+      if (armed) {
+        dropIndexRef.current = null;
+        setDropIndex(null);
         return;
       }
       const idx = computeDropIndex(e.clientX);
       dropIndexRef.current = idx;
       setDropIndex(idx);
       // Auto-scroll the strip when hovering near its edges.
-      const container = containerRef.current;
       if (container) {
         const rect = container.getBoundingClientRect();
         const EDGE = 28;
@@ -278,6 +332,15 @@ export const TabBar: FC<TabBarProps> = ({
       if (!pending) return;
       if (e.pointerId !== pending.pointerId && e.type !== "pointercancel") return;
       if (dragIdRef.current) {
+        if (detachArmedRef.current && e.type === "pointerup") {
+          // Released outside the strip: move the tab to a new window.
+          const id = dragIdRef.current;
+          cancelDrag();
+          // Swallow the click the release would otherwise send to a tab.
+          suppressClickRef.current = true;
+          onDetachTabRef.current?.(id, e.screenX, e.screenY);
+          return;
+        }
         // Refresh the target from the release point before committing.
         dropIndexRef.current = computeDropIndex(e.clientX);
         commitDrag();
@@ -439,11 +502,6 @@ export const TabBar: FC<TabBarProps> = ({
 
   return (
     <div className={`tab-bar${isTauriAvailable() && isMacPlatform() ? " has-traffic-lights" : ""}`}>
-      {/* App icon + name; also a drag handle for the frameless window. */}
-      <div className="tab-brand" data-tauri-drag-region title="Kai Terminal">
-        <AppIcon size={18} />
-      </div>
-
       <div
         ref={containerRef}
         className={`tabs-container${dragId ? " dragging" : ""}`}
@@ -467,7 +525,9 @@ export const TabBar: FC<TabBarProps> = ({
                 tabIndex={isActive ? 0 : -1}
                 className={`tab-item ${isActive ? "active" : ""} status-${tab.status}${
                   tab.color ? " has-color" : ""
-                }${isDragging ? " dragging" : ""}`}
+                }${isDragging ? " dragging" : ""}${
+                  isDragging && detachArmed ? " detach-armed" : ""
+                }`}
                 style={
                   tab.color
                     ? ({ "--tab-color": tabColorValue(tab.color) } as CSSProperties)
@@ -479,7 +539,6 @@ export const TabBar: FC<TabBarProps> = ({
                 onKeyDown={(e) => handleTabKeyDown(e, index)}
               >
                 <TabStatusIcon status={tab.status} />
-                {tab.color && <span className="tab-color-dot" aria-hidden="true" />}
                 {isEditing ? (
                   <input
                     type="text"
@@ -511,7 +570,9 @@ export const TabBar: FC<TabBarProps> = ({
                       e.stopPropagation();
                       startEditing(tab);
                     }}
-                    title={`${tab.title} (${STATUS_TEXT[tab.status]}). Drag to reorder; double-click or right-click to rename`}
+                    title={`${tab.title} (${STATUS_TEXT[tab.status]}). Drag to reorder${
+                      onDetachTab && tabs.length > 1 ? " or out of the bar for a new window" : ""
+                    }; double-click or right-click to rename`}
                   >
                     {tab.title}
                   </span>
@@ -569,6 +630,12 @@ export const TabBar: FC<TabBarProps> = ({
           />
         )}
       </div>
+
+      {detachArmed && (
+        <div className="tab-detach-hint" role="status">
+          Release to open this tab in a new window
+        </div>
+      )}
 
       {/* Empty strip that moves the window (and maximizes on double-click). */}
       <div className="tab-bar-drag" data-tauri-drag-region />
@@ -651,6 +718,19 @@ export const TabBar: FC<TabBarProps> = ({
           >
             Move right
           </button>
+          {onDetachTab && tabs.length > 1 && (
+            <button
+              type="button"
+              role="menuitem"
+              className="tab-menu-item"
+              onClick={() => {
+                setMenu(null);
+                onDetachTab(menuTab.id);
+              }}
+            >
+              Move to new window
+            </button>
+          )}
           {tabs.length > 1 && (
             <button
               type="button"

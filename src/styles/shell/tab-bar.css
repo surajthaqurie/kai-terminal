@@ -12,27 +12,6 @@
   position: relative;
 }
 
-/* App icon at the far left of the header (a drag handle too). It spans the full
-   bar height (the -4px cancels .tab-bar's top padding) and centers the icon in
-   it, so it lines up with the header buttons on every OS. */
-.tab-brand {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
-  align-self: stretch;
-  margin: -4px 8px 0 2px;
-  user-select: none;
-}
-
-.tab-brand svg {
-  display: block;
-}
-
-.tab-brand > * {
-  pointer-events: none;
-}
-
 .tabs-container {
   display: flex;
   align-items: flex-end;
@@ -108,6 +87,31 @@ body.tab-dragging * {
   cursor: move !important;
 }
 
+/* Dragged clear of the strip: releasing opens the tab in a new window. The tab
+   stays dimmed and gets an accent outline (a shape cue, not only a colour), and a
+   short note under the header says what will happen. */
+.tab-item.dragging.detach-armed {
+  opacity: 0.8;
+  outline: 1px dashed var(--accent-primary);
+  outline-offset: -2px;
+}
+
+.tab-detach-hint {
+  position: fixed;
+  top: 44px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: var(--z-modal);
+  padding: 5px 12px;
+  border-radius: var(--radius-full);
+  background: var(--bg-surface-elevated);
+  border: 1px solid var(--accent-primary);
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  pointer-events: none;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+}
+
 .tab-item:hover {
   background-color: var(--bg-tab-hover);
   color: var(--text-primary);
@@ -161,10 +165,6 @@ body.tab-dragging * {
   background: var(--tab-color);
 }
 
-.tab-item.has-color:not(.active) .tab-color-dot {
-  opacity: 0.65;
-}
-
 /* The tab strip clips anything outside its box (overflow-y: hidden), so draw
    the keyboard focus ring inside the tab instead of letting the global
    outline get cut in half at the top edge. */
@@ -203,14 +203,6 @@ body.tab-dragging * {
 .tab-item.status-disconnected .tab-title {
   color: var(--text-tertiary);
   font-style: italic;
-}
-
-.tab-color-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex: 0 0 auto;
-  background-color: var(--tab-color);
 }
 
 .tab-title {

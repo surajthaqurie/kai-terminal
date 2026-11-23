@@ -152,9 +152,27 @@ pub fn gui_path_from_args(argv: &[String]) -> Option<String> {
     Some(first.to_string())
 }
 
+/// True when the app was started with no arguments at all (Start menu, Dock,
+/// desktop icon, or `kai` alone): the user wants another window, not a path
+/// forwarded or a CLI command answered. `argv[0]` is the binary name.
+pub fn is_bare_launch(argv: &[String]) -> bool {
+    argv.iter().skip(1).all(|a| a.trim().is_empty())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_an_argument_free_launch_is_bare() {
+        let argv = |parts: &[&str]| parts.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert!(is_bare_launch(&argv(&["kai.exe"])));
+        assert!(is_bare_launch(&argv(&[])));
+        assert!(is_bare_launch(&argv(&["kai.exe", "  "])));
+        assert!(!is_bare_launch(&argv(&["kai.exe", "."])));
+        assert!(!is_bare_launch(&argv(&["kai.exe", "code"])));
+        assert!(!is_bare_launch(&argv(&["kai.exe", "--help"])));
+    }
 
     #[test]
     fn detects_cli_subcommands_on_all_os_argv_shapes() {

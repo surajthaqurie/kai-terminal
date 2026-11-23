@@ -28,6 +28,8 @@ export interface AppShortcutHandlers {
   toggleMusic: () => void;
   musicEvent: (name: string) => void;
   reviewChanges: () => void;
+  /** Opens another terminal window (reserved Ctrl/Cmd+Shift+N). */
+  newWindow: () => void;
 }
 
 const MODIFIER_KEYS = new Set(["Control", "Shift", "Alt", "Meta"]);
@@ -75,6 +77,12 @@ export function useAppShortcuts(handlers: AppShortcutHandlers) {
       if (primary && e.shiftKey && e.code === "KeyG") {
         e.preventDefault();
         if (!e.repeat) h.reviewChanges();
+        return;
+      }
+      // New window: reserved like review-changes, so no binding can shadow it.
+      if (primary && e.shiftKey && !e.altKey && e.code === "KeyN") {
+        e.preventDefault();
+        if (!e.repeat) h.newWindow();
         return;
       }
       // Universal New-Tab accelerator on every OS: Ctrl+T (Windows/Linux)

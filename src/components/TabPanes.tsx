@@ -140,15 +140,17 @@ export const TabPanes = memo(function TabPanes({
           width: pct(rect.w),
           height: pct(rect.h),
         }}
+        // No visible heading: the folder lives in the status bar. Screen readers
+        // still get which pane this is and which one has the keyboard.
+        role={isSplit ? "group" : undefined}
+        aria-label={
+          isSplit
+            ? `${folderName(dir) || "Terminal"}${isActivePane ? " (active pane)" : ""}`
+            : undefined
+        }
         onClick={focusPane}
         onPointerDown={focusPane}
       >
-        {isSplit && (
-          <div className="pane-label" title={dir || undefined}>
-            <span className="pane-label-name">{folderName(dir) || "Terminal"}</span>
-            {isActivePane && <span className="sr-only"> (active pane)</span>}
-          </div>
-        )}
         <TerminalView
           ref={(el) => {
             terminalRefs.current[pane.id] = el;
@@ -159,6 +161,7 @@ export const TabPanes = memo(function TabPanes({
           settings={settings}
           visible={isActive}
           resetKey={pane.resetKey ?? 0}
+          adopt={pane.adopt}
           onFocus={focusPane}
           onCodeModeChange={(project) => onCodeModeChange(pane.id, project)}
           onCwdResolved={(resolved) => onCwdResolved(tab.id, pane.id, resolved)}

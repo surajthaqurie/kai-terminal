@@ -241,6 +241,29 @@ describe("Use a shared agent", () => {
     expect(receive.textContent).not.toContain("Loading…");
   });
 
+  it("validates a pasted invite link at once, trimming stray whitespace", async () => {
+    await openReceive();
+    const input = container.querySelector<HTMLInputElement>('input[aria-label="Invite link"]')!;
+    const paste = (value: string) =>
+      act(async () => {
+        const ev = new Event("paste", { bubbles: true, cancelable: true });
+        Object.assign(ev, { clipboardData: { getData: () => value } });
+        input.dispatchEvent(ev);
+      });
+
+    await paste("not a link");
+    expect(text()).toContain("not a valid invite link");
+    expect(input.getAttribute("aria-invalid")).toBe("true");
+    expect(svc.joinHost).not.toHaveBeenCalled();
+
+    const good = `http://192.168.1.50:8765/join#${"a".repeat(43)}.${"f".repeat(43)}`;
+    await paste(`  ${good}\n`);
+    expect(text()).not.toContain("not a valid invite link");
+    expect(text()).toContain("Valid invite link for http://192.168.1.50:8765");
+    expect(input.value).toBe(good);
+    expect(input.getAttribute("aria-invalid")).toBe("false");
+  });
+
   it("rejects a bad invite link without calling the service, and joins with a good one", async () => {
     await openReceive();
     const input = container.querySelector<HTMLInputElement>('input[aria-label="Invite link"]')!;

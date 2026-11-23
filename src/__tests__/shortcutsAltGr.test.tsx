@@ -29,6 +29,7 @@ const handlers = {
   toggleMusic: vi.fn(),
   musicEvent: vi.fn(),
   reviewChanges: vi.fn(),
+  newWindow: vi.fn(),
 } satisfies AppShortcutHandlers;
 
 function Probe() {
@@ -91,5 +92,30 @@ describe("AltGr is text input, not a shortcut", () => {
   it("the same physical key without AltGr still triggers next pane", () => {
     press({ code: "BracketRight", key: "]", ctrlKey: true, altKey: true });
     expect(handlers.focusNextPane).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("New window shortcut", () => {
+  it("Ctrl+Shift+N opens a new window", () => {
+    const e = press({ code: "KeyN", key: "N", ctrlKey: true, shiftKey: true });
+    expect(handlers.newWindow).toHaveBeenCalledTimes(1);
+    expect(e.defaultPrevented).toBe(true);
+  });
+
+  it("Cmd+Shift+N does the same on macOS", () => {
+    press({ code: "KeyN", key: "N", metaKey: true, shiftKey: true });
+    expect(handlers.newWindow).toHaveBeenCalledTimes(1);
+  });
+
+  it("holding the keys opens one window, not a stream of them", () => {
+    press({ code: "KeyN", key: "N", ctrlKey: true, shiftKey: true });
+    press({ code: "KeyN", key: "N", ctrlKey: true, shiftKey: true, repeat: true });
+    expect(handlers.newWindow).toHaveBeenCalledTimes(1);
+  });
+
+  it("plain Ctrl+N and Ctrl+Alt+Shift+N are left alone (the shell may use them)", () => {
+    press({ code: "KeyN", key: "n", ctrlKey: true });
+    press({ code: "KeyN", key: "N", ctrlKey: true, shiftKey: true, altKey: true });
+    expect(handlers.newWindow).not.toHaveBeenCalled();
   });
 });

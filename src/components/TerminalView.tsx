@@ -12,6 +12,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { ImageAddon } from "@xterm/addon-image";
 import { SearchAddon } from "@xterm/addon-search";
+import { SerializeAddon } from "@xterm/addon-serialize";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
@@ -34,7 +35,9 @@ import {
   matchShortcut,
   matchTerminalAction,
 } from "../services/shortcuts";
-import { ShellProfile, SessionStatus, UserSettings } from "../types/terminal";
+import { PaneAdoption, ShellProfile, SessionStatus, UserSettings } from "../types/terminal";
+import { handoffFinish, type HandoffRelease } from "../services/terminalWindows";
+import type { HandoffTerminal, PaneCapture } from "../services/tabHandoff";
 import { SettingsService, DEFAULT_SETTINGS } from "../services/settingsService";
 import { getTheme, searchDecorations } from "../theme/registry";
 import { detectHostOs, launchFailureTip } from "./launchFailure";
@@ -140,7 +143,10 @@ function detachGpuRenderer(slot: { current: WebglAddon | null }): void {
   }
 }
 
-export interface TerminalViewRef {
+/** Most scrollback rows carried to another window with a moved tab (keeps the snapshot small). */
+const MAX_HANDOFF_SCROLLBACK = 4000;
+
+export interface TerminalViewRef extends HandoffTerminal {
   clear: () => void;
   copySelection: () => Promise<string>;
   pasteText: (text: string) => void;
@@ -173,6 +179,11 @@ interface TerminalViewProps {
    * the xterm instance or the pane id, so split layouts survive retries.
    */
   resetKey?: number;
+  /**
+   * A shell already running in another window (a tab dragged here): attach to it
+   * and redraw its screen instead of starting a new one. Read once, on mount.
+   */
+  adopt?: PaneAdoption;
   onSessionStatusChange?: (status: SessionStatus, message?: string) => void;
   /** `undefined` when the shell's exit status could not be determined. */
   onExit?: (exitCode?: number) => void;
@@ -196,6 +207,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       settings = DEFAULT_SETTINGS,
       visible = true,
       resetKey = 0,
+      adopt,
       onSessionStatusChange,
       onExit,
       onCwdResolved,
@@ -222,6 +234,14 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
     // hit SessionNotFound and output is dropped / leaks across tabs.
     const backendPtyIdRef = useRef<string | null>(null);
     const initSeqRef = useRef<number>(0);
+    // Moving a tab between windows (see services/tabHandoff): the shell to attach
+    // to on mount, the session this pane is attaching to (so closing the pane
+    // mid-attach still ends it), the serializer that snapshots the screen, and the
+    // writer for output that was held during a move that did not happen.
+    const adoptRef = useRef(adopt);
+    const pendingAdoptIdRef = useRef<string | null>(null);
+    const serializeAddonRef = useRef<SerializeAddon | null>(null);
+    const resumeHeldRef = useRef<(released: HandoffRelease) => void>(() => {});
     const [isSearchVisible, setIsSearchVisible] = useState(false);
     // Last PTY spawn failure for this pane. When set, an in-pane overlay
     // offers Retry (re-spawn) so a bad shell binary / cwd never leaves the
@@ -413,6 +433,34 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       toggleSearch: () => {
         setIsSearchVisible((prev) => !prev);
       },
+      handoffSessionId: () => backendPtyIdRef.current,
+      handoffCapture: async (): Promise<PaneCapture | null> => {
+        const id = backendPtyIdRef.current;
+        const term = xtermRef.current;
+        const serializer = serializeAddonRef.current;
+        if (!id || !term || !serializer) return null;
+        try {
+          // Everything received so far must be on screen before it is serialized.
+          flushPendingRef.current();
+          await Promise.race([
+            new Promise<void>((resolve) => term.write("", resolve)),
+            new Promise<void>((resolve) => setTimeout(resolve, 500)),
+          ]);
+          const snapshot = serializer.serialize({
+            scrollback: Math.min(term.options.scrollback ?? 1000, MAX_HANDOFF_SCROLLBACK),
+          });
+          return { ptyId: id, snapshot, cols: term.cols, rows: term.rows };
+        } catch {
+          return null;
+        }
+      },
+      handoffRelease: () => {
+        // The new window owns the session now: forget it WITHOUT closing it.
+        releasePtyId(backendPtyIdRef.current);
+        backendPtyIdRef.current = null;
+        onCodeModeChangeRef.current?.(null);
+      },
+      handoffResume: (released: HandoffRelease) => resumeHeldRef.current(released),
     }));
 
     const initPtySession = async (overrideShell?: ShellProfile) => {
@@ -635,8 +683,12 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
 
       const fitAddon = new FitAddon();
       const searchAddon = new SearchAddon();
+      // Snapshots the screen when this pane's tab is moved to another window.
+      const serializeAddon = new SerializeAddon();
+      serializeAddonRef.current = serializeAddon;
 
       term.loadAddon(fitAddon);
+      term.loadAddon(serializeAddon);
       term.loadAddon(searchAddon);
       // xterm defaults to Unicode 6 cell widths, which count emoji and many
       // symbols as one cell. Shells, ConPTY and modern TUIs (AI CLIs) lay text
@@ -1180,13 +1232,87 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       void fontSet?.ready?.then(refitAfterFonts);
       fontSet?.addEventListener?.("loadingdone", refitAfterFonts);
 
+      // Output a moved shell printed while no window was showing it (the backend
+      // held it) goes back into this terminal when the move is cancelled.
+      resumeHeldRef.current = (released) => {
+        for (const chunk of released.data) handleOutput({ id: "", data: chunk });
+        flushOutput();
+        const id = backendPtyIdRef.current;
+        if (released.exited && id) handleExit({ id, exit_code: released.exit_code });
+      };
+
+      // Attach to a shell that is already running (a tab dragged in from another
+      // window) instead of starting one: redraw its screen from the snapshot, then
+      // the output it printed during the move, then carry on live. Live events for
+      // the session wait in `earlyEvents` until the held output is in, so nothing is
+      // written out of order.
+      const adoptSession = async (a: PaneAdoption) => {
+        const mySeq = ++initSeqRef.current;
+        onStatusRef.current?.("connecting");
+        earlyEventsRef.current?.clear();
+        spawningRef.current = true;
+        pendingAdoptIdRef.current = a.ptyId;
+        const written = () => new Promise<void>((resolve) => term.write("", resolve));
+        try {
+          try {
+            // The snapshot was taken at this grid; xterm reflows it on the refit below.
+            term.resize(a.cols, a.rows);
+          } catch {
+            // Keep the current grid.
+          }
+          await new Promise<void>((resolve) => term.write(a.snapshot, resolve));
+          const released = await handoffFinish(a.ptyId);
+          if (mySeq !== initSeqRef.current) return;
+          for (const chunk of released.data) term.write(chunk);
+          await written();
+          if (mySeq !== initSeqRef.current) return;
+
+          backendPtyIdRef.current = a.ptyId;
+          pendingAdoptIdRef.current = null;
+          claimPtyId(a.ptyId);
+          ptySizeSyncRef.current?.spawned(a.ptyId, a.cols, a.rows);
+          try {
+            if (fitWhenShown()) pushPtySize(term);
+          } catch {
+            // Ignore fit errors during hidden-tab layout.
+          }
+          setLaunchError(null);
+          onStatusRef.current?.("connected");
+          spawningRef.current = false;
+          replayEarlyEventsRef.current(earlyEventsRef.current?.take(a.ptyId) ?? []);
+          if (released.exited) handleExit({ id: a.ptyId, exit_code: released.exit_code });
+          void PtyService.getPtyCwd(a.ptyId).then((resolved) => {
+            if (resolved) settleCwd(resolved);
+          });
+        } catch (err: unknown) {
+          if (mySeq !== initSeqRef.current) return;
+          const errorMsg = err instanceof Error ? err.message : String(err);
+          setLaunchError(errorMsg);
+          term.writeln(`\r\n\x1b[2m[Could not attach to the moved shell]\x1b[0m`);
+          onStatusRef.current?.("error", errorMsg);
+        } finally {
+          if (mySeq === initSeqRef.current) {
+            spawningRef.current = false;
+            earlyEventsRef.current?.clear();
+          }
+        }
+      };
+
       // Launch initial PTY session (deferred):
+      // - A moved shell is attached to straight away (it is already running).
       // - Hidden tabs skip the spawn entirely; the `visible` effect below
       //   launches on first show (startup thundering-herd fix).
       // - Visible panes wait one paint (~60 ms) so the window renders
       //   before the blocking-ish spawn IPC, avoiding "not responding".
       let initialTimer: ReturnType<typeof setTimeout> | null = null;
-      if (visibleRef.current) {
+      const adoption = adoptRef.current;
+      if (adoption) {
+        initialLaunchScheduledRef.current = true;
+        initialTimer = setTimeout(() => {
+          initialTimer = null;
+          void adoptSession(adoption);
+        }, 0);
+      } else if (visibleRef.current) {
         initialLaunchScheduledRef.current = true;
         initialTimer = setTimeout(() => {
           initialTimer = null;
@@ -1225,11 +1351,15 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         if (unlistenOutput) unlistenOutput();
         if (unlistenExit) unlistenExit();
         if (unlistenCwd) unlistenCwd();
-        const backendId = backendPtyIdRef.current;
+        // A pane closed while it was still attaching to a moved shell ends it too.
+        const backendId = backendPtyIdRef.current ?? pendingAdoptIdRef.current;
         backendPtyIdRef.current = null;
+        pendingAdoptIdRef.current = null;
         releasePtyId(backendId);
         spawningRef.current = false;
         replayEarlyEventsRef.current = () => {};
+        resumeHeldRef.current = () => {};
+        serializeAddonRef.current = null;
         if (backendId) {
           ptyService.closePty(backendId).catch(() => {
             // Already reaped; safe to ignore.

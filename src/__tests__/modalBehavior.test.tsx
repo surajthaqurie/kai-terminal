@@ -299,8 +299,10 @@ describe("SettingsModal", () => {
         expect(headings).toContain("Music Time");
         expect(headings).not.toContain("Tabs");
 
+        // Every word is matched on its own, and the fixed "New window" shortcut
+        // (Ctrl+Shift+N) has a "w" in its name, so it is listed too.
         await filter("ctrl shift w");
-        expect(labels()).toEqual(["Close tab or pane"]);
+        expect(labels()).toEqual(["Close tab or pane", "New window"]);
         await filter("Ctrl+Shift+W");
         expect(labels()).toEqual(["Close tab or pane"]);
         await filter("split");

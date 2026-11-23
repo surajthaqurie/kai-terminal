@@ -22,6 +22,11 @@ interface SessionPersistenceOptions {
   setActiveTabId: (id: string) => void;
   /** Opt-in: load the previous session immediately instead of offering it. */
   autoRestoreSession: boolean | undefined;
+  /**
+   * Only the first window saves the layout and offers to restore it. An extra
+   * window shares the same storage and would overwrite the first one's layout.
+   */
+  enabled?: boolean;
 }
 
 const toTabs = (persisted: PersistedTab[]) =>
@@ -36,9 +41,11 @@ export function useSessionPersistence({
   setTabs,
   setActiveTabId,
   autoRestoreSession,
+  enabled = true,
 }: SessionPersistenceOptions) {
   // Tabs from the previous launch, offered once via banner (never auto-run).
   const [pendingRestore, setPendingRestore] = useState<PersistedTab[] | null>(() => {
+    if (!enabled) return null;
     const persisted = loadPersistedLayout();
     return persisted && persisted.length > 0 ? persisted : null;
   });
@@ -80,9 +87,10 @@ export function useSessionPersistence({
   // the user opens or closes a tab their work is saved again; the offer itself
   // stays loadable (from memory) until it is loaded or dismissed.
   useEffect(() => {
+    if (!enabled) return;
     if (pendingRestore !== null && onlyStarter) return;
     savePersistedLayout(tabs);
-  }, [tabs, pendingRestore, onlyStarter]);
+  }, [tabs, pendingRestore, onlyStarter, enabled]);
 
   // Opt-in auto-restore: when enabled in settings, the previous session
   // loads immediately without asking (previous default behavior).

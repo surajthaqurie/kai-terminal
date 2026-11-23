@@ -1,6 +1,6 @@
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
@@ -159,6 +159,10 @@ pub struct PtySessionHandle {
     pub cols: u16,
     pub rows: u16,
     pub status: SessionStatus,
+    /// Label of the window that shows this session. Closing that window ends the
+    /// session (React cleanup is not guaranteed when a webview is torn down), and a
+    /// tab moved to another window changes it (`PtyManager::set_owner`).
+    pub owner: String,
     /// Last time the live OS cwd was probed for this session. Probes are
     /// syscalls (Linux) or child-process spawns (macOS `lsof`), so every
     /// accessor below throttles them — unthrottled polling from the
@@ -190,10 +194,131 @@ fn take_cwd_probe_slot(handle: &mut PtySessionHandle) -> Option<u32> {
     }
 }
 
+/// Most output kept for one session while it is being moved to another window. A
+/// move takes milliseconds; this only bounds a window that never finishes the move.
+const MAX_HELD_BYTES: usize = 8 * 1024 * 1024;
+
+/// What a session printed (and whether it ended) while it was in transit between two
+/// windows. The receiving window writes `data` right after the screen snapshot it
+/// was sent, then carries on with live events.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize)]
+pub struct HandoffRelease {
+    pub data: Vec<String>,
+    /// The shell ended during the move.
+    pub exited: bool,
+    pub exit_code: Option<i32>,
+}
+
+#[derive(Default)]
+struct HeldSession {
+    chunks: VecDeque<String>,
+    bytes: usize,
+    exit: Option<Option<i32>>,
+}
+
+/// Holds back the output and exit events of sessions that are moving between windows.
+///
+/// A tab dragged into a new window keeps its running shell. The old window takes a
+/// snapshot of the screen while the new one is still loading; anything the shell
+/// prints in between would be lost (it has no listener) or shown twice. So between
+/// `begin` and `release` a session's events are kept here instead of being emitted,
+/// then handed to the new window in order.
+#[derive(Default)]
+pub struct HandoffGate {
+    held: Mutex<HashMap<String, HeldSession>>,
+}
+
+impl HandoffGate {
+    /// Starts holding `id`'s events (a second call keeps what is already held).
+    pub fn begin(&self, id: &str) {
+        if let Ok(mut held) = self.held.lock() {
+            held.entry(id.to_string()).or_default();
+        }
+    }
+
+    pub fn is_held(&self, id: &str) -> bool {
+        self.held.lock().is_ok_and(|h| h.contains_key(id))
+    }
+
+    /// Keeps the chunk when `id` is held (returns `None`); hands it back otherwise.
+    fn hold_output(&self, payload: PtyOutputPayload) -> Option<PtyOutputPayload> {
+        let Ok(mut held) = self.held.lock() else {
+            return Some(payload);
+        };
+        let Some(slot) = held.get_mut(&payload.id) else {
+            return Some(payload);
+        };
+        slot.bytes += payload.data.len();
+        slot.chunks.push_back(payload.data);
+        while slot.bytes > MAX_HELD_BYTES {
+            match slot.chunks.pop_front() {
+                Some(dropped) => slot.bytes -= dropped.len(),
+                None => break,
+            }
+        }
+        None
+    }
+
+    fn hold_exit(&self, payload: PtyExitPayload) -> Option<PtyExitPayload> {
+        let Ok(mut held) = self.held.lock() else {
+            return Some(payload);
+        };
+        match held.get_mut(&payload.id) {
+            Some(slot) => {
+                slot.exit = Some(payload.exit_code);
+                None
+            }
+            None => Some(payload),
+        }
+    }
+
+    /// Stops holding `id` and returns what was kept, in order. `None` when it was
+    /// not held. Events after this call are emitted live again.
+    pub fn release(&self, id: &str) -> Option<HandoffRelease> {
+        let slot = self.held.lock().ok()?.remove(id)?;
+        Some(HandoffRelease {
+            data: slot.chunks.into_iter().collect(),
+            exited: slot.exit.is_some(),
+            exit_code: slot.exit.flatten(),
+        })
+    }
+
+    pub fn forget(&self, id: &str) {
+        if let Ok(mut held) = self.held.lock() {
+            held.remove(id);
+        }
+    }
+}
+
+/// Wraps a session's real emitter so [`HandoffGate`] can hold its events.
+struct GatedEmitter {
+    inner: Arc<dyn TerminalEventEmitter>,
+    gate: Arc<HandoffGate>,
+}
+
+impl TerminalEventEmitter for GatedEmitter {
+    fn emit_output(&self, payload: PtyOutputPayload) {
+        if let Some(payload) = self.gate.hold_output(payload) {
+            self.inner.emit_output(payload);
+        }
+    }
+
+    fn emit_exit(&self, payload: PtyExitPayload) {
+        if let Some(payload) = self.gate.hold_exit(payload) {
+            self.inner.emit_exit(payload);
+        }
+    }
+
+    fn emit_cwd(&self, payload: PtyCwdPayload) {
+        self.inner.emit_cwd(payload);
+    }
+}
+
 /// Thread-safe manager for active PTY sessions.
 #[derive(Default)]
 pub struct PtyManager {
     pub sessions: Arc<Mutex<HashMap<String, PtySessionHandle>>>,
+    gate: Arc<HandoffGate>,
 }
 
 // Maximum output batch size before flushing to event emitter (64 KB, the
@@ -239,6 +364,7 @@ impl PtyManager {
     pub fn new() -> Self {
         Self {
             sessions: Arc::new(Mutex::new(HashMap::new())),
+            gate: Arc::new(HandoffGate::default()),
         }
     }
 
@@ -248,6 +374,12 @@ impl PtyManager {
         emitter: Arc<dyn TerminalEventEmitter>,
         options: PtyCreateOptions,
     ) -> Result<PtySessionInfo, TerminalError> {
+        // Every session's events go through the gate, so a tab can later be moved to
+        // another window without losing output (see `HandoffGate`).
+        let emitter: Arc<dyn TerminalEventEmitter> = Arc::new(GatedEmitter {
+            inner: emitter,
+            gate: self.gate.clone(),
+        });
         let flatpak_id = flatpak_id_from_env();
         let shell_path = if flatpak_id.is_some() {
             // The shell runs on the host (`flatpak-spawn --host`), so a
@@ -433,6 +565,7 @@ impl PtyManager {
             cols,
             rows,
             status: SessionStatus::Connected,
+            owner: String::new(),
             last_cwd_probe: std::time::Instant::now(),
         };
 
@@ -708,6 +841,7 @@ impl PtyManager {
 
     /// Explicitly closes and cleans up a PTY session.
     pub fn close_pty(&self, id: &str) -> Result<(), TerminalError> {
+        self.gate.forget(id);
         // Remove under a short lock, then kill WITHOUT holding it so a
         // slow child cannot block other sessions (hang fix).
         let mut session = {
@@ -726,6 +860,54 @@ impl PtyManager {
             // Already closed or clean
             Ok(())
         }
+    }
+
+    /// Records which window shows session `id` (no-op for an unknown id).
+    pub fn set_owner(&self, id: &str, owner: &str) {
+        if let Ok(mut sessions) = self.sessions.lock() {
+            if let Some(session) = sessions.get_mut(id) {
+                session.owner = owner.to_string();
+            }
+        }
+    }
+
+    /// Ends every session shown by window `owner` (it was closed). Returns how many.
+    pub fn close_sessions_owned_by(&self, owner: &str) -> usize {
+        let ids: Vec<String> = match self.sessions.lock() {
+            Ok(sessions) => sessions
+                .values()
+                .filter(|s| s.owner == owner)
+                .map(|s| s.id.clone())
+                .collect(),
+            Err(_) => return 0,
+        };
+        for id in &ids {
+            let _ = self.close_pty(id);
+        }
+        ids.len()
+    }
+
+    /// First step of moving a tab to another window: from now on the output and exit
+    /// of these sessions are held back until [`PtyManager::handoff_finish`]. Fails,
+    /// holding nothing, if any session is gone.
+    pub fn handoff_begin(&self, ids: &[String]) -> Result<(), TerminalError> {
+        let sessions = self
+            .sessions
+            .lock()
+            .map_err(|e| TerminalError::IoError(format!("Lock failure: {}", e)))?;
+        if let Some(missing) = ids.iter().find(|id| !sessions.contains_key(*id)) {
+            return Err(TerminalError::SessionNotFound(missing.clone()));
+        }
+        for id in ids {
+            self.gate.begin(id);
+        }
+        Ok(())
+    }
+
+    /// Last step of a move (or a cancelled one): returns what the session produced
+    /// meanwhile and resumes live events. Empty when nothing was held.
+    pub fn handoff_finish(&self, id: &str) -> HandoffRelease {
+        self.gate.release(id).unwrap_or_default()
     }
 
     /// Reaps all child process handles on application shutdown.
@@ -1519,6 +1701,161 @@ mod tests {
         fn emit_exit(&self, _payload: PtyExitPayload) {
             self.exit_received.store(true, Ordering::SeqCst);
         }
+    }
+
+    fn out(id: &str, data: &str) -> PtyOutputPayload {
+        PtyOutputPayload {
+            id: id.to_string(),
+            data: data.to_string(),
+        }
+    }
+
+    #[test]
+    fn handoff_gate_holds_in_order_then_resumes_live_events() {
+        let gate = HandoffGate::default();
+        // Nothing is held until a move begins.
+        assert!(gate.hold_output(out("a", "live")).is_some());
+
+        gate.begin("a");
+        assert!(gate.is_held("a"));
+        assert!(gate.hold_output(out("a", "one ")).is_none());
+        // Other sessions are never touched.
+        assert!(gate.hold_output(out("b", "other")).is_some());
+        assert!(gate.hold_output(out("a", "two")).is_none());
+        assert!(gate
+            .hold_exit(PtyExitPayload {
+                id: "a".into(),
+                exit_code: Some(3),
+            })
+            .is_none());
+
+        let released = gate.release("a").expect("was held");
+        assert_eq!(released.data, vec!["one ".to_string(), "two".to_string()]);
+        assert!(released.exited);
+        assert_eq!(released.exit_code, Some(3));
+
+        // Released: events flow again, and a second release has nothing.
+        assert!(!gate.is_held("a"));
+        assert!(gate.hold_output(out("a", "after")).is_some());
+        assert!(gate.release("a").is_none());
+    }
+
+    #[test]
+    fn handoff_gate_reports_no_exit_when_the_shell_kept_running() {
+        let gate = HandoffGate::default();
+        gate.begin("a");
+        gate.hold_output(out("a", "x"));
+        let released = gate.release("a").unwrap();
+        assert!(!released.exited);
+        assert_eq!(released.exit_code, None);
+    }
+
+    #[test]
+    fn handoff_gate_keeps_the_newest_output_when_over_the_cap() {
+        let gate = HandoffGate::default();
+        gate.begin("a");
+        let chunk = "x".repeat(MAX_HELD_BYTES / 2 + 1);
+        gate.hold_output(out("a", &chunk));
+        gate.hold_output(out("a", &chunk));
+        gate.hold_output(out("a", "newest"));
+        let released = gate.release("a").unwrap();
+        assert_eq!(released.data.last().map(String::as_str), Some("newest"));
+        let total: usize = released.data.iter().map(String::len).sum();
+        assert!(total <= MAX_HELD_BYTES, "held {total} bytes");
+    }
+
+    #[test]
+    fn handoff_begin_holds_nothing_when_a_session_is_gone() {
+        let manager = PtyManager::new();
+        let err = manager.handoff_begin(&["missing".to_string()]);
+        assert!(matches!(err, Err(TerminalError::SessionNotFound(_))));
+        assert!(!manager.gate.is_held("missing"));
+        assert_eq!(manager.handoff_finish("missing"), HandoffRelease::default());
+    }
+
+    #[test]
+    fn a_moved_session_holds_output_then_hands_it_over_and_belongs_to_its_new_window() {
+        let _env = crate::test_support::lock_test_env();
+        let manager = PtyManager::new();
+        let logs = Arc::new(Mutex::new(Vec::new()));
+        let emitter = Arc::new(TestEventEmitter {
+            output_received: logs.clone(),
+            exit_received: Arc::new(AtomicBool::new(false)),
+        });
+        let info = manager
+            .create_pty(
+                emitter,
+                PtyCreateOptions {
+                    shell_path: None,
+                    args: None,
+                    cwd: None,
+                    cols: 80,
+                    rows: 24,
+                    env: None,
+                },
+            )
+            .expect("create session");
+        manager.set_owner(&info.id, "term-7");
+
+        manager
+            .handoff_begin(std::slice::from_ref(&info.id))
+            .expect("begin");
+        // Let whatever the shell printed on start-up arrive; it was emitted before the hold.
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+        let before = logs.lock().unwrap().join("");
+
+        #[cfg(not(target_os = "windows"))]
+        let cmd = "echo HANDOFF_MARK_42\n";
+        #[cfg(target_os = "windows")]
+        let cmd = "echo HANDOFF_MARK_42\r\n";
+        manager.write_to_pty(&info.id, cmd).expect("write");
+
+        let held_has_marker = || {
+            manager
+                .gate
+                .held
+                .lock()
+                .unwrap()
+                .get(&info.id)
+                .is_some_and(|s| s.chunks.iter().any(|c| c.contains("HANDOFF_MARK_42")))
+        };
+        let mut seen = false;
+        for _ in 0..80 {
+            if held_has_marker() {
+                seen = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        assert!(seen, "output produced during the move is held");
+        let during = logs.lock().unwrap().join("");
+        assert_eq!(during, before, "nothing is emitted while the move is open");
+
+        let released = manager.handoff_finish(&info.id);
+        assert!(released.data.concat().contains("HANDOFF_MARK_42"));
+        assert!(!released.exited);
+
+        // Live again: the next command reaches the emitter.
+        #[cfg(not(target_os = "windows"))]
+        let cmd = "echo HANDOFF_LIVE_43\n";
+        #[cfg(target_os = "windows")]
+        let cmd = "echo HANDOFF_LIVE_43\r\n";
+        manager.write_to_pty(&info.id, cmd).expect("write");
+        let mut live = false;
+        for _ in 0..80 {
+            if logs.lock().unwrap().join("").contains("HANDOFF_LIVE_43") {
+                live = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        assert!(live, "events flow live after the move");
+
+        // Closing the window that owns it ends it; another window's sessions are untouched.
+        assert_eq!(manager.close_sessions_owned_by("term-1"), 0);
+        assert_eq!(manager.list_sessions().len(), 1);
+        assert_eq!(manager.close_sessions_owned_by("term-7"), 1);
+        assert!(manager.list_sessions().is_empty());
     }
 
     #[test]
