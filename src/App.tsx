@@ -39,6 +39,7 @@ import { useProjectActions } from "./hooks/useProjectActions";
 import { useSessionExit } from "./hooks/useSessionExit";
 import { useCloseGuard } from "./hooks/useCloseGuard";
 import { useSessionPersistence } from "./hooks/useSessionPersistence";
+import { useExtraWindowLayout } from "./hooks/useExtraWindowLayout";
 import { useTabDetach } from "./hooks/useTabDetach";
 import { useTabs } from "./hooks/useTabs";
 import { useTerminalConfig } from "./hooks/useTerminalConfig";
@@ -51,7 +52,7 @@ import { RELEASES_PAGE_URL } from "./services/updateService";
 import {
   isSecondaryTerminalWindow,
   openTerminalWindow,
-  type TabSeed,
+  type WindowSeed,
 } from "./services/terminalWindows";
 import type { ShellProfile, SplitDirection, TerminalTab } from "./types/terminal";
 
@@ -61,7 +62,7 @@ import type { ShellProfile, SplitDirection, TerminalTab } from "./types/terminal
  * pane grid, lazy modals and status bar. State lives in `src/hooks`; this
  * component only composes it.
  */
-function App({ initialSeed = null }: { initialSeed?: TabSeed | null }) {
+function App({ initialSeed = null }: { initialSeed?: WindowSeed | null }) {
   // An extra window (opened with Ctrl+Shift+N, or by dragging a tab out) shares
   // this process with the first one. What must stay single belongs to the first
   // window only: the saved layout, the music player and the update checks.
@@ -250,6 +251,8 @@ function App({ initialSeed = null }: { initialSeed?: TabSeed | null }) {
     autoRestoreSession: userSettings.autoRestoreSession,
     enabled: !secondary,
   });
+  // The other windows save their tabs too, so the next launch can bring them back (FUNC-07).
+  useExtraWindowLayout({ tabs, activeTabId, enabled: secondary });
   const updates = useAppUpdates({
     autoCheckUpdates: secondary ? false : userSettings.autoCheckUpdates,
     setLastError: reportError,
@@ -538,7 +541,8 @@ function App({ initialSeed = null }: { initialSeed?: TabSeed | null }) {
 
         <div className="app-body">
           <SessionBanners
-            pendingRestoreCount={persistence.pendingRestore?.length ?? 0}
+            pendingRestoreCount={persistence.offerTabCount}
+            pendingRestoreWindows={persistence.offerWindowCount}
             onRestoreSession={persistence.restoreSession}
             onDismissRestore={persistence.dismissRestore}
             paneNotice={tabsState.paneNotice}

@@ -1,4 +1,32 @@
 import { isTauriAvailable } from "./ptyService";
+import { liveTerminalWindowLabels } from "./windowLayouts";
+
+const individualCloseHandlers = new Set<() => void>();
+
+/**
+ * Runs `handler` when this window is about to close while other terminal windows stay open:
+ * the user closed this one on purpose, so its tabs are not part of the next session (FUNC-07).
+ * Not called when closing it ends the app. Returns the unsubscribe function.
+ */
+export function onIndividualWindowClose(handler: () => void): () => void {
+  individualCloseHandlers.add(handler);
+  return () => individualCloseHandlers.delete(handler);
+}
+
+async function beforeClose(): Promise<void> {
+  if (individualCloseHandlers.size === 0) return;
+  // Unknown (the window list could not be read): keep the layout, so the worst case is an
+  // extra window offered next time rather than a lost one.
+  const live = await liveTerminalWindowLabels();
+  if (!live || live.length <= 1) return;
+  for (const handler of individualCloseHandlers) {
+    try {
+      handler();
+    } catch (err) {
+      console.warn("A close handler failed:", err);
+    }
+  }
+}
 
 /**
  * Closes the whole app window (desktop). Returns true when the close was
@@ -7,6 +35,7 @@ import { isTauriAvailable } from "./ptyService";
  */
 export async function closeAppWindow(): Promise<boolean> {
   if (!isTauriAvailable()) return false;
+  await beforeClose();
   try {
     const { invoke } = await import("@tauri-apps/api/core");
     await invoke("close_app_window");

@@ -21,14 +21,14 @@ describe("end-to-end isolation", () => {
 
   it("CI builds the app under test with that config, into its own folder", () => {
     expect(read(".github/workflows/ci.yml")).toContain(
-      'CARGO_TARGET_DIR="$PWD/src-tauri/target/e2e" npx tauri build --debug --no-bundle --config src-tauri/tauri.e2e.conf.json'
+      "CARGO_TARGET_DIR=target/e2e npx tauri build --debug --no-bundle --config src-tauri/tauri.e2e.conf.json"
     );
   });
 
   it("the setup's build hint is the command CI runs", () => {
     const setup = read("e2e/globalSetup.ts");
     const ci = read(".github/workflows/ci.yml");
-    const hint = /BUILD_COMMAND =\s*'([^']+)'/.exec(setup)?.[1];
+    const hint = /BUILD_COMMAND =\s*(["'])([^"']+)\1/.exec(setup)?.[2];
     expect(hint).toBeDefined();
     expect(ci).toContain(hint!);
   });

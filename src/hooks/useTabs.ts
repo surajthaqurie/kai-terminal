@@ -13,9 +13,10 @@ import {
   splitRefusalMessage,
   splitTab,
 } from "../services/paneLayout";
-import { createDefaultTab, deriveTabStatus } from "../services/tabFactory";
+import { createDefaultTab, deriveTabStatus, tabFromPersisted } from "../services/tabFactory";
 import { tabFromSeed } from "../services/tabHandoff";
-import type { TabSeed } from "../services/terminalWindows";
+import type { WindowSeed } from "../services/terminalWindows";
+import { isRestoreSeed } from "../services/windowLayouts";
 import type { SessionStatus, SplitDirection, TerminalTab } from "../types/terminal";
 import { useLatest } from "./useLatest";
 import { applyTabsUpdate } from "./tabsSync";
@@ -29,10 +30,11 @@ interface TabsOptions {
   effectiveShellPath: string | undefined;
   setLastError: (message: string | null) => void;
   /**
-   * A tab moved here from another window: the window opens with it (shells that
-   * were running keep running) instead of a fresh starter tab. Read once.
+   * What this window opens with instead of a fresh starter tab: a tab moved here from another
+   * window (shells that were running keep running), or a saved window's tabs from the last
+   * session (FUNC-07). Read once.
    */
-  initialSeed?: TabSeed | null;
+  initialSeed?: WindowSeed | null;
 }
 
 /**
@@ -47,16 +49,28 @@ export function useTabs({ effectiveShellPath, setLastError, initialSeed }: TabsO
   // explicit "Restore session" banner instead of auto-spawning N shells —
   // unless the user opted into auto-restore in settings.
   const initialTabsRef = useRef<TerminalTab[] | null>(null);
+  const initialActiveRef = useRef(0);
   if (initialTabsRef.current === null) {
-    initialTabsRef.current = [
-      initialSeed && initialSeed.panes.length > 0
-        ? tabFromSeed(initialSeed)
-        : createDefaultTab("Terminal 1"),
-    ];
+    const restored = isRestoreSeed(initialSeed)
+      ? initialSeed.restore.tabs.map(tabFromPersisted)
+      : [];
+    if (restored.length > 0) {
+      initialTabsRef.current = restored;
+      const index = isRestoreSeed(initialSeed) ? initialSeed.restore.activeIndex : null;
+      initialActiveRef.current = index !== null && index < restored.length ? index : 0;
+    } else {
+      initialTabsRef.current = [
+        initialSeed && !isRestoreSeed(initialSeed) && initialSeed.panes.length > 0
+          ? tabFromSeed(initialSeed)
+          : createDefaultTab("Terminal 1"),
+      ];
+    }
   }
   const [tabs, setTabs] = useState<TerminalTab[]>(initialTabsRef.current);
   const [activeTabId, setActiveTabId] = useState<string>(
-    initialTabsRef.current[0]?.id ?? "session-1"
+    initialTabsRef.current[initialActiveRef.current]?.id ??
+      initialTabsRef.current[0]?.id ??
+      "session-1"
   );
   const tabsRef = useLatest(tabs);
   const activeTabIdRef = useLatest(activeTabId);

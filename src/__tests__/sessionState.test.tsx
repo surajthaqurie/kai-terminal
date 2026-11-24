@@ -15,7 +15,10 @@ import {
 import { closeAppWindow } from "../services/appWindow";
 import type { ShellProfile, TerminalPane } from "../types/terminal";
 
-vi.mock("../services/appWindow", () => ({ closeAppWindow: vi.fn(async () => false) }));
+vi.mock("../services/appWindow", () => ({
+  closeAppWindow: vi.fn(async () => false),
+  onIndividualWindowClose: vi.fn(() => () => {}),
+}));
 vi.mock("../services/projectService", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../services/projectService")>()),
   getGitInfoCached: vi.fn(async () => ({

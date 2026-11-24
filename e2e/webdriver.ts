@@ -63,6 +63,16 @@ export class Session {
     await this.cmd("DELETE", "");
   }
 
+  /** Handles of the app's open windows. */
+  windowHandles(): Promise<string[]> {
+    return this.cmd<string[]>("GET", "/window/handles");
+  }
+
+  /** Sends the following commands to the window `handle`. */
+  async switchToWindow(handle: string): Promise<void> {
+    await this.cmd("POST", "/window", { handle });
+  }
+
   execute<T>(script: string, ...args: unknown[]): Promise<T> {
     return this.cmd<T>("POST", "/execute/sync", { script, args });
   }

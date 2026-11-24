@@ -26,9 +26,13 @@ export const DRIVER_URL = "http://127.0.0.1:4444";
 /** Identifier the app under test must carry (src-tauri/tauri.e2e.conf.json). */
 export const E2E_IDENTIFIER = "com.kai.terminal.e2e";
 
-/** How to build the app under test (also in the CI workflow). */
+/**
+ * How to build the app under test (also in the CI workflow). The target folder is relative on
+ * purpose: the Tauri CLI runs cargo from src-tauri/, so it lands in src-tauri/target/e2e on every
+ * platform and shell (an absolute path written by a POSIX shell is not one on Windows).
+ */
 export const BUILD_COMMAND =
-  'CARGO_TARGET_DIR="$PWD/src-tauri/target/e2e" npx tauri build --debug --no-bundle --config src-tauri/tauri.e2e.conf.json';
+  "CARGO_TARGET_DIR=target/e2e npx tauri build --debug --no-bundle --config src-tauri/tauri.e2e.conf.json";
 
 let driver: ChildProcess | undefined;
 let home: string | undefined;

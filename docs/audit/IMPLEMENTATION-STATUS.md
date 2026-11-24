@@ -81,7 +81,7 @@ Only Windows (windows-gnu, ConPTY) was run. Code that only exists on Linux or ma
 | FUNC-04 git badge stale | FIXED | |
 | FUNC-05 first tab ignores shell | FIXED | |
 | FUNC-06 settings not synced | FIXED | |
-| FUNC-07 persistence gaps | PARTIALLY FIXED | 30 tabs, active tab, debounced; other windows and torn-off tabs are not restored |
+| FUNC-07 persistence gaps | FIXED | 30 tabs, active tab, debounced; every other terminal window (New window or a dragged-out tab) now saves its tabs under its label, a window closed while others stay open forgets them, and the next launch offers all windows open at quit ("N tabs in M windows"); Load reopens the others with their tabs. Unit tests plus an end-to-end test in the real app (real window list and labels). Not observable end to end: the disk write across a real quit, because WebDriver gives every session a fresh profile |
 | FUNC-08 spinner forever | FIXED | |
 | FUNC-09 exit status lost | FIXED | a failed shell (non-zero or unknown status) keeps its pane open with the output, the exit code (hex too for Windows statuses) and Restart / Close; a clean exit still closes; the last pane failing no longer quits the app; crash-loop and instant-death guards unchanged and also apply after Restart |
 | FUNC-10 key and clipboard edges | FIXED | AltGr, denied clipboard. Focus after a palette action: switching tabs already handed focus to the new pane; closing a pane (shortcut, palette, or after the close confirmation) left focus on nothing, and now hands it to the pane that is left |
@@ -126,7 +126,7 @@ Windows, ConPTY, before = the audit baseline or the code before the change, afte
 | Fast-consumer throughput | about 1.3 MB/s | unchanged |
 | `kai.exe` (default features, release) | 5,502,464 bytes | 5,716,480 bytes (+3.89%); of that, the OS certificate store (RES-09) is 13,824 bytes (5,702,656 without it, same tree) |
 | App chunk loaded at every launch (gzip, Vite report) | 198.4 kB | 169.8 kB (-28.6 kB); the three add-ons now load on first use (4.8 + 9.8 + 18.6 kB) |
-| Frontend tests | 2,703 | 3,084 (+27 skipped), plus 6 end-to-end workflows |
+| Frontend tests | 2,703 | 3,113 (+27 skipped), plus 7 end-to-end workflows |
 | Rust lib tests | 270 | 310 |
 | PTY integration tests | 19 | 28 |
 | GUI-feature tests | 0 | 28 |
@@ -139,5 +139,6 @@ Not measured at all: cold start, idle CPU and wake-ups, memory per pane, frame t
 2. Run CI on Linux, macOS and Windows-MSVC once: the Unix-only code and tests, the weekly Node-update workflow, the release gate's CI check and the new bundle-budget step have never run on GitHub.
 3. Open the music player in a packaged build once: the narrowed CSP was checked by tests, not by playing a track.
 4. Accepted as they are: `style-src 'unsafe-inline'`, `frame-src http://localhost:*`, the 60 ms hand-off settle, JSON-in-eval output transport, the font gate.
-5. Test runs on a loaded machine: twice, a full `vitest run` left out `appShell.test.tsx` (102 tests) entirely and still reported success with zero failures; the file passes on its own and in the next full run. CI and release now run `npm run test:ci`, which fails, naming the files, when any test file Vitest selects has no results (`scripts/check-test-run.mjs`; checked against the report of that bad run, where it names `appShell.test.tsx`). A timing threshold in `lspDetection.test.ts` that failed under load was loosened to what still separates a blocked event loop from a busy one.
-6. Larger items left for a separate effort: running the end-to-end job on GitHub for the first time (CI-04), performance gates (CI-06), further `TerminalView.tsx` reduction (ARCH-03: the input filter and launch orchestration remain; diminishing returns).
+5. Found by the end-to-end tests and fixed: the app banners (session restore, split refused, shell keeps exiting) were painted under the terminal and their buttons took no clicks, because the terminal area became absolutely positioned in `187eb8a`; banners now have their own layer (`--z-banner`) and the end-to-end test checks the restore button is hit-test on top. Found and NOT fixed (outside this task): the inline-image add-on (`@xterm/addon-image`) fails to start in the packaged app because the CSP `script-src` does not allow WebAssembly (`'wasm-unsafe-eval'`); inline images (iTerm2 / Sixel) therefore do not work. The terminal itself is unaffected.
+6. Test runs on a loaded machine: twice, a full `vitest run` left out `appShell.test.tsx` (102 tests) entirely and still reported success with zero failures; the file passes on its own and in the next full run. CI and release now run `npm run test:ci`, which fails, naming the files, when any test file Vitest selects has no results (`scripts/check-test-run.mjs`; checked against the report of that bad run, where it names `appShell.test.tsx`). A timing threshold in `lspDetection.test.ts` that failed under load was loosened to what still separates a blocked event loop from a busy one.
+7. Larger items left for a separate effort: running the end-to-end job on GitHub for the first time (CI-04), performance gates (CI-06), further `TerminalView.tsx` reduction (ARCH-03: the input filter and launch orchestration remain; diminishing returns).

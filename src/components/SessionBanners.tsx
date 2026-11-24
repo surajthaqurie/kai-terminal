@@ -3,6 +3,8 @@ import { Banner, Button } from "./ui";
 interface SessionBannersProps {
   /** Number of tabs in a previous session offered for restore (0 = none). */
   pendingRestoreCount: number;
+  /** Windows those tabs were in (this one included); more than one reopens the others. */
+  pendingRestoreWindows?: number;
   onRestoreSession: () => void;
   onDismissRestore: () => void;
   paneNotice: string | null;
@@ -17,6 +19,7 @@ interface SessionBannersProps {
 /** Banners above the terminals: session restore offer, split refusal, shell fault. */
 export function SessionBanners({
   pendingRestoreCount,
+  pendingRestoreWindows = 1,
   onRestoreSession,
   onDismissRestore,
   paneNotice,
@@ -45,6 +48,8 @@ export function SessionBanners({
         >
           {`Previous session found (${pendingRestoreCount} tab${
             pendingRestoreCount === 1 ? "" : "s"
+          }${
+            pendingRestoreWindows > 1 ? ` in ${pendingRestoreWindows} windows` : ""
           }). Kai started fresh for a fast launch.`}
         </Banner>
       )}

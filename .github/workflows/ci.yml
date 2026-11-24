@@ -342,7 +342,7 @@ jobs:
 
       - name: Build the app under test (own identifier, see src-tauri/tauri.e2e.conf.json)
         shell: bash
-        run: CARGO_TARGET_DIR="$PWD/src-tauri/target/e2e" npx tauri build --debug --no-bundle --config src-tauri/tauri.e2e.conf.json
+        run: CARGO_TARGET_DIR=target/e2e npx tauri build --debug --no-bundle --config src-tauri/tauri.e2e.conf.json
 
       - name: End-to-end tests (Linux, virtual display)
         if: runner.os == 'Linux'

@@ -7,7 +7,10 @@ import { useSessionPersistence } from "../hooks/useSessionPersistence";
 import { LAYOUT_KEY } from "../services/tabFactory";
 import type { TabSeed } from "../services/terminalWindows";
 
-vi.mock("../services/appWindow", () => ({ closeAppWindow: vi.fn(async () => false) }));
+vi.mock("../services/appWindow", () => ({
+  closeAppWindow: vi.fn(async () => false),
+  onIndividualWindowClose: vi.fn(() => () => {}),
+}));
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 

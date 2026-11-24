@@ -7,6 +7,7 @@
  */
 import { isTauriAvailable } from "./ptyService";
 import type { PaneAdoption, PaneLayoutNode, SplitDirection } from "../types/terminal";
+import type { WindowRestoreSeed } from "./windowLayouts";
 
 /** True in a terminal window that was opened from another one (not the first). */
 export function isSecondaryTerminalWindow(): boolean {
@@ -38,6 +39,9 @@ export interface TabSeed {
   panes: PaneSeed[];
 }
 
+/** What a new window starts with: a tab moved from another window, or a saved window's tabs. */
+export type WindowSeed = TabSeed | WindowRestoreSeed;
+
 /** What a session printed, and whether it ended, while it was being moved. */
 export interface HandoffRelease {
   data: string[];
@@ -56,7 +60,7 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
  * (screen pixels). Rejects outside the desktop app.
  */
 export async function openTerminalWindow(opts?: {
-  seed?: TabSeed;
+  seed?: WindowSeed;
   adopt?: string[];
   at?: { x: number; y: number };
 }): Promise<string> {
@@ -69,11 +73,11 @@ export async function openTerminalWindow(opts?: {
   });
 }
 
-/** The tab this window was opened to show (once), or null for a plain new window. */
-export async function takeWindowSeed(): Promise<TabSeed | null> {
+/** What this window was opened to show (once), or null for a plain new window. */
+export async function takeWindowSeed(): Promise<WindowSeed | null> {
   if (!isTauriAvailable()) return null;
   try {
-    return (await call<TabSeed | null>("take_window_seed")) ?? null;
+    return (await call<WindowSeed | null>("take_window_seed")) ?? null;
   } catch (err) {
     console.warn("Could not read the tab for this window:", err);
     return null;
