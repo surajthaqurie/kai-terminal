@@ -354,8 +354,9 @@ jobs:
 
   # CI-08: ESLint (typescript-eslint recommended + React hooks), zero warnings allowed. It runs from
   # tools/lint with its own TypeScript 6.0: typescript-eslint cannot run on TypeScript 7.0, which
-  # the app builds and type-checks with (see docs/audit/CI-08-LINT-INVESTIGATION.md). Parsing
-  # needs no app dependencies, so only the lint toolchain is installed.
+  # the app builds and type-checks with (see docs/audit/CI-08-LINT-INVESTIGATION.md). The
+  # type-aware rules (no-unsafe-*, no-deprecated, ...) need the app's dependencies installed:
+  # without them every import resolves to an error type and each use is reported.
   lint:
     name: ESLint
     runs-on: ubuntu-22.04
@@ -369,7 +370,12 @@ jobs:
         with:
           node-version: 24
           cache: "npm"
-          cache-dependency-path: "tools/lint/package-lock.json"
+          cache-dependency-path: |
+            package-lock.json
+            tools/lint/package-lock.json
+
+      - name: Install app dependencies (types for the type-aware rules)
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
       - name: Install the lint toolchain (tools/lint)
         run: npm run lint:install

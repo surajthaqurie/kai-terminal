@@ -2,3 +2,9 @@
 set -e
 
 npm run prepush
+
+# ESLint (same check as CI). Installs the lint toolchain on first use.
+if [ ! -d tools/lint/node_modules ]; then
+  npm run lint:install
+fi
+npm run lint:eslint
