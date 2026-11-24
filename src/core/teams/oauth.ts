@@ -93,7 +93,7 @@ export function teamsClientId(env: NodeJS.ProcessEnv = process.env): string {
     return clientIdFrom(env);
   } catch (err) {
     // A malformed KAI_AZURE_* value is its own problem; do not hide it as "not set up".
-    if (err instanceof IntegrationError && /^KAI_AZURE_/.test(err.message)) throw err;
+    if (err instanceof IntegrationError && err.message.startsWith("KAI_AZURE_")) throw err;
     throw new IntegrationError(
       "config",
       "Microsoft Teams sign-in is not set up yet: Kai has no Microsoft Entra app ID.",

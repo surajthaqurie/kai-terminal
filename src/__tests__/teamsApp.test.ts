@@ -109,7 +109,7 @@ describe("ChatApp", () => {
       account,
       canReadChannels: true,
       screen: screen as unknown as Screen,
-      env: {} as NodeJS.ProcessEnv,
+      env: {},
       pollMs: 3_600_000,
       tmpDir: dir,
       ...opts,
@@ -252,7 +252,7 @@ describe("ChatApp", () => {
     // Only measured, never read, so report a size instead of making a 2 GB file.
     const realStat = fs.statSync.bind(fs);
     const stat = vi.spyOn(fs, "statSync").mockImplementation(((p: fs.PathLike, o?: unknown) => {
-      const st = realStat(p, o as never) as fs.Stats;
+      const st = realStat(p, o) as fs.Stats;
       return String(p) === big ? Object.assign(Object.create(st), { size: 2 * 1024 ** 3 + 1 }) : st;
     }) as typeof fs.statSync);
     try {
@@ -380,7 +380,7 @@ describe("ChatApp images", () => {
       account,
       canReadChannels: true,
       screen: screen as unknown as Screen,
-      env: { TERM_PROGRAM: "iTerm.app" } as NodeJS.ProcessEnv,
+      env: { TERM_PROGRAM: "iTerm.app" },
       pollMs: 3_600_000,
     });
     const done = app.run();
@@ -401,7 +401,7 @@ describe("ChatApp images", () => {
       account,
       canReadChannels: true,
       screen: screen as unknown as Screen,
-      env: {} as NodeJS.ProcessEnv,
+      env: {},
       openFile,
       pollMs: 3_600_000,
       tmpDir: dir,
@@ -442,7 +442,7 @@ describe("ChatApp links", () => {
       account,
       canReadChannels: true,
       screen: screen as unknown as Screen,
-      env: {} as NodeJS.ProcessEnv,
+      env: {},
       openUrl,
       pollMs: 3_600_000,
     });

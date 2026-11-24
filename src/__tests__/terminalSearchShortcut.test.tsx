@@ -139,7 +139,7 @@ beforeEach(() => {
     observe() {}
     unobserve() {}
     disconnect() {}
-  } as unknown as typeof ResizeObserver;
+  };
   terminals.length = 0;
   host = document.createElement("div");
   document.body.appendChild(host);

@@ -126,7 +126,7 @@ async function call<T>(
   const json = (await res.json().catch(() => ({}))) as {
     value?: T & { error?: string; message?: string };
   };
-  const value = json.value as (T & { error?: string; message?: string }) | undefined;
+  const value = json.value;
   if (!res.ok || (value && typeof value === "object" && "error" in value && value.error)) {
     throw new WebDriverError(res.status, value?.error ?? "unknown error", value?.message ?? "");
   }

@@ -91,13 +91,13 @@ describe("token-count truthfulness contract (KNOWN_LIMITATIONS 1.8.2)", () => {
       () => NaN,
       () => Infinity,
       () => -1,
-      (() => {
+      () => {
         throw new Error("tokenizer down");
-      }) as TokenizerFunction,
-      "5" as unknown as TokenizerFunction as TokenizerFunction,
+      },
+      "5" as unknown as TokenizerFunction,
     ];
     for (const fn of bad) {
-      const m = estimateTokens(SAMPLE, fn as TokenizerFunction);
+      const m = estimateTokens(SAMPLE, fn);
       expect(m.isEstimate).toBe(true);
       expect(m.measuredTokens).toBeUndefined();
       expect(m.estimatedTokens).toBe(heuristic);

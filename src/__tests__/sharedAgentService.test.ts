@@ -88,7 +88,7 @@ async function waitFor<T>(fn: () => T | undefined | false, ms = 8000): Promise<T
 
 type Chat = Array<Record<string, unknown>>;
 const chatEvents = (side: Side, id: string): Chat =>
-  side.events.filter((e) => e.event === "chat" && e.chatId === id) as unknown as Chat;
+  side.events.filter((e) => e.event === "chat" && e.chatId === id);
 
 async function sendChat(
   side: Side,
@@ -335,7 +335,7 @@ describe("chat routing", () => {
 
     const list = await ok(b.svc.handle({ op: "hosts_list" }));
     expect(list.hosts[0].usage).toMatchObject({ runs: 1, input: 10, output: 5 });
-    const share = (await ok(a.svc.handle({ op: "share_status" }))).share as ShareStatus;
+    const share = (await ok(a.svc.handle({ op: "share_status" }))).share;
     expect(share.devices[0].usage).toMatchObject({ runs: 1, input: 10, output: 5 });
     // The receiver was told its usage changed.
     expect(b.events.some((e) => e.event === "hosts")).toBe(true);

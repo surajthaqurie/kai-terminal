@@ -33,7 +33,7 @@ export function usePrefetchPanels() {
     if (typeof window.requestIdleCallback === "function") {
       idleHandle = window.requestIdleCallback(prefetchOnce, { timeout: IDLE_TIMEOUT_MS });
     } else {
-      idleHandle = window.setTimeout(prefetchOnce, SECONDARY_DELAY_MS) as unknown as number;
+      idleHandle = window.setTimeout(prefetchOnce, SECONDARY_DELAY_MS);
     }
     return () => {
       cancelled = true;

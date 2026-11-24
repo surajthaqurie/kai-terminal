@@ -422,7 +422,7 @@ export class HostsClient {
       );
       return session;
     } catch (e) {
-      if (e instanceof ClientError && e.code === "rejected" && /not approved/.test(e.message)) {
+      if (e instanceof ClientError && e.code === "rejected" && e.message.includes("not approved")) {
         await this.markRemoved(host.id);
         throw new ClientError(
           "removed",

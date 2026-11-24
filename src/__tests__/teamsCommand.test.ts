@@ -387,15 +387,11 @@ describe("kai teams", () => {
     });
 
     it("recognises the markers, and ignores empty or zero values", () => {
-      expect(agentSessionMarker({ KAI_AGENT_SESSION: "1" } as NodeJS.ProcessEnv)).toBe(
-        "KAI_AGENT_SESSION"
-      );
-      expect(agentSessionMarker({ CLAUDECODE: "1" } as NodeJS.ProcessEnv)).toBe("CLAUDECODE");
-      expect(
-        agentSessionMarker({ CLAUDECODE: "0", KAI_AGENT_SESSION: "" } as NodeJS.ProcessEnv)
-      ).toBeNull();
-      expect(agentSessionMarker({} as NodeJS.ProcessEnv)).toBeNull();
-      expect(agentEnv({ A: "1" } as NodeJS.ProcessEnv)).toEqual({ A: "1", KAI_AGENT_SESSION: "1" });
+      expect(agentSessionMarker({ KAI_AGENT_SESSION: "1" })).toBe("KAI_AGENT_SESSION");
+      expect(agentSessionMarker({ CLAUDECODE: "1" })).toBe("CLAUDECODE");
+      expect(agentSessionMarker({ CLAUDECODE: "0", KAI_AGENT_SESSION: "" })).toBeNull();
+      expect(agentSessionMarker({})).toBeNull();
+      expect(agentEnv({ A: "1" })).toEqual({ A: "1", KAI_AGENT_SESSION: "1" });
     });
 
     it("marks every agent that `kai <agent>` starts", () => {

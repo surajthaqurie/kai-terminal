@@ -95,7 +95,7 @@ function cloudOrgOf(address: string): string | null {
     return null;
   }
   const host = url.hostname.toLowerCase();
-  if (host === "dev.azure.com") return url.pathname.split("/").filter(Boolean)[0] ?? null;
+  if (host === "dev.azure.com") return url.pathname.split("/").find(Boolean) ?? null;
   if (host.endsWith(".visualstudio.com")) return host.slice(0, -".visualstudio.com".length) || null;
   return null;
 }

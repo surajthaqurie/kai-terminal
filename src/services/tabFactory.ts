@@ -5,13 +5,7 @@ import {
   persistedLayoutToNode,
   sanitizeTab,
 } from "./workspaces";
-import type {
-  PaneLayoutNode,
-  PaneSplitDirection,
-  SessionStatus,
-  TerminalPane,
-  TerminalTab,
-} from "../types/terminal";
+import type { PaneLayoutNode, SessionStatus, TerminalPane, TerminalTab } from "../types/terminal";
 
 export const LAYOUT_KEY = "terminal_tab_layout_v1";
 
@@ -112,7 +106,7 @@ export function loadPersistedLayout(): PersistedTab[] | null {
   try {
     const raw = localStorage.getItem(LAYOUT_KEY);
     if (!raw) return null;
-    const parsed = JSON.parse(raw);
+    const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return null;
     return sanitizePersistedTabs(parsed);
   } catch {
@@ -209,9 +203,7 @@ export function createDefaultTab(
     if (paneIds.length <= 1) {
       fullLayout = { kind: "pane", paneId: paneIds[0] };
     } else {
-      const axis = (
-        splitDirection === "horizontal" ? "horizontal" : "vertical"
-      ) as PaneSplitDirection;
+      const axis = splitDirection === "horizontal" ? "horizontal" : "vertical";
       let node: PaneLayoutNode = { kind: "pane", paneId: paneIds[0] };
       for (const id of paneIds.slice(1)) {
         node = {

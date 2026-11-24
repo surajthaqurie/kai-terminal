@@ -2395,7 +2395,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
                         loading="lazy"
                         className="music-item-thumb"
                         onError={(e) => {
-                          (e.currentTarget as HTMLImageElement).style.display = "none";
+                          e.currentTarget.style.display = "none";
                         }}
                       />
                     ) : (
@@ -2450,7 +2450,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
                           loading="lazy"
                           className="music-item-thumb"
                           onError={(e) => {
-                            (e.currentTarget as HTMLImageElement).style.display = "none";
+                            e.currentTarget.style.display = "none";
                           }}
                         />
                       ) : (
@@ -2514,7 +2514,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
                         loading="lazy"
                         className="music-item-thumb"
                         onError={(e) => {
-                          (e.currentTarget as HTMLImageElement).style.display = "none";
+                          e.currentTarget.style.display = "none";
                         }}
                       />
                     ) : (
@@ -2551,7 +2551,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
                                 loading="lazy"
                                 className="music-item-thumb"
                                 onError={(e) => {
-                                  (e.currentTarget as HTMLImageElement).style.display = "none";
+                                  e.currentTarget.style.display = "none";
                                 }}
                               />
                             ) : (
@@ -2614,7 +2614,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
                               loading="lazy"
                               className="music-item-thumb"
                               onError={(e) => {
-                                (e.currentTarget as HTMLImageElement).style.display = "none";
+                                e.currentTarget.style.display = "none";
                               }}
                             />
                           ) : (

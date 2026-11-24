@@ -126,7 +126,7 @@ describe("audit regression: retrieval confinement", () => {
   it("refuses path traversal via a crafted index entry", () => {
     const dir = makeTempProject({ "src/a.ts": "export function a() {}\n" });
     const meta = registerProject(dir);
-    const base: ReturnType<typeof loadProjectIndex> = loadProjectIndex(meta.id) as never;
+    const base: ReturnType<typeof loadProjectIndex> = loadProjectIndex(meta.id);
     void base;
     // Build a minimal malicious index pointing outside the root
     const evilIndex = {

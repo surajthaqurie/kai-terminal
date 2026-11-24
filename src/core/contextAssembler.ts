@@ -153,7 +153,7 @@ export function assembleContext(
   const rulesSkillsAllowance = remainingBudget;
 
   for (const rawRule of index.rules) {
-    const match = rawRule.match(/^\[Rule File:\s*([^\]]+)\]\n([\s\S]*)$/);
+    const match = /^\[Rule File:\s*([^\]]+)\]\n([\s\S]*)$/.exec(rawRule);
     const source = match ? match[1] : "project-rules";
     const content = match ? match[2] : rawRule;
 

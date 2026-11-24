@@ -94,7 +94,7 @@ describe("Escape while the terminal has focus", () => {
     });
     const zsh = [
       ...document.querySelectorAll<HTMLElement>("[role='menuitemradio'], [role='menuitem']"),
-    ].find((el) => /Zsh/.test(el.textContent ?? ""));
+    ].find((el) => (el.textContent ?? "").includes("Zsh"));
     expect(zsh).toBeTruthy();
     await act(async () => zsh!.click());
     expect(host.querySelector("[role='alertdialog']")).not.toBeNull();

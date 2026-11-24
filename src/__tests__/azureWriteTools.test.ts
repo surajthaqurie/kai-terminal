@@ -1071,8 +1071,8 @@ describe("write tools over MCP", () => {
       ],
       ["kai_pr_comment", { id: 12, text: "x", threadId: -1 }, "threadId"],
     ])("validates %s %j before any network call", async (name, args, message) => {
-      const res = await callTool(repoDir, name as string, args as Record<string, unknown>);
-      expect(res.error?.message).toContain(message as string);
+      const res = await callTool(repoDir, name, args);
+      expect(res.error?.message).toContain(message);
       expect(calls).toHaveLength(0);
     });
 

@@ -320,8 +320,7 @@ describe("IntegrationsPanel", () => {
   const flush = () => act(async () => {});
   const q = <T extends Element>(sel: string) => container.querySelector<T>(sel);
   const button = (text: string) =>
-    [...container.querySelectorAll("button")].find((b) => b.textContent?.trim() === text) as
-      HTMLButtonElement | undefined;
+    [...container.querySelectorAll("button")].find((b) => b.textContent?.trim() === text);
   const click = async (el: Element | undefined | null) => {
     expect(el).toBeTruthy();
     await act(async () => {

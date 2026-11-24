@@ -769,7 +769,7 @@ export async function indexProject(
     const extractorCurrent = existingIndex?.extractorVersion === EXTRACTOR_VERSION;
     // Normalize legacy keys: indexes written on Windows used backslash
     // separators (`src\a.ts`). Lookups below use POSIX keys (`src/a.ts`).
-    const existingFiles: Record<string, IndexedFile> = Object.create(null);
+    const existingFiles = Object.create(null) as Record<string, IndexedFile>;
     const deletedCandidates = new Map<string, IndexedFile>();
     if (existingIndex) {
       for (const [k, v] of Object.entries(existingIndex.files)) {
@@ -785,11 +785,11 @@ export async function indexProject(
     const existingSkipped: Record<string, SkippedFileRecord> =
       existingIndex && existingIndex.skipped && typeof existingIndex.skipped === "object"
         ? existingIndex.skipped
-        : Object.create(null);
+        : (Object.create(null) as Record<string, SkippedFileRecord>);
 
-    const indexedFiles: Record<string, IndexedFile> = Object.create(null);
-    const symbolIndex: Record<string, IndexedSymbol[]> = Object.create(null);
-    const skipped: Record<string, SkippedFileRecord> = Object.create(null);
+    const indexedFiles = Object.create(null) as Record<string, IndexedFile>;
+    const symbolIndex = Object.create(null) as Record<string, IndexedSymbol[]>;
+    const skipped = Object.create(null) as Record<string, SkippedFileRecord>;
     const modifiedFiles: string[] = [];
     const newFiles: string[] = [];
     let totalFilesSeen = 0;

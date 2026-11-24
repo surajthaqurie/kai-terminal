@@ -135,7 +135,7 @@ beforeEach(() => {
     observe() {}
     unobserve() {}
     disconnect() {}
-  } as unknown as typeof ResizeObserver;
+  };
   Object.defineProperty(HTMLElement.prototype, "clientWidth", { configurable: true, value: 800 });
   Object.defineProperty(HTMLElement.prototype, "clientHeight", { configurable: true, value: 400 });
   host = document.createElement("div");
@@ -214,7 +214,7 @@ describe("folder reports from the shell (SEC-12)", () => {
       backendCwd.mockClear();
 
       // What `cat evil.txt` or a remote shell can print.
-      await act(async () => void oscHandlers.get(id as number)!(payload as string));
+      await act(async () => void oscHandlers.get(id)!(payload));
       await settle(900); // past the settle delay that holds a changed folder back
 
       expect(backendCwd).toHaveBeenCalled();

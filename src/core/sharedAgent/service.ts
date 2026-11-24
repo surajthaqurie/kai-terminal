@@ -41,7 +41,6 @@ import {
   isSharedAgentId,
   parseGrants,
   type AgentView,
-  type InviteMinutes,
   type JoinedHost,
   type SharedAgentEvent,
   type SharedAgentRequest,
@@ -238,7 +237,7 @@ export class SharedAgentService {
         }
         const port = this.host.port;
         if (port === null) throw new BadRequest("Turn sharing on first.");
-        const invite = this.host.createInvite(req.expiresMinutes as InviteMinutes);
+        const invite = this.host.createInvite(req.expiresMinutes);
         const ip = lanAddresses(this.deps.networks?.())[0] ?? "127.0.0.1";
         const publicUrl = this.host.publicUrl;
         return {

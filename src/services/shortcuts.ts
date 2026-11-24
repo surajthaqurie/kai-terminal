@@ -100,7 +100,7 @@ export function parseBinding(binding: string): ParsedBinding | null {
   if (F_KEY.test(upper)) {
     code = upper;
   } else if (/^[A-Z0-9]$/.test(upper)) {
-    code = upper.match(/^[0-9]$/) ? `Digit${upper}` : `Key${upper}`;
+    code = /^[0-9]$/.exec(upper) ? `Digit${upper}` : `Key${upper}`;
   } else if (upper === ",") {
     code = "Comma";
   } else if (upper === "." || upper === "PERIOD") {

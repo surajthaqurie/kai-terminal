@@ -156,7 +156,7 @@ function parseBinding(raw: string): ProjectBinding | null {
         provider: v.provider,
         account: v.account,
         project: v.project,
-        repo: v.repo as string | null,
+        repo: v.repo,
         boundAt: typeof v.boundAt === "string" ? v.boundAt : "",
         ...(rules ? { rules } : {}),
         // Only an explicit `true` counts: anything else, or a hand-edit, stays off.

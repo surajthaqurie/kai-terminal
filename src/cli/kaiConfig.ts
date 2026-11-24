@@ -18,7 +18,11 @@ export function loadKaiConfig(): Record<string, unknown> {
   const configPath = kaiConfigPath();
   if (fs.existsSync(configPath)) {
     try {
-      return JSON.parse(fs.readFileSync(configPath, "utf-8"));
+      const parsed: unknown = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+      // A file holding null, a list or a number would break every `config[key]` read.
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
     } catch {
       // use defaults
     }

@@ -122,7 +122,7 @@ export function getTelemetrySummary(): TelemetrySummary {
 
     for (const line of lines) {
       try {
-        const item: LocalMetricsRecord = JSON.parse(line);
+        const item = JSON.parse(line) as LocalMetricsRecord;
         parsed++;
         totalLatency += item.latencyMs || 0;
         if (typeof item.tokensEstimated === "number") {

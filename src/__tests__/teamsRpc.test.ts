@@ -56,7 +56,7 @@ describe("Microsoft Teams RPC (the Integrations tab)", () => {
       secrets: memorySecrets(),
       agentGuard: async () => {},
       ...over,
-    } as TeamsRpcDeps & { secrets: SecretStore };
+    };
   }
 
   describe("status", () => {
@@ -288,7 +288,7 @@ describe("Microsoft Teams RPC (the Integrations tab)", () => {
 
     it("uses the real process and environment check by default", async () => {
       await expect(
-        handleTeamsRpc({ op: "teams_status" }, { env: { KAI_AGENT_SESSION: "1" } as never })
+        handleTeamsRpc({ op: "teams_status" }, { env: { KAI_AGENT_SESSION: "1" } })
       ).rejects.toMatchObject({ code: "forbidden" });
     });
   });

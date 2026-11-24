@@ -152,7 +152,7 @@ beforeEach(() => {
     observe() {}
     unobserve() {}
     disconnect() {}
-  } as unknown as typeof ResizeObserver;
+  };
   terminals.length = 0;
   outputListeners.clear();
   ackOutput.mockClear();

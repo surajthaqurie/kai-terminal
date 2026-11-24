@@ -21,7 +21,7 @@ interface DialogProps {
  * focus return) from `useModalBehavior`. Renders nothing while closed.
  */
 export function Dialog({ open, onClose, title, children, footer, className }: DialogProps) {
-  const dialogRef = useModalBehavior<HTMLDivElement>(open, onClose);
+  const dialogRef = useModalBehavior(open, onClose);
   const titleId = useId();
   if (!open) return null;
   return (

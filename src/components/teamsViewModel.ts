@@ -48,7 +48,7 @@ export function describeTeamsAccount(account: { name: string; email?: string }):
 /** The line shown after "Test connection". */
 export function describeAccess(access: TeamsAccessView): string {
   const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
-  const parts = [`${plural(access.teams, "team")}`];
+  const parts = [plural(access.teams, "team")];
   parts.push(access.chats === null ? "chats unavailable" : plural(access.chats, "chat"));
   return `Signed in as ${access.user.email ?? access.user.name}: ${parts.join(", ")}.`;
 }

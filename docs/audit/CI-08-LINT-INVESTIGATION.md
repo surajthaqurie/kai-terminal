@@ -53,6 +53,42 @@ all in tests; the config allows exactly those two conventions. The rest were fix
 reasoned disable), 8 stale `eslint-disable` comments. Two more `prefer-const` hits are closures
 reading a `let` before its single assignment, allowed with `ignoreReadBeforeAssign`.
 
+## Type-aware rules: final state (phases 32 to 35)
+
+Every rule in typescript-eslint's `strictTypeChecked` and `stylisticTypeChecked` sets was run and
+its findings read; each is now either enabled (findings fixed, CI fails on new ones) or recorded as
+not enabled with the reason, in `tools/lint/eslint.config.mjs`. The lint work for CI-08 ends here.
+
+**Enabled.** `no-floating-promises`, `no-misused-promises`, `await-thenable` (phase 32);
+`no-base-to-string`, `restrict-template-expressions`, `no-redundant-type-constituents`,
+`switch-exhaustiveness-check` (33); `unbound-method`, `no-deprecated`, `no-misused-spread`,
+`use-unknown-in-catch-callback-variable` (34); the six `no-unsafe-*` rules (production code
+only), `no-unnecessary-type-assertion`, `no-unnecessary-template-expression`,
+`no-unnecessary-type-arguments`, `prefer-find`, `prefer-includes`,
+`prefer-string-starts-ends-with`, `prefer-regexp-exec` (35).
+
+**Bugs these rules led to** (each with a test that fails on the old code): unhandled rejections
+from the palette's Copy and a maximize-state read (32); agent output fields shown as
+"[object Object]" (33); integration tests that read a rejection without checking one happened
+(34); the MCP stdio server stopping for good after a line that is JSON but not an object, such as
+`null` (35); LSP definitions resolved to broken paths on Windows and for any path with a space,
+because `file://` URIs were cut as strings instead of decoded, and requests sent `file://C:\...`
+(35).
+
+**Not enabled, and why.**
+
+| Rule(s) | Findings | Reason |
+|---|---|---|
+| `no-unnecessary-condition`, `no-unnecessary-type-conversion`, `no-unnecessary-boolean-literal-compare` | 253, 19, 10 | The code checks values whose static type is stronger than what arrives at runtime (settings from storage, RPC and backend replies, `isTTY`). The fixes remove those checks, and `x?.ok === false` becoming `!x?.ok` is true when `x` is missing. Tried in phase 35 and reverted. |
+| `prefer-nullish-coalescing` | 133 | No auto-fix; each `\|\|` to `??` changes what `""`, `0` and `false` do. Not read one by one. |
+| `require-await` | 17 | Each hit implements an async interface; dropping `async` changes a synchronous throw into an exception instead of a rejected promise. |
+| `no-unnecessary-type-parameters` | 11 | `get<T>()` / `invoke<T>()` where the caller names the result type. |
+| `only-throw-error`, `prefer-promise-reject-errors` | 2, 2 | Tauri's `invoke` rejects with strings; every hit rethrew a caught value. |
+| `return-await` | 15 | Style; none returned an unawaited promise inside a `try`. |
+| `no-meaningless-void-operator` | 30 | `void name;` marks a binding as deliberately unused; the fix turns it into a bare `name;`. |
+| `prefer-optional-chain` | 55 | Style; most hits have no safe auto-fix (`a && a.b` and `a?.b` differ for `""` and `0`). |
+| Style: `array-type`, `consistent-type-definitions`, `no-confusing-void-expression`, `no-empty-function`, `no-non-null-assertion`, `no-extraneous-class`, `no-invalid-void-type`, `dot-notation`, `no-inferrable-types`, `consistent-generic-constructors`, `no-dynamic-delete`, `prefer-for-of`, `non-nullable-type-assertion-style`, strict options of `restrict-template-expressions` / `restrict-plus-operands` | about 3,700 together | Formatting and spelling preferences; no finding pointed at a bug. |
+
 ## Original decision note
 
 Adding A means new dev dependencies and a rule set, so it was not installed here. With A chosen,

@@ -341,7 +341,7 @@ export function loadOrMigrateWorkspaces(): Workspace[] {
   try {
     const legacyRaw = readLS(LEGACY_LAYOUT_KEY);
     if (!legacyRaw) return [];
-    const parsed = JSON.parse(legacyRaw);
+    const parsed: unknown = JSON.parse(legacyRaw);
     const migrated = migrateLegacyLayout(parsed);
     if (!migrated) return [];
     saveWorkspaces([migrated]);

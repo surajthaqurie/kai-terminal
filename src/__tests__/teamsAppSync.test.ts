@@ -113,7 +113,7 @@ describe("ChatApp automatic sync", () => {
       account,
       canReadChannels: true,
       screen: screen as unknown as Screen,
-      env: {} as NodeJS.ProcessEnv,
+      env: {},
       sync: FAST,
       ...opts,
     });
@@ -213,7 +213,7 @@ describe("ChatApp automatic sync", () => {
       account,
       canReadChannels: true,
       screen: screen as unknown as Screen,
-      env: {} as NodeJS.ProcessEnv,
+      env: {},
       sync: FAST,
     });
     apps.push(app);

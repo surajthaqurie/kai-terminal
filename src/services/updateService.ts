@@ -240,7 +240,7 @@ function parseReleaseAssets(raw: GithubRelease["assets"]): ReleaseAsset[] {
     if (!name || !url) continue;
     // Only installer artifacts — never source zips / checksums.
     if (!/\.(exe|msi|dmg|deb|AppImage)$/i.test(name)) continue;
-    if (!/^https:\/\//.test(url)) continue;
+    if (!url.startsWith("https://")) continue;
     out.push({
       name,
       browser_download_url: url,

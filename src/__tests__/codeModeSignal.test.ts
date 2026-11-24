@@ -52,7 +52,7 @@ describe("announceCodeMode (CLI side)", () => {
   });
 
   function run(env: string | undefined, tty: boolean, project: string | null): string[] {
-    vi.stubEnv("KAI_TERMINAL", env as string);
+    vi.stubEnv("KAI_TERMINAL", env);
     Object.defineProperty(process.stdout, "isTTY", { value: tty, configurable: true });
     const write = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
     announceCodeMode(project);

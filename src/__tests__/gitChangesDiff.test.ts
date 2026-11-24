@@ -212,9 +212,7 @@ describe("GitChangesModal header", () => {
     // Windowed by default with an opt-in fullscreen toggle.
     const modal = container.querySelector(".git-changes-modal");
     expect(modal?.classList.contains("git-fullscreen")).toBe(false);
-    const toggle = container.querySelector(
-      '[aria-label="Enter fullscreen"]'
-    ) as HTMLButtonElement | null;
+    const toggle = container.querySelector<HTMLButtonElement>('[aria-label="Enter fullscreen"]');
     expect(toggle).not.toBeNull();
 
     await React.act(async () => {
@@ -257,9 +255,7 @@ describe("GitChangesModal header", () => {
 
     // Fullscreen toggle still works.
     const modal = container.querySelector(".git-changes-modal");
-    const toggle = container.querySelector(
-      '[aria-label="Enter fullscreen"]'
-    ) as HTMLButtonElement | null;
+    const toggle = container.querySelector<HTMLButtonElement>('[aria-label="Enter fullscreen"]');
     expect(toggle).not.toBeNull();
     await React.act(async () => {
       toggle?.click();
@@ -292,8 +288,8 @@ describe("GitChangesModal header", () => {
       await Promise.resolve();
     });
 
-    const modal = container.querySelector(".git-changes-modal") as HTMLElement | null;
-    const se = container.querySelector(".git-resize-se") as HTMLElement | null;
+    const modal = container.querySelector<HTMLElement>(".git-changes-modal");
+    const se = container.querySelector<HTMLElement>(".git-resize-se");
     expect(modal).not.toBeNull();
     expect(se).not.toBeNull();
 
@@ -323,9 +319,7 @@ describe("GitChangesModal header", () => {
     expect(modal?.style.height).toBe(expectH);
 
     // The reported bug: this stale inline size used to override fullscreen.
-    const enter = container.querySelector(
-      '[aria-label="Enter fullscreen"]'
-    ) as HTMLButtonElement | null;
+    const enter = container.querySelector<HTMLButtonElement>('[aria-label="Enter fullscreen"]');
     expect(enter).not.toBeNull();
     await React.act(async () => {
       enter?.click();
@@ -335,9 +329,7 @@ describe("GitChangesModal header", () => {
     expect(modal?.style.height).toBe("");
 
     // Exiting fullscreen restores the exact pre-fullscreen manual size.
-    const exit = container.querySelector(
-      '[aria-label="Exit fullscreen"]'
-    ) as HTMLButtonElement | null;
+    const exit = container.querySelector<HTMLButtonElement>('[aria-label="Exit fullscreen"]');
     expect(exit).not.toBeNull();
     await React.act(async () => {
       exit?.click();
@@ -429,7 +421,7 @@ describe("StatusBar Footer with Active Split Directory, Mode and Git", () => {
       );
     });
 
-    const pill = container.querySelector(".status-mode-pill") as HTMLElement | null;
+    const pill = container.querySelector<HTMLElement>(".status-mode-pill");
     expect(pill).not.toBeNull();
     expect(pill?.tagName).toBe("SPAN");
     expect(pill?.textContent).toBe("Terminal");
@@ -461,7 +453,7 @@ describe("StatusBar Footer with Active Split Directory, Mode and Git", () => {
       );
     });
 
-    const pill = container.querySelector(".status-mode-pill") as HTMLElement | null;
+    const pill = container.querySelector<HTMLElement>(".status-mode-pill");
     expect(pill?.tagName).toBe("SPAN");
     expect(pill?.textContent).toContain("Code Mode");
     expect(container.querySelector("button.status-mode-pill")).toBeNull();

@@ -171,7 +171,7 @@ function takeClientIdOption(args: string[]): { rest: string[]; clientId?: string
   const rest: string[] = [];
   let clientId: string | undefined;
   for (let i = 0; i < args.length; i++) {
-    const a = args[i]!;
+    const a = args[i];
     if (a === "--client-id") {
       const value = args[i + 1];
       if (value === undefined || value.startsWith("-")) {
@@ -216,7 +216,7 @@ async function ensureClientId(env: NodeJS.ProcessEnv, deps: TeamsDeps): Promise<
     return;
   } catch (err) {
     const notSetUp = err instanceof IntegrationError && err.code === "config";
-    const malformedEnv = notSetUp && /^KAI_/.test(err.message);
+    const malformedEnv = notSetUp && err.message.startsWith("KAI_");
     if (!notSetUp || malformedEnv || !(deps.interactive ?? isInteractive)()) throw err;
   }
   console.log(`  Kai needs a Microsoft Entra app ID to sign you in (a one-time step).`);

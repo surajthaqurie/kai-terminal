@@ -76,7 +76,7 @@ export function migrateMusicKeybindings(
     parsedCurrent.code === parsedOld.code;
   if (!untouched) return next;
   const moved = { ...next, musicMute: DEFAULT_KEYBINDINGS.musicMute };
-  const full = { ...DEFAULT_KEYBINDINGS, ...moved } as KeybindingsConfig;
+  const full = { ...DEFAULT_KEYBINDINGS, ...moved };
   const clash = findConflicts(full, resolveFixedBindings(fixed)).some((c) =>
     c.actions.includes("musicMute")
   );
@@ -146,15 +146,15 @@ export function migrateLegacyKeybindings(
   const resolvedFixed = resolveFixedBindings(fixed);
   const reverted = new Set<ShortcutActionId>();
   for (let pass = 0; pass < moved.length; pass++) {
-    const full = { ...DEFAULT_KEYBINDINGS, ...next } as KeybindingsConfig;
+    const full = { ...DEFAULT_KEYBINDINGS, ...next };
     const clashes = findConflicts(full, resolvedFixed)
       .flatMap((c) => c.actions)
       .filter((a): a is ShortcutActionId => a in DEFAULT_KEYBINDINGS)
-      .filter((a) => moved.includes(a as ShortcutActionId)) as ShortcutActionId[];
+      .filter((a) => moved.includes(a));
     const target = clashes.find((a) => !reverted.has(a));
     if (!target) break;
     reverted.add(target);
-    next[target] = LEGACY_DEFAULT_KEYBINDINGS[target] as string;
+    next[target] = LEGACY_DEFAULT_KEYBINDINGS[target];
   }
   return next;
 }
@@ -342,9 +342,13 @@ export class SettingsService {
     try {
       const stored = localStorage.getItem(STORAGE_KEY) || localStorage.getItem(LEGACY_STORAGE_KEY);
       if (stored) {
-        const parsed = JSON.parse(stored);
+        const value: unknown = JSON.parse(stored);
+        if (!value || typeof value !== "object" || Array.isArray(value)) {
+          return { ...DEFAULT_SETTINGS };
+        }
         // Version-tolerant: unknown future keys are dropped by normalize.
-        void parsed.version;
+        const parsed = value as Record<string, unknown>;
+        const fixed = parsed.fixedKeybindings as Partial<FixedShortcutsConfig> | null | undefined;
         // Migrate legacy hardcoded font and 14px default if unmodified
         if (
           parsed.fontFamily === 'Menlo, Monaco, "Courier New", monospace' ||
@@ -375,14 +379,11 @@ export class SettingsService {
         // scheme. Every save writes KEYBINDINGS_MIGRATED, so a combo the user
         // sets afterwards (even an old default) is kept as chosen.
         if (!parsed[KEYBINDINGS_MIGRATED]) {
-          parsed.keybindings = migrateLegacyKeybindings(
-            parsed.keybindings,
-            parsed.fixedKeybindings
-          );
+          parsed.keybindings = migrateLegacyKeybindings(parsed.keybindings, fixed);
         }
         // One-time: Mute moved off `Ctrl+Shift+,` so Previous song can have it.
         if (!parsed[MUSIC_KEYS_MIGRATED]) {
-          parsed.keybindings = migrateMusicKeybindings(parsed.keybindings, parsed.fixedKeybindings);
+          parsed.keybindings = migrateMusicKeybindings(parsed.keybindings, fixed);
         }
         return SettingsService.normalize(parsed);
       }

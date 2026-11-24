@@ -677,7 +677,7 @@ export class GraphClient {
       if (reply.status === 200 || reply.status === 201) {
         onProgress?.(total, total);
         try {
-          return obj(JSON.parse(reply.text)) as Json;
+          return obj(JSON.parse(reply.text));
         } catch {
           return fail(
             new IntegrationError("bad_request", "OneDrive returned an unreadable response.")

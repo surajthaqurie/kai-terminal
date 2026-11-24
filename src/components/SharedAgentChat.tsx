@@ -143,7 +143,7 @@ export const SharedAgentChat: FC<ChatProps> = ({
   const onChatEvent = (e: Extract<SharedAgentEvent, { event: "chat" }>) => {
     const cur = chat.current;
     if (!cur || e.chatId !== cur.id) return;
-    const text = (k: string) => (typeof e[k] === "string" ? (e[k] as string) : "");
+    const text = (k: string) => (typeof e[k] === "string" ? e[k] : "");
     switch (e.kind) {
       case "session":
         if (text("sessionId")) sessions.current[`${cur.hostId}:${cur.agent}`] = text("sessionId");

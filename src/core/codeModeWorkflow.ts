@@ -345,7 +345,7 @@ export function validateGraphCandidate(candidate: unknown): { valid: boolean; er
         errors.push(`unsafe symbol key: ${name}`);
         break;
       }
-      const list = (symbols as Record<string, unknown>)[name];
+      const list = symbols[name];
       if (!Array.isArray(list)) {
         errors.push(`symbol entry must be an array: ${name}`);
         break;

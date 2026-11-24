@@ -64,9 +64,48 @@ export default tseslint.config(
       // by code point, not by visible character).
       "@typescript-eslint/no-misused-spread": "error",
       "@typescript-eslint/use-unknown-in-catch-callback-variable": "error",
-      // Not enabled, with the findings read: `only-throw-error` / `prefer-promise-reject-errors`
-      // (Tauri's invoke rejects with strings; every hit rethrew a caught value) and `return-await`
-      // (all 15 hits were style; no promise was returned unawaited inside a try).
+      // `any` must not flow on unchecked (it mostly came from JSON.parse: type it `unknown` and
+      // narrow). Off in tests, below.
+      "@typescript-eslint/no-unsafe-argument": "error",
+      "@typescript-eslint/no-unsafe-assignment": "error",
+      "@typescript-eslint/no-unsafe-call": "error",
+      "@typescript-eslint/no-unsafe-member-access": "error",
+      "@typescript-eslint/no-unsafe-return": "error",
+      "@typescript-eslint/no-unsafe-class-instance-assignment": "error",
+      // Code that does nothing or says the same thing twice (all auto-fixable).
+      "@typescript-eslint/no-unnecessary-type-assertion": "error",
+      "@typescript-eslint/no-unnecessary-template-expression": "error",
+      "@typescript-eslint/no-unnecessary-type-arguments": "error",
+      "@typescript-eslint/prefer-find": "error",
+      "@typescript-eslint/prefer-includes": "error",
+      "@typescript-eslint/prefer-string-starts-ends-with": "error",
+      "@typescript-eslint/prefer-regexp-exec": "error",
+      // Not enabled, with the findings read (the CI-08 lint work stops here; see
+      // docs/audit/CI-08-LINT-INVESTIGATION.md):
+      // - only-throw-error, prefer-promise-reject-errors: Tauri's invoke rejects with strings;
+      //   every hit rethrew a caught value.
+      // - return-await: all 15 hits were style; no promise was returned unawaited inside a try.
+      // - no-unnecessary-condition (253), no-unnecessary-type-conversion (19),
+      //   no-unnecessary-boolean-literal-compare (10): the code checks and coerces values whose
+      //   static type is stronger than what arrives at runtime (settings from storage, RPC and
+      //   backend replies, `isTTY` that is really `true | undefined`). Their fixes remove those
+      //   checks (`x?.ok === false` becomes `!x?.ok`, true when x is missing): behavior changes.
+      // - require-await (17): every hit implements an async interface; dropping `async` turns a
+      //   synchronous throw into an exception instead of a rejected promise.
+      // - no-unnecessary-type-parameters (11): the usual `get<T>()` / `invoke<T>()` where the
+      //   caller names the result type.
+      // - prefer-nullish-coalescing (133): no auto-fix; each `||` -> `??` changes what "", 0 and
+      //   false do (e.g. `stored || fallback` for an empty localStorage value), so all 133 would
+      //   need reading one by one. Not done; a candidate if a `||` default ever causes a bug.
+      // - no-meaningless-void-operator: `void name;` is how this code marks a binding as
+      //   deliberately unused; the rule's fix turns it into a bare `name;`.
+      // - prefer-optional-chain (55): style; most hits have no safe auto-fix (`a && a.b` and
+      //   `a?.b` differ when `a` is "" or 0), so each would need reading for no bug.
+      // - Style only: array-type, consistent-type-definitions, no-confusing-void-expression,
+      //   no-empty-function, no-non-null-assertion, no-extraneous-class, no-invalid-void-type,
+      //   dot-notation, no-inferrable-types, consistent-generic-constructors, no-dynamic-delete,
+      //   prefer-for-of, non-nullable-type-assertion-style, and the strict options of
+      //   restrict-template-expressions / restrict-plus-operands.
     },
   },
   {
@@ -78,6 +117,13 @@ export default tseslint.config(
       "@typescript-eslint/no-base-to-string": "off",
       // `expect(obj.method).toHaveBeenCalled()` references a mock method without calling it.
       "@typescript-eslint/unbound-method": "off",
+      // Loose fixtures and mocks are typed `any` on purpose.
+      "@typescript-eslint/no-unsafe-argument": "off",
+      "@typescript-eslint/no-unsafe-assignment": "off",
+      "@typescript-eslint/no-unsafe-call": "off",
+      "@typescript-eslint/no-unsafe-member-access": "off",
+      "@typescript-eslint/no-unsafe-return": "off",
+      "@typescript-eslint/no-unsafe-class-instance-assignment": "off",
     },
   }
 );

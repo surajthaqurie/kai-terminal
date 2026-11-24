@@ -26,9 +26,8 @@ function parseColor(str: string, bgRgb: RGB = { r: 0, g: 0, b: 0 }): RGB {
       b: parseInt(hex.slice(4, 6), 16),
     };
   }
-  const rgbaMatch = s.match(
-    /rgba?\(\s*([0-9.]+)\s*,\s*([0-9.]+)\s*,\s*([0-9.]+)(?:\s*,\s*([0-9.]+))?\s*\)/
-  );
+  const rgbaMatch =
+    /rgba?\(\s*([0-9.]+)\s*,\s*([0-9.]+)\s*,\s*([0-9.]+)(?:\s*,\s*([0-9.]+))?\s*\)/.exec(s);
   if (rgbaMatch) {
     const r = parseFloat(rgbaMatch[1]);
     const g = parseFloat(rgbaMatch[2]);
@@ -82,7 +81,7 @@ describe("Split divider visibility (no invisible seams)", () => {
       if (!divider) return;
       // The seam sits between two xterm panes: composite the divider color
       // over the theme's terminal background (opacity 1).
-      const termBg = SettingsService.getThemeColors(theme, 1.0).background as string | undefined;
+      const termBg = SettingsService.getThemeColors(theme, 1.0).background;
       expect(termBg, `Theme ${theme} must define a terminal background`).toBeDefined();
       if (!termBg) return;
       const ratio = contrastRatio(divider, termBg);

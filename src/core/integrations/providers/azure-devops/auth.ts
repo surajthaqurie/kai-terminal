@@ -117,7 +117,7 @@ async function azAccessToken(account: IntegrationAccount, deps: AuthDeps): Promi
       }
       let parsed: { accessToken?: unknown; expires_on?: unknown };
       try {
-        parsed = JSON.parse(result.stdout);
+        parsed = (JSON.parse(result.stdout) ?? {}) as typeof parsed;
       } catch {
         throw new IntegrationError("auth", "The Azure CLI returned an unreadable token response.");
       }

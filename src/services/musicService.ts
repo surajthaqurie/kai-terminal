@@ -49,7 +49,7 @@ function extractVideoId(input: string): string | null {
 /** Extract a playlist id from any YouTube link carrying `list=`. */
 export function extractPlaylistId(input: string): string | null {
   if (!isYouTubeUrl(input)) return null;
-  const m = input.match(/[?&]list=([\w-]{10,64})/);
+  const m = /[?&]list=([\w-]{10,64})/.exec(input);
   return m ? m[1] : null;
 }
 

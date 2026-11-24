@@ -700,7 +700,7 @@ export async function setRules(
   }
   let rules: Partial<WorkflowRules>;
   try {
-    rules = compactRules(input as Partial<Record<keyof WorkflowRules, unknown>>);
+    rules = compactRules(input);
   } catch (err) {
     if (err instanceof RulesError) throw new IntegrationError("bad_request", err.message);
     throw err;

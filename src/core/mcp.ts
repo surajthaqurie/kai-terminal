@@ -962,7 +962,7 @@ export async function startMcpServer(
   });
   boundedStream.on("error", onStreamError);
 
-  (inputStream as NodeJS.ReadStream).pipe(boundedStream);
+  inputStream.pipe(boundedStream);
 
   const rl = readline.createInterface({
     input: boundedStream,
@@ -978,7 +978,8 @@ export async function startMcpServer(
       const trimmed = line.trim();
       if (!trimmed) continue;
 
-      let parsed: McpRequest;
+      // Any JSON value: handleMcpMessage answers a non-object with an error itself.
+      let parsed: unknown;
       try {
         parsed = JSON.parse(trimmed);
       } catch {
@@ -991,7 +992,11 @@ export async function startMcpServer(
         continue;
       }
 
-      if ((parsed as { method?: unknown }).method === "notifications/initialized") {
+      if (
+        parsed &&
+        typeof parsed === "object" &&
+        (parsed as { method?: unknown }).method === "notifications/initialized"
+      ) {
         clientInitialized = true;
         // Only changes made from here on are news to the client.
         lastToolSignature = toolSignature();

@@ -93,15 +93,12 @@ describe("migrating saved shortcuts", () => {
   beforeEach(() => localStorage.clear());
 
   it("moves every untouched legacy default to the new default", () => {
-    stored({ ...LEGACY_DEFAULT_KEYBINDINGS } as Record<string, string>);
+    stored({ ...LEGACY_DEFAULT_KEYBINDINGS });
     expect(SettingsService.loadSettings().keybindings).toEqual(DEFAULT_KEYBINDINGS);
   });
 
   it("keeps a binding the user customised and moves the rest", () => {
-    stored({ ...LEGACY_DEFAULT_KEYBINDINGS, splitVertical: "Ctrl+Alt+D" } as Record<
-      string,
-      string
-    >);
+    stored({ ...LEGACY_DEFAULT_KEYBINDINGS, splitVertical: "Ctrl+Alt+D" });
     const kb = SettingsService.loadSettings().keybindings;
     expect(kb.splitVertical).toBe("Ctrl+Alt+D");
     expect(kb.splitHorizontal).toBe(DEFAULT_KEYBINDINGS.splitHorizontal);
@@ -116,7 +113,7 @@ describe("migrating saved shortcuts", () => {
   it("keeps the old key when the new default would collide with a custom binding", () => {
     // The user put "Search" on Ctrl+, ; the old Settings default (Ctrl+Shift+,)
     // must not move onto it and silently shadow it.
-    stored({ ...LEGACY_DEFAULT_KEYBINDINGS, search: "Ctrl+," } as Record<string, string>);
+    stored({ ...LEGACY_DEFAULT_KEYBINDINGS, search: "Ctrl+," });
     const kb = SettingsService.loadSettings().keybindings;
     expect(kb.search).toBe("Ctrl+,");
     expect(kb.settings).toBe(LEGACY_DEFAULT_KEYBINDINGS.settings);
