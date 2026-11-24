@@ -12,7 +12,7 @@ Locally only Windows (windows-gnu, ConPTY) was run. The first CI runs on GitHub 
 | ID | Status | Note |
 |---|---|---|
 | SEC-01 Windows cwd binary planting | FIXED | `NoDefaultCurrentDirectoryInExePath` set in the process itself; system tools by absolute path |
-| SEC-02 updater without integrity check | PARTIALLY FIXED | Ed25519-signed checksums verified before launch. Needs the `UPDATE_SIGNING_KEY` secret added to GitHub; until then releases install by hand |
+| SEC-02 updater without integrity check | PARTIALLY FIXED | Ed25519-signed checksums verified before launch. Needs the `UPDATE_SIGNING_KEY` secret added to GitHub; until then releases install by hand. The secret's format is documented (RELEASE_GUIDE 1.3a: unencrypted PKCS#8 PEM, whole file) and the signing script now rejects a passphrase-protected key (it used to wait for a passphrase on a terminal), an OpenSSH key, a non-PEM value and a PEM with lost line breaks, each with its own message and never echoing the key; tested with throwaway keys. No local copy of the real private key was found (file-name search of the home folder); no released app embeds the public key yet, so a new pair can still be generated safely |
 | SEC-03 repo `core.fsmonitor` | FIXED | |
 | SEC-04 commands not capability-gated | FIXED | per-window ACL, tested against the real capability files |
 | SEC-05 symlink alias to a credential file | PARTIALLY FIXED | target is checked everywhere; the end-to-end link tests need Developer Mode on Windows, so they skipped here (Unix: passed in CI) |
@@ -126,7 +126,7 @@ Windows, ConPTY, before = the audit baseline or the code before the change, afte
 | Fast-consumer throughput | about 1.3 MB/s | unchanged |
 | `kai.exe` (default features, release) | 5,502,464 bytes | 5,716,480 bytes (+3.89%); of that, the OS certificate store (RES-09) is 13,824 bytes (5,702,656 without it, same tree) |
 | App chunk loaded at every launch (gzip, Vite report) | 198.4 kB | 169.8 kB (-28.6 kB); the three add-ons now load on first use (4.8 + 9.8 + 18.6 kB) |
-| Frontend tests | 2,703 | 3,113 (+27 skipped), plus 7 end-to-end workflows |
+| Frontend tests | 2,703 | 3,117 (+27 skipped), plus 7 end-to-end workflows |
 | Rust lib tests | 270 | 310 |
 | PTY integration tests | 19 | 28 |
 | GUI-feature tests | 0 | 28 |

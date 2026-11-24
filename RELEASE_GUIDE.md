@@ -35,6 +35,13 @@ To avoid operating system security warnings (Windows SmartScreen, macOS Gatekeep
 The in-app updater installs an update only if it verifies against a public key compiled into the app (see `SECURITY.md`, "Updater integrity"). Each release must therefore carry `SHA256SUMS` and `SHA256SUMS.sig`; `scripts/sign-release-checksums.sh` creates them in the `publish` job of `release.yml`.
 
 - **GitHub Action Secret:** `UPDATE_SIGNING_KEY` = the Ed25519 private key in PKCS#8 PEM form (the whole file, including the `BEGIN`/`END` lines). Without it the release still publishes but is **not** installable from inside the app (users install from the release page); a key that does not match the public key compiled into the app fails the signing step.
+- **Expected secret format, exactly:** the file `openssl genpkey -algorithm ED25519` writes. Three lines: `-----BEGIN PRIVATE KEY-----`, one base64 line, `-----END PRIVATE KEY-----` (about 119 bytes). The signing step checks this first and fails with a specific message, never echoing the key, for:
+  - a passphrase-protected key (`BEGIN ENCRYPTED PRIVATE KEY`): CI cannot type a passphrase; store `openssl pkey -in key.pem -out plain.pem` instead;
+  - an OpenSSH key (`BEGIN OPENSSH PRIVATE KEY`), a public key, or a raw hex/base64 seed: not a PKCS#8 private key;
+  - a PEM pasted as one line (line breaks lost): paste the file as it is. Windows line endings are fine.
+  `src/__tests__/signReleaseChecksums.test.ts` runs the real script against throwaway keys for each case.
+- **Setting it:** `gh secret set UPDATE_SIGNING_KEY < update-signing-key.pem` keeps the line breaks (or paste the whole file into Settings → Secrets and variables → Actions). Before setting it, check the pair matches the app: `openssl pkey -in update-signing-key.pem -pubout -outform DER | tail -c 32 | od -An -tx1 | tr -d ' \n'` must print exactly the contents of `src-tauri/update-public-key.hex`. Then delete the local file.
+- **If the private key is lost before any release embeds its public key** (true as of v0.2.3, which predates update verification): generate a new pair with the commands below and commit the new `update-public-key.hex`; nobody is locked out. After a release has shipped the key, losing it means installed apps can only be updated by hand once (ship a build with a new key from the release page).
 - **Public key:** `src-tauri/update-public-key.hex` (32 raw bytes as 64 hex characters), compiled into the app. It is public and committed.
 - **Create or rotate a key pair:**
   ```bash
