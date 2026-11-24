@@ -180,3 +180,36 @@
   font-size: var(--text-xs);
   color: var(--text-tertiary);
 }
+
+/* A pane whose shell exited with a failure (FUNC-09): the output stays readable above it. */
+.pane-exit-bar {
+  position: absolute;
+  inset: auto 12px 12px 12px;
+  z-index: var(--z-overlay-in-pane);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  background-color: var(--bg-surface-elevated);
+  border: 1px solid var(--border-default);
+  border-left: 3px solid var(--text-tertiary);
+  box-shadow: var(--shadow-md);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+}
+
+.pane-exit-bar-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pane-exit-bar-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}

@@ -105,6 +105,12 @@ export interface TerminalPane {
    * the pane attaches to it instead of starting a new one. Transient (never saved).
    */
   adopt?: PaneAdoption;
+  /**
+   * The shell ended with a failure status (non-zero, or the status could not be read). The pane
+   * stays open with its output, the exit code and Restart / Close (FUNC-09). `code` is undefined
+   * when the status is unknown. Transient (never saved).
+   */
+  exited?: { code?: number };
 }
 
 /**

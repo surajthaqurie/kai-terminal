@@ -83,7 +83,7 @@ Only Windows (windows-gnu, ConPTY) was run. Code that only exists on Linux or ma
 | FUNC-06 settings not synced | FIXED | |
 | FUNC-07 persistence gaps | PARTIALLY FIXED | 30 tabs, active tab, debounced; other windows and torn-off tabs are not restored |
 | FUNC-08 spinner forever | FIXED | |
-| FUNC-09 exit status lost | PARTIALLY FIXED | notice with the exit code, narrower crash counter; the pane is not kept with a Restart button |
+| FUNC-09 exit status lost | FIXED | a failed shell (non-zero or unknown status) keeps its pane open with the output, the exit code (hex too for Windows statuses) and Restart / Close; a clean exit still closes; the last pane failing no longer quits the app; crash-loop and instant-death guards unchanged and also apply after Restart |
 | FUNC-10 key and clipboard edges | FIXED | AltGr, denied clipboard. Focus after a palette action: switching tabs already handed focus to the new pane; closing a pane (shortcut, palette, or after the close confirmation) left focus on nothing, and now hands it to the pane that is left |
 | FUNC-11 absent terminal features | NOT STARTED | optional, each needs a stated user problem |
 | FUNC-12 spawn validation | FIXED | a folder as shell refused; when the backend opens the shell in the parent of a missing folder, the pane says so |
@@ -126,7 +126,7 @@ Windows, ConPTY, before = the audit baseline or the code before the change, afte
 | Fast-consumer throughput | about 1.3 MB/s | unchanged |
 | `kai.exe` (default features, release) | 5,502,464 bytes | 5,716,480 bytes (+3.89%); of that, the OS certificate store (RES-09) is 13,824 bytes (5,702,656 without it, same tree) |
 | App chunk loaded at every launch (gzip, Vite report) | 198.4 kB | 169.8 kB (-28.6 kB); the three add-ons now load on first use (4.8 + 9.8 + 18.6 kB) |
-| Frontend tests | 2,703 | 3,058 (+27 skipped) |
+| Frontend tests | 2,703 | 3,080 (+27 skipped) |
 | Rust lib tests | 270 | 310 |
 | PTY integration tests | 19 | 28 |
 | GUI-feature tests | 0 | 28 |

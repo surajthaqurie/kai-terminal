@@ -36,8 +36,6 @@ interface SessionExitOptions {
   shellsRef: MutableRefObject<ShellProfile[]>;
   selectedShellIdRef: MutableRefObject<string>;
   setLastError: (message: string | null) => void;
-  /** Shows a short, transient notice (a pane or tab closed because its shell failed). */
-  notify?: (message: string) => void;
 }
 
 /**
@@ -58,14 +56,11 @@ export function useSessionExit({
   shellsRef,
   selectedShellIdRef,
   setLastError,
-  notify,
 }: SessionExitOptions) {
   // Times of recent failed exits of shells that died right after opening. Only those count: a
   // shell that ran for a while and then exited with a failure status (`exit` after a failed
   // command, `wsl --shutdown`) is not a broken shell, however many do it at once (FUNC-09).
   const exitTimesRef = useRef<number[]>([]);
-  const notifyRef = useRef(notify);
-  notifyRef.current = notify;
   const tabBornRef = useRef<Record<string, number>>({});
   const [loopFault, setLoopFault] = useState<LoopFault | null>(null);
 
@@ -80,30 +75,74 @@ export function useSessionExit({
     }
   }, [tabs]);
 
-  const handleSessionExit = useCallback(
-    (tabId: string, paneId: string, exitCode?: number) => {
-      // Any shell exit (`exit`, `logout`, Ctrl+D, kill) closes the pane/tab.
-      // Previous behavior only closed on exit code 0, which made `exit`
-      // appear broken whenever the shell reported a non-zero status.
-      // Multi-pane: only the exited pane closes. Multi-tab: only the exited
-      // tab closes. Last pane of last tab quits the whole app on desktop
-      // (browser fallback recycles a fresh tab).
-      // NOTE: reads live refs (not the `tabs` state closure) so exits from
-      // tabs/panes created after this callback was memoized still close the
-      // correct pane. Idempotent: repeated `pty-exit` events for an already
-      // removed pane are ignored, so the Close-pane fallback button in
-      // TerminalView can safely re-fire this.
+  /**
+   * Removes a pane for good: only that pane in a split, the whole tab when it was the tab's last
+   * pane, and the window when it was the last pane of the last tab (the browser fallback recycles
+   * a fresh tab instead). Reads live refs, so panes created after this callback was memoized are
+   * found. Idempotent: an already removed pane is ignored.
+   */
+  const closePane = useCallback(
+    (tabId: string, paneId: string) => {
       const liveTabs = tabsRef.current;
       const targetTab = liveTabs.find((t) => t.id === tabId);
-      if (!targetTab) return;
-      if (targetTab.panes.some((p) => p.id === paneId) === false) return;
+      if (!targetTab || !targetTab.panes.some((p) => p.id === paneId)) return;
+
+      if (targetTab.panes.length > 1) {
+        // Single shared removal path (see removePaneById): survivors keep
+        // their ids/objects and the tree prunes to exactly the survivors, so
+        // the remaining splits stay mounted on every OS: exiting one pane
+        // must never refresh (respawn) its neighbors.
+        applyTabsUpdate(tabsRef, setTabs, (prev) =>
+          prev.map((t) => (t.id === tabId ? { ...t, ...removePaneById(t, paneId) } : t))
+        );
+        return;
+      }
+
+      if (liveTabs.length > 1) {
+        // Decide from the live ref and update it in the same step: two shells
+        // dying together (`wsl --shutdown`, a mass kill) arrive before React
+        // re-renders, and each used to overwrite the other's removal.
+        const remainingTabs = liveTabs.filter((t) => t.id !== tabId);
+        applyTabsUpdate(tabsRef, setTabs, (prev) => prev.filter((t) => t.id !== tabId));
+        if (activeTabIdRef.current === tabId) {
+          const nextId = tabAfterClose(liveTabs, tabId) ?? remainingTabs[0].id;
+          activeTabIdRef.current = nextId;
+          setActiveTabId(nextId);
+        }
+        return;
+      }
+
+      // Last pane of last tab: quit the whole app on desktop (`exit` in the only
+      // session closes Kai, like a regular terminal). The browser/mock fallback
+      // recycles a fresh tab so the window never ends up empty.
+      void closeAppWindow().then((closed) => {
+        if (closed) return;
+        const selectedShell = shellsRef.current.find((s) => s.id === selectedShellIdRef.current);
+        const fresh = createDefaultTab("Terminal 1", selectedShell?.path);
+        setTabs([fresh]);
+        setActiveTabId(fresh.id);
+      });
+    },
+    [tabsRef, activeTabIdRef, shellsRef, selectedShellIdRef, setTabs, setActiveTabId]
+  );
+
+  const handleSessionExit = useCallback(
+    (tabId: string, paneId: string, exitCode?: number) => {
+      // A clean exit (`exit`, `logout`, Ctrl+D: status 0) closes the pane like a native
+      // terminal. A failed one keeps the pane open with its output, the exit code and
+      // Restart / Close, so a failure is never invisible (FUNC-09). The backend sends no
+      // status (undefined) when it could not read it: that is not a clean exit either.
+      // NOTE: reads live refs (not the `tabs` state closure), and repeated `pty-exit`
+      // events for an already removed or already exited pane are ignored.
+      const liveTabs = tabsRef.current;
+      const targetTab = liveTabs.find((t) => t.id === tabId);
+      const pane = targetTab?.panes.find((p) => p.id === paneId);
+      if (!targetTab || !pane || pane.exited) return;
 
       // Release-freeze guard (Windows / Linux / macOS): a broken shell
       // binary (missing, not runnable, instantly crashing) fires `pty-exit`
-      // immediately after every spawn. Without this, the app churns through
-      // close/recycle/quit in a tight loop and the window looks frozen
-      // ("trying to reopen"). 3+ deaths inside 10 s parks the tab in `error`
-      // with an actionable banner instead — on every OS.
+      // immediately after every spawn. 3+ such deaths inside 10 s park the tab
+      // in `error` with an actionable banner instead, on every OS.
       const now = Date.now();
       const isCleanExit = exitCode === 0;
 
@@ -142,69 +181,73 @@ export function useSessionExit({
           );
           return;
         }
-      }
-
-      // The pane closes below, taking the shell's last output with it: say how it ended so a
-      // failure is not invisible (FUNC-09). A clean `exit` closes silently, as before.
-      if (
-        typeof exitCode === "number" &&
-        exitCode !== 0 &&
-        liveTabs.length + targetTab.panes.length > 2
-      ) {
-        notifyRef.current?.(`${targetTab.title}: shell exited with code ${exitCode}.`);
-      }
-
-      if (targetTab.panes.length > 1) {
-        // Single shared removal path (see removePaneById): survivors keep
-        // their ids/objects and the tree prunes to exactly the survivors, so
-        // the remaining splits stay mounted on every OS — exiting one pane
-        // must never refresh (respawn) its neighbors.
-        applyTabsUpdate(tabsRef, setTabs, (prev) =>
-          prev.map((t) => (t.id === tabId ? { ...t, ...removePaneById(t, paneId) } : t))
-        );
-        return;
-      }
-
-      if (liveTabs.length > 1) {
-        // Decide from the live ref and update it in the same step: two shells
-        // dying together (`wsl --shutdown`, a mass kill) arrive before React
-        // re-renders, and each used to overwrite the other's removal.
-        const remainingTabs = liveTabs.filter((t) => t.id !== tabId);
-        applyTabsUpdate(tabsRef, setTabs, (prev) => prev.filter((t) => t.id !== tabId));
-        if (activeTabIdRef.current === tabId) {
-          const nextId = tabAfterClose(liveTabs, tabId) ?? remainingTabs[0].id;
-          activeTabIdRef.current = nextId;
-          setActiveTabId(nextId);
+        // Instant-death exception (all OSes): the only shell of the window died with a
+        // failure within 4 s of opening, so it never actually ran (broken binary or bad
+        // folder). Keep the window and explain, with Retry and the shell picker.
+        if (liveTabs.length === 1 && targetTab.panes.length === 1) {
+          parkAsFault(
+            "Shell exited right after opening. It likely failed to start (bad shell binary or " +
+              "working directory). The window was kept open so you can fix it: switch this " +
+              "terminal's shell with the shell picker in the footer, or press Retry to try again."
+          );
+          return;
         }
-        return;
       }
 
-      // Last pane of last tab exited: quit the whole app on desktop
-      // (`exit` in the only session closes Kai, like a regular terminal).
-      // Browser/mock fallback recycles a fresh tab so the window never ends
-      // up empty/disconnected.
-      // Instant-death exception (all OSes): when the session died with a failure
-      // within 4 s of the tab's creation the shell never actually ran (broken binary or
-      // bad cwd) — quitting here would make a release launch vanish with no
-      // explanation. Clean exits (exitCode === 0) indicate intentional `exit`.
-      const bornAt = tabBornRef.current[tabId] ?? 0;
-      if (!isCleanExit && bornAt > 0 && now - bornAt < INSTANT_DEATH_MS) {
-        parkAsFault(
-          "Shell exited right after opening — it likely failed to start (bad shell binary or " +
-            "working directory). The window was kept open so you can fix it: switch this " +
-            "terminal's shell with the shell picker in the footer, or press Retry to try again."
+      if (!isCleanExit) {
+        applyTabsUpdate(tabsRef, setTabs, (prev) =>
+          prev.map((t) => {
+            if (t.id !== tabId) return t;
+            const panes = t.panes.map((p) =>
+              p.id === paneId
+                ? { ...p, status: "disconnected" as const, exited: { code: exitCode } }
+                : p
+            );
+            return { ...t, panes, ...deriveTabStatus(panes) };
+          })
         );
         return;
       }
-      void closeAppWindow().then((closed) => {
-        if (closed) return;
-        const selectedShell = shellsRef.current.find((s) => s.id === selectedShellIdRef.current);
-        const fresh = createDefaultTab("Terminal 1", selectedShell?.path);
-        setTabs([fresh]);
-        setActiveTabId(fresh.id);
-      });
+
+      closePane(tabId, paneId);
     },
-    [tabsRef, activeTabIdRef, shellsRef, selectedShellIdRef, setTabs, setActiveTabId, setLastError]
+    [tabsRef, setTabs, setLastError, closePane]
+  );
+
+  /** Restart on an exited pane: a new shell in the same pane (the split layout is kept). */
+  const restartExitedPane = useCallback(
+    (tabId: string, paneId: string) => {
+      // A restart is a fresh start for the guards: a shell that dies again right away
+      // counts as an instant death instead of being judged by the old birth time.
+      tabBornRef.current[tabId] = Date.now();
+      exitTimesRef.current = [];
+      applyTabsUpdate(tabsRef, setTabs, (prev) =>
+        prev.map((t) => {
+          if (t.id !== tabId) return t;
+          const panes = t.panes.map((p) =>
+            p.id === paneId && p.exited
+              ? {
+                  ...p,
+                  exited: undefined,
+                  status: "connecting" as const,
+                  resetKey: (p.resetKey ?? 0) + 1,
+                }
+              : p
+          );
+          return { ...t, activePaneId: paneId, panes, ...deriveTabStatus(panes) };
+        })
+      );
+    },
+    [tabsRef, setTabs]
+  );
+
+  /** Close on an exited pane: removed like any closed pane (its shell has already ended). */
+  const closeExitedPane = useCallback(
+    (tabId: string, paneId: string) => {
+      const pane = tabsRef.current.find((t) => t.id === tabId)?.panes.find((p) => p.id === paneId);
+      if (pane?.exited) closePane(tabId, paneId);
+    },
+    [tabsRef, closePane]
   );
 
   // Retry after a crash-loop / instant-death fault: re-spawn the same pane
@@ -273,5 +316,13 @@ export function useSessionExit({
     exitTimesRef.current = [];
   }, []);
 
-  return { loopFault, handleSessionExit, retryFaultedPane, dismissFault, markRestarted };
+  return {
+    loopFault,
+    handleSessionExit,
+    restartExitedPane,
+    closeExitedPane,
+    retryFaultedPane,
+    dismissFault,
+    markRestarted,
+  };
 }

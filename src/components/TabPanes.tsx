@@ -16,6 +16,7 @@ import type {
 } from "../types/terminal";
 import { resolvePaneShell } from "../services/paneShell";
 import { TerminalView, type TerminalViewRef } from "./TerminalView";
+import { PaneExitBar } from "./PaneExitBar";
 
 interface TabPanesProps {
   tab: TerminalTab;
@@ -36,6 +37,9 @@ interface TabPanesProps {
   onCodeModeChange: (paneId: string, project: string | null) => void;
   onCwdResolved: (tabId: string, paneId: string, cwd: string) => void;
   onExit: (tabId: string, paneId: string, exitCode?: number) => void;
+  /** Restart / Close on a pane whose shell exited with a failure (FUNC-09). */
+  onRestartPane: (tabId: string, paneId: string) => void;
+  onClosePane: (tabId: string, paneId: string) => void;
   onStatusChange: (tabId: string, paneId: string, status: SessionStatus, message?: string) => void;
   onResizeSplit: (tabId: string, splitId: string, ratio: number) => void;
 }
@@ -76,6 +80,8 @@ export const TabPanes = memo(function TabPanes({
   onCodeModeChange,
   onCwdResolved,
   onExit,
+  onRestartPane,
+  onClosePane,
   onStatusChange,
   onResizeSplit,
 }: TabPanesProps) {
@@ -174,6 +180,13 @@ export const TabPanes = memo(function TabPanes({
             onStatusChange(tab.id, pane.id, status, message)
           }
         />
+        {pane.exited && (
+          <PaneExitBar
+            code={pane.exited.code}
+            onRestart={() => onRestartPane(tab.id, pane.id)}
+            onClose={() => onClosePane(tab.id, pane.id)}
+          />
+        )}
       </div>
     );
   };

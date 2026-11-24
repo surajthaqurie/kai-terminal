@@ -162,6 +162,8 @@ describe("split panes", () => {
     onCodeModeChange: () => {},
     onCwdResolved: () => {},
     onExit: () => {},
+    onRestartPane: () => {},
+    onClosePane: () => {},
     onStatusChange: () => {},
     onResizeSplit: () => {},
   });

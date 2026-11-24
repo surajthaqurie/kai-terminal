@@ -241,7 +241,6 @@ function App({ initialSeed = null }: { initialSeed?: TabSeed | null }) {
     shellsRef: config.shellsRef,
     selectedShellIdRef: config.selectedShellIdRef,
     setLastError,
-    notify: tabsState.showPaneNotice,
   });
   const persistence = useSessionPersistence({
     tabs,
@@ -344,6 +343,21 @@ function App({ initialSeed = null }: { initialSeed?: TabSeed | null }) {
       focusActiveTerminalSoon();
     },
     [sessionExit.handleSessionExit, focusActiveTerminalSoon]
+  );
+  // Restart / Close on a pane whose shell failed (FUNC-09); the keyboard follows either way.
+  const restartExitedPane = useCallback(
+    (tabId: string, paneId: string) => {
+      sessionExit.restartExitedPane(tabId, paneId);
+      focusActiveTerminalSoon();
+    },
+    [sessionExit.restartExitedPane, focusActiveTerminalSoon]
+  );
+  const closeExitedPane = useCallback(
+    (tabId: string, paneId: string) => {
+      sessionExit.closeExitedPane(tabId, paneId);
+      focusActiveTerminalSoon();
+    },
+    [sessionExit.closeExitedPane, focusActiveTerminalSoon]
   );
 
   const toggleSearch = useCallback(() => getActiveTerminal()?.toggleSearch(), [getActiveTerminal]);
@@ -549,6 +563,8 @@ function App({ initialSeed = null }: { initialSeed?: TabSeed | null }) {
               onCodeModeChange={setPaneCodeMode}
               onCwdResolved={handleCwdResolved}
               onExit={handleSessionExit}
+              onRestartPane={restartExitedPane}
+              onClosePane={closeExitedPane}
               onStatusChange={tabsState.setPaneStatus}
               onResizeSplit={tabsState.resizeSplit}
             />
