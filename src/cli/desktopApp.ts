@@ -127,7 +127,7 @@ export function findKaiAppBinary(): string | null {
       ? ["kai.exe", "cross-platform-terminal-backend.exe", "kai-terminal.exe", "kai"]
       : ["kai", "cross-platform-terminal-backend", "kai-terminal"];
   for (const name of binNames) {
-    let lines: string[] = [];
+    let lines: string[];
     try {
       const out = lookupOnPath(name, true);
       lines = dropCwdHits(

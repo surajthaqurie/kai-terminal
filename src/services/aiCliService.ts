@@ -266,7 +266,7 @@ export async function getAiCliDetails(opts?: { force?: boolean }): Promise<AiCli
     return composeDetails(await detailsInflight, customClis);
   }
   detailsInflight = fetchAiCliDetailsBase();
-  let baseDetails: AiCliDetails[] = [];
+  let baseDetails: AiCliDetails[];
   try {
     baseDetails = await detailsInflight;
     detailsCache = { at: Date.now(), data: baseDetails };

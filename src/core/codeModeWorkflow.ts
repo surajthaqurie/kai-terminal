@@ -626,7 +626,7 @@ export function getValidatedFreshness(
   index: ProjectIndex | null | undefined
 ): GraphFreshness {
   if (!index) return "unindexed";
-  let mismatched = false;
+  let mismatched: boolean;
   try {
     mismatched = !checkPersistenceConsistency(projectId).consistent;
   } catch {
@@ -681,7 +681,7 @@ export async function synchronizeGraphAfterChanges(
   const sanitized = sanitizeChangedFiles(changedFiles);
   // Security boundary: caller hints are untrusted. Re-validate against the
   // canonical root and drop escapes/traversals before they influence scope.
-  let canonicalRootForValidation: string | null = null;
+  let canonicalRootForValidation: string | null;
   try {
     canonicalRootForValidation = resolveCanonicalPath(meta.canonicalPath);
   } catch {
@@ -721,7 +721,7 @@ export async function synchronizeGraphAfterChanges(
     // A torn persistence snapshot must never be reported as fresh just
     // because no caller-reported change was in scope: validate the pairing
     // before skipping, and take a safe broader refresh on mismatch.
-    let mismatched = false;
+    let mismatched: boolean;
     try {
       mismatched = !checkPersistenceConsistency(meta.id).consistent;
     } catch {
@@ -997,7 +997,7 @@ export async function ensureFreshIndex(
   const freshnessBefore = getGraphFreshness(index);
   // Crash-recovery: a partial write between meta.json and index.json must
   // never read as fresh. Force a rebuild when the copies disagree.
-  let persistenceMismatched = false;
+  let persistenceMismatched: boolean;
   try {
     persistenceMismatched = !checkPersistenceConsistency(meta.id).consistent;
   } catch {
@@ -1311,7 +1311,7 @@ export async function planCodeTask(
       ? "stale"
       : rawFreshness;
 
-  let canonicalRoot = meta.canonicalPath;
+  let canonicalRoot: string;
   try {
     canonicalRoot = resolveCanonicalPath(meta.canonicalPath);
   } catch {

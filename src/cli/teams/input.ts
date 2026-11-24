@@ -62,7 +62,7 @@ export class InputParser {
   /** Feed a chunk from stdin; returns the events it completes. */
   feed(chunk: string): InputEvent[] {
     const events: InputEvent[] = [];
-    let s = this.buffer + chunk;
+    const s = this.buffer + chunk;
     this.buffer = "";
     let i = 0;
     while (i < s.length) {
@@ -158,7 +158,6 @@ export class InputParser {
         i = j;
       }
     }
-    s = "";
     return events;
   }
 }

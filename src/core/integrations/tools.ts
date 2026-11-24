@@ -342,7 +342,7 @@ export function integrationToolDefs(
   /** The git top-level of `projectDir` when already known (the poll passes it, see mcp.ts). */
   knownTopLevel?: string
 ): Array<Omit<ToolDef, "capability">> {
-  let provider: IntegrationProvider | null = null;
+  let provider: IntegrationProvider | null;
   let writesAllowed = false;
   try {
     const found = findBinding(projectDir, knownTopLevel);

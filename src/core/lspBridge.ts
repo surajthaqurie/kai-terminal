@@ -387,7 +387,7 @@ export async function queryLspCrossFileReferences(
           const body = responseBuffer.subarray(bodyStart, bodyStart + length).toString("utf-8");
           responseBuffer = responseBuffer.subarray(bodyStart + length);
 
-          let parsed: Record<string, unknown> | null = null;
+          let parsed: Record<string, unknown> | null;
           try {
             parsed = JSON.parse(body);
           } catch {

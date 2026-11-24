@@ -48,7 +48,7 @@ export async function runConfig(args: string[]): Promise<number> {
       );
       return 1;
     }
-    let parsed: unknown = val;
+    let parsed: unknown;
     if (key === "telemetryLocal") {
       if (val === "true") parsed = true;
       else if (val === "false") parsed = false;

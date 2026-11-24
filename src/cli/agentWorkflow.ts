@@ -191,10 +191,9 @@ export async function executeAgentWorkflow(
   }
 
   // 3. Ensure baseline index & project graph
-  let baseline = loadProjectIndex(meta.id);
-  if (!baseline) {
+  if (!loadProjectIndex(meta.id)) {
     console.log(`[kai] Indexing project for Code Mode run...`);
-    baseline = await indexProject(meta);
+    await indexProject(meta);
   }
 
   // 4. Resolve executable binary

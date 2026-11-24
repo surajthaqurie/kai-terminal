@@ -706,7 +706,7 @@ export async function setRules(
     throw err;
   }
   if (rules.mergeBranch) {
-    let exists: boolean | null = null;
+    let exists: boolean | null;
     try {
       exists = await branchExists(projectDir, rules.mergeBranch, deps);
     } catch {

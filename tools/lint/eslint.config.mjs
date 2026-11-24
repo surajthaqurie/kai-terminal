@@ -36,7 +36,6 @@ export default tseslint.config(
     // once its findings are fixed or justified where they occur.
     files,
     rules: {
-      "no-useless-assignment": "off",
       "no-empty": "off",
       "no-useless-escape": "off",
       "no-control-regex": "off",

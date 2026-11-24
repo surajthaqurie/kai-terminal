@@ -234,7 +234,7 @@ function boundProjects(accountId: string): BoundProject[] {
   const out: BoundProject[] = [];
   for (const id of entries) {
     const file = path.join(projectsDir, id, BINDING_FILE);
-    let binding: ProjectBinding | null = null;
+    let binding: ProjectBinding | null;
     let label = `project ${id}`;
     try {
       const raw = fs.readFileSync(file, "utf8");

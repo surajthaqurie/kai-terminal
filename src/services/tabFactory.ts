@@ -41,7 +41,7 @@ let tabSeq = 0;
 /** Collision-safe tab id (frontend-only; distinct from backend PTY UUIDs). */
 export function newTabId(): string {
   tabSeq += 1;
-  let rand = "";
+  let rand: string;
   try {
     rand =
       typeof crypto !== "undefined" && "randomUUID" in crypto
