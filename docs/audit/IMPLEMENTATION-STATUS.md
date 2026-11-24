@@ -105,7 +105,7 @@ Only Windows (windows-gnu, ConPTY) was run. Code that only exists on Linux or ma
 | CI-01 GUI feature not built in CI | PARTIALLY FIXED | clippy and the GUI-feature tests run in CI; not yet run on a CI runner |
 | CI-02 release gate not tied to CI | FIXED | the gate requires a green `ci.yml` run for the tagged commit (not yet exercised on GitHub) |
 | CI-03 supply-chain gates | FIXED (not yet run on GitHub) | `npm audit` and `cargo audit` job, weekly dependabot PRs (npm, cargo, actions), every action pinned to a commit SHA (a test guards it); CI, release and the Docker image build with one exact Rust version (`scripts/rust-toolchain-version.txt`, a test keeps them in agreement; local builds are not forced onto it); every release attaches CycloneDX SBOMs for the npm packages (bundled devDependencies and the Node runtime included) and the Rust crates and every installer and SBOM gets a GitHub-signed build-provenance attestation (`gh attestation verify`); a test keeps the attested and uploaded file lists identical. None of the release steps has run on GitHub yet. The pinned SHAs were taken from the GitHub API and have not run in Actions yet |
-| CI-04 no end-to-end UI test | NOT STARTED | needs `tauri-driver`; large |
+| CI-04 no end-to-end UI test | PARTIALLY FIXED | `npm run test:e2e` drives the built app through tauri-driver with a small W3C WebDriver client (no new dependency): a command runs in a real shell, new tab, split, find, command palette, and a failed shell keeping its pane then Restart. The app under test has its own identifier (own profile and single-instance lock) and a throwaway home, so a running Kai is never touched. Passed 3 of 3 runs on Windows here (about 81 s). CI job `e2e` on Linux (Xvfb) and Windows is written but has not run on GitHub. macOS cannot be driven: there is no WebDriver for WKWebView |
 | CI-05 PTY test depth | PARTIALLY FIXED | churn, byte-exact flood, stalled consumer, busy sessions, child observes resize, close semantics added; the default Windows test shell is still `cmd.exe` |
 | CI-06 performance not gated | PARTIALLY FIXED | bundle size and a PTY throughput floor (a prompt consumer must keep above 260 kB/s; measured 0.97 to 1.24 MB/s here) are gated; no latency, cold-start or memory gate |
 | CI-07 duplicate work, no safeguards | FIXED | concurrency, timeouts, read-only permissions |
@@ -126,7 +126,7 @@ Windows, ConPTY, before = the audit baseline or the code before the change, afte
 | Fast-consumer throughput | about 1.3 MB/s | unchanged |
 | `kai.exe` (default features, release) | 5,502,464 bytes | 5,716,480 bytes (+3.89%); of that, the OS certificate store (RES-09) is 13,824 bytes (5,702,656 without it, same tree) |
 | App chunk loaded at every launch (gzip, Vite report) | 198.4 kB | 169.8 kB (-28.6 kB); the three add-ons now load on first use (4.8 + 9.8 + 18.6 kB) |
-| Frontend tests | 2,703 | 3,080 (+27 skipped) |
+| Frontend tests | 2,703 | 3,084 (+27 skipped), plus 6 end-to-end workflows |
 | Rust lib tests | 270 | 310 |
 | PTY integration tests | 19 | 28 |
 | GUI-feature tests | 0 | 28 |
@@ -140,4 +140,4 @@ Not measured at all: cold start, idle CPU and wake-ups, memory per pane, frame t
 3. Open the music player in a packaged build once: the narrowed CSP was checked by tests, not by playing a track.
 4. Accepted as they are: `style-src 'unsafe-inline'`, `frame-src http://localhost:*`, the 60 ms hand-off settle, JSON-in-eval output transport, the font gate.
 5. Test runs on a loaded machine: twice, a full `vitest run` left out `appShell.test.tsx` (102 tests) entirely and still reported success with zero failures; the file passes on its own and in the next full run. CI and release now run `npm run test:ci`, which fails, naming the files, when any test file Vitest selects has no results (`scripts/check-test-run.mjs`; checked against the report of that bad run, where it names `appShell.test.tsx`). A timing threshold in `lspDetection.test.ts` that failed under load was loosened to what still separates a blocked event loop from a busy one.
-6. Larger items left for a separate effort: an end-to-end UI harness (CI-04), performance gates (CI-06), further `TerminalView.tsx` reduction (ARCH-03: the input filter and launch orchestration remain; diminishing returns), a binary output channel (PERF-09).
+6. Larger items left for a separate effort: running the end-to-end job on GitHub for the first time (CI-04), performance gates (CI-06), further `TerminalView.tsx` reduction (ARCH-03: the input filter and launch orchestration remain; diminishing returns), a binary output channel (PERF-09).

@@ -281,6 +281,7 @@ npm run tauri dev      # desktop app with hot reload
 | `npm run check`        | Type check, formatting and tests                           |
 | `npm run prepush`      | Full pre-push gate, including Rust fmt, clippy and tests   |
 | `npm run test:ci`      | All frontend tests; fails if a test file left no results   |
+| `npm run test:e2e`     | End-to-end UI tests on the built app (see `e2e/globalSetup.ts`) |
 | `npm run test:docker`  | Run the suites in Docker                                   |
 
 More in [DEVELOPMENT.md](DEVELOPMENT.md), [ARCHITECTURE.md](ARCHITECTURE.md) and [TEST_PLAN.md](TEST_PLAN.md).
