@@ -292,11 +292,11 @@ if (!process.env.VITEST && typeof process !== "undefined" && process.argv && pro
         scriptPath.endsWith("cli/index.js")) &&
       !scriptPath.endsWith("kai.js");
 
-    if (isDirectRun) runAsScript();
+    if (isDirectRun) void runAsScript();
   } catch {
     // If realpathSync fails (e.g. file unlinked), fall back to path suffix check
     if (process.argv[1].endsWith("dist/cli/index.js") || process.argv[1].endsWith("cli/index.js")) {
-      runAsScript();
+      void runAsScript();
     }
   }
 }

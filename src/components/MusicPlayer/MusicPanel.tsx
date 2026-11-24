@@ -1202,7 +1202,9 @@ export const MusicPanel: FC<MusicPanelProps> = ({
   actionsRef.current = { togglePlay, next, previous, toggleMute, toggleLoop, seekToPercent };
   useEffect(() => {
     const onTogglePlay = () => actionsRef.current.togglePlay();
-    const onNext = () => actionsRef.current.next();
+    const onNext = () => {
+      void actionsRef.current.next();
+    };
     const onPrevious = () => actionsRef.current.previous();
     const onMute = () => actionsRef.current.toggleMute();
     const onLoop = () => actionsRef.current.toggleLoop();
@@ -1443,7 +1445,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
   /** Opens the song that is playing now (not a list's first song) on YouTube. */
   const openOnYouTube = () => {
     const t = liveTrack();
-    if (t) openExternalUrl(watchUrlForTrack(t));
+    if (t) void openExternalUrl(watchUrlForTrack(t));
   };
 
   // Panel-scoped keys: Space play / pause, N next, P previous, M mute, L loop,
@@ -1459,7 +1461,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
         break;
       case "n":
       case "N":
-        next();
+        void next();
         break;
       case "p":
       case "P":
@@ -2113,7 +2115,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
           className="music-search"
           onSubmit={(e) => {
             e.preventDefault();
-            submit();
+            void submit();
           }}
         >
           <Search size={14} aria-hidden="true" />
@@ -2247,7 +2249,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
               <button
                 type="button"
                 className={`btn btn-icon music-ctrl-btn${advancing ? " music-ctrl-busy" : ""}`}
-                onClick={next}
+                onClick={() => void next()}
                 aria-busy={advancing || undefined}
                 disabled={!src && queue.length === 0}
                 title={withKeys(
@@ -2267,7 +2269,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
               <button
                 type="button"
                 className={`btn btn-icon music-ctrl-btn ${showNextList && queue.length > 0 ? "music-control-active" : ""}`}
-                onClick={toggleNextList}
+                onClick={() => void toggleNextList()}
                 title={showNextList ? "Hide next playing list" : "Show next playing list"}
                 aria-label="Next playing list"
                 aria-pressed={showNextList}
@@ -2639,7 +2641,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
                         className="music-list-clear"
                         style={{ margin: "8px auto", display: "block" }}
                         disabled={suggestLoading}
-                        onClick={loadMoreSuggestions}
+                        onClick={() => void loadMoreSuggestions()}
                       >
                         {suggestLoading ? "Loading…" : "Load more suggestions"}
                       </button>

@@ -127,8 +127,10 @@ vi.mock("../services/terminalWindows", () => ({
   isSecondaryTerminalWindow: () => false,
 }));
 
+// async: React 19 returns a thenable for act() either way, and awaiting it flushes pending
+// work; an async callback makes the types say so (@types/react types the sync form as void).
 const emitOutput = (id: string, data: string) =>
-  act(() => outputListeners.forEach((l) => l({ id, data })));
+  act(async () => outputListeners.forEach((l) => l({ id, data })));
 
 const adoption: PaneAdoption = { ptyId: "pty-moved", snapshot: "SCREEN", cols: 120, rows: 40 };
 const none: HandoffRelease = { data: [], exited: false, exit_code: null };

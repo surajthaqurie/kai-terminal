@@ -92,7 +92,7 @@ describe("command palette", () => {
   function openPalette(actions: CommandAction[], onClose = vi.fn()) {
     vi.useFakeTimers();
     const el = render(createElement(CommandPalette, { isOpen: true, onClose, actions }));
-    act(() => vi.runAllTimers());
+    void act(() => vi.runAllTimers());
     const input = el.querySelector("input")!;
     return { el, input, onClose };
   }

@@ -136,8 +136,10 @@ vi.mock("../services/terminalWindows", () => ({
   isSecondaryTerminalWindow: () => false,
 }));
 
+// async: React 19 returns a thenable for act() either way, and awaiting it flushes pending
+// work; an async callback makes the types say so (@types/react types the sync form as void).
 const emit = (data: string, id = "pty-1") =>
-  act(() => outputListeners.forEach((l) => l({ id, data })));
+  act(async () => outputListeners.forEach((l) => l({ id, data })));
 const tick = (ms = 0) => act(async () => void (await new Promise((r) => setTimeout(r, ms))));
 /** Long enough for the 250 ms flush timer, the 40 ms ack timer and the microtask callbacks. */
 const settle = () => tick(400);

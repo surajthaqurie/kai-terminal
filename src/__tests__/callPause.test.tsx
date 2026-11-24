@@ -36,7 +36,8 @@ async function mount(playing: boolean) {
   const host = document.createElement("div");
   const root = createRoot(host);
   await act(async () => root.render(<Probe playing={playing} pause={pause} resume={resume} />));
-  return { pause, resume, unmount: () => act(() => root.unmount()) };
+  // async act: awaitable for real (see React 19 act; the sync form is typed void).
+  return { pause, resume, unmount: () => act(async () => root.unmount()) };
 }
 
 const flush = () => act(async () => {});

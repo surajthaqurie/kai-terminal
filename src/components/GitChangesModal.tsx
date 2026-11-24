@@ -609,7 +609,7 @@ export const GitChangesModal: FC<GitChangesModalProps> = ({ dir, onClose }) => {
                     <button
                       type="button"
                       className="section-action-btn"
-                      onClick={handleUnstageAll}
+                      onClick={() => void handleUnstageAll()}
                       title="Unstage all changes"
                       aria-label="Unstage all changes"
                     >
@@ -669,7 +669,7 @@ export const GitChangesModal: FC<GitChangesModalProps> = ({ dir, onClose }) => {
                     <button
                       type="button"
                       className="section-action-btn"
-                      onClick={handleStageAll}
+                      onClick={() => void handleStageAll()}
                       title="Stage all changes"
                       aria-label="Stage all changes"
                     >

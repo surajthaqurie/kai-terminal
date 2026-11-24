@@ -393,11 +393,10 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       },
       copySelection: async () => {
         const selection = xtermRef.current?.getSelection();
-        if (selection) {
-          await navigator.clipboard.writeText(selection);
-          return selection;
-        }
-        return "";
+        if (!selection) return "";
+        // Same copy as the keyboard path: falls back when the clipboard API is denied, and never
+        // rejects (the command palette does not await actions). "" when nothing was copied.
+        return (await copyTextToClipboard(selection)) ? selection : "";
       },
       pasteText: (text: string) => pasteToPty(text),
       focus: () => {

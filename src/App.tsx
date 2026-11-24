@@ -471,7 +471,9 @@ function App({ initialSeed = null }: { initialSeed?: WindowSeed | null }) {
     checkUpdates: () => void updates.checkUpdates(true),
     closeActiveTab: () => closeGuard.requestCloseTab(activeTabId),
     toggleSearch,
-    copySelection: () => getActiveTerminal()?.copySelection(),
+    copySelection: () => {
+      void getActiveTerminal()?.copySelection();
+    },
     pasteClipboard: () => void pasteFromClipboard(),
     clearTerminal: () => getActiveTerminal()?.clear(),
     openAiCli,
@@ -714,7 +716,7 @@ function App({ initialSeed = null }: { initialSeed?: WindowSeed | null }) {
           currentShell={activePaneShell}
           onChangeShell={changeActiveShell}
           mode={modeDisplay}
-          onOpenEditor={project.openEditor}
+          onOpenEditor={(editorBinary) => void project.openEditor(editorBinary)}
           editorPath={userSettings.editorPath}
           installedEditors={project.installedEditors}
           isLoadingEditors={project.isLoadingEditors}

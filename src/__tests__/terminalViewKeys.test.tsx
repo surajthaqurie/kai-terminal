@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { act } from "react-dom/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS } from "../services/settingsService";
+import type { TerminalViewRef } from "../components/TerminalView";
 
 /**
  * FUNC-10: in the terminal's own key handler, AltGr (reported as Ctrl+Alt on Windows) must reach
@@ -11,6 +12,8 @@ import { DEFAULT_SETTINGS } from "../services/settingsService";
  */
 let keyHandler: ((e: KeyboardEvent) => boolean) | undefined;
 let dataHandler: ((data: string) => void) | undefined;
+/** What the fake terminal reports as selected. */
+let selectionText = "";
 const oscHandlers = new Map<number, (data: string) => boolean>();
 const backendCwd = vi.fn(async (_id: string): Promise<string | null> => "/backend/says");
 
@@ -53,10 +56,10 @@ class FakeTerm {
   clear() {}
   selectAll() {}
   hasSelection() {
-    return false;
+    return selectionText !== "";
   }
   getSelection() {
-    return "";
+    return selectionText;
   }
   focus() {}
   dispose() {}
@@ -280,5 +283,51 @@ describe("folder probes after a submitted line", () => {
     root = createRoot(host); // afterEach unmounts again
     await settle(400);
     expect(backendCwd).not.toHaveBeenCalled();
+  });
+});
+
+describe("copySelection (the command palette's Copy)", () => {
+  async function mountWithRef() {
+    const { TerminalView } = await import("../components/TerminalView");
+    const ref = { current: null as TerminalViewRef | null };
+    await act(async () => {
+      root.render(
+        createElement(TerminalView, {
+          ref,
+          sessionId: "pane-1",
+          visible: true,
+          settings: { ...DEFAULT_SETTINGS },
+          onSessionStatusChange: vi.fn(),
+          onExit: vi.fn(),
+        })
+      );
+    });
+    return ref.current!;
+  }
+  const setClipboard = (writeText: (text: string) => Promise<void>) =>
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+
+  afterEach(() => {
+    selectionText = "";
+    Reflect.deleteProperty(navigator, "clipboard");
+  });
+
+  it("copies the selection and returns it", async () => {
+    const writeText = vi.fn(async () => {});
+    setClipboard(writeText);
+    selectionText = "copied text";
+    const view = await mountWithRef();
+    await expect(view.copySelection()).resolves.toBe("copied text");
+    expect(writeText).toHaveBeenCalledWith("copied text");
+  });
+
+  it("does not reject when the clipboard is denied (the palette does not await it)", async () => {
+    setClipboard(async () => {
+      throw new DOMException("denied", "NotAllowedError");
+    });
+    selectionText = "secret";
+    const view = await mountWithRef();
+    // Falls back to the older copy route; "" when that did not copy either (jsdom).
+    await expect(view.copySelection()).resolves.toBeTypeOf("string");
   });
 });

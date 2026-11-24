@@ -67,9 +67,9 @@ describe("useNotices", () => {
       api.notify("success", "Saved");
       api.notify("error", "Failed");
     });
-    act(() => vi.advanceTimersByTime(NOTICE_AUTO_DISMISS_MS + 50));
+    void act(() => vi.advanceTimersByTime(NOTICE_AUTO_DISMISS_MS + 50));
     expect(api.notices.map((n) => n.message)).toEqual(["Failed"]);
-    act(() => vi.advanceTimersByTime(10 * NOTICE_AUTO_DISMISS_MS));
+    void act(() => vi.advanceTimersByTime(10 * NOTICE_AUTO_DISMISS_MS));
     expect(api.notices.map((n) => n.message)).toEqual(["Failed"]);
   });
 

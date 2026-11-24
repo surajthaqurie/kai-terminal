@@ -518,7 +518,7 @@ export const AiCliPanel: FC<AiCliPanelProps> = ({
               />
               <button
                 className="btn btn-primary"
-                onClick={handleRegisterNewCli}
+                onClick={() => void handleRegisterNewCli()}
                 disabled={!newCliName.trim() || !newCliPath.trim()}
               >
                 <Plus size={14} />

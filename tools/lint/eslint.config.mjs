@@ -33,6 +33,20 @@ export default tseslint.config(
     },
   },
   {
+    // Type-aware rules that catch real bugs (not the stylistic type-checked set): a promise whose
+    // rejection nobody handles, a promise passed where a plain callback is expected, `await` on
+    // something that is not a promise. They need the TypeScript program, built from tsconfig.json.
+    files,
+    languageOptions: {
+      parserOptions: { project: "./tsconfig.json", tsconfigRootDir: process.cwd() },
+    },
+    rules: {
+      "@typescript-eslint/no-floating-promises": "error",
+      "@typescript-eslint/no-misused-promises": "error",
+      "@typescript-eslint/await-thenable": "error",
+    },
+  },
+  {
     // Tests may use `any` for loose fixtures and mocks.
     files: ["src/__tests__/**/*.{ts,tsx}", "e2e/**/*.ts"],
     rules: { "@typescript-eslint/no-explicit-any": "off" },

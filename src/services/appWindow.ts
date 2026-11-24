@@ -104,7 +104,11 @@ export async function watchWindowMaximized(
     const { getCurrentWindow } = await import("@tauri-apps/api/window");
     const win = getCurrentWindow();
     onChange(await win.isMaximized());
-    return await win.onResized(async () => onChange(await win.isMaximized()));
+    return await win.onResized(() => {
+      win.isMaximized().then(onChange, () => {
+        // The window is going away: nothing to report.
+      });
+    });
   } catch (err) {
     console.warn("Failed to watch window maximize state:", err);
     return () => {};
