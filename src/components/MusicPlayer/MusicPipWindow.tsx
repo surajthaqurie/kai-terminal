@@ -145,7 +145,6 @@ export const MusicPipWindow: FC = () => {
   // A song starting while the pointer rests on the video hides them too.
   useEffect(() => {
     if (state.playing) scheduleHide(false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.playing]);
   useEffect(() => {
     // The pointer can leave the window without a pointerleave (window hidden,
@@ -156,7 +155,6 @@ export const MusicPipWindow: FC = () => {
       window.removeEventListener("blur", onBlur);
       window.clearTimeout(chromeTimerRef.current);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /** Drag the window from anywhere on it except its buttons and slider. */

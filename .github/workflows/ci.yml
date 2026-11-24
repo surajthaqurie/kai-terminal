@@ -352,6 +352,31 @@ jobs:
         if: runner.os == 'Windows'
         run: npm run test:e2e
 
+  # CI-08: ESLint (typescript-eslint recommended + React hooks), zero warnings allowed. It runs from
+  # tools/lint with its own TypeScript 6.0: typescript-eslint cannot run on TypeScript 7.0, which
+  # the app builds and type-checks with (see docs/audit/CI-08-LINT-INVESTIGATION.md). Parsing
+  # needs no app dependencies, so only the lint toolchain is installed.
+  lint:
+    name: ESLint
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup Node.js v24 environment
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: "npm"
+          cache-dependency-path: "tools/lint/package-lock.json"
+
+      - name: Install the lint toolchain (tools/lint)
+        run: npm run lint:install
+
+      - name: ESLint (no warnings allowed)
+        run: npm run lint:eslint
+
   dependency-security:
     name: Dependency Security Audit
     runs-on: ubuntu-22.04

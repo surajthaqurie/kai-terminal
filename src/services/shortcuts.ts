@@ -96,7 +96,7 @@ export function parseBinding(binding: string): ParsedBinding | null {
   const upper = last.toUpperCase();
   if (!ctrlOrCmd && !alt && !F_KEY.test(upper)) return null;
   let code: string;
-  let key = last;
+  const key = last;
   if (F_KEY.test(upper)) {
     code = upper;
   } else if (/^[A-Z0-9]$/.test(upper)) {

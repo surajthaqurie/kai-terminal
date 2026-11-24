@@ -1571,7 +1571,6 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
     // closeDrawer only resets state through setters and refs.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, isPinned, onClose, showDimPopover, drawerOpen]);
 
   const drawerRef = useRef<HTMLDivElement | null>(null);

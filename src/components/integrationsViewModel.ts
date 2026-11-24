@@ -303,7 +303,6 @@ export function validateServerForm(
 
   let project: string | null = input.project.trim() || null;
   if (project) {
-    // eslint-disable-next-line no-control-regex
     if (/[\\/\u0000-\u001f]/.test(project) || project.length > PROJECT_MAX) {
       errors.project = "That is not a project name. Use the name only, without slashes.";
     }

@@ -100,6 +100,7 @@ function App({ initialSeed = null }: { initialSeed?: WindowSeed | null }) {
     setLastError: reportError,
     isSettingsOpen,
   });
+  const { setSelectedShellId: configSetSelectedShellId } = config;
   const { userSettings } = config;
   const music = useMusicPlayer({ showMusicPlayer: !secondary && userSettings.showMusicPlayer });
 
@@ -108,6 +109,13 @@ function App({ initialSeed = null }: { initialSeed?: WindowSeed | null }) {
     setLastError,
     initialSeed,
   });
+  // Stable callbacks as plain names, so hook dependency lists name exactly what they use.
+  const {
+    newTab: tabsNewTab,
+    splitPane: tabsSplitPane,
+    closeActivePane: tabsCloseActivePane,
+    setPaneShell: tabsSetPaneShell,
+  } = tabsState;
   const {
     tabs,
     setTabs,
@@ -179,29 +187,29 @@ function App({ initialSeed = null }: { initialSeed?: WindowSeed | null }) {
 
   const newTabAndFocus = useCallback(
     (opts?: { cwd?: string }) => {
-      tabsState.newTab(opts);
+      tabsNewTab(opts);
       focusActiveTerminalSoon();
     },
-    [tabsState.newTab, focusActiveTerminalSoon]
+    [tabsNewTab, focusActiveTerminalSoon]
   );
 
   /** A split makes the new pane active, so type-ahead must land in it, not the pane it came from. */
   const splitPaneAndFocus = useCallback(
     (direction: SplitDirection) => {
-      tabsState.splitPane(direction);
+      tabsSplitPane(direction);
       focusActiveTerminalSoon();
     },
-    [tabsState.splitPane, focusActiveTerminalSoon]
+    [tabsSplitPane, focusActiveTerminalSoon]
   );
 
   /** "+ ▾" menu: the chosen shell becomes the default for new tabs and opens one now. */
   const newTabWithShell = useCallback(
     (shell: ShellProfile) => {
-      config.setSelectedShellId(shell.id);
-      tabsState.newTab({ shellPath: shell.path });
+      configSetSelectedShellId(shell.id);
+      tabsNewTab({ shellPath: shell.path });
       focusActiveTerminalSoon();
     },
-    [config.setSelectedShellId, tabsState.newTab, focusActiveTerminalSoon]
+    [configSetSelectedShellId, tabsNewTab, focusActiveTerminalSoon]
   );
 
   /** Active project dir: the focused pane's folder, else its tab's. Empty until a new shell reports one. */
@@ -243,6 +251,12 @@ function App({ initialSeed = null }: { initialSeed?: WindowSeed | null }) {
     selectedShellIdRef: config.selectedShellIdRef,
     setLastError,
   });
+  const {
+    markRestarted: exitMarkRestarted,
+    handleSessionExit: exitHandleSessionExit,
+    restartExitedPane: exitRestartExitedPane,
+    closeExitedPane: exitCloseExitedPane,
+  } = sessionExit;
   const persistence = useSessionPersistence({
     tabs,
     setTabs,
@@ -266,9 +280,9 @@ function App({ initialSeed = null }: { initialSeed?: WindowSeed | null }) {
   // Closing a pane keeps the same tab, so the tab-change focus hand-off never runs: the closed
   // pane's input is gone and typing went nowhere until a click (FUNC-10). Hand focus over here.
   const closeActivePaneAndFocus = useCallback(() => {
-    tabsState.closeActivePane();
+    tabsCloseActivePane();
     focusActiveTerminalSoon();
-  }, [tabsState.closeActivePane, focusActiveTerminalSoon]);
+  }, [tabsCloseActivePane, focusActiveTerminalSoon]);
   const closeGuard = useCloseGuard({
     tabsRef,
     activeTabIdRef,
@@ -327,40 +341,34 @@ function App({ initialSeed = null }: { initialSeed?: WindowSeed | null }) {
   const changeActiveShell = useCallback(
     (shell: ShellProfile) => {
       if (!activeTabId || !activePaneId) return;
-      sessionExit.markRestarted(activeTabId);
-      tabsState.setPaneShell(activeTabId, activePaneId, shell.path);
+      exitMarkRestarted(activeTabId);
+      tabsSetPaneShell(activeTabId, activePaneId, shell.path);
       focusActiveTerminalSoon();
     },
-    [
-      activeTabId,
-      activePaneId,
-      sessionExit.markRestarted,
-      tabsState.setPaneShell,
-      focusActiveTerminalSoon,
-    ]
+    [activeTabId, activePaneId, exitMarkRestarted, tabsSetPaneShell, focusActiveTerminalSoon]
   );
 
   const handleSessionExit = useCallback(
     (tabId: string, paneId: string, exitCode?: number) => {
-      sessionExit.handleSessionExit(tabId, paneId, exitCode);
+      exitHandleSessionExit(tabId, paneId, exitCode);
       focusActiveTerminalSoon();
     },
-    [sessionExit.handleSessionExit, focusActiveTerminalSoon]
+    [exitHandleSessionExit, focusActiveTerminalSoon]
   );
   // Restart / Close on a pane whose shell failed (FUNC-09); the keyboard follows either way.
   const restartExitedPane = useCallback(
     (tabId: string, paneId: string) => {
-      sessionExit.restartExitedPane(tabId, paneId);
+      exitRestartExitedPane(tabId, paneId);
       focusActiveTerminalSoon();
     },
-    [sessionExit.restartExitedPane, focusActiveTerminalSoon]
+    [exitRestartExitedPane, focusActiveTerminalSoon]
   );
   const closeExitedPane = useCallback(
     (tabId: string, paneId: string) => {
-      sessionExit.closeExitedPane(tabId, paneId);
+      exitCloseExitedPane(tabId, paneId);
       focusActiveTerminalSoon();
     },
-    [sessionExit.closeExitedPane, focusActiveTerminalSoon]
+    [exitCloseExitedPane, focusActiveTerminalSoon]
   );
 
   const toggleSearch = useCallback(() => getActiveTerminal()?.toggleSearch(), [getActiveTerminal]);

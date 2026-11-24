@@ -1039,7 +1039,7 @@ export function toolReadRange(ctx: ToolContext, args: Record<string, unknown>): 
     return fail(`out-of-range: file has ${totalLines} lines, endLine is ${endLine}`);
   }
 
-  let from = Math.max(1, startLine - contextLines);
+  const from = Math.max(1, startLine - contextLines);
   let to = Math.min(totalLines, Math.max(endLine, startLine) + contextLines);
   let truncated = false;
   if (to - from + 1 > maxLines) {

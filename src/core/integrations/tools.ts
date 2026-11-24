@@ -374,7 +374,6 @@ function writeText(v: unknown, max: number): string | null {
   if (typeof v !== "string") return null;
   const t = v.trim();
   if (!t || t.length > max) return null;
-  // eslint-disable-next-line no-control-regex
   if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(t)) return null;
   return t;
 }

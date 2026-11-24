@@ -42,7 +42,18 @@ the linter adds rules tsc does not have (hooks dependencies, `any`, unused catch
 - Not recommended: npm `overrides` to give typescript-eslint a nested TypeScript 6 inside the main
   dependency tree (fragile, easy to break the build's TypeScript resolution).
 
-## Decision needed
+## Adopted (option A)
+
+Chosen by the maintainer and set up in `tools/lint` (see its `eslint.config.mjs`): `npm run
+lint:install`, then `npm run lint:eslint` (no warnings allowed), CI job `lint`. Of the 66 findings
+above, 43 `no-unused-vars` were all names deliberately prefixed `_` and 19 `no-explicit-any` were
+all in tests; the config allows exactly those two conventions. The rest were fixed: 2
+`prefer-const`, 8 React hook dependency lists (stable members destructured in `App.tsx`;
+`TerminalView.tsx` lists `cwdTracker`, and the GPU attach effect keeps visibility-only deps with a
+reasoned disable), 8 stale `eslint-disable` comments. Two more `prefer-const` hits are closures
+reading a `let` before its single assignment, allowed with `ignoreReadBeforeAssign`.
+
+## Original decision note
 
 Adding A means new dev dependencies and a rule set, so it was not installed here. With A chosen,
 the work is: create `tools/lint/`, fix the 66 findings (or baseline them), add `npm run lint:eslint`

@@ -586,7 +586,6 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       resetKeySeenRef.current = resetKey;
       setLaunchError(null);
       void initPtyRef.current();
-      // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [resetKey]);
 
     // The look this pane's xterm currently has (set when it is created, then by the
@@ -1221,6 +1220,9 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       // (panes that mounted hidden never attached one).
       if (webglAddonRef.current) hiddenGpuBudget.hide(release);
       return () => hiddenGpuBudget.show(release);
+      // Runs on visibility changes only: `attachGpu` is recreated every render, and re-running this
+      // on each render would re-attach the renderer and churn the hidden-pane budget.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [visible]);
 
     // Periodic live CWD synchronization for the visible pane (ensures footer updates on cd).
@@ -1236,7 +1238,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         cwdTracker.poll();
       }, 5000);
       return () => clearInterval(timer);
-    }, [visible]);
+    }, [visible, cwdTracker]); // cwdTracker is created once per pane
 
     // First-show launcher for tabs that mounted hidden: spawn the PTY on
     // first visibility, or re-fit an already-live session (hidden mount

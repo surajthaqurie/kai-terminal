@@ -39,7 +39,6 @@ export const AGENT_EXIT_CLEANUP_SEQ = "\x1b[<u\x1b[>4;0m\x1b[?25h\x1b[?7h\x1b[?1
 
 // Erase-display (ED 2 / ED 3, what `clear` / `cls` / Clear-Host emit) and full
 // reset (RIS).
-// eslint-disable-next-line no-control-regex
 const CLEAR_SCREEN_RE = /\x1b\[[23]J|\x1bc/;
 
 /**
@@ -90,7 +89,6 @@ const STUCK_INPUT_REPORT_RE = /\x1b\[<[0-9;]*[Mm]|\x1b\[M...|\x1b\[[IO]/g;
 // looks "blocked". Only ever stripped inside the short post-agent window
 // (see STALE_REPLY_WINDOW_MS) because a live non-alt-screen TUI needs them.
 const STALE_TERMINAL_REPLY_RE =
-  // eslint-disable-next-line no-control-regex
   /\x1b\[[?>=]?[0-9;]*c|\x1b\[[0-9;]*R|\x1b\[\?[0-9;]*\$y|\x1b\[\?[0-9;]*u|\x1b\](?:4;[0-9]+|1[012]);[^\x07\x1b]*(?:\x07|\x1b\\)|\x1bP[>!]?\|[^\x1b]*\x1b\\/g;
 
 /** How long after `[kai] Agent finished` leftover terminal replies are dropped. */
