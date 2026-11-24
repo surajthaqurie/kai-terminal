@@ -109,7 +109,7 @@ Locally only Windows (windows-gnu, ConPTY) was run. The first CI runs on GitHub 
 | CI-05 PTY test depth | PARTIALLY FIXED | churn, byte-exact flood, stalled consumer, busy sessions, child observes resize, close semantics added; the default Windows test shell is still `cmd.exe` |
 | CI-06 performance not gated | PARTIALLY FIXED | bundle size and a PTY throughput floor (a prompt consumer must keep above 260 kB/s; measured 0.97 to 1.24 MB/s here) are gated; no latency, cold-start or memory gate |
 | CI-07 duplicate work, no safeguards | FIXED | concurrency, timeouts, read-only permissions |
-| CI-08 lint is only `tsc` | BLOCKED | `typescript-eslint` does not support TypeScript 7.0 |
+| CI-08 lint is only `tsc` | INVESTIGATED, decision needed | TypeScript 7.0 has no classic compiler API, so typescript-eslint cannot run on it (upstream support targets the 7.1 native API). A separate TypeScript 6.0 used only by the linter works today: 462 files, 0 parse errors, 66 findings with the recommended rules. Recommended setup and numbers: [CI-08-LINT-INVESTIGATION](CI-08-LINT-INVESTIGATION.md); not installed, because it adds dev dependencies and a rule set |
 | CI-09 Docker harness drift | FIXED | Node 24, and the same pinned Rust as CI (the image has not been rebuilt here: Docker was not run) |
 
 ## What was measured
