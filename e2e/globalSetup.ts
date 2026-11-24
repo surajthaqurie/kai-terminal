@@ -5,27 +5,37 @@
  * - The app under test is built with src-tauri/tauri.e2e.conf.json, which gives it its own
  *   identifier: its own WebView2 / WebKit profile (settings, saved layout) and its own
  *   single-instance lock, so a Kai that is already running is neither used nor disturbed.
+ * - It is built into its own folder (src-tauri/target/e2e), because other builds write
+ *   target/debug/kai(.exe): `cargo test` compiles the windowless helper there. And the binary
+ *   is refused unless it carries the e2e identifier, so the real app can never be launched.
  * - HOME / USERPROFILE point at a fresh temporary folder for the driver and everything it starts,
  *   so `~/.kai` (credentials, projects, metrics) is a throwaway copy.
  *
  * Environment:
- *   KAI_E2E_APP     the app binary (default: src-tauri/target/debug/kai[.exe])
+ *   KAI_E2E_APP     the app binary (default: src-tauri/target/e2e/debug/kai[.exe])
  *   TAURI_DRIVER    the tauri-driver binary (default: `tauri-driver` on PATH)
  *   KAI_E2E_NATIVE_DRIVER  WebView2: path to msedgedriver; Linux: WebKitWebDriver (optional)
  */
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 export const DRIVER_URL = "http://127.0.0.1:4444";
+
+/** Identifier the app under test must carry (src-tauri/tauri.e2e.conf.json). */
+export const E2E_IDENTIFIER = "com.kai.terminal.e2e";
+
+/** How to build the app under test (also in the CI workflow). */
+export const BUILD_COMMAND =
+  'CARGO_TARGET_DIR="$PWD/src-tauri/target/e2e" npx tauri build --debug --no-bundle --config src-tauri/tauri.e2e.conf.json';
 
 let driver: ChildProcess | undefined;
 let home: string | undefined;
 
 export function appPath(): string {
   const exe = process.platform === "win32" ? "kai.exe" : "kai";
-  return resolve(process.env.KAI_E2E_APP ?? join("src-tauri", "target", "debug", exe));
+  return resolve(process.env.KAI_E2E_APP ?? join("src-tauri", "target", "e2e", "debug", exe));
 }
 
 async function driverReady(timeoutMs: number): Promise<void> {
@@ -46,9 +56,15 @@ export async function setup(): Promise<void> {
   const app = appPath();
   if (!existsSync(app)) {
     throw new Error(
-      `App under test not found: ${app}. Build it with ` +
-        "`npx tauri build --debug --no-bundle --config src-tauri/tauri.e2e.conf.json` " +
-        "or set KAI_E2E_APP."
+      `App under test not found: ${app}. Build it with \`${BUILD_COMMAND}\` or set KAI_E2E_APP.`
+    );
+  }
+  // Never launch a build with the real identifier: it would use the real profile and could hand
+  // the launch to a Kai the developer is running.
+  if (!readFileSync(app).includes(Buffer.from(E2E_IDENTIFIER))) {
+    throw new Error(
+      `${app} is not the end-to-end build (it does not carry ${E2E_IDENTIFIER}). ` +
+        `Build it with \`${BUILD_COMMAND}\`.`
     );
   }
   home = mkdtempSync(join(tmpdir(), "kai-e2e-home-"));

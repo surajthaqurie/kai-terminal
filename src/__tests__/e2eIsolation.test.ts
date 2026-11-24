@@ -19,10 +19,26 @@ describe("end-to-end isolation", () => {
     expect(e2e.startsWith(`${main}.`)).toBe(true); // recognisably a variant of the real app
   });
 
-  it("CI builds the app under test with that config", () => {
+  it("CI builds the app under test with that config, into its own folder", () => {
     expect(read(".github/workflows/ci.yml")).toContain(
-      "npx tauri build --debug --no-bundle --config src-tauri/tauri.e2e.conf.json"
+      'CARGO_TARGET_DIR="$PWD/src-tauri/target/e2e" npx tauri build --debug --no-bundle --config src-tauri/tauri.e2e.conf.json'
     );
+  });
+
+  it("the setup's build hint is the command CI runs", () => {
+    const setup = read("e2e/globalSetup.ts");
+    const ci = read(".github/workflows/ci.yml");
+    const hint = /BUILD_COMMAND =\s*'([^']+)'/.exec(setup)?.[1];
+    expect(hint).toBeDefined();
+    expect(ci).toContain(hint!);
+  });
+
+  it("the setup refuses a binary that does not carry the e2e identifier", () => {
+    const setup = read("e2e/globalSetup.ts");
+    const e2e = JSON.parse(read("src-tauri/tauri.e2e.conf.json")).identifier;
+    expect(setup).toContain(`E2E_IDENTIFIER = "${e2e}"`);
+    expect(setup).toMatch(/readFileSync\(app\)\.includes\(Buffer\.from\(E2E_IDENTIFIER\)\)/);
+    expect(setup).toContain('join("src-tauri", "target", "e2e", "debug", exe)');
   });
 
   it("the driver runs with a throwaway home folder", () => {
