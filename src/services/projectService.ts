@@ -271,7 +271,7 @@ function withHomeTilde(p: string): string {
   }
   // Browser (no process.env): try a leading /home/<user> or /Users/<user>.
   const m = p.match(/^(\/home\/[^/\\]+|\/Users\/[^/\\]+)([/\\]|$)/);
-  if (m) return `~${p.slice(m[1].length) || ""}` || "~";
+  if (m) return `~${p.slice(m[1].length)}`;
   return p;
 }
 

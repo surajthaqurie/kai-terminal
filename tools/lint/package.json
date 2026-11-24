@@ -4,6 +4,7 @@
   "description": "ESLint for Kai Terminal, isolated from the app (CI-08). typescript-eslint cannot run on TypeScript 7.0, which the app builds and type-checks with; this folder has its own TypeScript 6.0 used only for parsing. See docs/audit/CI-08-LINT-INVESTIGATION.md.",
   "type": "module",
   "devDependencies": {
+    "@eslint/js": "10.0.1",
     "eslint": "10.15.0",
     "eslint-plugin-react-hooks": "7.1.1",
     "typescript": "6.0.3",

@@ -44,7 +44,9 @@ async function expectSoon<T>(what: string, probe: () => Promise<T | null | undef
   try {
     return await waitFor(what, probe);
   } catch (err) {
-    throw new Error(`${(err as Error).message}\n--- window text ---\n${await screenText()}`);
+    // `cause` keeps the original error (the project's lib is ES2020, before Error's options).
+    const message = `${(err as Error).message}\n--- window text ---\n${await screenText()}`;
+    throw Object.assign(new Error(message), { cause: err });
   }
 }
 

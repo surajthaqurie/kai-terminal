@@ -5,6 +5,7 @@
 // React hooks rules. The type-checked set and ESLint's core `recommended` rules are not enabled
 // yet: measured on this code they add about 1,800 and 100 findings, mostly stylistic; add them
 // one rule at a time. `tsc --noEmit` (TypeScript 7, strict) remains the type check.
+import js from "@eslint/js";
 import tseslint from "typescript-eslint";
 import reactHooks from "eslint-plugin-react-hooks";
 
@@ -12,6 +13,7 @@ const files = ["src/**/*.{ts,tsx}", "e2e/**/*.ts"];
 
 export default tseslint.config(
   { ignores: ["**/node_modules/**", "dist/**", "src-tauri/**", "kai-website/**"] },
+  { ...js.configs.recommended, files },
   ...tseslint.configs.recommended.map((config) => ({ ...config, files })),
   {
     files,
@@ -27,6 +29,17 @@ export default tseslint.config(
         "error",
         { argsIgnorePattern: "^_", varsIgnorePattern: "^_", caughtErrorsIgnorePattern: "^_" },
       ],
+    },
+  },
+  {
+    // ESLint core rules still being enabled one at a time (phase 31); each comes off this list
+    // once its findings are fixed or justified where they occur.
+    files,
+    rules: {
+      "no-useless-assignment": "off",
+      "no-empty": "off",
+      "no-useless-escape": "off",
+      "no-control-regex": "off",
     },
   },
   {

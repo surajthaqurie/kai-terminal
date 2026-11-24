@@ -153,12 +153,12 @@ const tabEls = () => [...container.querySelectorAll<HTMLElement>('[role="tab"]')
 const tabTitles = () => tabEls().map((el) => el.getAttribute("aria-label")!.split(", ")[0]);
 const activeTitle = () =>
   container.querySelector(".tab-item.active")?.getAttribute("aria-label")?.split(", ")[0];
-const terminalsIn = (tabIndex: number) =>
-  [
-    ...container
-      .querySelectorAll(".tab-content")
-      [tabIndex].querySelectorAll<HTMLElement>('[data-testid="terminal"]'),
-  ].map((el) => el.dataset.session!);
+const terminalsIn = (tabIndex: number) => {
+  const tabContent = container.querySelectorAll(".tab-content")[tabIndex];
+  return [...tabContent.querySelectorAll<HTMLElement>('[data-testid="terminal"]')].map(
+    (el) => el.dataset.session!
+  );
+};
 const paneId = (tabIndex: number, paneIndex = 0) => terminalsIn(tabIndex)[paneIndex];
 const activeTabContent = () =>
   [...container.querySelectorAll<HTMLElement>(".tab-content")].find(
