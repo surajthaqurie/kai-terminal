@@ -60,6 +60,14 @@ describe("tauri.conf.json Content Security Policy", () => {
     expect(scriptSrc).not.toContain("*");
     expect(scriptSrc).not.toContain("unsafe-inline");
   });
+
+  it("allows compiling WebAssembly (the inline-image add-on) but never JavaScript eval", () => {
+    // 'wasm-unsafe-eval' permits WebAssembly.compile/instantiate only; 'unsafe-eval' would also
+    // allow eval() and new Function(). Compared as whole tokens: one contains the other's text.
+    const tokens = (csp.match(/script-src([^;]*)/)?.[1] ?? "").trim().split(/\s+/);
+    expect(tokens.sort()).toEqual(["'self'", "'wasm-unsafe-eval'"]);
+    expect(tokens).not.toContain("'unsafe-eval'");
+  });
 });
 
 describe("frameless window (custom title bar) config", () => {

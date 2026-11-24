@@ -114,6 +114,28 @@ describe("Kai end to end", () => {
     );
   });
 
+  it("the app's CSP lets WebAssembly compile (inline images) but still blocks eval", async () => {
+    // The smallest valid module: the magic number and version.
+    const wasm = await s.execute<string>(
+      `return WebAssembly.compile(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]))
+         .then(() => "compiled", (e) => "blocked: " + e.message);`
+    );
+    expect(wasm).toBe("compiled");
+    // Eval must stay blocked for page code. (Code injected through WebDriver runs via DevTools,
+    // which the CSP exempts, so the string is handed to setTimeout and runs as a page task.)
+    const evalProbe = await s.execute<{ ran: boolean; violations: string[] }>(
+      `return new Promise((done) => {
+         const violations = [];
+         document.addEventListener("securitypolicyviolation", (e) => violations.push(e.violatedDirective + " " + e.blockedURI));
+         window.__kaiEvalProbe = false;
+         try { setTimeout("window.__kaiEvalProbe = true", 0); } catch (e) {}
+         setTimeout(() => done({ ran: window.__kaiEvalProbe, violations }), 300);
+       });`
+    );
+    expect(evalProbe.ran).toBe(false);
+    expect(evalProbe.violations).toContain("script-src eval");
+  });
+
   it("a failed shell keeps its pane with the exit code, and Restart starts a new shell (FUNC-09)", async () => {
     // In a second tab: the only shell of a window dying within seconds of opening is treated as
     // a shell that never started (Retry banner), which is a different guard.
