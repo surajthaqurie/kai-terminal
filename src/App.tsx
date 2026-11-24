@@ -42,6 +42,7 @@ import { useSessionPersistence } from "./hooks/useSessionPersistence";
 import { useExtraWindowLayout } from "./hooks/useExtraWindowLayout";
 import { useTabDetach } from "./hooks/useTabDetach";
 import { useTabs } from "./hooks/useTabs";
+import { useTeamsUnread } from "./hooks/useTeamsUnread";
 import { useTerminalConfig } from "./hooks/useTerminalConfig";
 import { shouldRestoreTerminalFocus, useWindowRefit } from "./hooks/useWindowRefit";
 import { resolvePaneShell } from "./services/paneShell";
@@ -215,6 +216,7 @@ function App({ initialSeed = null }: { initialSeed?: WindowSeed | null }) {
   /** Active project dir: the focused pane's folder, else its tab's. Empty until a new shell reports one. */
   const effectiveProjectDir = resolveEffectiveProjectDir(activePane?.cwd, activeTab?.cwd);
 
+  const { setPaneUnread, unreadByTab } = useTeamsUnread(tabs);
   const { setPaneCodeMode, modeDisplay } = useCodeMode({
     activePaneId,
     onOpenProject: tabsState.openOrFocusDir,
@@ -489,6 +491,7 @@ function App({ initialSeed = null }: { initialSeed?: WindowSeed | null }) {
           <TabBar
             tabs={tabs}
             activeTabId={activeTabId}
+            unreadByTab={unreadByTab}
             onSelectTab={setActiveTabId}
             onTabClicked={focusActiveTerminalSoon}
             onCloseTab={closeGuard.requestCloseTab}
@@ -575,6 +578,7 @@ function App({ initialSeed = null }: { initialSeed?: WindowSeed | null }) {
               terminalRefs={terminalRefs}
               onFocusPane={tabsState.focusPane}
               onCodeModeChange={setPaneCodeMode}
+              onTeamsUnreadChange={setPaneUnread}
               onCwdResolved={handleCwdResolved}
               onExit={handleSessionExit}
               onRestartPane={restartExitedPane}

@@ -40,17 +40,8 @@
   border-color: var(--pane-ring-active);
 }
 
-/* Inactive panes in a split recede under a light veil of the canvas colour,
- * so the pane that takes input stands out without any glow. The active pane is
- * never dimmed. Pointer events pass through: clicking a dimmed pane focuses it. */
-.pane-grid[data-split="true"] .pane-item:not(.active-pane)::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: var(--pane-inactive-dim);
-  pointer-events: none;
-  z-index: 4;
-}
+/* Inactive panes in a split are drawn exactly as they are: no veil or dimming.
+ * The accent ring on the active pane alone shows where input goes. */
 
 /* Split Pane Divider: `--border-strong` (not `--border-subtle`) so the seam
  * between two same-background terminals stays visible in every theme. The old

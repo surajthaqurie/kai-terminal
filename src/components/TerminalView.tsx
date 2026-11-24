@@ -64,6 +64,7 @@ import {
 } from "../services/clipboardService";
 import { guardLinkClicks, isOpenLinkClick, openTerminalLink } from "../services/terminalLinks";
 import { CODE_MODE_OSC, parseCodeModeSignal } from "../core/codeModeSignal";
+import { TEAMS_OSC, parseTeamsSignal } from "../core/teamsSignal";
 import { createPaneCwdTracker, type PaneCwdTracker } from "../services/paneCwdTracker";
 import { TERMINAL_MODE_RESET_SEQ, scanAgentFinishedTail } from "../services/terminalModes";
 import {
@@ -132,6 +133,11 @@ interface TerminalViewProps {
    * pane closes. Other panes and tabs are never affected.
    */
   onCodeModeChange?: (project: string | null) => void;
+  /**
+   * Unread Teams messages when `kai teams` runs in THIS terminal (see
+   * `core/teamsSignal`); 0 when it closes, the shell restarts, or the pane closes.
+   */
+  onTeamsUnreadChange?: (count: number) => void;
 }
 
 export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
@@ -150,6 +156,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       onCwdResolved,
       onFocus,
       onCodeModeChange,
+      onTeamsUnreadChange,
     },
     ref
   ) => {
@@ -265,6 +272,8 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
     const cwdTracker = cwdTrackerRef.current;
     const onCodeModeChangeRef = useRef(onCodeModeChange);
     onCodeModeChangeRef.current = onCodeModeChange;
+    const onTeamsUnreadChangeRef = useRef(onTeamsUnreadChange);
+    onTeamsUnreadChangeRef.current = onTeamsUnreadChange;
     const onFocusRef = useRef(onFocus);
     onFocusRef.current = onFocus;
     const shellRef = useRef(selectedShell);
@@ -429,6 +438,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         releasePtyId(backendPtyIdRef.current);
         backendPtyIdRef.current = null;
         onCodeModeChangeRef.current?.(null);
+        onTeamsUnreadChangeRef.current?.(0);
       },
       handoffResume: (released: HandoffRelease) => resumeHeldRef.current(released),
     }));
@@ -501,6 +511,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
 
       // A fresh shell cannot still be running the previous shell's agent.
       onCodeModeChangeRef.current?.(null);
+      onTeamsUnreadChangeRef.current?.(0);
       term.clear();
       onStatusRef.current?.("connecting");
       // Fresh PTY, fresh input modes: the xterm instance is REUSED across
@@ -808,6 +819,13 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
           if (signal) onCodeModeChangeRef.current?.(signal.active ? signal.path : null);
           return signal !== null;
         });
+
+        // `kai teams` reports its unread count on this pane's output, for the tab badge.
+        term.parser.registerOscHandler(TEAMS_OSC, (data) => {
+          const count = parseTeamsSignal(data);
+          if (count !== null) onTeamsUnreadChangeRef.current?.(count);
+          return count !== null;
+        });
       } catch {
         // parser handler registration not supported in some mock environments
       }
@@ -970,6 +988,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         releasePtyId(backendPtyIdRef.current);
         backendPtyIdRef.current = null;
         onCodeModeChangeRef.current?.(null);
+        onTeamsUnreadChangeRef.current?.(0);
         // The backend sends `null` when it could not read the exit status
         // (child.wait() failed). That is NOT a clean exit: treating it as 0
         // skipped the crash-loop / instant-death guards and could quit the app
@@ -1179,6 +1198,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         cancelGpuRetry();
         cwdTracker.dispose();
         onCodeModeChangeRef.current?.(null);
+        onTeamsUnreadChangeRef.current?.(0);
         unguardLinkClicks();
         term.dispose();
       };

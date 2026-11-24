@@ -1,0 +1,41 @@
+import type { SVGProps } from "react";
+
+/**
+ * The Kai logo (docs/logo.svg): charcoal tile, off-white prompt, cyan block cursor.
+ * Drawn inline so it stays crisp at tab-icon size and needs no asset loading.
+ * Brand colours are fixed; it does not take `currentColor`.
+ */
+export function KaiMark({ size = 14, ...rest }: { size?: number } & SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 1024 1024"
+      width={size}
+      height={size}
+      focusable="false"
+      {...rest}
+    >
+      <rect width="1024" height="1024" rx="228" fill="#111317" />
+      <rect
+        x="6"
+        y="6"
+        width="1012"
+        height="1012"
+        rx="222"
+        fill="none"
+        stroke="#ffffff"
+        strokeOpacity="0.08"
+        strokeWidth="12"
+      />
+      <path
+        d="M300 344 L480 512 L300 680"
+        fill="none"
+        stroke="#f4f4f5"
+        strokeWidth="88"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <rect x="548" y="604" width="184" height="88" rx="14" fill="#22d3ee" />
+    </svg>
+  );
+}

@@ -182,11 +182,13 @@ describe("ChatApp automatic sync", () => {
     click(app, screen.last, (a) => a.type === "select" && a.key === "ch:t1:c1");
     await waitFor(() => expect(screen.text).toContain("first in general"));
     w.state.msgs["ch:t1:c2"].push(msg("r2", 3, "news in releases"));
-    await waitFor(() => expect(screen.text).toMatch(/# Releases\s+●/));
+    // The conversation is loaded, so the sidebar knows how many: a count, not just a dot.
+    await waitFor(() => expect(screen.text).toMatch(/# Releases\s+1 /));
     expect(screen.text).toContain("New message in Releases");
+    expect(screen.text).toContain("1 unread");
     click(app, screen.last, (a) => a.type === "select" && a.key === "ch:t1:c2");
     await waitFor(() => expect(screen.text).toContain("news in releases"));
-    await waitFor(() => expect(screen.text).not.toMatch(/# Releases\s+●/));
+    await waitFor(() => expect(screen.text).not.toMatch(/# Releases\s+1 /));
   });
 
   it("goes offline when the network fails, backs off, and recovers on its own", async () => {

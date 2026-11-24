@@ -35,6 +35,8 @@ interface TabPanesProps {
   onFocusPane: (tabId: string, paneId: string) => void;
   /** Code Mode of one pane (project path) or `null` when it ends. */
   onCodeModeChange: (paneId: string, project: string | null) => void;
+  /** Unread Teams messages in one pane (0 when `kai teams` is not running there). */
+  onTeamsUnreadChange?: (paneId: string, count: number) => void;
   onCwdResolved: (tabId: string, paneId: string, cwd: string) => void;
   onExit: (tabId: string, paneId: string, exitCode?: number) => void;
   /** Restart / Close on a pane whose shell exited with a failure (FUNC-09). */
@@ -78,6 +80,7 @@ export const TabPanes = memo(function TabPanes({
   terminalRefs,
   onFocusPane,
   onCodeModeChange,
+  onTeamsUnreadChange,
   onCwdResolved,
   onExit,
   onRestartPane,
@@ -174,6 +177,7 @@ export const TabPanes = memo(function TabPanes({
           adopt={pane.adopt}
           onFocus={focusPane}
           onCodeModeChange={(project) => onCodeModeChange(pane.id, project)}
+          onTeamsUnreadChange={(count) => onTeamsUnreadChange?.(pane.id, count)}
           onCwdResolved={(resolved) => onCwdResolved(tab.id, pane.id, resolved)}
           onExit={(exitCode) => onExit(tab.id, pane.id, exitCode)}
           onSessionStatusChange={(status, message) =>
