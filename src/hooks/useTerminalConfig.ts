@@ -36,6 +36,8 @@ export function useTerminalConfig({
     SettingsService.loadSettings()
   );
   const [shells, setShells] = useState<ShellProfile[]>([]);
+  // True once the shell list has loaded or failed to: a new pane waits (briefly) for it.
+  const [shellsReady, setShellsReady] = useState(false);
   const [selectedShellId, setSelectedShellId] = useState<string>("");
   // Live mirrors for long-lived callbacks (pty-exit recycle path).
   const shellsRef = useLatest(shells);
@@ -90,7 +92,8 @@ export function useTerminalConfig({
       .catch((err) => {
         console.error("Failed to load available shells:", err);
         setLastError(err instanceof Error ? err.message : String(err));
-      });
+      })
+      .finally(() => setShellsReady(true));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -124,6 +127,25 @@ export function useTerminalConfig({
       clearTimeout(timer);
     };
   }, [isSettingsOpen]);
+
+  // Another Kai window saved settings (theme, font, shortcuts, ...): take them over, so this
+  // window does not keep showing stale values and later overwrite the other window's change
+  // with its own copy of everything (FUNC-06).
+  const shellsForSyncRef = useLatest(shells);
+  const userSettingsRef = useLatest(userSettings);
+  useEffect(
+    () =>
+      SettingsService.subscribeToChanges((incoming) => {
+        const current = userSettingsRef.current;
+        if (JSON.stringify(current) === JSON.stringify(incoming)) return;
+        if (incoming.defaultShellId !== current.defaultShellId) {
+          const target = pickDefaultShell(shellsForSyncRef.current, incoming.defaultShellId);
+          if (target) setSelectedShellId(target.id);
+        }
+        setUserSettings(incoming);
+      }),
+    [shellsForSyncRef, userSettingsRef]
+  );
 
   // Saving preferences applies a changed default shell to new sessions
   // and syncs the launch-at-startup toggle with the OS (all platforms).
@@ -198,6 +220,7 @@ export function useTerminalConfig({
     saveSettings,
     zoomFont,
     shells,
+    shellsReady,
     selectedShellId,
     setSelectedShellId,
     shellsRef,

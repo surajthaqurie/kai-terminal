@@ -1,9 +1,12 @@
 pub mod active_project;
 pub mod ai_cli;
 pub mod autostart;
+#[cfg(feature = "tauri")]
+pub mod blocking;
 pub mod call_watch;
 pub mod cli_guard;
 pub mod clipboard;
+pub mod close_requests;
 pub mod diagnostics;
 pub mod editor_terminal;
 pub mod error;
@@ -21,6 +24,8 @@ pub mod shell;
 pub mod shutdown;
 pub mod snap_layouts;
 pub mod terminal_windows;
+#[cfg(feature = "tauri")]
+pub mod update_verify;
 pub mod updater;
 
 #[cfg(test)]
@@ -125,6 +130,23 @@ async fn close_app_window(window: tauri::WebviewWindow) {
         let _ = window.destroy();
     }
 }
+
+/// The page answers a [`CLOSE_REQUESTED_EVENT`]: it has the question and deals with it (asks
+/// the user, then closes through `close_app_window`, or leaves the window open). Without this
+/// the close goes ahead after a short wait, so a page that cannot answer never traps the window.
+#[cfg(feature = "tauri")]
+#[tauri::command]
+fn close_request_ack(
+    window: tauri::WebviewWindow,
+    requests: State<'_, close_requests::CloseRequests>,
+) {
+    requests.acknowledge(window.label());
+}
+
+/// Sent to a terminal window whose close was requested by the system (Alt+F4, the taskbar, the
+/// window menu); the page asks before ending running commands.
+#[cfg(feature = "tauri")]
+const CLOSE_REQUESTED_EVENT: &str = "kai-close-requested";
 
 /// Label of the detached music picture-in-picture window.
 #[cfg(feature = "tauri")]
@@ -246,7 +268,7 @@ async fn open_music_pip(
     // A saved spot counts only while its title strip is on some monitor (one
     // may have been unplugged since).
     let on_screen = |(px, py): (i32, i32)| {
-        app_handle.available_monitors().map_or(false, |monitors| {
+        app_handle.available_monitors().is_ok_and(|monitors| {
             monitors.iter().any(|m| {
                 let (mx, my) = (m.position().x, m.position().y);
                 let (mw, mh) = (m.size().width as i32, m.size().height as i32);
@@ -409,26 +431,26 @@ async fn fetch_youtube_playlist_cmd(
 
 #[cfg(feature = "tauri")]
 #[tauri::command(async)]
-fn get_available_shells() -> Vec<ShellProfile> {
-    detect_available_shells()
+async fn get_available_shells() -> Result<Vec<ShellProfile>, String> {
+    blocking::run(detect_available_shells).await
 }
 
 #[cfg(feature = "tauri")]
 #[tauri::command(async)]
-fn get_ai_cli_status() -> Vec<AiCliStatus> {
-    detect_ai_clis()
+async fn get_ai_cli_status() -> Result<Vec<AiCliStatus>, String> {
+    blocking::run(detect_ai_clis).await
 }
 
 #[cfg(feature = "tauri")]
 #[tauri::command(async)]
-fn get_ai_cli_details() -> Vec<AiCliDetails> {
-    detect_ai_cli_details()
+async fn get_ai_cli_details() -> Result<Vec<AiCliDetails>, String> {
+    blocking::run(detect_ai_cli_details).await
 }
 
 #[cfg(feature = "tauri")]
 #[tauri::command(async)]
-fn check_ai_cli_path(id: String, custom_path: String) -> Result<AiCliDetails, String> {
-    check_custom_ai_cli_path(&id, &custom_path)
+async fn check_ai_cli_path(id: String, custom_path: String) -> Result<AiCliDetails, String> {
+    blocking::run_flat(move || check_custom_ai_cli_path(&id, &custom_path)).await
 }
 
 #[cfg(feature = "tauri")]
@@ -439,14 +461,21 @@ fn get_kai_cli_launch_cmd() -> Result<Vec<String>, String> {
 
 #[cfg(feature = "tauri")]
 #[tauri::command(async)]
-fn setup_agent_mcp_cmd(
+async fn setup_agent_mcp_cmd(
     id: String,
-    launcher: Vec<String>,
+    // There is deliberately no `launcher` argument: the command an agent is told to run is
+    // resolved here, from the installed CLI. A launcher supplied by the webview would let a
+    // compromised page persist an arbitrary command into `~/.claude.json` and friends (SEC-08).
+    // The webview and this backend ship in one binary, so no older frontend sends one.
     project_arg: String,
     force: bool,
     project_dir: Option<String>,
 ) -> Result<AgentSetupResult, String> {
-    setup_agent_mcp(&id, launcher, &project_arg, force, project_dir)
+    blocking::run_flat(move || {
+        let launcher = get_kai_cli_launch()?;
+        setup_agent_mcp(&id, launcher, &project_arg, force, project_dir)
+    })
+    .await
 }
 
 #[cfg(feature = "tauri")]
@@ -457,25 +486,29 @@ fn get_agent_setup_snippet_cmd(id: String, project_arg: String) -> Result<String
 
 #[cfg(feature = "tauri")]
 #[tauri::command(async)]
-fn run_integration_rpc_cmd(
+async fn run_integration_rpc_cmd(
     app_handle: AppHandle,
     window: tauri::WebviewWindow,
     request_json: String,
 ) -> Result<String, String> {
-    let emitter = app_handle.clone();
     // The sign-in link goes back to the window whose Integrations tab asked for it.
     let asker = window.label().to_string();
-    let sink: integrations::SignInUrlSink = Box::new(move |url| {
-        let _ = emitter.emit_to(asker.as_str(), "kai-integration:signin-url", url);
-    });
-    let bundled = app_handle
-        .path()
-        .resource_dir()
-        .ok()
-        .and_then(|dir| kai_cli::find_bundled_cli(&dir))
-        .zip(kai_cli::find_node_exe())
-        .map(|(script, node)| integrations::BundledCli { node, script });
-    integrations::run_integration_rpc_with(&request_json, bundled.as_ref(), Some(sink))
+    // A browser sign-in waits for minutes: it must not hold an async worker (see `blocking`).
+    blocking::run_flat(move || {
+        let emitter = app_handle.clone();
+        let sink: integrations::SignInUrlSink = Box::new(move |url| {
+            let _ = emitter.emit_to(asker.as_str(), "kai-integration:signin-url", url);
+        });
+        let bundled = app_handle
+            .path()
+            .resource_dir()
+            .ok()
+            .and_then(|dir| kai_cli::find_bundled_cli(&dir))
+            .zip(kai_cli::find_node_exe())
+            .map(|(script, node)| integrations::BundledCli { node, script });
+        integrations::run_integration_rpc_with(&request_json, bundled.as_ref(), Some(sink))
+    })
+    .await
 }
 
 /// Stops a browser sign-in that is waiting in the Integrations tab.
@@ -490,31 +523,35 @@ fn cancel_integration_sign_in_cmd() -> bool {
 /// window as `kai-shared-agent:event`.
 #[cfg(feature = "tauri")]
 #[tauri::command(async)]
-fn shared_agent_request_cmd(
+async fn shared_agent_request_cmd(
     app_handle: AppHandle,
-    service: State<'_, shared_agent::SharedAgentService>,
     request_json: String,
 ) -> Result<String, String> {
-    let emitter = app_handle.clone();
-    let sink: shared_agent::EventSink = Arc::new(move |line| {
-        // The popped-out chat window, when open, needs the chat text too.
-        terminal_windows::emit_to_terminal_windows(
-            &emitter,
-            "kai-shared-agent:event",
-            line.clone(),
-        );
-        if emitter.get_webview_window(SHARED_CHAT_LABEL).is_some() {
-            let _ = emitter.emit_to(SHARED_CHAT_LABEL, "kai-shared-agent:event", line);
-        }
-    });
-    let bundled = app_handle
-        .path()
-        .resource_dir()
-        .ok()
-        .and_then(|dir| kai_cli::find_bundled_cli(&dir))
-        .zip(kai_cli::find_node_exe())
-        .map(|(script, node)| integrations::BundledCli { node, script });
-    service.request(&request_json, bundled.as_ref(), sink)
+    // Waits for the service's answer (up to 45 s): off the async workers (see `blocking`).
+    blocking::run_flat(move || {
+        let service: State<'_, shared_agent::SharedAgentService> = app_handle.state();
+        let emitter = app_handle.clone();
+        let sink: shared_agent::EventSink = Arc::new(move |line| {
+            // The popped-out chat window, when open, needs the chat text too.
+            terminal_windows::emit_to_terminal_windows(
+                &emitter,
+                "kai-shared-agent:event",
+                line.clone(),
+            );
+            if emitter.get_webview_window(SHARED_CHAT_LABEL).is_some() {
+                let _ = emitter.emit_to(SHARED_CHAT_LABEL, "kai-shared-agent:event", line);
+            }
+        });
+        let bundled = app_handle
+            .path()
+            .resource_dir()
+            .ok()
+            .and_then(|dir| kai_cli::find_bundled_cli(&dir))
+            .zip(kai_cli::find_node_exe())
+            .map(|(script, node)| integrations::BundledCli { node, script });
+        service.request(&request_json, bundled.as_ref(), sink)
+    })
+    .await
 }
 
 /// Stops the Shared Agent service (sharing ends, every run is stopped).
@@ -526,50 +563,56 @@ fn shared_agent_stop_cmd(service: State<'_, shared_agent::SharedAgentService>) -
 
 #[cfg(feature = "tauri")]
 #[tauri::command(async)]
-fn get_git_info_cmd(cwd: String) -> GitInfo {
-    get_git_info(&cwd)
+async fn get_git_info_cmd(cwd: String) -> Result<GitInfo, String> {
+    blocking::run(move || get_git_info(&cwd)).await
 }
 
 #[cfg(feature = "tauri")]
 #[tauri::command(async)]
-fn run_git_action_cmd(cwd: String, action: String) -> Result<String, String> {
-    run_git_action(&cwd, &action)
+async fn run_git_action_cmd(cwd: String, action: String) -> Result<String, String> {
+    blocking::run_flat(move || run_git_action(&cwd, &action)).await
 }
 
 #[cfg(feature = "tauri")]
 #[tauri::command(async)]
-fn get_git_changes_cmd(cwd: String) -> Result<GitChangesSummary, String> {
-    get_git_changes(&cwd)
+async fn get_git_changes_cmd(cwd: String) -> Result<GitChangesSummary, String> {
+    blocking::run_flat(move || get_git_changes(&cwd)).await
 }
 
 #[cfg(feature = "tauri")]
 #[tauri::command(async)]
-fn get_git_diff_cmd(cwd: String, path: Option<String>, staged: bool) -> Result<String, String> {
-    get_git_diff(&cwd, path.as_deref(), staged)
+async fn get_git_diff_cmd(
+    cwd: String,
+    path: Option<String>,
+    staged: bool,
+) -> Result<String, String> {
+    blocking::run_flat(move || get_git_diff(&cwd, path.as_deref(), staged)).await
 }
 
 #[cfg(feature = "tauri")]
 #[tauri::command(async)]
-fn stage_git_file_cmd(cwd: String, path: String) -> Result<String, String> {
-    stage_git_file(&cwd, &path)
+async fn stage_git_file_cmd(cwd: String, path: String) -> Result<String, String> {
+    blocking::run_flat(move || stage_git_file(&cwd, &path)).await
 }
 
 #[cfg(feature = "tauri")]
 #[tauri::command(async)]
-fn unstage_git_file_cmd(cwd: String, path: String) -> Result<String, String> {
-    unstage_git_file(&cwd, &path)
+async fn unstage_git_file_cmd(cwd: String, path: String) -> Result<String, String> {
+    blocking::run_flat(move || unstage_git_file(&cwd, &path)).await
 }
 
 #[cfg(feature = "tauri")]
 #[tauri::command(async)]
-fn discard_git_file_cmd(cwd: String, path: String) -> Result<String, String> {
-    discard_git_file(&cwd, &path)
+async fn discard_git_file_cmd(cwd: String, path: String) -> Result<String, String> {
+    blocking::run_flat(move || discard_git_file(&cwd, &path)).await
 }
 
 #[cfg(feature = "tauri")]
 #[tauri::command(async)]
-fn get_project_intelligence_cmd(cwd: String) -> intelligence::ProjectIntelligenceSummary {
-    intelligence::get_project_intelligence(&cwd)
+async fn get_project_intelligence_cmd(
+    cwd: String,
+) -> Result<intelligence::ProjectIntelligenceSummary, String> {
+    blocking::run(move || intelligence::get_project_intelligence(&cwd)).await
 }
 
 /// Single source of truth for Code Mode: `kai code <path>` sets it,
@@ -591,17 +634,17 @@ fn clear_active_project_cmd() {
 
 #[cfg(feature = "tauri")]
 #[tauri::command(async)]
-fn open_project_in_editor(
+async fn open_project_in_editor(
     editor_path: Option<String>,
     cwd: String,
 ) -> Result<String, error::TerminalError> {
-    open_in_editor(editor_path.as_deref(), &cwd)
+    blocking::run_terminal(move || open_in_editor(editor_path.as_deref(), &cwd)).await
 }
 
 #[cfg(feature = "tauri")]
 #[tauri::command(async)]
-fn clipboard_text_begin_cmd() -> Result<clipboard::ClipboardSession, error::TerminalError> {
-    clipboard::clipboard_text_begin()
+async fn clipboard_text_begin_cmd() -> Result<clipboard::ClipboardSession, error::TerminalError> {
+    blocking::run_terminal(clipboard::clipboard_text_begin).await
 }
 
 /// Next piece of the clipboard text held for session `id` (see `clipboard.rs`).
@@ -625,8 +668,8 @@ fn clipboard_text_end_cmd(id: u64) {
 /// Paths of files on the clipboard, or of a PNG saved from a copied image.
 #[cfg(feature = "tauri")]
 #[tauri::command(async)]
-fn read_clipboard_attachments_cmd() -> Result<Vec<String>, error::TerminalError> {
-    clipboard::read_clipboard_attachments()
+async fn read_clipboard_attachments_cmd() -> Result<Vec<String>, error::TerminalError> {
+    blocking::run_terminal(clipboard::read_clipboard_attachments).await
 }
 
 /// Open a Ctrl+clicked terminal link (any http/https site) in the browser.
@@ -638,36 +681,48 @@ fn open_terminal_link_cmd(url: String) -> Result<(), error::TerminalError> {
 
 #[cfg(feature = "tauri")]
 #[tauri::command(async)]
-fn list_system_fonts_cmd() -> Vec<String> {
-    fonts::list_system_fonts()
+async fn list_system_fonts_cmd() -> Result<Vec<String>, String> {
+    blocking::run(fonts::list_system_fonts).await
+}
+
+/// The music player asks for call detection only while it needs it (playing, or paused
+/// by a call and waiting for it to end); otherwise no process is started for it.
+#[cfg(feature = "tauri")]
+#[tauri::command]
+fn call_watch_set_enabled(enabled: bool) {
+    call_watch::call_watch_gate().set_enabled(enabled);
 }
 
 #[cfg(feature = "tauri")]
 #[tauri::command(async)]
-fn is_call_active_cmd() -> bool {
-    call_watch::is_call_active()
+async fn is_call_active_cmd() -> Result<bool, String> {
+    blocking::run(call_watch::is_call_active).await
 }
 
 #[cfg(feature = "tauri")]
 #[tauri::command(async)]
-fn detect_installed_editors_cmd() -> Vec<EditorInfo> {
-    detect_installed_editors()
+async fn detect_installed_editors_cmd() -> Result<Vec<EditorInfo>, String> {
+    blocking::run(detect_installed_editors).await
 }
 
 #[cfg(feature = "tauri")]
 #[tauri::command(async)]
-fn get_diagnostics(state: State<'_, PtyManager>) -> diagnostics::DiagnosticsReport {
-    let sessions = state.list_sessions();
-    let shells = detect_available_shells();
-    let ai_clis: Vec<AiCliSummary> = detect_ai_cli_details()
-        .into_iter()
-        .map(|d| AiCliSummary {
-            id: d.id,
-            available: d.available,
-            version: d.version,
-        })
-        .collect();
-    build_diagnostics(shells.len(), sessions.len(), ai_clis)
+async fn get_diagnostics(app_handle: AppHandle) -> Result<diagnostics::DiagnosticsReport, String> {
+    blocking::run(move || {
+        let state: State<'_, PtyManager> = app_handle.state();
+        let sessions = state.list_sessions();
+        let shells = detect_available_shells();
+        let ai_clis: Vec<AiCliSummary> = detect_ai_cli_details()
+            .into_iter()
+            .map(|d| AiCliSummary {
+                id: d.id,
+                available: d.available,
+                version: d.version,
+            })
+            .collect();
+        build_diagnostics(shells.len(), sessions.len(), ai_clis)
+    })
+    .await
 }
 
 #[cfg(feature = "tauri")]
@@ -683,7 +738,13 @@ fn create_pty(
     state: State<'_, PtyManager>,
     options: PtyCreateOptions,
 ) -> Result<PtySessionInfo, error::TerminalError> {
-    let emitter = Arc::new(pty::TauriEventEmitter { app_handle });
+    // Events go to the window that created the session, and follow it if its tab
+    // is moved to another window (`PtyManager::set_owner`), never to every window.
+    let emitter = Arc::new(pty::TauriEventEmitter {
+        app_handle,
+        routes: state.routes(),
+        default_owner: window.label().to_string(),
+    });
     let info = state.create_pty(emitter, options)?;
     // Remember which window shows it: closing that window ends the session.
     state.set_owner(&info.id, window.label());
@@ -715,6 +776,22 @@ fn resize_pty(
 #[tauri::command(async)]
 fn close_pty(state: State<'_, PtyManager>, id: String) -> Result<(), error::TerminalError> {
     state.close_pty(&id)
+}
+
+/// The frontend has handed `bytes` of session `id`'s output to the terminal
+/// emulator: frees credit so a flooding program can keep writing (flow control).
+#[cfg(feature = "tauri")]
+#[tauri::command(async)]
+fn pty_ack(state: State<'_, PtyManager>, id: String, bytes: u64) {
+    state.ack_output(&id, bytes);
+}
+
+/// Which of the given sessions have a command running (not just an idle shell).
+/// Backs the "this will end running processes" confirmation before a close.
+#[cfg(feature = "tauri")]
+#[tauri::command(async)]
+fn pty_busy_sessions(state: State<'_, PtyManager>, ids: Vec<String>) -> Vec<String> {
+    state.busy_sessions(&ids)
 }
 
 #[cfg(feature = "tauri")]
@@ -776,6 +853,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(pty_manager)
         .manage(terminal_windows::WindowSeeds::default())
+        .manage(close_requests::CloseRequests::default())
         .manage(shared_agent::SharedAgentService::default())
         // Single-instance enforcement (Windows / Linux / macOS): a second
         // launch never starts a second process (no duplicate "ghost" app).
@@ -850,15 +928,37 @@ pub fn run() {
             // Closing the LAST terminal window ends the app; closing the music
             // picture-in-picture window, or one of several terminal windows,
             // leaves the rest running.
-            tauri::WindowEvent::CloseRequested { .. }
+            tauri::WindowEvent::CloseRequested { api, .. }
                 if terminal_windows::is_terminal_label(window.label()) =>
             {
-                let open = terminal_windows::terminal_window_count(window.app_handle());
-                if terminal_windows::closing_ends_app(open) {
-                    // Hide at once, reap PTY children within a time limit, then exit.
-                    exit_now(window.app_handle());
+                let requests: State<'_, close_requests::CloseRequests> =
+                    window.app_handle().state();
+                match requests.on_close_requested(window.label()) {
+                    close_requests::Decision::Ask(question) => {
+                        // Hold the close back and let the page ask before it ends running
+                        // commands. If the page cannot answer, the close goes ahead.
+                        api.prevent_close();
+                        let _ = window.emit_to(window.label(), CLOSE_REQUESTED_EVENT, ());
+                        let waiting = window.clone();
+                        std::thread::spawn(move || {
+                            std::thread::sleep(close_requests::ANSWER_WAIT);
+                            let requests: State<'_, close_requests::CloseRequests> =
+                                waiting.app_handle().state();
+                            if requests.approve_if_unanswered(waiting.label(), question) {
+                                let _ = waiting.close();
+                            }
+                        });
+                    }
+                    close_requests::Decision::AlreadyAsking => api.prevent_close(),
+                    close_requests::Decision::Allow => {
+                        let open = terminal_windows::terminal_window_count(window.app_handle());
+                        if terminal_windows::closing_ends_app(open) {
+                            // Hide at once, reap PTY children within a time limit, then exit.
+                            exit_now(window.app_handle());
+                        }
+                        // Otherwise the window just closes; `Destroyed` ends its shells.
+                    }
                 }
-                // Otherwise the window just closes; `Destroyed` ends its shells.
             }
             // A closed terminal window takes its shells with it. React cleanup is
             // not guaranteed once a webview is torn down, so the backend does it,
@@ -869,6 +969,7 @@ pub fn run() {
                 let app = window.app_handle().clone();
                 let label = window.label().to_string();
                 std::thread::spawn(move || {
+                    app.state::<close_requests::CloseRequests>().forget(&label);
                     app.state::<terminal_windows::WindowSeeds>().discard(&label);
                     let pty: State<'_, PtyManager> = app.state();
                     pty.close_sessions_owned_by(&label);
@@ -884,6 +985,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             close_app_window,
+            close_request_ack,
             set_maximize_button_rect,
             open_music_pip,
             close_music_pip,
@@ -931,6 +1033,9 @@ pub fn run() {
             resize_pty,
             close_pty,
             get_pty_cwd,
+            pty_busy_sessions,
+            pty_ack,
+            call_watch_set_enabled,
             get_system_terminal_config,
             get_app_version,
             get_autostart_enabled,

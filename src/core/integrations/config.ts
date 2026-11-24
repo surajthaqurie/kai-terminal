@@ -188,8 +188,12 @@ function ancestorsUpTo(dir: string, stopAt: string): string[] {
  * started in a sub-folder of a bound repository still finds the repository's
  * binding; the nearest one wins.
  */
-export function findBinding(dir: string): { root: string; binding: ProjectBinding } | null {
-  const top = projectRootFor(dir);
+export function findBinding(
+  dir: string,
+  /** The git top-level of `dir` when the caller already knows it (skips spawning `git`). */
+  knownTopLevel?: string
+): { root: string; binding: ProjectBinding } | null {
+  const top = knownTopLevel ?? projectRootFor(dir);
   for (const root of ancestorsUpTo(dir, top)) {
     const file = bindingPath(root);
     if (!fs.existsSync(file)) continue;

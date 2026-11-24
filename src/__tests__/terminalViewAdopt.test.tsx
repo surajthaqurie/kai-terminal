@@ -119,10 +119,12 @@ vi.mock("../services/ptyService", () => ({
     closePty: (id: string) => closePty(id),
     writeToPty: vi.fn(async () => {}),
     getPtyCwd: vi.fn(async () => null),
+    ackOutput: vi.fn(async () => {}),
   },
 }));
 vi.mock("../services/terminalWindows", () => ({
   handoffFinish: (id: string) => finish(id),
+  isSecondaryTerminalWindow: () => false,
 }));
 
 const emitOutput = (id: string, data: string) =>
@@ -258,6 +260,36 @@ describe("TerminalView attaching to a shell moved from another window", () => {
     await tick(120);
     expect(createPty).toHaveBeenCalledTimes(1);
     expect(finish).not.toHaveBeenCalled();
+  });
+});
+
+describe("hand-off failure and exit edge cases (REL-08)", () => {
+  it("Retry after a failed attach ends the moved shell instead of leaving it running unseen", async () => {
+    finish.mockRejectedValue(new Error("window gone"));
+    createPty.mockResolvedValue({ id: "fresh", shell_path: "sh", cwd: "/", cols: 80, rows: 24 });
+    const { onSessionStatusChange } = await mount();
+    await tick(20);
+    expect(onSessionStatusChange).toHaveBeenCalledWith("error", "window gone");
+    expect(closePty).not.toHaveBeenCalled();
+
+    // The Retry banner re-spawns the pane (resetKey bump) with a brand-new shell.
+    await mount({ adopt: undefined, resetKey: 1 });
+    await tick(120);
+    expect(closePty).toHaveBeenCalledWith("pty-moved");
+    expect(createPty).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports an exit seen twice (held event + hand-off result) once", async () => {
+    let release!: (r: HandoffRelease) => void;
+    finish.mockReturnValue(new Promise<HandoffRelease>((resolve) => (release = resolve)));
+    const { onExit } = await mount();
+    await tick(5);
+    // The shell dies while attaching: the pty-exit event is held, and the hand-off result says so too.
+    act(() => exitListeners.forEach((l) => l({ id: "pty-moved", exit_code: 2 })));
+    await act(async () => release({ data: [], exited: true, exit_code: 2 }));
+    await tick(50);
+    expect(onExit).toHaveBeenCalledTimes(1);
+    expect(onExit).toHaveBeenCalledWith(2);
   });
 });
 

@@ -327,8 +327,57 @@ describe("host server: end-to-end encryption", () => {
     const flipped = body.c.slice(0, 10) + (body.c[10] === "A" ? "B" : "A") + body.c.slice(11);
     const altered = await rawPost("/api/sc/call", { ...body, n: body.n + 1, c: flipped });
     expect(altered.status).toBe(401);
-    // The tampered-with session is gone; the client simply reconnects.
+    // The real client carries on.
     await expect(watched.me(host.id)).resolves.toMatchObject({ hostName: "Office-PC" });
+  });
+
+  it("one forged message cannot end somebody else's session (the session id is public)", async () => {
+    const tap = wiretap();
+    const watched = new HostsClient({
+      secrets,
+      file: path.join(dir, "hosts-tap2.json"),
+      fetchImpl: tap.fetchImpl,
+    });
+    const host = await watched.join(parseInviteLink(linkFor(server.createInvite(15)))!);
+    await watched.me(host.id);
+    const captured = JSON.parse(tap.seen[tap.seen.length - 2]) as {
+      s: string;
+      n: number;
+      c: string;
+    };
+    const handshakes = () => tap.calls.filter((u) => u.endsWith("/api/sc/hello")).length;
+    const before = handshakes();
+
+    const forged = await rawPost("/api/sc/call", { ...captured, n: captured.n + 1, c: "AAAA" });
+    expect(forged.status).toBe(401);
+
+    // Same session, no new handshake: the forgery did not end it.
+    await expect(watched.me(host.id)).resolves.toMatchObject({ hostName: "Office-PC" });
+    expect(handshakes()).toBe(before);
+  });
+
+  it("but a session that keeps receiving forgeries is dropped", async () => {
+    const tap = wiretap();
+    const watched = new HostsClient({
+      secrets,
+      file: path.join(dir, "hosts-tap3.json"),
+      fetchImpl: tap.fetchImpl,
+    });
+    const host = await watched.join(parseInviteLink(linkFor(server.createInvite(15)))!);
+    await watched.me(host.id);
+    const captured = JSON.parse(tap.seen[tap.seen.length - 2]) as {
+      s: string;
+      n: number;
+      c: string;
+    };
+    const handshakes = () => tap.calls.filter((u) => u.endsWith("/api/sc/hello")).length;
+    const before = handshakes();
+
+    for (let i = 0; i < 5; i++) {
+      await rawPost("/api/sc/call", { ...captured, n: captured.n + 1 + i, c: "AAAA" });
+    }
+    await expect(watched.me(host.id)).resolves.toMatchObject({ hostName: "Office-PC" });
+    expect(handshakes()).toBe(before + 1); // it had to reconnect
   });
 
   it("gives nothing to someone who knows a PC's id but not its key", async () => {

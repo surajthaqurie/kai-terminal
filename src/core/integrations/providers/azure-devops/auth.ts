@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import { IntegrationError, type IntegrationAccount } from "../../types";
 import { runProcess, secretKeyFor, type Runner, type SecretStore } from "../../secretStore";
-import { noCwdLookupEnv } from "../../../spawnSafety";
+import { noCwdLookupEnv, systemToolPath } from "../../../spawnSafety";
 import {
   parseTokenSet,
   refreshTokenSet,
@@ -94,7 +94,7 @@ async function azAccessToken(account: IntegrationAccount, deps: AuthDeps): Promi
       // `az` is a .cmd shim on Windows, which Node will not spawn directly.
       const result =
         process.platform === "win32"
-          ? await run("cmd.exe", ["/d", "/s", "/c", "az", ...azArgs], {
+          ? await run(systemToolPath("cmd.exe"), ["/d", "/s", "/c", "az", ...azArgs], {
               timeoutMs: 30_000,
               // cmd.exe would run an `az.cmd`/`az.bat` planted in the project folder.
               env: noCwdLookupEnv(),

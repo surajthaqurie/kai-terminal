@@ -19,6 +19,8 @@ on:
 
 permissions:
   contents: write
+  # Read the status of the CI runs for the tagged commit (see the first step of `gate`).
+  actions: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -39,23 +41,58 @@ jobs:
     name: Quality gate (format, lint, typecheck, tests)
     runs-on: ubuntu-22.04
     steps:
+      # This gate runs on Linux only. A failure that shows on Windows or macOS (the PTY tests,
+      # the security regression subset, the dependency audit) is caught by the full CI run, so a
+      # release is refused unless that run is green for exactly this commit.
+      - name: Require a green CI run for this commit
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 60); do
+            runs="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$GITHUB_SHA" --json status,conclusion,url --limit 20)"
+            total="$(echo "$runs" | jq 'length')"
+            if [ "$total" -eq 0 ]; then
+              echo "::error::No CI run exists for $GITHUB_SHA. Push the commit to a branch, let CI finish green, then tag it."
+              exit 1
+            fi
+            pending="$(echo "$runs" | jq '[.[] | select(.status != "completed")] | length')"
+            if [ "$pending" -gt 0 ]; then
+              echo "CI is still running for this commit (check $attempt of 60); waiting 30 s."
+              sleep 30
+              continue
+            fi
+            latest="$(echo "$runs" | jq -r '.[0].conclusion')"
+            if [ "$latest" = "success" ]; then
+              echo "CI is green for $GITHUB_SHA: $(echo "$runs" | jq -r '.[0].url')"
+              exit 0
+            fi
+            echo "::error::The latest CI run for this commit ended '$latest': $(echo "$runs" | jq -r '.[0].url')"
+            exit 1
+          done
+          echo "::error::CI did not finish within 30 minutes."
+          exit 1
+
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Setup Node.js v24 environment
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
           cache: "npm"
           cache-dependency-path: "package-lock.json"
 
       - name: Install Rust stable toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
+          toolchain: "1.99.0"
           components: rustfmt, clippy
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: "src-tauri"
 
@@ -89,7 +126,8 @@ jobs:
         run: npm run typecheck
 
       - name: Frontend Vitest Unit Tests
-        run: npm run test
+        # test:ci also fails when a test file silently produced no results (scripts/check-test-run.mjs).
+        run: npm run test:ci
 
       - name: Rust Formatting Check
         run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
@@ -105,6 +143,35 @@ jobs:
 
       - name: Build Web Frontend Bundle
         run: npm run build
+
+      # CI-03: what this release ships, as CycloneDX JSON attached to the release. The npm file
+      # lists the app's and the CLI's JavaScript packages (including devDependencies the CLI build
+      # bundles) and the bundled Node.js runtime; the Rust file lists the crates of the desktop
+      # binary (default features) for every platform at once (`--target all`: this job runs on
+      # Linux, and without it the file would leave out the Windows and macOS crates; it also
+      # names crates only used on platforms Kai does not ship, e.g. Android). Names carry
+      # _<version>_ like every other release asset.
+      - name: Install cargo-cyclonedx
+        uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2
+        with:
+          tool: cargo-cyclonedx
+
+      - name: Software bill of materials
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION=$(node -p "require('./package.json').version")
+          node scripts/generate-sbom.mjs release-sbom "$VERSION"
+          cargo cyclonedx --manifest-path src-tauri/Cargo.toml --format json --target all --spec-version 1.5 --override-filename "kai_${VERSION}_sbom-rust.cdx"
+          mv "src-tauri/kai_${VERSION}_sbom-rust.cdx.json" release-sbom/
+          ls -l release-sbom
+
+      - name: Upload the bill of materials
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-sbom
+          path: release-sbom/*.cdx.json
+          if-no-files-found: error
 
   # ------------------------------------------------------------------
   # Native platform bundles. Each entry runs on its own OS so the
@@ -147,22 +214,23 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Setup Node.js v24 environment
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
           cache: "npm"
           cache-dependency-path: "package-lock.json"
 
       - name: Install Rust stable toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
+          toolchain: "1.99.0"
           components: rustfmt, clippy
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: "src-tauri"
 
@@ -183,7 +251,7 @@ jobs:
 
       - name: Build Tauri bundles (${{ matrix.bundles }})
         id: tauri_build
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
         # macOS DMG creation intermittently fails on GitHub runners with
         # `hdiutil: couldn't eject "diskN" - Resource busy`. Let macOS fall
         # through to the retry steps below; other platforms still fail fast.
@@ -216,7 +284,7 @@ jobs:
       - name: Retry Tauri bundles (macOS DMG flake)
         id: tauri_retry
         if: startsWith(matrix.os, 'macos') && steps.tauri_build.outcome == 'failure'
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -337,7 +405,7 @@ jobs:
           echo "Artifact verification passed for ${{ matrix.target-name }}."
 
       - name: Upload workflow artifacts (version, OS, arch in name)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: kai-${{ github.ref_name || inputs.version }}-${{ matrix.artifact-suffix }}
           # Upload only final installers. Do NOT use bundle/**/*: that captures
@@ -362,12 +430,35 @@ jobs:
     needs: [gate, build]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    # Job permissions replace the workflow's, so contents: write is repeated. id-token and
+    # attestations let this job have GitHub sign build provenance for the release files.
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     steps:
-      - name: Download all workflow artifacts
-        uses: actions/download-artifact@v4
+      - name: Checkout the release signing helper and public key
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          sparse-checkout: |
+            scripts/sign-release-checksums.sh
+            src-tauri/update-public-key.hex
+          sparse-checkout-cone-mode: false
+
+      - name: Download all workflow artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          # Installers only (artifact names start with kai-); the SBOM is downloaded separately so
+          # the installer checks and the release notes' installer list never see it.
+          pattern: kai-*
           path: release-artifacts
           merge-multiple: true
+
+      - name: Download the bill of materials
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-sbom
+          path: release-sbom
 
       - name: Verify expected files before publication
         shell: bash
@@ -439,6 +530,23 @@ jobs:
           fi
           echo "All staged files are for version $VERSION."
 
+      # CI-03: signed build provenance (SLSA, via GitHub's Sigstore instance) for every file the
+      # release ships, taken after renaming and version checks so it covers exactly the uploaded
+      # bytes. Anyone can check a download came from this workflow at this commit:
+      #   gh attestation verify <file> --repo <owner>/<repo>
+      - name: Attest build provenance of the release files
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            release-artifacts/**/*.deb
+            release-artifacts/**/*.AppImage
+            release-artifacts/**/*.appimage
+            release-artifacts/**/*.rpm
+            release-artifacts/**/*.exe
+            release-artifacts/**/*.msi
+            release-artifacts/**/*.dmg
+            release-sbom/*.cdx.json
+
       # This job has no checkout, so gh needs GH_REPO to find the repository.
       # Without it `gh release view` always fails and stale assets are kept.
       - name: Clear existing assets so this release only has its own
@@ -492,10 +600,24 @@ jobs:
               esac
             done
             echo
+            echo "### Software bill of materials (CycloneDX JSON)"
+            find release-sbom -type f -name '*.cdx.json' | sed 's|.*/||' | sort | while read -r f; do
+              case "$f" in
+                *_sbom-npm.cdx.json)  echo "- \`$f\` — JavaScript packages and the bundled Node.js runtime" ;;
+                *_sbom-rust.cdx.json) echo "- \`$f\` — Rust crates of the desktop binary (all platforms)" ;;
+                *)                    echo "- \`$f\`" ;;
+              esac
+            done
+            echo
             echo "Snap and Flatpak are built and smoke-tested in CI (\`ci.yml\`, job \`linux-packages\`) but are not attached to releases."
             echo "The \`.rpm\` and the other Linux packages are built on Ubuntu runners and have not been installed on a Fedora/RHEL system."
             echo
             cat <<'NOTES'
+          ### Verifying a download
+          Every installer and SBOM has a build-provenance attestation signed by GitHub. With the
+          GitHub CLI: `gh attestation verify <downloaded file> --repo surajthaqurie/kai-terminal`
+          confirms it was built by this repository's release workflow and names the commit.
+
           ### Signing status
           - Windows/macOS binaries are signed only when the corresponding GitHub Actions
             secrets are configured. Without secrets, artifacts are unsigned test builds.
@@ -512,8 +634,20 @@ jobs:
           NOTES
           } > release-body.md
 
+      # The in-app updater installs an update only if SHA256SUMS verifies against the
+      # public key compiled into the app (src-tauri/update-public-key.hex) and the
+      # downloaded installer hashes to the value listed there. Add the matching
+      # Ed25519 PKCS#8 PEM private key as the repository secret UPDATE_SIGNING_KEY.
+      # Without it the release still publishes, but the updater refuses to install it
+      # (users install from the release page); a key that does not match the
+      # compiled-in public key fails this step.
+      - name: Sign release checksums for the in-app updater
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+        run: bash scripts/sign-release-checksums.sh release-artifacts release-signing src-tauri/update-public-key.hex
+
       - name: Create GitHub Release with verified artifacts
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           # Recursive globs: installers are nested (deb/, appimage/, nsis/,
           # msi/, dmg/) after merge-multiple. A flat `release-artifacts/*`
@@ -526,6 +660,9 @@ jobs:
             release-artifacts/**/*.exe
             release-artifacts/**/*.msi
             release-artifacts/**/*.dmg
+            release-signing/SHA256SUMS
+            release-signing/SHA256SUMS.sig
+            release-sbom/*.cdx.json
           draft: false
           prerelease: false
           generate_release_notes: true
@@ -542,7 +679,7 @@ jobs:
           assets=$(gh release view "$TAG" --json assets --jq '.assets[].name')
           echo "Assets on $TAG:"
           echo "$assets"
-          foreign=$(echo "$assets" | grep -v "_${VERSION}_" | grep -v -E -- "-${VERSION}-[^/]*\.rpm$" || true)
+          foreign=$(echo "$assets" | grep -v -x -E 'SHA256SUMS(\.sig)?' | grep -v "_${VERSION}_" | grep -v -E -- "-${VERSION}-[^/]*\.rpm$" || true)
           if [ -n "$foreign" ]; then
             echo "Release $TAG contains assets from another version:"
             echo "$foreign"

@@ -196,6 +196,29 @@ describe("secret stores", () => {
     expect(calls[0].args).not.toContain("tok");
   });
 
+  it("DPAPI receives the secret on stdin, not in argv or the child's environment (SEC-13)", async () => {
+    const seen: Array<{ args: string[]; env?: NodeJS.ProcessEnv; input?: string }> = [];
+    const store = new DpapiSecretStore(async (_cmd, args, opts) => {
+      seen.push({ args, env: opts?.env, input: opts?.input });
+      return { code: 0, stdout: "", stderr: "" };
+    });
+    await store.set("kai/test/stdin", "pat-plaintext-123");
+    expect(seen).toHaveLength(1);
+    const { args, env: childEnv, input } = seen[0];
+    expect(Buffer.from(input ?? "", "base64").toString("utf8")).toBe("pat-plaintext-123");
+    const b64 = Buffer.from("pat-plaintext-123", "utf8").toString("base64");
+    expect(JSON.stringify(args)).not.toContain(b64);
+    expect(JSON.stringify(args)).not.toContain("pat-plaintext-123");
+    for (const [k, v] of Object.entries(childEnv ?? {})) {
+      expect(k, "no secret variable").not.toBe("KAI_SECRET_B64");
+      expect(String(v)).not.toContain(b64);
+    }
+    // The script reads it from stdin (the encoded command is UTF-16 base64: decode to look).
+    const script = Buffer.from(args[args.length - 1], "base64").toString("utf16le");
+    expect(script).toContain("[Console]::In.ReadToEnd()");
+    expect(script).not.toContain("KAI_SECRET_B64");
+  });
+
   it.runIf(process.platform === "win32")(
     "Windows DPAPI encrypts at rest and round-trips",
     async () => {

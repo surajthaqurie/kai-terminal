@@ -51,6 +51,7 @@ function Harness() {
     shellsRef: shells,
     selectedShellIdRef: defaultShellId,
     setLastError: vi.fn(),
+    notify: tabsState.showPaneNotice,
   });
   const reportCwd = usePaneCwd({
     tabsRef: tabsState.tabsRef,
@@ -313,5 +314,42 @@ describe("crash-loop banner lifecycle", () => {
     await act(async () => api.exit.retryFaultedPane());
     expect(api.tabsState.tabs[0].panes[0].shellPath).toBe("C:\\zsh\\zsh.exe");
     expect(api.tabsState.tabs[0].panes[0].resetKey).toBe(before + 1);
+  });
+});
+
+describe("exit status and the crash-loop guard (FUNC-09)", () => {
+  it("failed exits of shells that had been running for a while are not a crash loop", async () => {
+    await act(async () => api.tabsState.newTab());
+    await act(async () => api.tabsState.splitPane("vertical"));
+    await act(async () => api.tabsState.splitPane("vertical"));
+    const tab = api.tabsState.tabs[api.tabsState.tabs.length - 1];
+    expect(tab.panes).toHaveLength(3);
+
+    // The shells have been up for a minute; the user runs `exit` after a failed command in
+    // each of them within seconds. Not a broken shell binary, so no "keeps exiting" banner.
+    const realNow = Date.now();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(realNow + 60_000);
+    try {
+      await act(async () => api.exit.handleSessionExit(tab.id, tab.panes[0].id, 1));
+      await act(async () => api.exit.handleSessionExit(tab.id, tab.panes[1].id, 1));
+      await act(async () => api.exit.handleSessionExit(tab.id, tab.panes[2].id, 1));
+    } finally {
+      clock.mockRestore();
+    }
+    expect(api.exit.loopFault).toBeNull();
+  });
+
+  it("a tab that closes because its shell failed says so, with the exit code", async () => {
+    await act(async () => api.tabsState.newTab());
+    const [a] = api.tabsState.tabs;
+    await act(async () => api.exit.handleSessionExit(a.id, a.panes[0].id, 127));
+    expect(api.tabsState.paneNotice).toBe(`${a.title}: shell exited with code 127.`);
+  });
+
+  it("a clean exit closes silently", async () => {
+    await act(async () => api.tabsState.newTab());
+    const [a] = api.tabsState.tabs;
+    await act(async () => api.exit.handleSessionExit(a.id, a.panes[0].id, 0));
+    expect(api.tabsState.paneNotice).toBeNull();
   });
 });

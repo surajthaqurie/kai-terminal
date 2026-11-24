@@ -262,7 +262,7 @@ describe("applyAgentSetup (automatic install)", () => {
 describe("desktop auto-wire service (outside Tauri)", () => {
   it("rejects IPC wiring when Tauri is unavailable", async () => {
     await expect(getKaiCliLaunch()).rejects.toThrow("desktop app");
-    await expect(setupAgentMcp("aider", ["kai"])).rejects.toThrow("desktop app");
+    await expect(setupAgentMcp("aider")).rejects.toThrow("desktop app");
   });
 
   it("rejects manual snippets when Tauri is unavailable (with CLI hint)", async () => {

@@ -564,6 +564,14 @@ pub fn validate_and_resolve_shell(requested_path: Option<&str>) -> Result<String
         }
 
         let p = Path::new(trimmed);
+        // A folder "exists" and, on Unix, even has the execute bit, but it is not a program:
+        // starting it only fails later, in the pty layer, with a worse message (FUNC-12).
+        if p.is_dir() {
+            return Err(TerminalError::ShellNotFound(format!(
+                "Shell path '{}' is a folder, not a program",
+                trimmed
+            )));
+        }
         if p.exists() {
             #[cfg(not(target_os = "windows"))]
             if !is_executable(p) {
@@ -2057,6 +2065,16 @@ mod tests {
         assert!(validate_and_resolve_shell(Some("bad\0path")).is_err());
         assert!(validate_and_resolve_cwd(Some("bad\0dir")).is_err());
         assert!(validate_and_resolve_shell(Some(&"x".repeat(5000))).is_err());
+    }
+
+    #[test]
+    fn test_validate_and_resolve_shell_rejects_a_folder() {
+        let _env = crate::test_support::lock_test_env();
+        let dir = std::env::temp_dir();
+        match validate_and_resolve_shell(Some(&dir.to_string_lossy())) {
+            Err(TerminalError::ShellNotFound(msg)) => assert!(msg.contains("folder"), "{msg}"),
+            other => panic!("a folder is not a shell: {other:?}"),
+        }
     }
 
     #[test]

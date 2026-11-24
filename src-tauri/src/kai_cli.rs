@@ -24,8 +24,6 @@
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-#[cfg(target_os = "windows")]
-use std::time::{Duration, Instant};
 #[cfg(feature = "tauri")]
 use tauri::Manager;
 
@@ -297,135 +295,411 @@ pub fn append_dir_to_path_var(path_var: &str, dir: &str) -> String {
     format!("{}{sep}{dir}", path_var.trim_end_matches(sep))
 }
 
+/// Directories added to the PATH of shells this app starts after startup
+/// (Unix). They are recorded here and handed to each child's own environment
+/// (`spawn_path_with_extras`) rather than written into this process's
+/// environment: `setenv` from a background thread races with `getenv` in the
+/// threads WebKitGTK/GLib and process spawning run, which is undefined behaviour.
+#[cfg(not(target_os = "windows"))]
+static EXTRA_PATH_DIRS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+#[cfg(not(target_os = "windows"))]
+fn extra_path_dirs() -> Vec<String> {
+    EXTRA_PATH_DIRS
+        .lock()
+        .map(|dirs| dirs.clone())
+        .unwrap_or_default()
+}
+
+/// `current` with every entry of `extras` that it lacks put in front, in order.
+pub fn path_with_extra_dirs(current: &str, extras: &[String]) -> String {
+    let mut out = current.to_string();
+    for dir in extras.iter().rev() {
+        if !path_contains_dir(&out, dir) {
+            out = if out.trim().is_empty() {
+                dir.clone()
+            } else {
+                format!("{dir}:{out}")
+            };
+        }
+    }
+    out
+}
+
+/// The `PATH` a shell started now should get on Unix: this process's `PATH` plus
+/// the directories recorded by [`prepend_current_process_path`]. `None` when
+/// nothing was recorded (the child then simply inherits the environment) and
+/// always `None` on Windows, where the process environment is updated directly.
+#[cfg(not(target_os = "windows"))]
+pub fn spawn_path_with_extras() -> Option<String> {
+    let extras = extra_path_dirs();
+    if extras.is_empty() {
+        return None;
+    }
+    let current = std::env::var("PATH").unwrap_or_default();
+    Some(path_with_extra_dirs(&current, &extras))
+}
+
+#[cfg(target_os = "windows")]
+pub fn spawn_path_with_extras() -> Option<String> {
+    None
+}
+
 /// Current-process PATH check (shells spawned later inherit this process).
 pub fn current_process_path_contains(dir: &Path) -> bool {
     let cur = std::env::var("PATH").unwrap_or_default();
-    path_contains_dir(&cur, &dir.to_string_lossy())
+    if path_contains_dir(&cur, &dir.to_string_lossy()) {
+        return true;
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let wanted = dir.to_string_lossy();
+        if extra_path_dirs()
+            .iter()
+            .any(|d| path_contains_dir(d, &wanted))
+        {
+            return true;
+        }
+    }
+    false
 }
 
-/// Prepend `dir` to this process's PATH so PTY children spawned after
-/// startup resolve `kai` even before the user restarts the terminal.
+/// Make `kai` resolvable in PTY children spawned after startup, even before the
+/// user restarts the terminal. Windows updates this process's PATH (its
+/// environment API is thread-safe); Unix only records `dir`, which `create_pty`
+/// then adds to each child's PATH (see [`spawn_path_with_extras`]).
 pub fn prepend_current_process_path(dir: &Path) {
     if current_process_path_contains(dir) {
         return;
     }
+    #[cfg(not(target_os = "windows"))]
+    {
+        if let Ok(mut dirs) = EXTRA_PATH_DIRS.lock() {
+            dirs.push(dir.to_string_lossy().to_string());
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        set_windows_process_path(dir);
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn set_windows_process_path(dir: &Path) {
     let cur = std::env::var("PATH").unwrap_or_default();
     let dir_s = dir.to_string_lossy().to_string();
-    #[cfg(target_os = "windows")]
     let next = if cur.trim().is_empty() {
         dir_s
     } else {
         format!("{dir_s};{cur}")
     };
-    #[cfg(not(target_os = "windows"))]
-    let next = if cur.trim().is_empty() {
-        dir_s
-    } else {
-        format!("{dir_s}:{cur}")
-    };
     std::env::set_var("PATH", next);
 }
 
+/// The persistent per-user PATH exactly as stored (`HKCU\Environment\Path`, variable
+/// references such as `%USERPROFILE%` left unexpanded), read straight from the registry.
+/// `Some("")` when the user has no PATH value yet; `None` when it cannot be read.
+///
+/// Reading it through a PowerShell child instead (what this used to do, on EVERY launch)
+/// cost a cold PowerShell start of hundreds of milliseconds of CPU, during the window in
+/// which the app avoids child processes because they are a classic "Not Responding on
+/// launch" trigger. A registry read costs microseconds.
 #[cfg(target_os = "windows")]
-fn powershell_exe() -> &'static str {
-    "powershell"
-}
+pub fn read_user_path_registry() -> Option<String> {
+    use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_MORE_DATA, ERROR_SUCCESS};
+    use windows_sys::Win32::System::Registry::{
+        RegGetValueW, HKEY_CURRENT_USER, RRF_NOEXPAND, RRF_RT_REG_EXPAND_SZ, RRF_RT_REG_SZ,
+    };
 
-/// Run a PowerShell snippet with a hard timeout. Returns trimmed stdout, or
-/// `None` when PowerShell is missing, blocked, or hung — callers degrade to
-/// manual instructions instead of freezing startup. Uses inbox Windows
-/// PowerShell (always present); no `pwsh` dependency.
-#[cfg(target_os = "windows")]
-fn run_powershell(script: &str, timeout: Duration) -> Option<String> {
-    use std::os::windows::process::CommandExt;
-    use std::process::{Command, Stdio};
-    const CREATE_NO_WINDOW: u32 = 0x08000000;
-    // Probing for pwsh first doubles cold-start cost; a single `powershell`
-    // call with a bounded wait is enough on a background thread.
-    let mut child = Command::new(powershell_exe())
-        .args(["-NoProfile", "-NonInteractive", "-Command", script])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .creation_flags(CREATE_NO_WINDOW)
-        .spawn()
-        .ok()?;
-    let deadline = Instant::now() + timeout;
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) => {
-                if Instant::now() >= deadline {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return None;
-                }
-                std::thread::sleep(Duration::from_millis(50));
-            }
-            Err(_) => return None,
+    let subkey: Vec<u16> = "Environment\0".encode_utf16().collect();
+    let value: Vec<u16> = "Path\0".encode_utf16().collect();
+    let flags = RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ | RRF_NOEXPAND;
+    // The value can grow between sizing it and reading it: retry a few times.
+    for _ in 0..4 {
+        let mut size: u32 = 0;
+        // SAFETY: `subkey` and `value` are NUL-terminated UTF-16 that outlive the call; passing a
+        // null data pointer with a size out-parameter is the documented way to query the size.
+        let status = unsafe {
+            RegGetValueW(
+                HKEY_CURRENT_USER,
+                subkey.as_ptr(),
+                value.as_ptr(),
+                flags,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                &mut size,
+            )
+        };
+        if status == ERROR_FILE_NOT_FOUND {
+            return Some(String::new());
         }
+        if status != ERROR_SUCCESS {
+            return None;
+        }
+        let mut buf: Vec<u16> = vec![0; size as usize / 2 + 2];
+        let mut capacity = (buf.len() * 2) as u32;
+        // SAFETY: `buf` is writable for `capacity` bytes and outlives the call; `capacity` is
+        // passed as the buffer size and receives the size written.
+        let status = unsafe {
+            RegGetValueW(
+                HKEY_CURRENT_USER,
+                subkey.as_ptr(),
+                value.as_ptr(),
+                flags,
+                std::ptr::null_mut(),
+                buf.as_mut_ptr().cast(),
+                &mut capacity,
+            )
+        };
+        if status == ERROR_MORE_DATA {
+            continue;
+        }
+        if status != ERROR_SUCCESS {
+            return None;
+        }
+        // `capacity` counts the terminating NUL.
+        let units = (capacity as usize / 2).saturating_sub(1).min(buf.len());
+        return String::from_utf16(&buf[..units]).ok();
     }
-    let out = child.wait_with_output().ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
-}
-
-#[cfg(target_os = "windows")]
-fn escape_ps_single(s: &str) -> String {
-    s.replace('\'', "''")
+    None
 }
 
 /// Persistent per-user PATH check (registry), not just this process.
 #[cfg(target_os = "windows")]
 fn persisted_user_path_contains(dir: &str) -> bool {
-    match run_powershell(
-        "[Environment]::GetEnvironmentVariable('Path','User')",
-        Duration::from_secs(15),
-    ) {
+    match read_user_path_registry() {
         Some(v) => path_contains_dir(&v, dir),
+        // Unreadable (not "empty"): fall back to this process's PATH, as before.
         None => current_process_path_contains(Path::new(dir)),
     }
 }
 
-/// Append `dir` to the persistent User PATH. Returns true when the value
+/// A registry string value with the kind it is stored as. `HKCU\Environment\Path` is usually
+/// `REG_EXPAND_SZ` (it holds `%USERPROFILE%`-style references); writing it back as plain
+/// `REG_SZ` makes Windows stop expanding them, which breaks every such entry.
+#[cfg(target_os = "windows")]
+#[derive(Debug, PartialEq, Eq)]
+struct RegString {
+    text: String,
+    expandable: bool,
+}
+
+/// `Ok(None)`: the value does not exist. `Err(())`: it exists but cannot be read as a string.
+#[cfg(target_os = "windows")]
+fn read_registry_string(subkey: &str, name: &str) -> Result<Option<RegString>, ()> {
+    use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_MORE_DATA, ERROR_SUCCESS};
+    use windows_sys::Win32::System::Registry::{
+        RegGetValueW, HKEY_CURRENT_USER, REG_EXPAND_SZ, RRF_NOEXPAND, RRF_RT_REG_EXPAND_SZ,
+        RRF_RT_REG_SZ,
+    };
+
+    let subkey: Vec<u16> = subkey.encode_utf16().chain(std::iter::once(0)).collect();
+    let name: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
+    let flags = RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ | RRF_NOEXPAND;
+    for _ in 0..4 {
+        let mut size: u32 = 0;
+        // SAFETY: both strings are NUL-terminated UTF-16 that outlive the call; a null data
+        // pointer with a size out-parameter is the documented way to ask for the size.
+        let status = unsafe {
+            RegGetValueW(
+                HKEY_CURRENT_USER,
+                subkey.as_ptr(),
+                name.as_ptr(),
+                flags,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                &mut size,
+            )
+        };
+        if status == ERROR_FILE_NOT_FOUND {
+            return Ok(None);
+        }
+        if status != ERROR_SUCCESS {
+            return Err(());
+        }
+        let mut buf: Vec<u16> = vec![0; size as usize / 2 + 2];
+        let mut capacity = (buf.len() * 2) as u32;
+        let mut kind: u32 = 0;
+        // SAFETY: `buf` is writable for `capacity` bytes and outlives the call; `kind` and
+        // `capacity` are valid out-parameters.
+        let status = unsafe {
+            RegGetValueW(
+                HKEY_CURRENT_USER,
+                subkey.as_ptr(),
+                name.as_ptr(),
+                flags,
+                &mut kind,
+                buf.as_mut_ptr().cast(),
+                &mut capacity,
+            )
+        };
+        if status == ERROR_MORE_DATA {
+            continue;
+        }
+        if status != ERROR_SUCCESS {
+            return Err(());
+        }
+        let units = (capacity as usize / 2).saturating_sub(1).min(buf.len());
+        let text = String::from_utf16(&buf[..units]).map_err(|_| ())?;
+        return Ok(Some(RegString {
+            text,
+            expandable: kind == REG_EXPAND_SZ,
+        }));
+    }
+    Err(())
+}
+
+/// Writes a string value under `HKEY_CURRENT_USER\<subkey>` (created if missing) as
+/// `REG_EXPAND_SZ` or `REG_SZ`.
+#[cfg(target_os = "windows")]
+fn write_registry_string(subkey: &str, name: &str, value: &RegString) -> Result<(), u32> {
+    use windows_sys::Win32::Foundation::ERROR_SUCCESS;
+    use windows_sys::Win32::System::Registry::{
+        RegCloseKey, RegCreateKeyExW, RegSetValueExW, HKEY, HKEY_CURRENT_USER, KEY_SET_VALUE,
+        REG_EXPAND_SZ, REG_OPTION_NON_VOLATILE, REG_SZ,
+    };
+
+    let subkey: Vec<u16> = subkey.encode_utf16().chain(std::iter::once(0)).collect();
+    let name: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
+    let data: Vec<u16> = value
+        .text
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    let mut key: HKEY = std::ptr::null_mut();
+    // SAFETY: `subkey` is NUL-terminated UTF-16; `key` is a valid out-parameter that is closed
+    // below on every path where the call succeeded.
+    let status = unsafe {
+        RegCreateKeyExW(
+            HKEY_CURRENT_USER,
+            subkey.as_ptr(),
+            0,
+            std::ptr::null(),
+            REG_OPTION_NON_VOLATILE,
+            KEY_SET_VALUE,
+            std::ptr::null(),
+            &mut key,
+            std::ptr::null_mut(),
+        )
+    };
+    if status != ERROR_SUCCESS {
+        return Err(status);
+    }
+    let kind = if value.expandable {
+        REG_EXPAND_SZ
+    } else {
+        REG_SZ
+    };
+    // SAFETY: `key` was opened above; `data` is valid for `data.len() * 2` bytes and is
+    // NUL-terminated, as REG_SZ / REG_EXPAND_SZ data must be.
+    let status = unsafe {
+        RegSetValueExW(
+            key,
+            name.as_ptr(),
+            0,
+            kind,
+            data.as_ptr().cast(),
+            (data.len() * 2) as u32,
+        )
+    };
+    // SAFETY: `key` is a valid open key.
+    unsafe { RegCloseKey(key) };
+    if status == ERROR_SUCCESS {
+        Ok(())
+    } else {
+        Err(status)
+    }
+}
+
+/// `existing` with `dir` appended, or `None` when `dir` is already listed. Entries are kept
+/// exactly as they are written (unexpanded variable references included).
+#[cfg(target_os = "windows")]
+fn path_with_appended(existing: &str, dir: &str) -> Option<String> {
+    if path_contains_dir(existing, dir) {
+        return None;
+    }
+    let trimmed = existing.trim_end_matches(';');
+    Some(if trimmed.is_empty() {
+        dir.to_string()
+    } else {
+        format!("{trimmed};{dir}")
+    })
+}
+
+/// Appends `dir` to the persistent per-user PATH in `HKCU\<subkey>`, keeping the value's kind
+/// (a `REG_EXPAND_SZ` PATH stays one). A PATH that does not exist yet is created expandable, as
+/// Windows itself does. Returns whether the value changed.
+#[cfg(target_os = "windows")]
+fn append_to_registry_path(subkey: &str, dir: &str) -> bool {
+    let current = match read_registry_string(subkey, "Path") {
+        Ok(current) => current,
+        // Unreadable: do not overwrite what we cannot see.
+        Err(()) => return false,
+    };
+    let (existing, expandable) = match &current {
+        Some(v) => (v.text.as_str(), v.expandable),
+        None => ("", true),
+    };
+    let Some(text) = path_with_appended(existing, dir) else {
+        return false;
+    };
+    write_registry_string(subkey, "Path", &RegString { text, expandable }).is_ok()
+}
+
+/// Tells running programs (Explorer, new terminals) that the environment changed, so a new
+/// terminal sees the PATH without a sign-out. A hung program is skipped after 5 s.
+#[cfg(target_os = "windows")]
+fn broadcast_env_change() {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        SendMessageTimeoutW, HWND_BROADCAST, SMTO_ABORTIFHUNG, WM_SETTINGCHANGE,
+    };
+    let param: Vec<u16> = "Environment\0".encode_utf16().collect();
+    let mut result: usize = 0;
+    // SAFETY: HWND_BROADCAST with WM_SETTINGCHANGE is the documented way to announce an
+    // environment change; `param` is NUL-terminated UTF-16 that outlives the call and `result`
+    // is a valid out-parameter. The call times out after 5000 ms per window.
+    unsafe {
+        SendMessageTimeoutW(
+            HWND_BROADCAST,
+            WM_SETTINGCHANGE,
+            0,
+            param.as_ptr() as isize,
+            SMTO_ABORTIFHUNG,
+            5000,
+            &mut result,
+        );
+    }
+}
+
+/// Append `dir` to the persistent User PATH (`HKCU\Environment`). Returns true when the value
 /// changed (caller should tell the user to restart the terminal).
+///
+/// Written straight to the registry, keeping the value's kind: the PowerShell route this
+/// replaces read a `REG_EXPAND_SZ` PATH expanded and wrote it back as `REG_SZ`, which flattened
+/// every `%VAR%` entry, and started `powershell` by bare name through PATH.
 #[cfg(target_os = "windows")]
 fn ensure_persisted_user_path(dir: &str) -> bool {
     if persisted_user_path_contains(dir) {
         return false;
     }
-    let safe = escape_ps_single(dir);
-    let script = format!(
-        "$p=[Environment]::GetEnvironmentVariable('Path','User');\
-         if(($p -split ';') -notcontains '{safe}'){{\
-         [Environment]::SetEnvironmentVariable('Path',($p.TrimEnd(';')+';{safe}'),'User');'CHANGED'}}\
-         else{{'PRESENT'}}"
-    );
-    match run_powershell(&script, Duration::from_secs(20)) {
-        Some(out) => out.contains("CHANGED"),
-        None => false,
-    }
-}
-
-/// Best-effort `WM_SETTINGCHANGE` broadcast so new terminals pick up the
-/// PATH without a reboot. Failures are silent by design.
-#[cfg(target_os = "windows")]
-fn broadcast_env_change() {
-    let script = "Add-Type -Namespace Win32 -Name Env -MemberDefinition \
-        '[DllImport(\"user32.dll\", SetLastError=$true, CharSet=CharSet.Auto)] \
-         public static extern IntPtr SendMessageTimeout( \
-         IntPtr hWnd, uint Msg, UIntPtr wParam, string lParam, \
-         uint fuFlags, uint uTimeout, out UIntPtr lpdwResult);' | Out-Null; \
-         [UIntPtr]$r = 0; \
-         [Win32.Env]::SendMessageTimeout([IntPtr]0xffff, 0x1a, \
-         [UIntPtr]::Zero, 'Environment', 0x0002, 5000, [ref]$r) | Out-Null";
-    let _ = run_powershell(script, Duration::from_secs(20));
+    append_to_registry_path("Environment", dir)
 }
 
 #[cfg(not(target_os = "windows"))]
 const KAI_RC_MARK: &str = "# kai-terminal: kai CLI on PATH";
+
+/// The lines added to a shell rc file. `~/.local/bin` goes AFTER the existing PATH: a
+/// user-writable folder in front of `/usr/bin` would let anything that can write there shadow a
+/// system tool for every shell the user opens; at the end it only supplies commands that are not
+/// found elsewhere, which is all the `kai` shim needs.
+#[cfg(not(target_os = "windows"))]
+fn rc_path_block(fish: bool) -> String {
+    if fish {
+        format!("\n{KAI_RC_MARK}\nfish_add_path --append ~/.local/bin\n")
+    } else {
+        format!("\n{KAI_RC_MARK}\nexport PATH=\"$PATH:$HOME/.local/bin\"\n")
+    }
+}
 
 /// Append `~/.local/bin` to shell rc files (idempotent). Returns true when a
 /// terminal restart is needed to pick it up.
@@ -435,7 +709,6 @@ fn ensure_rc_path(dir: &Path) -> bool {
         Ok(h) if !h.trim().is_empty() => PathBuf::from(h),
         _ => return false,
     };
-    let line = "export PATH=\"$HOME/.local/bin:$PATH\"";
     let shell = std::env::var("SHELL").unwrap_or_default().to_lowercase();
     let targets: Vec<PathBuf> = if shell.contains("fish") {
         vec![home.join(".config").join("fish").join("config.fish")]
@@ -451,11 +724,7 @@ fn ensure_rc_path(dir: &Path) -> bool {
         if cur.contains(KAI_RC_MARK) || cur.contains("$HOME/.local/bin") {
             continue;
         }
-        let block = if rc.ends_with("config.fish") {
-            format!("\n{KAI_RC_MARK}\nfish_add_path ~/.local/bin\n")
-        } else {
-            format!("\n{KAI_RC_MARK}\n{line}\n")
-        };
+        let block = rc_path_block(rc.ends_with("config.fish"));
         if let Some(parent) = rc.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
@@ -680,6 +949,128 @@ pub fn ensure_kai_cli_cmd(app: tauri::AppHandle) -> KaiCliStatus {
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "windows")]
+    mod windows_registry_path {
+        use super::super::*;
+
+        /// A throw-away key under HKCU, removed afterwards; the real `Environment` key is never
+        /// touched by these tests.
+        struct Scratch(String);
+        impl Scratch {
+            fn new(tag: &str) -> Self {
+                Scratch(format!(
+                    "Software\\KaiTerminalTests\\{}-{}-{}",
+                    tag,
+                    std::process::id(),
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_nanos())
+                        .unwrap_or(0)
+                ))
+            }
+        }
+        impl Drop for Scratch {
+            fn drop(&mut self) {
+                use windows_sys::Win32::System::Registry::{RegDeleteTreeW, HKEY_CURRENT_USER};
+                let sub: Vec<u16> = "Software\\KaiTerminalTests\0".encode_utf16().collect();
+                // SAFETY: NUL-terminated UTF-16 key path; deleting our own scratch tree.
+                unsafe { RegDeleteTreeW(HKEY_CURRENT_USER, sub.as_ptr()) };
+            }
+        }
+
+        fn put(sub: &str, text: &str, expandable: bool) {
+            write_registry_string(
+                sub,
+                "Path",
+                &RegString {
+                    text: text.to_string(),
+                    expandable,
+                },
+            )
+            .expect("write scratch value");
+        }
+
+        #[test]
+        fn an_expandable_path_stays_expandable_and_keeps_its_variables() {
+            let _env = crate::test_support::lock_test_env();
+            let key = Scratch::new("expand");
+            put(&key.0, r"%USERPROFILE%\bin;C:\tools", true);
+            assert!(append_to_registry_path(&key.0, r"C:\Users\x\.local\bin"));
+            let after = read_registry_string(&key.0, "Path").unwrap().unwrap();
+            assert!(
+                after.expandable,
+                "REG_EXPAND_SZ must not be flattened to REG_SZ"
+            );
+            assert_eq!(
+                after.text, r"%USERPROFILE%\bin;C:\tools;C:\Users\x\.local\bin",
+                "existing entries stay exactly as written"
+            );
+        }
+
+        #[test]
+        fn a_plain_path_stays_plain() {
+            let _env = crate::test_support::lock_test_env();
+            let key = Scratch::new("plain");
+            put(&key.0, r"C:\tools;", false);
+            assert!(append_to_registry_path(&key.0, r"C:\kai\bin"));
+            let after = read_registry_string(&key.0, "Path").unwrap().unwrap();
+            assert!(!after.expandable);
+            assert_eq!(after.text, r"C:\tools;C:\kai\bin");
+        }
+
+        #[test]
+        fn nothing_is_written_when_the_folder_is_already_listed() {
+            let _env = crate::test_support::lock_test_env();
+            let key = Scratch::new("present");
+            put(&key.0, r"C:\kai\bin;C:\tools", true);
+            assert!(!append_to_registry_path(&key.0, r"c:\KAI\bin\"));
+            let after = read_registry_string(&key.0, "Path").unwrap().unwrap();
+            assert_eq!(after.text, r"C:\kai\bin;C:\tools");
+        }
+
+        #[test]
+        fn a_missing_path_value_is_created_expandable() {
+            let _env = crate::test_support::lock_test_env();
+            let key = Scratch::new("missing");
+            assert_eq!(read_registry_string(&key.0, "Path"), Ok(None));
+            assert!(append_to_registry_path(&key.0, r"C:\kai\bin"));
+            let after = read_registry_string(&key.0, "Path").unwrap().unwrap();
+            assert_eq!(after.text, r"C:\kai\bin");
+            assert!(after.expandable);
+        }
+
+        #[test]
+        fn path_with_appended_handles_edge_cases() {
+            assert_eq!(path_with_appended("", r"C:\a"), Some(r"C:\a".to_string()));
+            assert_eq!(path_with_appended(";;", r"C:\a"), Some(r"C:\a".to_string()));
+            assert_eq!(
+                path_with_appended(r"C:\x;", r"C:\a"),
+                Some(r"C:\x;C:\a".to_string())
+            );
+            assert_eq!(path_with_appended(r"C:\A", r"c:\a"), None);
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn rc_blocks_append_the_folder_instead_of_putting_it_first() {
+        let sh = rc_path_block(false);
+        assert!(sh.contains(KAI_RC_MARK));
+        assert!(
+            sh.contains(r#"export PATH="$PATH:$HOME/.local/bin""#),
+            "{sh}"
+        );
+        assert!(
+            !sh.contains(r#"$HOME/.local/bin:$PATH"#),
+            "must not prepend: {sh}"
+        );
+        let fish = rc_path_block(true);
+        assert!(
+            fish.contains("fish_add_path --append ~/.local/bin"),
+            "{fish}"
+        );
+    }
+
     #[test]
     fn test_path_contains_matches_whole_entries_only() {
         assert!(path_contains_dir("C:\\a\\b;C:\\c", "c:\\A\\B"));
@@ -806,5 +1197,77 @@ mod tests {
         assert!(!st.resource_found);
         assert!(!st.message.is_empty());
         let _ = std::fs::remove_dir_all(&missing);
+    }
+
+    #[test]
+    fn extra_path_dirs_go_in_front_once_and_keep_order() {
+        let extras = vec![
+            "/home/me/.local/bin".to_string(),
+            "/opt/kai/bin".to_string(),
+        ];
+        assert_eq!(
+            path_with_extra_dirs("/usr/bin:/bin", &extras),
+            "/home/me/.local/bin:/opt/kai/bin:/usr/bin:/bin"
+        );
+        // Already present: unchanged, never duplicated.
+        assert_eq!(
+            path_with_extra_dirs("/opt/kai/bin:/usr/bin", &extras[1..]),
+            "/opt/kai/bin:/usr/bin"
+        );
+        // Empty PATH and no extras.
+        assert_eq!(
+            path_with_extra_dirs("", &extras[..1]),
+            "/home/me/.local/bin"
+        );
+        assert_eq!(path_with_extra_dirs("/usr/bin", &[]), "/usr/bin");
+    }
+
+    /// The raw `Path` value `reg.exe` prints for the user's environment key.
+    #[cfg(target_os = "windows")]
+    fn reg_exe_user_path() -> Option<String> {
+        let out = std::process::Command::new("reg")
+            .args(["query", r"HKCU\Environment", "/v", "Path"])
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None; // no Path value
+        }
+        let text = String::from_utf8_lossy(&out.stdout);
+        let line = text.lines().find(|l| l.trim_start().starts_with("Path"))?;
+        // "    Path    REG_EXPAND_SZ    C:\a;%USERPROFILE%\b"
+        let rest = line.trim_start().strip_prefix("Path")?.trim_start();
+        let (_kind, value) = rest.split_once(char::is_whitespace)?;
+        Some(value.trim().to_string())
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn reading_the_user_path_from_the_registry_matches_reg_exe() {
+        let _env = crate::test_support::lock_test_env();
+        let ours = read_user_path_registry();
+        match reg_exe_user_path() {
+            Some(expected) => assert_eq!(
+                ours.as_deref(),
+                Some(expected.as_str()),
+                "the registry reader must return the stored value, unexpanded"
+            ),
+            None => assert_eq!(ours.as_deref(), Some(""), "no PATH value reads as empty"),
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn the_persisted_path_check_needs_no_child_process() {
+        let _env = crate::test_support::lock_test_env();
+        let stored = read_user_path_registry().expect("the user PATH is readable");
+        // Any directory that is on the stored PATH is found; one that is not, is not.
+        if let Some(first) = stored.split(';').find(|e| !e.trim().is_empty()) {
+            if !first.contains('%') {
+                assert!(persisted_user_path_contains(first));
+            }
+        }
+        assert!(!persisted_user_path_contains(
+            r"C:\kai-test-not-on-any-path-7f3a91"
+        ));
     }
 }

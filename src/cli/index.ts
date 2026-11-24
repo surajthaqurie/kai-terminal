@@ -19,6 +19,7 @@ import { runTeams } from "./commands/teams";
 import { runProvider } from "./commands/provider";
 import { runRemove } from "./commands/remove";
 import { findProvider } from "../core/integrations/providerCatalog";
+import { hardenExecutableLookup } from "../core/spawnSafety";
 import { runSessionClean, runSessionList } from "./commands/session";
 
 // Public surface consumed by tests and the doctor/launch tooling.
@@ -127,6 +128,10 @@ const AGENT_REMOVE_SUBCOMMANDS = new Set(["remove", "rm", "unlink", "unregister"
 let activeCliPromise: Promise<number> | null = null;
 
 export async function runCli(argv: string[]): Promise<number> {
+  // Before anything can spawn: the CLI and `kai mcp` run inside whatever folder
+  // the user opened, and on Windows a bare `git`/`cmd.exe`/`powershell` would
+  // otherwise resolve to a same-named exe planted in that folder.
+  hardenExecutableLookup();
   if (activeCliPromise) {
     return activeCliPromise;
   }

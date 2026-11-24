@@ -1258,3 +1258,643 @@ fn test_16_wsl_shell_round_trip() {
         manager.close_pty(&session.id).unwrap();
     }
 }
+
+// ---------------------------------------------------------------------------
+// 17. Session lifecycle churn never stalls the manager (REL-01)
+// ---------------------------------------------------------------------------
+/// Sessions exit on their own, are closed explicitly while busy, and are closed
+/// while their child is exiting — all at once — while another thread keeps
+/// using the manager-wide state. The global sessions lock must never be held
+/// across a blocking native close, so no operation may stall for long.
+#[test]
+fn test_17_lifecycle_churn_does_not_stall_manager() {
+    let manager = Arc::new(PtyManager::new());
+
+    #[cfg(target_os = "windows")]
+    let (busy_cmd, exit_cmd) = ("ping -n 300 127.0.0.1\r\n", "exit\r\n");
+    #[cfg(not(target_os = "windows"))]
+    let (busy_cmd, exit_cmd) = ("sleep 300\n", "exit\n");
+
+    let spawn_session = |manager: &PtyManager| {
+        let (emitter, _, _) = TestEventEmitter::new();
+        manager
+            .create_pty(
+                Arc::new(emitter),
+                PtyCreateOptions {
+                    shell_path: default_test_shell(),
+                    args: None,
+                    cwd: None,
+                    cols: 80,
+                    rows: 24,
+                    env: None,
+                },
+            )
+            .expect("spawn session")
+    };
+
+    // Observer: hammers the manager-wide lock and records the worst latency.
+    let stop = Arc::new(AtomicBool::new(false));
+    let worst_ms = Arc::new(Mutex::new(0u128));
+    let observer = {
+        let (manager, stop, worst_ms) = (manager.clone(), stop.clone(), worst_ms.clone());
+        std::thread::spawn(move || {
+            while !stop.load(Ordering::SeqCst) {
+                let t = Instant::now();
+                let _ = manager.list_sessions();
+                let _ = manager.resize_pty("no-such-session", 100, 30);
+                let ms = t.elapsed().as_millis();
+                if let Ok(mut w) = worst_ms.lock() {
+                    *w = (*w).max(ms);
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        })
+    };
+
+    for _round in 0..3 {
+        let busy = spawn_session(&manager);
+        let exiting = spawn_session(&manager);
+        let racing = spawn_session(&manager);
+        let idle = spawn_session(&manager);
+
+        manager.write_to_pty(&busy.id, busy_cmd).unwrap();
+        // The child of `exiting` terminates by itself ...
+        manager.write_to_pty(&exiting.id, exit_cmd).unwrap();
+        // ... while `racing` is closed at about the moment it exits.
+        manager.write_to_pty(&racing.id, exit_cmd).unwrap();
+        manager.close_pty(&racing.id).unwrap();
+        // Resize while others are tearing down.
+        manager.resize_pty(&idle.id, 120, 40).unwrap();
+        manager.close_pty(&busy.id).unwrap();
+        manager.close_pty(&idle.id).unwrap();
+        // Closing an already-exited or already-closed session is a no-op.
+        manager.close_pty(&exiting.id).unwrap();
+        manager.close_pty(&racing.id).unwrap();
+    }
+
+    // Every session must be gone from the map shortly after the churn.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !manager.list_sessions().is_empty() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(
+        manager.list_sessions().is_empty(),
+        "all churned sessions must be cleaned up"
+    );
+
+    stop.store(true, Ordering::SeqCst);
+    observer.join().unwrap();
+    let worst = *worst_ms.lock().unwrap();
+    assert!(
+        worst < 2_000,
+        "manager-wide operations stalled for {worst} ms during session teardown"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 18. Running-command detection backs the close confirmation (FUNC-02)
+// ---------------------------------------------------------------------------
+#[test]
+fn test_18_busy_sessions_reports_running_commands_only() {
+    let manager = PtyManager::new();
+    let (emitter, _, _) = TestEventEmitter::new();
+    let session = manager
+        .create_pty(
+            Arc::new(emitter.clone()),
+            PtyCreateOptions {
+                shell_path: default_test_shell(),
+                args: None,
+                cwd: None,
+                cols: 80,
+                rows: 24,
+                env: None,
+            },
+        )
+        .expect("spawn session");
+    let ids = vec![session.id.clone(), "no-such-session".to_string()];
+
+    // Let the prompt settle: an idle shell is not "running something".
+    std::thread::sleep(Duration::from_millis(1500));
+    assert!(
+        manager.busy_sessions(&ids).is_empty(),
+        "an idle shell prompt must not be reported as busy"
+    );
+
+    // A foreground command makes it busy (and only that session, never an unknown id).
+    #[cfg(target_os = "windows")]
+    let long_cmd = "ping -n 60 127.0.0.1\r\n";
+    #[cfg(not(target_os = "windows"))]
+    let long_cmd = "sleep 60\n";
+    manager.write_to_pty(&session.id, long_cmd).unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let mut busy = Vec::new();
+    while Instant::now() < deadline {
+        busy = manager.busy_sessions(&ids);
+        if !busy.is_empty() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert_eq!(
+        busy,
+        vec![session.id.clone()],
+        "a running foreground command must be reported busy"
+    );
+
+    // Closing it ends the session; a closed session is never reported busy.
+    manager.close_pty(&session.id).unwrap();
+    assert!(manager.busy_sessions(&ids).is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// 19-21. Output flow control (PERF-01 / PERF-02)
+// ---------------------------------------------------------------------------
+
+/// Writes `lines` numbered lines (`L0000001 ...` padded to 80 bytes) to a temp file
+/// and returns its path.
+fn write_numbered_file(tag: &str, lines: usize) -> std::path::PathBuf {
+    let path = std::env::temp_dir().join(format!("kai-flow-{tag}-{}.txt", std::process::id()));
+    let mut text = String::with_capacity(lines * 82);
+    for n in 1..=lines {
+        text.push_str(&format!("L{n:07} {}\n", "x".repeat(70)));
+    }
+    std::fs::write(&path, text).unwrap();
+    path
+}
+
+/// The command that prints `file` to the terminal.
+fn cat_command(file: &std::path::Path) -> String {
+    #[cfg(target_os = "windows")]
+    return format!("type \"{}\"\r\n", file.display());
+    #[cfg(not(target_os = "windows"))]
+    return format!("cat '{}'\n", file.display());
+}
+
+/// Receives output like the frontend does and (optionally) acknowledges it.
+struct FlowEmitter {
+    bytes: Arc<std::sync::atomic::AtomicU64>,
+    text: Arc<Mutex<String>>,
+    exited: Arc<AtomicBool>,
+    acks: Option<std::sync::mpsc::Sender<u64>>,
+}
+
+impl TerminalEventEmitter for FlowEmitter {
+    fn emit_output(&self, payload: PtyOutputPayload) {
+        self.bytes
+            .fetch_add(payload.data.len() as u64, Ordering::SeqCst);
+        if let Ok(mut t) = self.text.lock() {
+            t.push_str(&payload.data);
+        }
+        if let Some(acks) = &self.acks {
+            let _ = acks.send(payload.data.len() as u64);
+        }
+    }
+    fn emit_exit(&self, _payload: PtyExitPayload) {
+        self.exited.store(true, Ordering::SeqCst);
+    }
+}
+
+struct FlowSession {
+    info: kai::pty::PtySessionInfo,
+    bytes: Arc<std::sync::atomic::AtomicU64>,
+    text: Arc<Mutex<String>>,
+    exited: Arc<AtomicBool>,
+    peak_in_flight: Arc<Mutex<u64>>,
+}
+
+/// Starts a shell whose output goes to a simulated frontend. With `ack_delay`, the
+/// frontend takes that long per chunk to hand it to the emulator and then
+/// acknowledges it; with `None` it never acknowledges (a stalled consumer).
+fn start_flow_session(manager: &Arc<PtyManager>, ack_delay: Option<Duration>) -> FlowSession {
+    let bytes = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let text = Arc::new(Mutex::new(String::new()));
+    let exited = Arc::new(AtomicBool::new(false));
+    let peak = Arc::new(Mutex::new(0u64));
+    let (tx, rx) = std::sync::mpsc::channel::<u64>();
+    let emitter = FlowEmitter {
+        bytes: bytes.clone(),
+        text: text.clone(),
+        exited: exited.clone(),
+        acks: ack_delay.map(|_| tx),
+    };
+    let info = manager
+        .create_pty(
+            Arc::new(emitter),
+            PtyCreateOptions {
+                shell_path: default_test_shell(),
+                args: None,
+                cwd: None,
+                cols: 200,
+                rows: 50,
+                env: None,
+            },
+        )
+        .expect("spawn session");
+    if let Some(delay) = ack_delay {
+        let (manager, id, peak) = (manager.clone(), info.id.clone(), peak.clone());
+        std::thread::spawn(move || {
+            while let Ok(n) = rx.recv() {
+                if let Some(in_flight) = manager.output_in_flight(&id) {
+                    let mut p = peak.lock().unwrap();
+                    *p = (*p).max(in_flight);
+                }
+                std::thread::sleep(delay);
+                manager.ack_output(&id, n);
+            }
+        });
+    }
+    FlowSession {
+        info,
+        bytes,
+        text,
+        exited,
+        peak_in_flight: peak,
+    }
+}
+
+/// Numbers of the `L0000001`-style lines found in `text`, in the order they appear.
+fn line_numbers(text: &str) -> Vec<usize> {
+    let bytes = text.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i + 8 <= bytes.len() {
+        if bytes[i] == b'L' && bytes[i + 1..i + 8].iter().all(u8::is_ascii_digit) {
+            out.push(text[i + 1..i + 8].parse().unwrap());
+            i += 8;
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
+#[test]
+fn test_19_flood_is_delivered_byte_exact_in_order_with_bounded_in_flight() {
+    let manager = Arc::new(PtyManager::new());
+    // A consumer far slower than the shell (~1.6 MB/s): without flow control the bytes in flight would pile up.
+    let s = start_flow_session(&manager, Some(Duration::from_millis(40)));
+    std::thread::sleep(Duration::from_millis(1200));
+
+    const LINES: usize = 30_000; // ~2.4 MB: more than twice the 1 MiB high-water mark
+    let file = write_numbered_file("exact", LINES);
+    manager
+        .write_to_pty(&s.info.id, &cat_command(&file))
+        .expect("write");
+
+    let deadline = Instant::now() + Duration::from_secs(120);
+    let last = format!("L{LINES:07}");
+    while Instant::now() < deadline && !s.text.lock().unwrap().contains(&last) {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let got = s.text.lock().unwrap().clone();
+    assert!(got.contains(&last), "the last line never arrived");
+
+    // Every line, once, in order: nothing dropped, nothing reordered, nothing duplicated.
+    let numbers = line_numbers(&got);
+    let found = numbers.iter().filter(|n| **n >= 1 && **n <= LINES).count();
+    assert_eq!(found, LINES, "{} lines were lost", LINES - found.min(LINES));
+    assert!(
+        numbers.windows(2).all(|w| w[0] < w[1]),
+        "lines arrived out of order or duplicated"
+    );
+
+    // The bound: never more than the high-water mark plus one batch (~98 KiB) in flight.
+    let peak = *s.peak_in_flight.lock().unwrap();
+    assert!(
+        peak <= kai::pty::FLOW_HIGH_WATER_BYTES + 160 * 1024,
+        "in flight reached {peak} bytes; flow control did not bound it"
+    );
+    manager.close_pty(&s.info.id).unwrap();
+    let _ = std::fs::remove_file(file);
+}
+
+#[test]
+fn test_20_stalled_consumer_stops_the_producer_and_close_returns_promptly() {
+    let manager = Arc::new(PtyManager::new());
+    // A consumer that never acknowledges anything.
+    let s = start_flow_session(&manager, None);
+    std::thread::sleep(Duration::from_millis(1200));
+
+    let file = write_numbered_file("stall", 250_000); // ~20 MB, far above the mark
+    manager
+        .write_to_pty(&s.info.id, &cat_command(&file))
+        .expect("write");
+
+    // The shell is held at the bound instead of being drained into memory.
+    std::thread::sleep(Duration::from_secs(4));
+    let settled = s.bytes.load(Ordering::SeqCst);
+    std::thread::sleep(Duration::from_secs(2));
+    let later = s.bytes.load(Ordering::SeqCst);
+    let ceiling = kai::pty::FLOW_HIGH_WATER_BYTES + 512 * 1024;
+    assert!(
+        later <= ceiling,
+        "{later} bytes reached the stalled frontend (limit {ceiling}): output is not bounded"
+    );
+    assert_eq!(settled, later, "output must stop, not just slow down");
+    assert!(
+        manager.output_in_flight(&s.info.id).unwrap() >= kai::pty::FLOW_HIGH_WATER_BYTES,
+        "the session should be waiting at the high-water mark"
+    );
+
+    // Input still works while the output side is held: writes never depend on draining.
+    let t = Instant::now();
+    manager
+        .write_to_pty(&s.info.id, "\x03")
+        .expect("input while paused");
+    assert!(
+        t.elapsed() < Duration::from_secs(1),
+        "input stalled behind output"
+    );
+
+    // Closing must not wait for a consumer that will never acknowledge.
+    let t = Instant::now();
+    manager.close_pty(&s.info.id).unwrap();
+    assert!(
+        t.elapsed() < Duration::from_secs(2),
+        "close_pty took {:?} with a stalled consumer",
+        t.elapsed()
+    );
+    // The shell must actually go away (a reader blocked on a full channel would keep the
+    // waiter, and so the process teardown, waiting). Closing on purpose reports no exit event.
+    if let Some(pid) = s.info.pid {
+        assert!(
+            wait_until_dead(pid, 15),
+            "the shell of a closed, paused session never went away"
+        );
+    }
+    assert!(
+        !s.exited.load(Ordering::SeqCst),
+        "an explicit close reports no exit event"
+    );
+    let _ = std::fs::remove_file(file);
+}
+
+#[test]
+fn test_21_a_session_that_ends_while_paused_still_reports_its_exit() {
+    let manager = Arc::new(PtyManager::new());
+    let s = start_flow_session(&manager, None);
+    std::thread::sleep(Duration::from_millis(1200));
+
+    let file = write_numbered_file("exit", 120_000);
+    #[cfg(target_os = "windows")]
+    let command = format!("type \"{}\" & exit\r\n", file.display());
+    #[cfg(not(target_os = "windows"))]
+    let command = format!("cat '{}'; exit\n", file.display());
+    manager.write_to_pty(&s.info.id, &command).expect("write");
+
+    // The consumer never acknowledges; the shell is blocked mid-output and so cannot exit.
+    std::thread::sleep(Duration::from_secs(3));
+    assert!(s.bytes.load(Ordering::SeqCst) > 0);
+    assert!(!s.exited.load(Ordering::SeqCst), "it is blocked on output");
+
+    // The consumer comes back and acknowledges everything it was sent.
+    let deadline = Instant::now() + Duration::from_secs(120);
+    while Instant::now() < deadline && !s.exited.load(Ordering::SeqCst) {
+        let in_flight = manager.output_in_flight(&s.info.id).unwrap_or(0);
+        manager.ack_output(&s.info.id, in_flight);
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        s.exited.load(Ordering::SeqCst),
+        "after the consumer resumed, the shell finished and its exit was reported"
+    );
+    let _ = std::fs::remove_file(file);
+}
+
+// ---------------------------------------------------------------------------
+// 22. The child process sees the new size (CI-05)
+// ---------------------------------------------------------------------------
+// `test_05` only checks the size the manager stores. What matters is that the program inside
+// the terminal is told: `stty size` (Unix) and `mode con` (Windows console) ask the terminal.
+#[test]
+fn test_22_the_child_observes_a_resize() {
+    let manager = PtyManager::new();
+    let (emitter, _, _) = TestEventEmitter::new();
+    let session = manager
+        .create_pty(
+            Arc::new(emitter.clone()),
+            PtyCreateOptions {
+                shell_path: default_test_shell(),
+                args: None,
+                cwd: None,
+                cols: 80,
+                rows: 24,
+                env: None,
+            },
+        )
+        .expect("Failed to spawn PTY session");
+    std::thread::sleep(Duration::from_millis(500));
+
+    manager.resize_pty(&session.id, 132, 41).unwrap();
+    std::thread::sleep(Duration::from_millis(300));
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        manager.write_to_pty(&session.id, "stty size\n").unwrap();
+        assert!(
+            emitter.wait_for_output("41 132", 5),
+            "the shell must report the new size, got: {}",
+            emitter.get_text()
+        );
+    }
+    #[cfg(target_os = "windows")]
+    {
+        manager.write_to_pty(&session.id, "mode con\r\n").unwrap();
+        let reported = |text: &str| {
+            // "    Columns:        132"
+            text.lines().any(|l| {
+                let l = l.trim();
+                l.starts_with("Columns:") && l.trim_start_matches("Columns:").trim() == "132"
+            })
+        };
+        let start = Instant::now();
+        while start.elapsed() < Duration::from_secs(5) && !reported(&emitter.get_text()) {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(
+            reported(&emitter.get_text()),
+            "the console must report 132 columns, got: {}",
+            emitter.get_text()
+        );
+    }
+
+    // And back down: the child follows the terminal both ways.
+    manager.resize_pty(&session.id, 60, 12).unwrap();
+    std::thread::sleep(Duration::from_millis(300));
+    #[cfg(not(target_os = "windows"))]
+    {
+        manager.write_to_pty(&session.id, "stty size\n").unwrap();
+        assert!(
+            emitter.wait_for_output("12 60", 5),
+            "got: {}",
+            emitter.get_text()
+        );
+    }
+    #[cfg(target_os = "windows")]
+    {
+        manager.write_to_pty(&session.id, "mode con\r\n").unwrap();
+        let start = Instant::now();
+        let narrow = |text: &str| {
+            text.lines().any(|l| {
+                let l = l.trim();
+                l.starts_with("Columns:") && l.trim_start_matches("Columns:").trim() == "60"
+            })
+        };
+        while start.elapsed() < Duration::from_secs(5) && !narrow(&emitter.get_text()) {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(
+            narrow(&emitter.get_text()),
+            "the console must report 60 columns, got: {}",
+            emitter.get_text()
+        );
+    }
+
+    manager.close_pty(&session.id).unwrap();
+}
+
+// ---------------------------------------------------------------------------
+// 23. An explicit close reports no exit; a shell that ignores SIGHUP is still ended
+// ---------------------------------------------------------------------------
+#[test]
+fn test_23_explicit_close_emits_no_exit_event() {
+    let manager = PtyManager::new();
+    let (emitter, _, exited) = TestEventEmitter::new();
+    let session = manager
+        .create_pty(
+            Arc::new(emitter.clone()),
+            PtyCreateOptions {
+                shell_path: default_test_shell(),
+                args: None,
+                cwd: None,
+                cols: 80,
+                rows: 24,
+                env: None,
+            },
+        )
+        .expect("Failed to spawn PTY session");
+    std::thread::sleep(Duration::from_millis(500));
+
+    manager.close_pty(&session.id).unwrap();
+
+    // The shell dies and the waiter runs; if it were going to report, it would have by now.
+    // (The code a killed child leaves behind, 1 on Windows, reads as a crash.)
+    std::thread::sleep(Duration::from_millis(1500));
+    assert!(
+        !exited.load(Ordering::SeqCst),
+        "closing a session on purpose must not produce an exit event"
+    );
+}
+
+#[test]
+fn test_23b_a_shell_that_exits_by_itself_still_reports_its_code() {
+    let manager = PtyManager::new();
+    let (emitter, _, exited) = TestEventEmitter::new();
+    let session = manager
+        .create_pty(
+            Arc::new(emitter.clone()),
+            PtyCreateOptions {
+                shell_path: default_test_shell(),
+                args: None,
+                cwd: None,
+                cols: 80,
+                rows: 24,
+                env: None,
+            },
+        )
+        .expect("Failed to spawn PTY session");
+    std::thread::sleep(Duration::from_millis(500));
+    #[cfg(target_os = "windows")]
+    manager.write_to_pty(&session.id, "exit 7\r\n").unwrap();
+    #[cfg(not(target_os = "windows"))]
+    manager.write_to_pty(&session.id, "exit 7\n").unwrap();
+
+    let start = Instant::now();
+    while start.elapsed() < Duration::from_secs(10) && !exited.load(Ordering::SeqCst) {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(
+        exited.load(Ordering::SeqCst),
+        "a shell that exits on its own must report it"
+    );
+    let _ = manager.close_pty(&session.id);
+}
+
+#[cfg(unix)]
+#[test]
+fn test_23c_close_ends_a_shell_that_ignores_sighup() {
+    let manager = PtyManager::new();
+    let (emitter, _, _) = TestEventEmitter::new();
+    let session = manager
+        .create_pty(
+            Arc::new(emitter.clone()),
+            PtyCreateOptions {
+                shell_path: Some("/bin/sh".to_string()),
+                // The shell ignores SIGHUP and then stays alive: SIGHUP alone cannot end it.
+                args: Some(vec![
+                    "-c".to_string(),
+                    "trap '' HUP; while true; do sleep 1; done".to_string(),
+                ]),
+                cwd: None,
+                cols: 80,
+                rows: 24,
+                env: None,
+            },
+        )
+        .expect("Failed to spawn PTY session");
+    let pid = session.pid.expect("pid");
+    std::thread::sleep(Duration::from_millis(500));
+    assert!(process_alive(pid));
+
+    manager.close_pty(&session.id).unwrap();
+
+    // The grace period is 500 ms; the shell must be gone shortly after, not at app exit.
+    assert!(
+        wait_until_dead(pid, 5),
+        "a shell that ignores SIGHUP must still be killed after the grace period"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 24. Throughput floor with a prompt consumer (CI-06)
+// ---------------------------------------------------------------------------
+// Flow control must hold a flooding program back from a SLOW reader, never throttle a prompt one.
+// Measured on the development machine (Windows, ConPTY) a prompt consumer receives about 1.3 MB/s
+// of `type`/`cat` output. The floor is a fifth of that: loose enough for a loaded CI runner, tight
+// enough to catch flow control, batching or the output path becoming an order of magnitude slower.
+#[test]
+fn test_24_a_prompt_consumer_keeps_up_with_a_flood() {
+    const FLOOR_BYTES_PER_SEC: f64 = 260_000.0;
+    let manager = Arc::new(PtyManager::new());
+    let s = start_flow_session(&manager, Some(Duration::ZERO));
+    std::thread::sleep(Duration::from_millis(1200));
+
+    const LINES: usize = 30_000; // ~2.4 MB
+    let file = write_numbered_file("floor", LINES);
+    let started = Instant::now();
+    manager
+        .write_to_pty(&s.info.id, &cat_command(&file))
+        .expect("write");
+
+    let last = format!("L{LINES:07}");
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while Instant::now() < deadline && !s.text.lock().unwrap().contains(&last) {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let elapsed = started.elapsed();
+    let received = s.bytes.load(Ordering::SeqCst) as f64;
+    assert!(
+        s.text.lock().unwrap().contains(&last),
+        "the flood never completed"
+    );
+    let rate = received / elapsed.as_secs_f64();
+    println!("flood throughput with a prompt consumer: {rate:.0} bytes/s over {elapsed:?}");
+    assert!(
+        rate >= FLOOR_BYTES_PER_SEC,
+        "throughput fell to {rate:.0} bytes/s (floor {FLOOR_BYTES_PER_SEC:.0}); \
+         the output path or flow control has become much slower"
+    );
+    manager.close_pty(&s.info.id).unwrap();
+    let _ = std::fs::remove_file(file);
+}

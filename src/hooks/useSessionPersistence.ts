@@ -9,6 +9,7 @@ import {
 import {
   PersistedTab,
   createDefaultTab,
+  loadPersistedActiveIndex,
   loadPersistedLayout,
   savePersistedLayout,
 } from "../services/tabFactory";
@@ -20,6 +21,8 @@ interface SessionPersistenceOptions {
   tabs: TerminalTab[];
   setTabs: Dispatch<SetStateAction<TerminalTab[]>>;
   setActiveTabId: (id: string) => void;
+  /** The tab in front: saved with the layout so a restart comes back to it. */
+  activeTabId?: string;
   /** Opt-in: load the previous session immediately instead of offering it. */
   autoRestoreSession: boolean | undefined;
   /**
@@ -28,6 +31,9 @@ interface SessionPersistenceOptions {
    */
   enabled?: boolean;
 }
+
+/** Quiet time before a changed layout is written to storage. */
+const SAVE_DEBOUNCE_MS = 500;
 
 const toTabs = (persisted: PersistedTab[]) =>
   persisted.map((t) => createDefaultTab(t.title, t.shellPath, t.cwd, t));
@@ -40,9 +46,14 @@ export function useSessionPersistence({
   tabs,
   setTabs,
   setActiveTabId,
+  activeTabId,
   autoRestoreSession,
   enabled = true,
 }: SessionPersistenceOptions) {
+  // Which restored tab to bring to the front (read once, with the offered layout).
+  const [pendingActive] = useState<number | null>(() =>
+    enabled ? loadPersistedActiveIndex() : null
+  );
   // Tabs from the previous launch, offered once via banner (never auto-run).
   const [pendingRestore, setPendingRestore] = useState<PersistedTab[] | null>(() => {
     if (!enabled) return null;
@@ -59,9 +70,9 @@ export function useSessionPersistence({
   const onlyStarter = tabs.length === 1 && tabs[0]?.id === starterId.current;
 
   const applyRestoredTabs = useCallback(
-    (restored: TerminalTab[]) => {
+    (restored: TerminalTab[], activeIndex?: number | null) => {
       setTabs(restored);
-      setActiveTabId(restored[0].id);
+      setActiveTabId((restored[activeIndex ?? 0] ?? restored[0]).id);
     },
     [setTabs, setActiveTabId]
   );
@@ -72,13 +83,13 @@ export function useSessionPersistence({
       if (restored.length === 0) return;
       const live = tabsRef.current;
       if (live.length === 1 && live[0].id === starterId.current) {
-        applyRestoredTabs(restored);
+        applyRestoredTabs(restored, pendingActive);
         return;
       }
       setTabs((prev) => [...prev, ...restored]);
-      setActiveTabId(restored[0].id);
+      setActiveTabId((restored[pendingActive ?? 0] ?? restored[0]).id);
     },
-    [applyRestoredTabs, setTabs, setActiveTabId, tabsRef]
+    [applyRestoredTabs, setTabs, setActiveTabId, tabsRef, pendingActive]
   );
 
   // Persist on tab change. While the previous session is still waiting for a
@@ -86,11 +97,33 @@ export function useSessionPersistence({
   // alone so the offer is not overwritten by the fresh starter tab. As soon as
   // the user opens or closes a tab their work is saved again; the offer itself
   // stays loadable (from memory) until it is loaded or dismissed.
+  //
+  // Written at most every SAVE_DEBOUNCE_MS (a layout change used to serialise and write the
+  // whole layout synchronously each time, and a cwd report is a layout change), and flushed when
+  // the window hides or unmounts so the last change is never lost.
+  const latestSave = useLatest({ tabs, activeTabId });
+  const holdBackSave = pendingRestore !== null && onlyStarter;
+  const holdBackRef = useLatest(holdBackSave);
+  const flushSave = useCallback(() => {
+    if (holdBackRef.current) return;
+    savePersistedLayout(latestSave.current.tabs, latestSave.current.activeTabId);
+  }, [latestSave, holdBackRef]);
+
+  useEffect(() => {
+    if (!enabled || holdBackSave) return;
+    const timer = setTimeout(flushSave, SAVE_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [tabs, activeTabId, holdBackSave, enabled, flushSave]);
+
+  // The window is hiding or closing: write now rather than lose the last 500 ms of changes.
   useEffect(() => {
     if (!enabled) return;
-    if (pendingRestore !== null && onlyStarter) return;
-    savePersistedLayout(tabs);
-  }, [tabs, pendingRestore, onlyStarter, enabled]);
+    window.addEventListener("pagehide", flushSave);
+    return () => {
+      window.removeEventListener("pagehide", flushSave);
+      flushSave();
+    };
+  }, [enabled, flushSave]);
 
   // Opt-in auto-restore: when enabled in settings, the previous session
   // loads immediately without asking (previous default behavior).

@@ -25,6 +25,8 @@ interface TabPanesProps {
   selectedShell: ShellProfile | undefined;
   /** Detected shells, to turn a pane's saved binary back into a full profile. */
   shells: ShellProfile[];
+  /** False while the shell list is still loading (a new pane waits briefly for it). Default true. */
+  shellsReady?: boolean;
   skipShellProfile: boolean;
   settings: UserSettings;
   /** Terminal handles keyed by pane id (toolbar actions, refit). */
@@ -66,6 +68,7 @@ export const TabPanes = memo(function TabPanes({
   isActive,
   selectedShell,
   shells,
+  shellsReady = true,
   skipShellProfile,
   settings,
   terminalRefs,
@@ -157,6 +160,7 @@ export const TabPanes = memo(function TabPanes({
           }}
           sessionId={pane.id}
           selectedShell={resolvePaneShell(pane.shellPath, shells, selectedShell, skipShellProfile)}
+          shellsReady={shellsReady}
           cwd={pane.cwd || tab.cwd}
           settings={settings}
           visible={isActive}

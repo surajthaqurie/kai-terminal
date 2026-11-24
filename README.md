@@ -254,7 +254,7 @@ Defaults follow Windows Terminal and avoid `Ctrl+Alt`, which Windows reports as 
 - Indexed source files are never executed. `.env*`, keys and binaries are skipped by default.
 - MCP input is size-capped before parsing, and retrieval checks file hashes and warns on stale indexes.
 - Indexes live in `~/.kai/`; `kai remove` deletes them. Diagnostics go to `~/.kai/metrics.jsonl`.
-- No account and no telemetry in the app. The code-map tools never touch the network.
+- No account and no telemetry in the app. The code-map tools never touch the network. The app itself makes these requests, and no others of its own: a version check against GitHub's public releases API (about 45 seconds after launch when none ran in the last 24 hours, then every 6 hours while the window stays open; turn it off with **Automatically check for updates** in Settings), the update download from GitHub when you choose to install, and, only once you open the music player, YouTube's player and search. Shared Agent and the integrations talk only to the PCs and services you set up.
 - Shared Agent opens a listener only while you have sharing turned on in the current session. `kai remove --name <id>` deletes an Azure DevOps sign-in and token; `kai integration teams remove` does the same for Teams.
 
 To report a vulnerability, see [SECURITY.md](SECURITY.md).
@@ -280,6 +280,7 @@ npm run tauri dev      # desktop app with hot reload
 | `npm run tauri build`  | Production bundles in `src-tauri/target/release/bundle/`   |
 | `npm run check`        | Type check, formatting and tests                           |
 | `npm run prepush`      | Full pre-push gate, including Rust fmt, clippy and tests   |
+| `npm run test:ci`      | All frontend tests; fails if a test file left no results   |
 | `npm run test:docker`  | Run the suites in Docker                                   |
 
 More in [DEVELOPMENT.md](DEVELOPMENT.md), [ARCHITECTURE.md](ARCHITECTURE.md) and [TEST_PLAN.md](TEST_PLAN.md).

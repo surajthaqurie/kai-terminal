@@ -121,15 +121,16 @@ function psEncode(script: string): string {
 /**
  * Straight .NET calls, no cmdlets: nothing to autoload, so a PowerShell 7 `PSModulePath` inherited
  * from the parent shell (CI runners, many terminals) cannot break Windows PowerShell 5.1 here.
- * The secret arrives in the child's environment, never in argv, and the child's output only ever
- * carries the plaintext of a `get`.
+ * The secret arrives on the child's stdin, never in argv or its environment (both can be read by
+ * other processes of the same user while the child runs), and the child's output only ever carries
+ * the plaintext of a `get`.
  */
 const DPAPI_PREAMBLE = `$ErrorActionPreference='Stop'
 [void][Reflection.Assembly]::LoadWithPartialName('System.Security')
 $scope = [Security.Cryptography.DataProtectionScope]::CurrentUser`;
 
 const DPAPI_SET = `${DPAPI_PREAMBLE}
-$plain = [Convert]::FromBase64String($env:KAI_SECRET_B64)
+$plain = [Convert]::FromBase64String([Console]::In.ReadToEnd().Trim())
 $enc = [Security.Cryptography.ProtectedData]::Protect($plain, $null, $scope)
 [IO.File]::WriteAllText($env:KAI_SECRET_FILE, '${DPAPI_V2}' + [Convert]::ToBase64String($enc))`;
 
@@ -214,10 +215,8 @@ export class DpapiSecretStore implements SecretStore {
   async set(key: string, value: string): Promise<SecretLocation> {
     fs.mkdirSync(credentialsDir(), { recursive: true, mode: 0o700 });
     const r = await this.run(POWERSHELL, this.psArgs(DPAPI_SET), {
-      env: windowsPowerShellEnv({
-        KAI_SECRET_FILE: this.blobPath(key),
-        KAI_SECRET_B64: Buffer.from(value, "utf8").toString("base64"),
-      }),
+      env: windowsPowerShellEnv({ KAI_SECRET_FILE: this.blobPath(key) }),
+      input: Buffer.from(value, "utf8").toString("base64"),
       timeoutMs: DPAPI_TIMEOUT_MS,
     });
     if (r.code !== 0) {

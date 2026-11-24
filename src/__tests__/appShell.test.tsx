@@ -100,6 +100,7 @@ import { SettingsService } from "../services/settingsService";
 import { runCacheJanitor } from "../services/cacheJanitor";
 import { checkForUpdates } from "../services/updateService";
 import { runGitAction } from "../services/projectService";
+import { PtyService } from "../services/ptyService";
 
 const LAYOUT_KEY = "terminal_tab_layout_v1";
 
@@ -165,6 +166,8 @@ const activeTabContent = () =>
   )!;
 const banner = (label: string) => container.querySelector(`[aria-label="${label}"]`);
 const modal = (name: string) => registry.modals[name]!;
+/** The layout is written after a short quiet period (and on hide/unmount): let it pass. */
+const layoutSaved = () => act(async () => void (await new Promise((r) => setTimeout(r, 650))));
 const persistedTitles = () =>
   (JSON.parse(localStorage.getItem(LAYOUT_KEY) ?? "[]") as Array<{ title: string }>).map(
     (t) => t.title
@@ -335,6 +338,7 @@ describe("App shell: tabs", () => {
     )!;
     await act(async () => moveRight.click());
     expect(tabTitles()).toEqual(["Terminal 2", "Terminal 1"]);
+    await layoutSaved();
     expect(persistedTitles()).toEqual(["Terminal 2", "Terminal 1"]);
   });
 
@@ -555,6 +559,7 @@ describe("App shell: session persistence", () => {
   it("persists tab titles on change", async () => {
     await mount();
     await newTabKey();
+    await layoutSaved();
     expect(persistedTitles()).toEqual(["Terminal 1", "Terminal 2"]);
   });
 
@@ -589,6 +594,7 @@ describe("App shell: session persistence", () => {
     await act(async () => fresh.click());
     expect(banner("Restore previous session")).toBeNull();
     expect(tabTitles()).toEqual(["Terminal 1"]);
+    await layoutSaved();
     expect(persistedTitles()).toEqual(["Terminal 1"]);
   });
 
@@ -596,6 +602,7 @@ describe("App shell: session persistence", () => {
     await mount();
     await resolveCwd(paneId(0), "/work/proj");
     await splitVerticalKey();
+    await layoutSaved();
     const saved = JSON.parse(localStorage.getItem(LAYOUT_KEY)!);
     expect(saved[0].panes).toHaveLength(2);
     expect(saved[0].layout).toBeTruthy();
@@ -854,6 +861,19 @@ describe("App shell: new-tab focus handoff and auto-repeat guard", () => {
     // reach the shell instead of re-activating the focused + button (which
     // used to open yet another tab).
     expect(registry.refCalls).toContain(`${paneId(1)}:focus`);
+  });
+
+  it("closing a pane hands keyboard focus to the pane that is left (FUNC-10)", async () => {
+    await mount();
+    await splitVerticalKey();
+    await settleFocus(); // the split's own focus hand-off is done
+    const [first] = terminalsIn(0);
+    registry.refCalls.length = 0;
+    await press("KeyW", "W", { alt: true, shift: true });
+    await settleFocus();
+    expect(terminalsIn(0)).toEqual([first]);
+    // The closed pane's input is gone; without this, typing went nowhere until a click.
+    expect(registry.refCalls).toContain(`${first}:focus`);
   });
 
   it("a session exit hands keyboard focus to the now-active terminal", async () => {
@@ -1602,11 +1622,162 @@ describe("App shell: footer shell picker", () => {
     await mount();
     await pick("Zsh");
     await answer("Restart");
+    await layoutSaved();
     const saved = JSON.parse(localStorage.getItem(LAYOUT_KEY) ?? "[]") as Array<{
       shellPath?: string;
       panes?: Array<{ shellPath?: string }>;
     }>;
     const paths = saved.flatMap((t) => [t.shellPath, ...(t.panes ?? []).map((p) => p.shellPath)]);
     expect(paths).toContain("/bin/zsh");
+  });
+});
+
+describe("App shell: closing live work asks first", () => {
+  const dialog = () => container.querySelector<HTMLElement>('[role="dialog"]');
+  const dialogButton = (label: string) =>
+    [...(dialog()?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find(
+      (b) => b.textContent === label
+    );
+  const click = async (el: Element | undefined) => {
+    await act(async () => (el as HTMLElement).click());
+    await flush();
+  };
+  const closeTabButton = (title: string) =>
+    container.querySelector<HTMLElement>(`[aria-label="Close ${title}"]`)!;
+  /** Mark a pane as having a live shell, optionally with a command running in it. */
+  const liveShell = (pane: string, running: boolean) => {
+    registry.liveSessions.set(pane, `backend-${pane}`);
+    return running ? [`backend-${pane}`] : [];
+  };
+
+  it("closes an idle tab immediately, with no dialog", async () => {
+    await mount();
+    await newTabKey();
+    const busy = vi.spyOn(PtyService, "busySessions").mockResolvedValue([]);
+    liveShell(paneId(1), false);
+    await click(closeTabButton("Terminal 2"));
+    expect(busy).toHaveBeenCalledTimes(1); // asked once; nothing was running
+    expect(dialog()).toBeNull();
+    expect(tabTitles()).toEqual(["Terminal 1"]);
+  });
+
+  it("does not even query the backend for a tab whose shell never started", async () => {
+    await mount();
+    await newTabKey();
+    const busy = vi.spyOn(PtyService, "busySessions");
+    await click(closeTabButton("Terminal 2"));
+    expect(busy).not.toHaveBeenCalled();
+    expect(tabTitles()).toEqual(["Terminal 1"]);
+  });
+
+  it("asks before closing a tab with a running command; Cancel keeps it", async () => {
+    await mount();
+    await newTabKey();
+    const running = liveShell(paneId(1), true);
+    vi.spyOn(PtyService, "busySessions").mockResolvedValue(running);
+
+    await click(closeTabButton("Terminal 2"));
+    expect(dialog()).not.toBeNull();
+    expect(dialog()!.textContent).toContain("still running");
+    expect(tabTitles()).toEqual(["Terminal 1", "Terminal 2"]); // nothing closed yet
+
+    await click(dialogButton("Cancel"));
+    expect(dialog()).toBeNull();
+    expect(tabTitles()).toEqual(["Terminal 1", "Terminal 2"]);
+  });
+
+  it("closes the tab once the question is confirmed", async () => {
+    await mount();
+    await newTabKey();
+    const running = liveShell(paneId(1), true);
+    vi.spyOn(PtyService, "busySessions").mockResolvedValue(running);
+
+    await click(closeTabButton("Terminal 2"));
+    await click(dialogButton("Close tab"));
+    expect(dialog()).toBeNull();
+    expect(tabTitles()).toEqual(["Terminal 1"]);
+  });
+
+  it("covers the shortcut path too (Ctrl+Shift+W) and ignores repeats while asking", async () => {
+    await mount();
+    await newTabKey();
+    const running = liveShell(paneId(1), true);
+    const busy = vi.spyOn(PtyService, "busySessions").mockResolvedValue(running);
+
+    await press("KeyW", "w", { ctrl: true, shift: true });
+    await flush();
+    expect(dialog()).not.toBeNull();
+    await press("KeyW", "w", { ctrl: true, shift: true }); // second press while asking
+    await flush();
+    expect(busy).toHaveBeenCalledTimes(1);
+    expect(tabTitles()).toEqual(["Terminal 1", "Terminal 2"]);
+  });
+
+  it("asks before closing a pane that runs a command, and keeps the pane on Cancel", async () => {
+    await mount();
+    await splitVerticalKey();
+    const [first, second] = terminalsIn(0);
+    expect(first).toBeDefined();
+    // The second pane is the active one after a split.
+    const running = liveShell(second, true);
+    liveShell(first, false);
+    vi.spyOn(PtyService, "busySessions").mockResolvedValue(running);
+
+    await press("KeyW", "w", { alt: true, shift: true });
+    await flush();
+    expect(dialog()?.textContent).toContain("Close this pane?");
+    expect(terminalsIn(0)).toHaveLength(2);
+
+    await click(dialogButton("Cancel"));
+    expect(terminalsIn(0)).toHaveLength(2);
+
+    await press("KeyW", "w", { alt: true, shift: true });
+    await flush();
+    registry.refCalls.length = 0;
+    await click(dialogButton("Close pane"));
+    expect(terminalsIn(0)).toHaveLength(1);
+    // After the confirmation, the pane that is left takes the keyboard (FUNC-10).
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 60));
+    });
+    expect(registry.refCalls).toContain(`${first}:focus`);
+  });
+
+  it("asks before a workspace load replaces tabs that run a command", async () => {
+    await mount();
+    const running = liveShell(paneId(0), true);
+    vi.spyOn(PtyService, "busySessions").mockResolvedValue(running);
+    const workspace = {
+      id: "w1",
+      name: "W",
+      createdAt: 1,
+      updatedAt: 1,
+      tabs: [{ title: "One", cwd: "/w/one" }],
+    };
+
+    await act(async () => modal("workspace").onLoadWorkspace(workspace));
+    await flush();
+    expect(dialog()?.textContent).toContain("Replace the open tabs?");
+    expect(tabTitles()).toEqual(["Terminal 1"]); // not replaced yet
+
+    await click(dialogButton("Cancel"));
+    expect(tabTitles()).toEqual(["Terminal 1"]);
+
+    await act(async () => modal("workspace").onLoadWorkspace(workspace));
+    await flush();
+    await click(dialogButton("Load workspace"));
+    expect(tabTitles()).toEqual(["One"]);
+  });
+
+  it("a shell that exits by itself closes its pane without any question", async () => {
+    await mount();
+    await newTabKey();
+    const second = paneId(1);
+    const running = liveShell(second, true);
+    const busy = vi.spyOn(PtyService, "busySessions").mockResolvedValue(running);
+    await exitPane(second, 0);
+    expect(dialog()).toBeNull();
+    expect(busy).not.toHaveBeenCalled();
+    expect(tabTitles()).toEqual(["Terminal 1"]);
   });
 });

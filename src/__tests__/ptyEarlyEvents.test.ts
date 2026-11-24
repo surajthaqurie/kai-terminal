@@ -1,7 +1,13 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, it, expect } from "vitest";
-import { claimPtyId, createEarlyPtyEvents, releasePtyId } from "../services/ptyEarlyEvents";
+import {
+  MAX_EARLY_EVENTS,
+  MAX_EARLY_OUTPUT_CHARS,
+  claimPtyId,
+  createEarlyPtyEvents,
+  releasePtyId,
+} from "../services/ptyEarlyEvents";
 
 const out = (id: string, data: string) => ({ kind: "output" as const, id, data });
 const exit = (id: string, exit_code = 0) => ({ kind: "exit" as const, id, exit_code });
@@ -38,23 +44,39 @@ describe("createEarlyPtyEvents (events that beat the create_pty reply)", () => {
 
   it("bounds the buffer by event count, dropping the oldest and keeping the newest", () => {
     const early = createEarlyPtyEvents(() => false);
-    for (let i = 0; i < 1000; i++) early.hold(out("mine", String(i)));
+    const total = MAX_EARLY_EVENTS * 2;
+    for (let i = 0; i < total; i++) early.hold(out("mine", String(i)));
     const kept = early.take("mine");
-    expect(kept.length).toBeLessThanOrEqual(256);
-    expect(kept[kept.length - 1]).toEqual(out("mine", "999"));
+    expect(kept.length).toBeLessThanOrEqual(MAX_EARLY_EVENTS);
+    expect(kept[kept.length - 1]).toEqual(out("mine", String(total - 1)));
   });
 
   it("bounds the buffer by output size", () => {
     const early = createEarlyPtyEvents(() => false);
-    const chunk = "x".repeat(400_000);
+    const chunk = "x".repeat(Math.ceil(MAX_EARLY_OUTPUT_CHARS * 0.4));
     early.hold(out("mine", chunk));
     early.hold(out("mine", chunk));
     early.hold(out("mine", chunk));
     const kept = early.take("mine");
     expect(
       kept.reduce((n, e) => n + (e.kind === "output" ? e.data.length : 0), 0)
-    ).toBeLessThanOrEqual(1_048_576);
+    ).toBeLessThanOrEqual(MAX_EARLY_OUTPUT_CHARS);
     expect(kept.length).toBe(2);
+  });
+
+  it("is sized above what output flow control allows in flight, so a held event is never dropped", () => {
+    // The backend sends at most ~1 MiB (plus a batch) before the frontend acknowledges
+    // anything. A dropped early event would also never be acknowledged.
+    expect(MAX_EARLY_OUTPUT_CHARS).toBeGreaterThanOrEqual(3 * 1024 * 1024);
+    const early = createEarlyPtyEvents(() => false);
+    const oneMiB = 1024 * 1024;
+    for (let sent = 0; sent < oneMiB + 98_304; sent += 32_768) {
+      early.hold(out("mine", "y".repeat(32_768)));
+    }
+    const kept = early.take("mine");
+    expect(kept.reduce((n, e) => n + (e.kind === "output" ? e.data.length : 0), 0)).toBe(
+      Math.ceil((oneMiB + 98_304) / 32_768) * 32_768
+    );
   });
 
   it("clear() discards everything held", () => {
@@ -85,13 +107,24 @@ describe("TerminalView replays early PTY events after spawn", () => {
   });
 
   it("replays them after the session id is assigned and 'connected' is reported", () => {
-    const start = source.indexOf("backendPtyIdRef.current = sessionInfo.id;");
-    const body = source.slice(start, source.indexOf("} catch (err: unknown) {", start));
-    expect(start).toBeGreaterThan(-1);
-    expect(body).toContain("claimPtyId(sessionInfo.id)");
-    expect(body.indexOf('onStatusRef.current?.("connected")')).toBeLessThan(
-      body.indexOf("replayEarlyEventsRef.current(")
+    // Both launch paths (new shell, moved shell) go live through `markLive` then `replayHeld`.
+    const live = source.slice(
+      source.indexOf("const markLive = "),
+      source.indexOf("const replayHeld = ")
     );
+    expect(live).toContain("backendPtyIdRef.current = id;");
+    expect(live).toContain("claimPtyId(id)");
+    expect(live).toContain('onStatusRef.current?.("connected")');
+    const held = source.slice(
+      source.indexOf("const replayHeld = "),
+      source.indexOf("const launchFailed = ")
+    );
+    expect(held).toContain("replayEarlyEventsRef.current(");
+    for (const launch of ["const initPtySession = ", "const adoptSession = "]) {
+      const body = source.slice(source.indexOf(launch));
+      expect(body.indexOf("markLive("), launch).toBeGreaterThan(-1);
+      expect(body.indexOf("markLive("), launch).toBeLessThan(body.indexOf("replayHeld("));
+    }
   });
 
   it("releases the session id when the shell exits, respawns, or the pane unmounts", () => {

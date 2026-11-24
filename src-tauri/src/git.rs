@@ -253,6 +253,14 @@ fn validate_repo_rel_path<'a>(repo_root: &str, rel_path: &'a str) -> Result<&'a 
             return Err("Invalid relative path: directory traversal attempt".to_string());
         }
     }
+    // `.` (or `./`) names the whole working tree: `git restore -- .` would discard everything.
+    // Whole-tree actions have their own, explicit entry point (`run_git_action`).
+    if normalized
+        .split('/')
+        .all(|part| part.is_empty() || part == ".")
+    {
+        return Err("Invalid file path".to_string());
+    }
 
     for component in p.components() {
         match component {
@@ -570,6 +578,44 @@ fn git_binary_available_uncached() -> bool {
     false
 }
 
+/// Global options prepended to every git invocation Kai makes in a user-chosen
+/// folder (every probe and action goes through [`run_git_bounded`]).
+///
+/// Git honours the folder's own `.git/config`. `core.fsmonitor` names a program
+/// git executes on `status`, so merely `cd`-ing into a downloaded or unpacked
+/// repository that ships a crafted config would run attacker code (reproduced
+/// with git 2.43: `core.fsmonitor='sh -c "echo pwned > ../pwned.txt"'` plus
+/// `git status` creates the file). Forcing it off disables that vector.
+const GIT_HARDENING_ARGS: [&str; 2] = ["-c", "core.fsmonitor=false"];
+
+/// Builds the full argument list for one git invocation: the hardening options,
+/// then the caller's arguments; `diff` additionally gets `--no-ext-diff
+/// --no-textconv` so a repository's `diff.external` / `diff.<driver>.textconv`
+/// programs never run either.
+///
+/// Residual risk (documented in SECURITY.md): clean/smudge filter drivers
+/// (`filter.<name>.clean`) defined in a repository's own config and referenced
+/// from its `.gitattributes` can still run during `status`/`diff`.
+fn git_command_args(args: &[&str]) -> Vec<String> {
+    let mut out: Vec<String> = GIT_HARDENING_ARGS.iter().map(|a| a.to_string()).collect();
+    let mut i = 0;
+    // The subcommand is the first argument that is not a global `-c key=value` pair.
+    while i < args.len() && args[i] == "-c" {
+        i += 2;
+    }
+    let sub = i.min(args.len());
+    out.extend(args[..sub].iter().map(|a| a.to_string()));
+    if let Some(subcommand) = args.get(sub) {
+        out.push(subcommand.to_string());
+        if *subcommand == "diff" {
+            out.push("--no-ext-diff".to_string());
+            out.push("--no-textconv".to_string());
+        }
+        out.extend(args[sub + 1..].iter().map(|a| a.to_string()));
+    }
+    out
+}
+
 fn run_git_bounded(
     cwd: &str,
     args: &[&str],
@@ -578,7 +624,15 @@ fn run_git_bounded(
 ) -> Option<String> {
     let mut c = Command::new("git");
     c.current_dir(cwd)
-        .args(args)
+        .args(git_command_args(args))
+        // Background probes must not take `index.lock` just to refresh the
+        // index: it can make the user's own concurrent `git commit` in the same
+        // repository fail with "index.lock exists".
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        // Paths are file names, not patterns: without this a file called `[id].tsx` also
+        // matches `i.tsx` and `d.tsx`, and `:(top)`/`*` style magic in a path means something
+        // else than the file the user clicked.
+        .env("GIT_LITERAL_PATHSPECS", "1")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         // stderr is never consumed (diagnostics use exit status + stdout
@@ -706,6 +760,168 @@ mod tests {
         std::fs::write(dir.join("f.txt"), "hello\n").unwrap();
         assert!(run(&["add", "f.txt"]).status.success());
         assert!(run(&["commit", "-m", "init"]).status.success());
+    }
+
+    #[test]
+    fn test_validate_repo_rel_path_rejects_whole_tree_paths() {
+        let _env = crate::test_support::lock_test_env();
+        let root = std::env::temp_dir().to_string_lossy().to_string();
+        for bad in [".", "./", ".//", "./.", ".\\", " . "] {
+            assert!(
+                validate_repo_rel_path(&root, bad).is_err(),
+                "{bad:?} must be refused"
+            );
+        }
+        assert!(validate_repo_rel_path(&root, "./src/a.rs").is_ok());
+        assert!(validate_repo_rel_path(&root, "[id].tsx").is_ok());
+    }
+
+    #[test]
+    fn test_paths_are_literal_not_patterns() {
+        let _env = crate::test_support::lock_test_env();
+        if !git_available() {
+            return;
+        }
+        let base = std::env::temp_dir().join(format!("kai-git-literal-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        init_repo_with_commit(&base);
+        // `[id].tsx` is a glob that also matches `i.tsx` and `d.tsx`: three tracked files,
+        // all modified, of which only the first is the one the user picked.
+        let git = |args: &[&str]| {
+            assert!(std::process::Command::new("git")
+                .current_dir(&base)
+                .args(args)
+                .output()
+                .unwrap()
+                .status
+                .success());
+        };
+        for name in ["[id].tsx", "i.tsx", "d.tsx"] {
+            std::fs::write(base.join(name), "one\n").unwrap();
+        }
+        git(&["add", "-A"]);
+        git(&["commit", "-m", "files"]);
+        for name in ["[id].tsx", "i.tsx", "d.tsx"] {
+            std::fs::write(base.join(name), "two\n").unwrap();
+        }
+        let dir = base.to_string_lossy().to_string();
+        let staged = || {
+            let out = std::process::Command::new("git")
+                .current_dir(&base)
+                .args(["diff", "--cached", "--name-only"])
+                .output()
+                .unwrap();
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        };
+
+        stage_git_file(&dir, "[id].tsx").expect("stage");
+        assert_eq!(staged(), "[id].tsx", "only the named file");
+
+        // Whole-tree actions still work (the folder they name is not a pattern).
+        run_git_action(&dir, "stage_all").expect("stage all");
+        assert!(staged().contains("i.tsx"));
+        assert!(staged().contains("d.tsx"));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn test_git_command_args_harden_every_invocation() {
+        // fsmonitor is always forced off, ahead of the caller's own -c options.
+        assert_eq!(
+            git_command_args(&["status", "--porcelain"]),
+            ["-c", "core.fsmonitor=false", "status", "--porcelain"]
+        );
+        assert_eq!(
+            git_command_args(&["-c", "core.quotepath=off", "status", "--short"]),
+            [
+                "-c",
+                "core.fsmonitor=false",
+                "-c",
+                "core.quotepath=off",
+                "status",
+                "--short"
+            ]
+        );
+        // diff never runs external diff / textconv programs.
+        assert_eq!(
+            git_command_args(&["diff", "--cached", "--", "a.txt"]),
+            [
+                "-c",
+                "core.fsmonitor=false",
+                "diff",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--cached",
+                "--",
+                "a.txt"
+            ]
+        );
+        // A path that merely equals "diff" after `--` is not a subcommand.
+        assert_eq!(
+            git_command_args(&["restore", "--", "diff"]),
+            ["-c", "core.fsmonitor=false", "restore", "--", "diff"]
+        );
+        assert_eq!(
+            git_command_args(&[]),
+            ["-c", "core.fsmonitor=false"],
+            "no arguments must not panic"
+        );
+    }
+
+    /// Security regression (SEC-03): a repository whose config sets
+    /// `core.fsmonitor` must not get that command executed by Kai's probes.
+    #[test]
+    fn test_repo_fsmonitor_command_is_not_executed_by_probes() {
+        let _env = crate::test_support::lock_test_env();
+        if !git_available() {
+            return;
+        }
+        let base = std::env::temp_dir().join(format!("kai-fsmon-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let repo = base.join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        init_repo_with_commit(&repo);
+        let marker = base.join("pwned.txt");
+        let git = |args: &[&str]| {
+            std::process::Command::new("git")
+                .current_dir(&repo)
+                .args(args)
+                .output()
+                .expect("git")
+        };
+        assert!(git(&[
+            "config",
+            "core.fsmonitor",
+            "sh -c \"echo pwned > ../pwned.txt; exit 0\""
+        ])
+        .status
+        .success());
+
+        // Control (the premise): plain git honours the repo config and runs it.
+        // Newer git releases may refuse; then there is nothing to defend against.
+        let _ = git(&["status", "--porcelain"]);
+        let premise_holds = marker.exists();
+        let _ = std::fs::remove_file(&marker);
+
+        let dir = repo.to_string_lossy().to_string();
+        let info = get_git_info(&dir);
+        assert!(
+            info.error.is_none(),
+            "probe must still work: {:?}",
+            info.error
+        );
+        assert!(info.branch.is_some());
+        assert!(run_git_action(&dir, "status").is_ok());
+        assert!(run_git_action(&dir, "diff_working").is_ok());
+        assert!(
+            !marker.exists(),
+            "core.fsmonitor from the repository config was executed by a Kai git probe"
+        );
+        if !premise_holds {
+            eprintln!("note: this git does not run the planted fsmonitor on plain `status`");
+        }
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

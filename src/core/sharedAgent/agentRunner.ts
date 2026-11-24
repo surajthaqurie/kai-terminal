@@ -13,6 +13,7 @@
  *    that widens this: a shared agent cannot read or change files.
  */
 import { spawn, execFile, type ChildProcess } from "child_process";
+import { systemToolPath } from "../spawnSafety";
 import crypto from "crypto";
 import fs from "fs";
 import { AGENT_REGISTRY, findBinaryOnPath } from "../agents";
@@ -216,7 +217,7 @@ export const detectOtherClis: OtherCliDetector = () =>
 function killTree(proc: ChildProcess): void {
   if (proc.exitCode !== null || proc.pid === undefined) return;
   if (process.platform === "win32") {
-    spawn("taskkill", ["/PID", String(proc.pid), "/T", "/F"], {
+    spawn(systemToolPath("taskkill.exe"), ["/PID", String(proc.pid), "/T", "/F"], {
       windowsHide: true,
       stdio: "ignore",
     });

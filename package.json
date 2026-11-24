@@ -10,12 +10,16 @@
   },
   "files": [
     "bin",
-    "dist"
+    "dist/cli"
   ],
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build && npm run build:cli",
     "build:cli": "vite build --config vite.cli.config.ts",
+    "check:bundle": "node scripts/check-bundle-budget.mjs",
     "build:website": "npm --prefix kai-website run build",
     "build:all": "npm run build && npm run build:website",
     "prepack": "npm run build:cli",
@@ -23,6 +27,7 @@
     "doctor": "node ./bin/kai.js --version",
     "preview": "vite preview",
     "test": "vitest run",
+    "test:ci": "vitest run --reporter=default --reporter=json --outputFile=test-results/vitest.json && node scripts/check-test-run.mjs test-results/vitest.json",
     "test:live": "vitest run -c vitest.live.config.ts",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit",
@@ -58,7 +63,6 @@
     "@xterm/addon-web-links": "^0.12.0",
     "@xterm/addon-webgl": "^0.19.0",
     "@xterm/xterm": "^6.0.0",
-    "gpt-tokenizer": "^4.1.0",
     "lucide-react": "^0.460.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
@@ -70,6 +74,7 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
+    "gpt-tokenizer": "^4.1.0",
     "husky": "^9.1.7",
     "jsdom": "^30.1.2",
     "prettier": "^3.9.10",

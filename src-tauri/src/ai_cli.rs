@@ -379,6 +379,56 @@ fn is_cli_launcher_candidate(p: &str) -> bool {
     false
 }
 
+/// Copies `file` to `<file>.kai.bak`, unless that backup already exists. The first backup is the
+/// user's own file: a later forced re-wire must not replace it with a copy that already contains
+/// our entry (SEC-08). Returns the backup's path.
+fn backup_config_once(file: &std::path::Path) -> Result<String, String> {
+    let bak = file.with_file_name(format!(
+        "{}.kai.bak",
+        file.file_name().unwrap_or_default().to_string_lossy()
+    ));
+    if !bak.exists() {
+        std::fs::copy(file, &bak).map_err(|e| format!("Cannot back up existing config: {}", e))?;
+    }
+    Ok(bak.to_string_lossy().to_string())
+}
+
+/// Replaces `file` with `content`: a temp file next to it, flushed to disk, then renamed over it.
+/// The temp file starts with the original's permissions (on Unix a `0600` config that holds other
+/// servers' API keys must not come back `0644`); a new file is created `0600` (SEC-08).
+fn replace_config_atomically(file: &std::path::Path, content: &[u8]) -> Result<(), String> {
+    use std::io::Write as _;
+    let tmp = file.with_file_name(format!(
+        "{}.kai.tmp.{}.tmp",
+        file.file_name().unwrap_or_default().to_string_lossy(),
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&tmp);
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let mode = std::fs::metadata(file)
+            .map(|m| m.permissions().mode() & 0o777)
+            .unwrap_or(0o600);
+        options.mode(mode);
+    }
+    let written = (|| -> std::io::Result<()> {
+        let mut f = options.open(&tmp)?;
+        f.write_all(content)?;
+        f.sync_all()
+    })();
+    if let Err(e) = written {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(format!("Cannot write config: {}", e));
+    }
+    std::fs::rename(&tmp, file).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("Cannot replace config: {}", e)
+    })
+}
+
 fn validate_launcher(launcher: &[String]) -> Result<(), String> {
     if launcher.is_empty() || launcher.len() > 8 {
         return Err("Launcher must hold 1-8 command parts.".to_string());
@@ -802,30 +852,14 @@ fn write_merged_json_config(
             .map_err(|e| format!("Cannot create config directory: {}", e))?;
     }
     let backup_path = if existing_raw.is_some() {
-        // Human-friendly `<file>.kai.bak` next to the original.
-        let bak = file.with_file_name(format!(
-            "{}.kai.bak",
-            file.file_name().unwrap_or_default().to_string_lossy()
-        ));
-        std::fs::copy(file, &bak).map_err(|e| format!("Cannot back up existing config: {}", e))?;
-        Some(bak.to_string_lossy().to_string())
+        Some(backup_config_once(file)?)
     } else {
         None
     };
-    let tmp = file.with_file_name(format!(
-        "{}.kai.tmp.{}.tmp",
-        file.file_name().unwrap_or_default().to_string_lossy(),
-        std::process::id()
-    ));
-    std::fs::write(
-        &tmp,
-        format!("{}\n", serde_json::to_string_pretty(&doc).unwrap()),
-    )
-    .map_err(|e| format!("Cannot write config: {}", e))?;
-    std::fs::rename(&tmp, file).map_err(|e| {
-        let _ = std::fs::remove_file(&tmp);
-        format!("Cannot replace config: {}", e)
-    })?;
+    replace_config_atomically(
+        file,
+        format!("{}\n", serde_json::to_string_pretty(&doc).unwrap()).as_bytes(),
+    )?;
     Ok(AgentSetupResult {
         id: id.to_string(),
         path: file.to_string_lossy().to_string(),
@@ -900,12 +934,7 @@ fn setup_codex_toml(
             .map_err(|e| format!("Cannot create config directory: {}", e))?;
     }
     let backup_path = if existing.is_some() {
-        let bak = file.with_file_name(format!(
-            "{}.kai.bak",
-            file.file_name().unwrap_or_default().to_string_lossy()
-        ));
-        std::fs::copy(file, &bak).map_err(|e| format!("Cannot back up existing config: {}", e))?;
-        Some(bak.to_string_lossy().to_string())
+        Some(backup_config_once(file)?)
     } else {
         None
     };
@@ -924,16 +953,7 @@ fn setup_codex_toml(
         Some(raw) => format!("{}\n\n{}", raw, section),
         None => section,
     };
-    let tmp = file.with_file_name(format!(
-        "{}.kai.tmp.{}.tmp",
-        file.file_name().unwrap_or_default().to_string_lossy(),
-        std::process::id()
-    ));
-    std::fs::write(&tmp, content).map_err(|e| format!("Cannot write config: {}", e))?;
-    std::fs::rename(&tmp, file).map_err(|e| {
-        let _ = std::fs::remove_file(&tmp);
-        format!("Cannot replace config: {}", e)
-    })?;
+    replace_config_atomically(file, content.as_bytes())?;
     Ok(AgentSetupResult {
         id: id.to_string(),
         path: file.to_string_lossy().to_string(),
@@ -2620,6 +2640,88 @@ mod tests {
             assert!(forced.wrote);
             assert!(forced.backup_path.is_some());
         });
+    }
+
+    #[test]
+    fn test_setup_keeps_the_first_backup_across_forced_rewires() {
+        let _env = crate::test_support::lock_test_env();
+        with_temp_home("firstbackup", |home| {
+            let dir = home.join(".config/aider");
+            std::fs::create_dir_all(&dir).unwrap();
+            let original = r#"{"mcpServers":{"other":{"command":"other-bin","args":[]}}}"#;
+            std::fs::write(dir.join("mcp.json"), original).unwrap();
+
+            let first = setup_agent_mcp("aider", test_launcher(), ".", false, None).expect("setup");
+            let bak = std::path::PathBuf::from(first.backup_path.expect("backup"));
+            assert_eq!(std::fs::read_to_string(&bak).unwrap(), original);
+
+            // A forced re-wire reads a file that already holds our entry. Its backup must not
+            // replace the user's original with that modified copy.
+            let forced = setup_agent_mcp("aider", test_launcher(), ".", true, None).expect("force");
+            assert!(forced.wrote);
+            assert_eq!(
+                std::fs::read_to_string(&bak).unwrap(),
+                original,
+                "the first backup is the user's file"
+            );
+        });
+    }
+
+    #[test]
+    fn test_setup_keeps_the_codex_first_backup_too() {
+        let _env = crate::test_support::lock_test_env();
+        with_temp_home("firstbackup-codex", |home| {
+            let dir = home.join(".codex");
+            std::fs::create_dir_all(&dir).unwrap();
+            let original = "model = \"x\"\n";
+            std::fs::write(dir.join("config.toml"), original).unwrap();
+            let first = setup_agent_mcp("codex", test_launcher(), ".", false, None).expect("setup");
+            let bak = std::path::PathBuf::from(first.backup_path.expect("backup"));
+            setup_agent_mcp("codex", test_launcher(), ".", true, None).expect("force");
+            assert_eq!(std::fs::read_to_string(&bak).unwrap(), original);
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_setup_preserves_the_configs_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let _env = crate::test_support::lock_test_env();
+        with_temp_home("mode", |home| {
+            let dir = home.join(".config/aider");
+            std::fs::create_dir_all(&dir).unwrap();
+            let file = dir.join("mcp.json");
+            std::fs::write(&file, r#"{"mcpServers":{"other":{"apiKey":"secret"}}}"#).unwrap();
+            std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+            setup_agent_mcp("aider", test_launcher(), ".", false, None).expect("setup");
+            let mode = std::fs::metadata(&file).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "a private config must stay private");
+
+            // And a file we create ourselves is private too.
+            let fresh = home.join(".config/new-agent.json");
+            replace_config_atomically(&fresh, b"{}").unwrap();
+            let mode = std::fs::metadata(&fresh).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600);
+        });
+    }
+
+    #[test]
+    fn test_replace_config_atomically_replaces_and_leaves_no_temp_file() {
+        let dir = std::env::temp_dir().join(format!("kai-atomic-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("c.json");
+        std::fs::write(&file, "old").unwrap();
+        replace_config_atomically(&file, b"new").unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "new");
+        let leftovers: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+            .filter(|n| n.contains(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "temp files left: {leftovers:?}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -188,6 +188,10 @@ body.tab-dragging * {
   color: var(--color-warning);
 }
 
+.tab-item.status-connecting .tab-icon.tab-icon-idle {
+  color: var(--text-tertiary);
+}
+
 .tab-icon-spin {
   animation: kai-spin 1s linear infinite;
 }
@@ -317,6 +321,11 @@ body.tab-dragging * {
 }
 
 /* Context Menu */
+/* The menu itself only holds focus so the arrow keys work; its buttons show the focus ring. */
+.tab-context-menu:focus {
+  outline: none;
+}
+
 .tab-context-menu {
   position: fixed;
   z-index: var(--z-menu);

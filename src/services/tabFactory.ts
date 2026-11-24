@@ -15,8 +15,13 @@ import type {
 
 export const LAYOUT_KEY = "terminal_tab_layout_v1";
 
-/** Most tabs ever written to / read from the saved layout. */
-const MAX_PERSISTED_TABS = 10;
+/**
+ * Most tabs ever written to / read from the saved layout. Restored tabs start their shell only
+ * when first shown, so a long list does not cost a spawn storm at launch.
+ */
+export const MAX_PERSISTED_TABS = 30;
+/** Which tab (by position) was in front when the layout was saved. */
+export const ACTIVE_TAB_KEY = "terminal_active_tab_v1";
 
 let tabSeq = 0;
 
@@ -93,9 +98,25 @@ export function loadPersistedLayout(): PersistedTab[] | null {
   }
 }
 
-/** Safe UI layout only (titles, color, cwd, pane structure) — never history. */
-export function savePersistedLayout(tabs: TerminalTab[]): void {
+/** Position of the tab that was in front at the last save; null when unknown or out of range. */
+export function loadPersistedActiveIndex(): number | null {
   try {
+    const n = Number(localStorage.getItem(ACTIVE_TAB_KEY));
+    return Number.isInteger(n) && n >= 0 && n < MAX_PERSISTED_TABS ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Safe UI layout only (titles, color, cwd, pane structure) — never history. */
+export function savePersistedLayout(tabs: TerminalTab[], activeTabId?: string): void {
+  try {
+    if (activeTabId !== undefined) {
+      const index = tabs.findIndex((t) => t.id === activeTabId);
+      if (index >= 0 && index < MAX_PERSISTED_TABS) {
+        localStorage.setItem(ACTIVE_TAB_KEY, String(index));
+      }
+    }
     const safe: PersistedTab[] = tabs.slice(0, MAX_PERSISTED_TABS).map((t) => {
       const paneIds = t.panes.map((p) => p.id);
       // A single-pane tab is restored from the tab-level fields, which are only

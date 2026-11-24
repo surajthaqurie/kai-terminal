@@ -53,13 +53,20 @@ describe("music picture-in-picture", () => {
     expect(pip.windows).toEqual(["music-pip"]);
     expect(main.windows).not.toContain("music-pip");
     // Dragging is the only window power it needs; it cannot close or minimize the app.
-    expect(pip.permissions).toEqual(["core:default", "core:window:allow-start-dragging"]);
+    // Of the app's own commands it may call just the two it uses (tauriCapabilities.test.ts
+    // and src-tauri/tests/window_acl.rs prove it can call nothing else, e.g. create_pty).
+    expect(pip.permissions).toEqual([
+      "core:default",
+      "core:window:allow-start-dragging",
+      "allow-close-music-pip",
+      "allow-music-relay-url",
+    ]);
   });
 
   it("only a terminal window (never the music window) can end the app, and only the last one", () => {
     const rs = fs.readFileSync(path.resolve(__dirname, "../../src-tauri/src/lib.rs"), "utf-8");
     expect(rs).toMatch(
-      /CloseRequested \{ \.\. \}\s*if terminal_windows::is_terminal_label\(window\.label\(\)\)/
+      /CloseRequested \{ api, \.\. \}\s*if terminal_windows::is_terminal_label\(window\.label\(\)\)/
     );
     expect(rs).toContain("terminal_windows::closing_ends_app(open)");
     // The music window is not a terminal window, so closing it leaves the app running.

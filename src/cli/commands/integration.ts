@@ -1,4 +1,5 @@
 import { spawn } from "child_process";
+import { noCwdLookupEnv, systemToolPath } from "../../core/spawnSafety";
 import { applyAgentSetup, detectInstalledAgentsSync } from "../../core/agents";
 import { findBinding, getAccount, listAccounts } from "../../core/integrations/config";
 import {
@@ -191,7 +192,11 @@ function runAzLogin(): Promise<boolean> {
     const args = ["login"];
     const child =
       process.platform === "win32"
-        ? spawn("cmd.exe", ["/d", "/s", "/c", "az", ...args], { stdio: "inherit" })
+        ? spawn(systemToolPath("cmd.exe"), ["/d", "/s", "/c", "az", ...args], {
+            stdio: "inherit",
+            // cmd.exe would run an `az.cmd`/`az.bat` planted in the project folder.
+            env: noCwdLookupEnv(),
+          })
         : spawn("az", args, { stdio: "inherit" });
     child.on("error", () => resolve(false));
     child.on("close", (code) => resolve(code === 0));

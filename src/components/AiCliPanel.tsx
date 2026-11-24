@@ -23,7 +23,6 @@ import {
   registerUserCustomAiCli,
   removeUserCustomAiCli,
   saveAiCliPathOverride,
-  getKaiCliLaunch,
   getAgentSetupSnippet,
   setupAgentMcp,
   versionBadgeLabel,
@@ -125,10 +124,9 @@ export const AiCliPanel: FC<AiCliPanelProps> = ({
     setCustomError(null);
     setSuccessMessage(null);
     try {
-      const launcher = await getKaiCliLaunch();
+      // The backend resolves the installed CLI itself (and says so if it is missing).
       const res = await setupAgentMcp(
         cli.id,
-        launcher,
         projectDir || ".",
         Boolean(cli.kai_wired),
         projectDir || undefined

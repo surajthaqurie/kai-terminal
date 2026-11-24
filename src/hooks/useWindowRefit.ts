@@ -1,9 +1,112 @@
-import { useCallback, useEffect, type MutableRefObject } from "react";
+import { useCallback, useEffect, useMemo, type MutableRefObject } from "react";
 import type { TerminalViewRef } from "../components/TerminalView";
 import type { TerminalTab } from "../types/terminal";
 
 /** Follow-up passes after window-restore animations settle (intermediate sizes). */
 const REFIT_FOLLOW_UP_MS = [150, 500];
+/** A resize burst (an OS window drag emits an event per pixel) refits once it goes quiet this long. */
+const RESIZE_SETTLE_MS = 100;
+/** Signals closer together than this share one immediate pass (window focus fires several). */
+const IMMEDIATE_COALESCE_MS = 50;
+
+export interface RefitTimers {
+  setTimeout: (fn: () => void, ms: number) => unknown;
+  clearTimeout: (handle: unknown) => void;
+  now: () => number;
+}
+
+const realTimers: RefitTimers = {
+  setTimeout: (fn, ms) => setTimeout(fn, ms),
+  clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+  now: () => Date.now(),
+};
+
+export interface RefitScheduler {
+  /** Focus / visibility signal: refit right away (coalesced), then again after the follow-ups. */
+  now(): void;
+  /** Resize signal: refit once, after the burst has gone quiet, then after the follow-ups. */
+  burst(): void;
+  dispose(): void;
+}
+
+/**
+ * Decides WHEN to run a refit `pass` for the window-level signals.
+ *
+ * An OS window drag-resize delivers a resize event for every step. Each used to run
+ * `fit()` on every pane at once plus two follow-up timers that were never cancelled, so a
+ * 2-second drag queued hundreds of full-layout passes; the container's own
+ * ResizeObserver (throttled in TerminalView) already follows the size live. Now a burst
+ * collapses to one pass after it settles, a new signal cancels the follow-ups still pending
+ * from the previous one, and several focus signals in the same instant share one pass.
+ */
+export function createRefitScheduler(
+  rawPass: () => void,
+  timers: RefitTimers = realTimers,
+  followUps: readonly number[] = REFIT_FOLLOW_UP_MS,
+  settleMs: number = RESIZE_SETTLE_MS
+): RefitScheduler {
+  // A pass that throws (layout in transition) must never cancel the passes after it.
+  const pass = () => {
+    try {
+      rawPass();
+    } catch {
+      // Ignore refit errors during layout transitions.
+    }
+  };
+  let settleTimer: unknown = null;
+  let followUpTimers: unknown[] = [];
+  let lastImmediateAt = -Infinity;
+  let disposed = false;
+
+  const cancelFollowUps = () => {
+    for (const handle of followUpTimers) timers.clearTimeout(handle);
+    followUpTimers = [];
+  };
+  const scheduleFollowUps = () => {
+    cancelFollowUps();
+    followUpTimers = followUps.map((delay) =>
+      timers.setTimeout(() => {
+        if (!disposed) pass();
+      }, delay)
+    );
+  };
+  const clearSettle = () => {
+    if (settleTimer !== null) {
+      timers.clearTimeout(settleTimer);
+      settleTimer = null;
+    }
+  };
+
+  return {
+    now() {
+      if (disposed) return;
+      clearSettle();
+      const at = timers.now();
+      if (at - lastImmediateAt >= IMMEDIATE_COALESCE_MS) {
+        lastImmediateAt = at;
+        pass();
+      }
+      scheduleFollowUps();
+    },
+    burst() {
+      if (disposed) return;
+      clearSettle();
+      cancelFollowUps(); // the burst is still going: earlier follow-ups would fit a stale size
+      settleTimer = timers.setTimeout(() => {
+        settleTimer = null;
+        if (disposed) return;
+        lastImmediateAt = timers.now();
+        pass();
+        scheduleFollowUps();
+      }, settleMs);
+    },
+    dispose() {
+      disposed = true;
+      clearSettle();
+      cancelFollowUps();
+    },
+  };
+}
 
 interface WindowRefitOptions {
   tabsRef: MutableRefObject<TerminalTab[]>;
@@ -42,26 +145,27 @@ export function useWindowRefit({
   terminalRefs,
   getActiveTerminal,
 }: WindowRefitOptions) {
-  const refitVisibleTerminals = useCallback(() => {
+  // One refit pass over the panes of the tab that is active when it RUNS (a follow-up
+  // must not fit the panes of a tab that was left meanwhile).
+  const refitPass = useCallback(() => {
     const liveTabs = tabsRef.current;
     const tab = liveTabs.find((t) => t.id === activeTabIdRef.current) || liveTabs[0];
     if (!tab) return;
-    const views = tab.panes
-      .map((p) => terminalRefs.current[p.id])
-      .filter((v): v is TerminalViewRef => v !== null && v !== undefined);
-    if (views.length === 0) return;
-    const pass = () => {
-      for (const view of views) {
-        try {
-          view.refit();
-        } catch {
-          // Ignore refit errors during layout transitions.
-        }
+    for (const pane of tab.panes) {
+      const view = terminalRefs.current[pane.id];
+      if (!view) continue;
+      try {
+        view.refit();
+      } catch {
+        // Ignore refit errors during layout transitions.
       }
-    };
-    pass();
-    for (const delay of REFIT_FOLLOW_UP_MS) setTimeout(pass, delay);
+    }
   }, [tabsRef, activeTabIdRef, terminalRefs]);
+
+  const scheduler = useMemo(() => createRefitScheduler(refitPass), [refitPass]);
+  useEffect(() => () => scheduler.dispose(), [scheduler]);
+
+  const refitVisibleTerminals = useCallback(() => scheduler.now(), [scheduler]);
 
   // Multi-click fix (Windows WebView2 especially): after Alt+Tab or a click
   // that re-activates the window, keyboard input did not reach the terminal
@@ -110,7 +214,7 @@ export function useWindowRefit({
         try {
           const win = getCurrentWindow();
           void win
-            .onResized(() => refitVisibleTerminals())
+            .onResized(() => scheduler.burst())
             .then(track)
             .catch(() => {});
           void win
@@ -140,5 +244,5 @@ export function useWindowRefit({
         }
       }
     };
-  }, [refitVisibleTerminals, restoreFocus]);
+  }, [refitVisibleTerminals, restoreFocus, scheduler]);
 }

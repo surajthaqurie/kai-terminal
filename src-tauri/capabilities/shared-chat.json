@@ -3,5 +3,10 @@
   "identifier": "shared-chat",
   "description": "Least-privilege scope for the popped-out Shared Agent chat window",
   "windows": ["shared-chat"],
-  "permissions": ["core:default"]
+  "permissions": [
+    "core:default",
+    "allow-shared-agent-request-cmd",
+    "allow-shared-agent-stop-cmd",
+    "allow-close-shared-chat-window"
+  ]
 }

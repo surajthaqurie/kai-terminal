@@ -189,6 +189,15 @@ export function isSensitiveFile(filename: string): boolean {
   return false;
 }
 
+/**
+ * True when a link's TARGET is a sensitive file by name. The scan used to test only the
+ * link's own name, so `notes.txt -> .env` (or `-> id_rsa`) was indexed and readable (SEC-05).
+ * `resolved` is the real path of the entry (the entry's own path when it is not a link).
+ */
+export function targetIsSensitive(resolved: string): boolean {
+  return isSensitiveFile(path.basename(resolved));
+}
+
 export function isBinaryFile(filename: string, sampleBuffer?: Buffer): boolean {
   const ext = path.extname(filename).toLowerCase();
   if (BINARY_EXTENSIONS.has(ext)) return true;
@@ -696,7 +705,7 @@ function detectUntrackedNewFiles(
       } else if (isFile) {
         // Tracked files were already stat-checked above; only unknown files need a look.
         if (Object.prototype.hasOwnProperty.call(index.files, rel)) continue;
-        if (isSensitiveFile(entry.name)) continue;
+        if (isSensitiveFile(entry.name) || targetIsSensitive(canonical)) continue;
         if (isBinaryFile(entry.name)) continue;
         if (matchesIgnorePattern(rel, entry.name, ignorePatterns)) continue;
         let st: fs.Stats;
@@ -890,7 +899,7 @@ export async function indexProject(
           // project lock fresh from here (cheap, rate-limited inside `touch`).
           lock.touch();
 
-          if (isSensitiveFile(entry.name)) continue;
+          if (isSensitiveFile(entry.name) || targetIsSensitive(entryCanonical)) continue;
           if (isBinaryFile(entry.name)) continue;
           if (matchesIgnorePattern(relPath, entry.name, ignorePatterns)) continue;
 

@@ -302,7 +302,122 @@ impl CallTracker {
     }
 }
 
-/// Polls in the background and emits [`CALL_STATE_EVENT`] on every change.
+/// Decides whether the call watcher polls at all (RES-01).
+///
+/// The only consumer of call state is the music player, which pauses playback while
+/// a call holds the microphone. The watcher used to start at every launch and run a
+/// process (`reg.exe` on Windows, `pactl` on Linux, `ps` on macOS) every 3 s until
+/// the app exited, music or not: about 1,200 process spawns an hour doing nothing.
+/// Now the thread sleeps on this gate and polls only while the player asks it to.
+#[cfg_attr(not(any(feature = "tauri", test)), allow(dead_code))]
+pub struct WatchGate {
+    state: std::sync::Mutex<GateState>,
+    changed: std::sync::Condvar,
+}
+
+#[cfg_attr(not(any(feature = "tauri", test)), allow(dead_code))]
+#[derive(Default)]
+struct GateState {
+    enabled: bool,
+    shutdown: bool,
+}
+
+#[cfg_attr(not(any(feature = "tauri", test)), allow(dead_code))]
+impl WatchGate {
+    pub fn new() -> Self {
+        Self {
+            state: std::sync::Mutex::new(GateState::default()),
+            changed: std::sync::Condvar::new(),
+        }
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, GateState> {
+        self.state.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Turns polling on or off. Cheap, idempotent, never blocks on the poller.
+    pub fn set_enabled(&self, enabled: bool) {
+        self.lock().enabled = enabled;
+        self.changed.notify_all();
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.lock().enabled
+    }
+
+    /// Ends the watcher for good (tests; the app thread otherwise lives as long as the app).
+    pub fn shutdown(&self) {
+        self.lock().shutdown = true;
+        self.changed.notify_all();
+    }
+
+    /// Blocks, using no CPU, until polling is enabled. `false` once shut down.
+    fn wait_until_enabled(&self) -> bool {
+        let mut state = self.lock();
+        while !state.enabled && !state.shutdown {
+            state = self.changed.wait(state).unwrap_or_else(|e| e.into_inner());
+        }
+        !state.shutdown
+    }
+
+    /// Sleeps for `interval`, waking at once if polling is switched off. Returns whether
+    /// polling should continue.
+    fn sleep_while_enabled(&self, interval: std::time::Duration) -> bool {
+        let deadline = std::time::Instant::now() + interval;
+        let mut state = self.lock();
+        loop {
+            if state.shutdown || !state.enabled {
+                return false;
+            }
+            let now = std::time::Instant::now();
+            if now >= deadline {
+                return true;
+            }
+            state = self
+                .changed
+                .wait_timeout(state, deadline - now)
+                .unwrap_or_else(|e| e.into_inner())
+                .0;
+        }
+    }
+}
+
+impl Default for WatchGate {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// The app-wide gate the music player switches (`call_watch_set_enabled`).
+#[cfg_attr(not(any(feature = "tauri", test)), allow(dead_code))]
+pub fn call_watch_gate() -> &'static WatchGate {
+    static GATE: std::sync::OnceLock<WatchGate> = std::sync::OnceLock::new();
+    GATE.get_or_init(WatchGate::new)
+}
+
+/// Polls while `gate` is enabled and reports every debounced change. Sleeps, with no
+/// polling at all, while it is disabled. A fresh enable starts from a clean tracker.
+#[cfg_attr(not(any(feature = "tauri", test)), allow(dead_code))]
+fn run_watch_loop(
+    gate: &WatchGate,
+    mut poll: impl FnMut() -> bool,
+    mut emit: impl FnMut(bool),
+    interval: std::time::Duration,
+) {
+    while gate.wait_until_enabled() {
+        let mut tracker = CallTracker::default();
+        loop {
+            if let Some(active) = tracker.observe(poll()) {
+                emit(active);
+            }
+            if !gate.sleep_while_enabled(interval) {
+                break;
+            }
+        }
+    }
+}
+
+/// Starts the watcher thread. It does nothing until the music player enables the gate.
 /// A no-op where there is no detector (anything but Windows, Linux, macOS).
 #[cfg(feature = "tauri")]
 pub fn spawn_call_watcher(app_handle: tauri::AppHandle) {
@@ -315,13 +430,14 @@ pub fn spawn_call_watcher(app_handle: tauri::AppHandle) {
     }
     use tauri::Emitter;
     std::thread::spawn(move || {
-        let mut tracker = CallTracker::default();
-        loop {
-            if let Some(active) = tracker.observe(is_call_active()) {
+        run_watch_loop(
+            call_watch_gate(),
+            is_call_active,
+            |active| {
                 let _ = app_handle.emit(CALL_STATE_EVENT, serde_json::json!({ "active": active }));
-            }
-            std::thread::sleep(std::time::Duration::from_secs(POLL_INTERVAL_SECS));
-        }
+            },
+            std::time::Duration::from_secs(POLL_INTERVAL_SECS),
+        );
     });
 }
 
@@ -462,5 +578,129 @@ mod tests {
         assert!(t.active);
         assert_eq!(t.observe(false), None);
         assert_eq!(t.observe(false), Some(false));
+    }
+
+    fn run_in_thread(
+        gate: std::sync::Arc<WatchGate>,
+        polls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        mic: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        events: std::sync::Arc<std::sync::Mutex<Vec<bool>>>,
+        interval: std::time::Duration,
+    ) -> std::thread::JoinHandle<()> {
+        use std::sync::atomic::Ordering;
+        std::thread::spawn(move || {
+            run_watch_loop(
+                &gate,
+                || {
+                    polls.fetch_add(1, Ordering::SeqCst);
+                    mic.load(Ordering::SeqCst)
+                },
+                |active| events.lock().unwrap().push(active),
+                interval,
+            )
+        })
+    }
+
+    #[test]
+    fn a_disabled_watcher_never_polls() {
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        use std::sync::Arc;
+        let gate = Arc::new(WatchGate::new());
+        let polls = Arc::new(AtomicUsize::new(0));
+        let handle = run_in_thread(
+            gate.clone(),
+            polls.clone(),
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(std::sync::Mutex::new(Vec::new())),
+            std::time::Duration::from_millis(5),
+        );
+        // Long enough for ~100 polls at this interval, were it running.
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        assert_eq!(
+            polls.load(Ordering::SeqCst),
+            0,
+            "no process may be started while disabled"
+        );
+        gate.shutdown();
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn enabling_starts_polling_and_disabling_stops_it_at_once() {
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        use std::sync::Arc;
+        let gate = Arc::new(WatchGate::new());
+        let polls = Arc::new(AtomicUsize::new(0));
+        // A long interval: if disabling had to wait for it, the join below would take a minute.
+        let handle = run_in_thread(
+            gate.clone(),
+            polls.clone(),
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(std::sync::Mutex::new(Vec::new())),
+            std::time::Duration::from_secs(60),
+        );
+        gate.set_enabled(true);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while polls.load(Ordering::SeqCst) == 0 && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(
+            polls.load(Ordering::SeqCst),
+            1,
+            "polls right away when enabled"
+        );
+
+        let started = std::time::Instant::now();
+        gate.set_enabled(false);
+        gate.shutdown();
+        handle.join().unwrap();
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "the watcher must wake from its sleep as soon as it is disabled"
+        );
+        assert_eq!(polls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn a_call_is_reported_while_enabled_and_polling_stops_when_disabled() {
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        use std::sync::Arc;
+        let gate = Arc::new(WatchGate::new());
+        let polls = Arc::new(AtomicUsize::new(0));
+        let mic = Arc::new(AtomicBool::new(true));
+        let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let handle = run_in_thread(
+            gate.clone(),
+            polls.clone(),
+            mic.clone(),
+            events.clone(),
+            std::time::Duration::from_millis(10),
+        );
+        gate.set_enabled(true);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while events.lock().unwrap().is_empty() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(events.lock().unwrap().as_slice(), [true]);
+
+        // Disabled mid-call: polling stops dead.
+        gate.set_enabled(false);
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let frozen = polls.load(Ordering::SeqCst);
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert_eq!(
+            polls.load(Ordering::SeqCst),
+            frozen,
+            "no polling while disabled"
+        );
+
+        // Re-enabled after the call ended: a fresh tracker sees silence, and reports nothing.
+        mic.store(false, Ordering::SeqCst);
+        gate.set_enabled(true);
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert_eq!(events.lock().unwrap().as_slice(), [true]);
+        assert!(gate.is_enabled());
+        gate.shutdown();
+        handle.join().unwrap();
     }
 }

@@ -428,6 +428,23 @@ export class SettingsService {
     }
   }
 
+  /**
+   * Calls `onChange` with the freshly loaded settings whenever ANOTHER window saves them
+   * (FUNC-06). The webview's storage is shared by all of Kai's windows and the browser fires
+   * a `storage` event in every window except the one that wrote, so this never fires for this
+   * window's own saves. Returns the unsubscribe function.
+   */
+  static subscribeToChanges(onChange: (settings: UserSettings) => void): () => void {
+    if (typeof window === "undefined") return () => {};
+    const handler = (event: StorageEvent) => {
+      // `key === null` is `localStorage.clear()` in another window.
+      if (event.key !== null && event.key !== STORAGE_KEY) return;
+      onChange(SettingsService.loadSettings());
+    };
+    window.addEventListener("storage", handler);
+    return () => window.removeEventListener("storage", handler);
+  }
+
   static getProjectSettings(projectDir: string): ProjectWorkspaceSettings | null {
     if (!projectDir || !projectDir.trim()) return null;
     try {

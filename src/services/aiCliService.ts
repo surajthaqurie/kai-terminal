@@ -343,14 +343,15 @@ export async function getKaiCliLaunch(): Promise<string[]> {
 
 /**
  * Automatically install the kai MCP entry into a provider's own config
- * file (with `.kai.bak` backup). `launcher` comes from getKaiCliLaunch().
+ * file (with `.kai.bak` backup). The command the agent is told to run is
+ * resolved by the backend from the installed CLI; the page never supplies
+ * it (SEC-08), so a compromised page cannot persist a command of its own.
  * `projectDir` is required for project-scoped agents (copilot writes
  * `<project>/.vscode/mcp.json`); global agents ignore it for the file
  * location (the baked MCP project arg still comes from `projectArg`).
  */
 export async function setupAgentMcp(
   id: string,
-  launcher: string[],
   projectArg: string = ".",
   force: boolean = false,
   projectDir?: string
@@ -360,7 +361,6 @@ export async function setupAgentMcp(
   }
   return await invoke<AgentSetupResult>("setup_agent_mcp_cmd", {
     id,
-    launcher,
     projectArg,
     force,
     projectDir: projectDir ?? null,

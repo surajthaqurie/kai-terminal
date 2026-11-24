@@ -1,4 +1,4 @@
-import { spawn, execSync } from "child_process";
+import { spawn, exec, execSync } from "child_process";
 import fs from "fs";
 import path from "path";
 import { resolveCanonicalPath } from "./registry";
@@ -119,6 +119,72 @@ export function isCommandAvailable(command: string): boolean {
   } catch {
     return false;
   }
+}
+
+/** `<command> --version`, asynchronously (never blocks the event loop). */
+function probeLspVersion(command: string): Promise<string> {
+  return new Promise((resolve) => {
+    exec(
+      `${command} --version`,
+      {
+        encoding: "utf-8",
+        timeout: 2000,
+        // Never run a same-named file from the project directory (Windows).
+        env: noCwdLookupEnv(),
+        windowsHide: true,
+      },
+      (error, stdout) => resolve(error ? "detected" : String(stdout).trim().split("\n")[0])
+    );
+  });
+}
+
+/**
+ * Detect all installed language servers, probing every installed one at the same
+ * time without blocking the event loop. Installed servers are probed through the shell
+ * exactly as the synchronous version does; the commands come from the fixed catalog.
+ */
+export async function detectInstalledLspServersAsync(): Promise<DetectedLspServer[]> {
+  return Promise.all(
+    KNOWN_LSP_SERVERS.map(async (entry): Promise<DetectedLspServer> => {
+      const available = isCommandAvailable(entry.command);
+      return {
+        language: entry.language,
+        command: entry.command,
+        isAvailable: available,
+        version: available ? await probeLspVersion(entry.command) : undefined,
+        installHint: available ? undefined : entry.installHint,
+      };
+    })
+  );
+}
+
+/** How long a detection result is reused: servers are installed rarely. */
+export const LSP_DETECTION_TTL_MS = 5 * 60 * 1000;
+let lspDetection: { at: number; value: DetectedLspServer[] } | null = null;
+let lspDetectionInFlight: Promise<DetectedLspServer[]> | null = null;
+
+/** [`detectInstalledLspServersAsync`] remembered for [`LSP_DETECTION_TTL_MS`]; concurrent calls share one probe. */
+export function detectInstalledLspServersCached(
+  now: number = Date.now()
+): Promise<DetectedLspServer[]> {
+  if (lspDetection && now - lspDetection.at < LSP_DETECTION_TTL_MS) {
+    return Promise.resolve(lspDetection.value);
+  }
+  lspDetectionInFlight ??= detectInstalledLspServersAsync()
+    .then((value) => {
+      lspDetection = { at: now, value };
+      return value;
+    })
+    .finally(() => {
+      lspDetectionInFlight = null;
+    });
+  return lspDetectionInFlight;
+}
+
+/** Forgets the remembered detection (tests, or after the user installs a server). */
+export function resetLspDetectionCache(): void {
+  lspDetection = null;
+  lspDetectionInFlight = null;
 }
 
 /**

@@ -7,11 +7,37 @@
  *
  * Never calls `localStorage.clear()`: foreign keys (other apps, WebView
  * internals) and every allowlisted key survive. In-memory caches (git,
- * autocomplete buffers) die with the process and need no handling; Vite
+ * line buffers) die with the process and need no handling; Vite
  * content-hashed assets already bypass the HTTP cache on update.
  */
 
 export const CACHE_JANITOR_VERSION_KEY = "kai_cache_janitor_version";
+
+/**
+ * Keys that must never survive, regardless of version stamps.
+ *
+ * `kai_cmd_history_v1` held every line typed before Enter (including
+ * passphrases typed at no-echo prompts and text typed into TUIs) in plaintext,
+ * for a suggestion feature that was never shown. Nothing writes it any more;
+ * installs that still carry the old data lose it on the first launch.
+ */
+export const LEGACY_PRIVATE_KEYS: readonly string[] = ["kai_cmd_history_v1"];
+
+/** Removes {@link LEGACY_PRIVATE_KEYS}. Never throws. Returns the keys it removed. */
+export function purgeLegacyPrivateKeys(): string[] {
+  const purged: string[] = [];
+  for (const key of LEGACY_PRIVATE_KEYS) {
+    try {
+      if (localStorage.getItem(key) !== null) {
+        localStorage.removeItem(key);
+        purged.push(key);
+      }
+    } catch {
+      // Storage unavailable (private mode / blocked): nothing to purge.
+    }
+  }
+  return purged;
+}
 
 /** Exact keys that must survive an update. Mirrors the constants in each service. */
 const PRESERVED_EXACT: ReadonlySet<string> = new Set([
@@ -31,8 +57,6 @@ const PRESERVED_EXACT: ReadonlySet<string> = new Set([
   "kai_update_last_check",
   "kai_update_dismissed_version",
   "kai_update_pending",
-  // autocomplete.ts
-  "kai_cmd_history_v1",
   // aiCliService.ts
   "kai_custom_ai_clis",
   "terminal_custom_ai_clis",
@@ -68,6 +92,7 @@ export interface CacheJanitorReport {
  */
 export function runCacheJanitor(appVersion: string): CacheJanitorReport {
   const version = (appVersion || "").trim() || "unknown";
+  purgeLegacyPrivateKeys();
   let stored: string | null = null;
   try {
     stored = localStorage.getItem(CACHE_JANITOR_VERSION_KEY);

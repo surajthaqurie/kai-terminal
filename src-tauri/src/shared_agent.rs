@@ -45,7 +45,10 @@ type Pending = Arc<Mutex<HashMap<u64, Sender<String>>>>;
 
 struct Running {
     child: Child,
-    stdin: ChildStdin,
+    /// Shared so a request can write to it WITHOUT holding the `running` lock: a service that
+    /// stops reading would otherwise block `stop()` and every other request behind a full pipe
+    /// (REL-12). `stop()` kills the service, which makes a blocked write fail.
+    stdin: Arc<Mutex<ChildStdin>>,
     pending: Pending,
 }
 
@@ -166,7 +169,7 @@ fn spawn_service(program: &str, args: &[String], sink: EventSink) -> Result<Runn
     }
     Ok(Running {
         child,
-        stdin,
+        stdin: Arc::new(Mutex::new(stdin)),
         pending,
     })
 }
@@ -204,7 +207,7 @@ impl SharedAgentService {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst) + 1;
         let line = with_request_id(raw, id)?;
         let (tx, rx) = mpsc::channel::<String>();
-        {
+        let (stdin, pending) = {
             let mut guard = self
                 .running
                 .lock()
@@ -225,17 +228,22 @@ impl SharedAgentService {
                 .lock()
                 .map_err(|_| "The Shared Agent service is unavailable.".to_string())?
                 .insert(id, tx);
-            let written = running
-                .stdin
+            (running.stdin.clone(), running.pending.clone())
+        };
+        // Written outside the `running` lock (see `Running::stdin`). Requests still reach the
+        // service one whole line at a time: the stdin lock is held for the entire line.
+        let written = match stdin.lock() {
+            Ok(mut w) => w
                 .write_all(line.as_bytes())
-                .and_then(|_| running.stdin.write_all(b"\n"))
-                .and_then(|_| running.stdin.flush());
-            if written.is_err() {
-                if let Ok(mut p) = running.pending.lock() {
-                    p.remove(&id);
-                }
-                return Err("Lost the Shared Agent service.".to_string());
+                .and_then(|_| w.write_all(b"\n"))
+                .and_then(|_| w.flush()),
+            Err(_) => Err(std::io::Error::other("stdin lock poisoned")),
+        };
+        if written.is_err() {
+            if let Ok(mut p) = pending.lock() {
+                p.remove(&id);
             }
+            return Err("Lost the Shared Agent service.".to_string());
         }
         match rx.recv_timeout(REQUEST_TIMEOUT) {
             Ok(answer) => Ok(answer),
@@ -415,5 +423,57 @@ mod tests {
 
         assert!(service.stop());
         assert!(!service.stop(), "already stopped");
+    }
+
+    /// A service that never reads its input (hung, or busy forever).
+    fn deaf_service() -> Option<Running> {
+        let check = Command::new("node").arg("--version").output().ok()?;
+        if !check.status.success() {
+            return None;
+        }
+        let script = "setInterval(() => {}, 1000);";
+        let sink: EventSink = Arc::new(|_| {});
+        spawn_service("node", &["-e".to_string(), script.to_string()], sink).ok()
+    }
+
+    #[test]
+    fn a_service_that_stops_reading_cannot_block_stop() {
+        let _guard = crate::test_support::lock_test_env();
+        let Some(running) = deaf_service() else {
+            eprintln!("node not available: skipping");
+            return;
+        };
+        let service = Arc::new(SharedAgentService::default());
+        *service.running.lock().unwrap() = Some(running);
+
+        // A request (just under the size cap) far larger than any pipe buffer: its write blocks, the service never reads.
+        let big = format!(r#"{{"op":"x","pad":"{}"}}"#, "A".repeat(250 * 1024));
+        let requester = {
+            let service = service.clone();
+            std::thread::spawn(move || {
+                let sink: EventSink = Arc::new(|_| {});
+                service.request_with(&big, |_| Err("must not restart".into()), sink)
+            })
+        };
+        std::thread::sleep(Duration::from_millis(500)); // the writer is now stuck in write_all
+
+        // Stopping must not wait for that write: it takes the service away and kills it.
+        let (done_tx, done_rx) = mpsc::channel();
+        let stopper = {
+            let service = service.clone();
+            std::thread::spawn(move || {
+                let started = service.stop();
+                let _ = done_tx.send(started);
+            })
+        };
+        let stopped = done_rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("stop() must not be blocked by a request stuck writing");
+        assert!(stopped);
+        stopper.join().unwrap();
+
+        // Killing the service breaks the pipe, so the stuck request fails instead of hanging.
+        let result = requester.join().unwrap();
+        assert!(result.is_err(), "the stuck request must fail: {result:?}");
     }
 }

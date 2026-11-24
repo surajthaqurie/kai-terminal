@@ -762,7 +762,12 @@ export const SettingsModal: FC<SettingsModalProps> = ({
                         scrollback: Math.max(1000, parseInt(e.target.value) || 10000),
                       })
                     }
+                    aria-describedby="scrollback-memory-note"
                   />
+                  <p id="scrollback-memory-note" className="muted-text">
+                    Kept in memory for every open tab: roughly 1.2 MB per 1,000 lines at 100
+                    columns, so 100,000 lines is about 120 MB per tab.
+                  </p>
                 </div>
               </div>
 

@@ -1,4 +1,11 @@
-import { useCallback, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
+import {
+  useCallback,
+  useRef,
+  type Dispatch,
+  type MutableRefObject,
+  type SetStateAction,
+} from "react";
+import { GIT_BADGE_MIN_INTERVAL_MS } from "../services/cwdCommand";
 import {
   GitInfo,
   cleanCwdForStore,
@@ -21,6 +28,8 @@ interface PaneCwdOptions {
  * `getPtyCwd`). Returns a stable `(tabId, paneId, cwd)` callback.
  */
 export function usePaneCwd({ tabsRef, activeTabIdRef, setTabs, applyGitInfo }: PaneCwdOptions) {
+  // When each directory's badge was last force-refreshed (see the unchanged branch below).
+  const lastForcedRef = useRef<Map<string, number>>(new Map());
   return useCallback(
     (tabId: string, paneId: string, resolved: string) => {
       if (!resolved) return;
@@ -58,7 +67,20 @@ export function usePaneCwd({ tabsRef, activeTabIdRef, setTabs, applyGitInfo }: P
         (live?.activePaneId === paneId || (live?.panes.length ?? 0) <= 1);
 
       if (current && normalizeCwdForCompare(current) === normalizeCwdForCompare(cleaned)) {
-        if (drivesFooter) refreshBadge();
+        if (drivesFooter) {
+          // The folder is the same, but the shell just reported in (a prompt, or a `git ...`
+          // line), so the branch / dirty state may have changed: `git checkout -b x` must show
+          // up. A cache-only refresh never would (it serves the 30 s old answer), so drop the
+          // cached answer, at most once per GIT_BADGE_MIN_INTERVAL_MS per directory (FUNC-04).
+          const key = normalizeCwdForCompare(cleaned);
+          const now = Date.now();
+          const last = lastForcedRef.current.get(key) ?? 0;
+          if (now - last >= GIT_BADGE_MIN_INTERVAL_MS) {
+            lastForcedRef.current.set(key, now);
+            invalidateGitCache(cleaned);
+          }
+          refreshBadge();
+        }
         return;
       }
       setTabs((prev) =>

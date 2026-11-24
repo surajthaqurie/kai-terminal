@@ -253,6 +253,30 @@ export async function initMusicRelay(): Promise<void> {
   }
 }
 
+const EMBED_HOST = "https://www.youtube-nocookie.com";
+
+/**
+ * Starts the connection to the player's host early, so the first song starts sooner.
+ * Called when the music player opens, never at launch: a `<link rel="preconnect">` in
+ * index.html contacted YouTube's servers (DNS + TLS) on every start, for users who never
+ * open the player. Safe to call repeatedly.
+ */
+export function preconnectMusicEmbed(): void {
+  try {
+    if (typeof document === "undefined") return;
+    const exists = Array.from(document.head.querySelectorAll('link[rel="preconnect"]')).some(
+      (l) => l.getAttribute("href") === EMBED_HOST
+    );
+    if (exists) return;
+    const link = document.createElement("link");
+    link.rel = "preconnect";
+    link.href = EMBED_HOST;
+    document.head.appendChild(link);
+  } catch {
+    // An optimisation only.
+  }
+}
+
 /**
  * True when the embed can be remote-controlled from this page. The embed only
  * honours postMessage commands from the origin it was told about: this page's,

@@ -50,6 +50,19 @@ export function lineLikelyChangesCwd(line: string): boolean {
 }
 
 /**
+ * True when a submitted line runs `git` (checkout, commit, switch, pull, ...): the directory
+ * stays the same but the branch / dirty state the footer shows may have changed (FUNC-04).
+ * Deliberately loose: a false positive costs one throttled `git status`.
+ */
+export function lineMayChangeGitState(line: string): boolean {
+  if (!line) return false;
+  return line
+    .toLowerCase()
+    .split(/;|&&|\|\||\||\r|\n/)
+    .some((seg) => /^(git|git\.exe|gh|lazygit)$/.test(seg.trim().split(/\s+/, 1)[0] ?? ""));
+}
+
+/**
  * Post-`cd` live-cwd probe schedule (ms after Enter).
  *
  * Spacing is load-bearing: the backend throttles live-OS probes to one per
@@ -61,6 +74,16 @@ export function lineLikelyChangesCwd(line: string): boolean {
  * `cwdCommand.test.ts`) and the first tap prompt-fast. Same on all OSes.
  */
 export const CD_PROBE_DELAYS_MS: readonly number[] = [300, 2500, 5000];
+
+/**
+ * After a `git ...` line (FUNC-04): when to ask the backend for the cwd, which makes the app
+ * re-read the branch / dirty badge. Two taps: most git commands finish within a second or two,
+ * slow ones (pull, checkout of a big tree) are caught by the prompt's OSC 7 instead.
+ */
+export const GIT_PROBE_DELAYS_MS: readonly number[] = [600, 2500];
+
+/** At most one forced `git status` per directory in this window (see `usePaneCwd`). */
+export const GIT_BADGE_MIN_INTERVAL_MS = 2500;
 
 /**
  * Quiet period before a CHANGED directory reaches the footer path pill.
@@ -87,8 +110,11 @@ function normalizeForSettle(p: string): string {
 }
 
 export interface CwdSettler {
-  /** Report a candidate directory from any source. */
-  push(path: string): void;
+  /**
+   * Report a candidate directory from any source. `quiet` marks a report that carries no news
+   * about the shell (the periodic poll): it never triggers `onUnchanged`.
+   */
+  push(path: string, opts?: { quiet?: boolean }): void;
   /** Forget the last shown directory: the next push applies immediately. */
   reset(): void;
   /** Drop any held candidate and stop timers (unmount). */
@@ -104,7 +130,16 @@ export interface CwdSettler {
  */
 export function createCwdSettler(
   deliver: (path: string) => void,
-  opts: { settleMs?: number; isTyping?: () => boolean } = {}
+  opts: {
+    settleMs?: number;
+    isTyping?: () => boolean;
+    /**
+     * Called when a report names the directory already shown. The directory did not change, but
+     * the report is still a sign the shell just ran something (OSC 7 is sent at every prompt), so
+     * the app can refresh what depends on it, e.g. the git branch badge (FUNC-04).
+     */
+    onUnchanged?: (path: string) => void;
+  } = {}
 ): CwdSettler {
   const settleMs = opts.settleMs ?? CWD_SETTLE_MS;
   let shown: string | null = null;
@@ -132,7 +167,7 @@ export function createCwdSettler(
   };
 
   return {
-    push(path: string): void {
+    push(path: string, pushOpts: { quiet?: boolean } = {}): void {
       if (!path || !path.trim()) return;
       if (shown === null) {
         shown = path;
@@ -142,6 +177,8 @@ export function createCwdSettler(
       if (normalizeForSettle(path) === normalizeForSettle(shown)) {
         pending = null;
         clear();
+        // A quiet report (the periodic poll) says nothing new happened in the shell.
+        if (!pushOpts.quiet) opts.onUnchanged?.(shown);
         return;
       }
       if (pending !== null && normalizeForSettle(path) === normalizeForSettle(pending)) {

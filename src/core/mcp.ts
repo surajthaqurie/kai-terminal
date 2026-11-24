@@ -37,6 +37,7 @@ import {
   type ToolContext,
   type ToolOutcome,
 } from "./mcpTools";
+import { projectRootFor } from "./integrations/config";
 import { integrationToolDefs, isIntegrationTool, runIntegrationTool } from "./integrations/tools";
 import packageJson from "../../package.json";
 
@@ -660,7 +661,7 @@ async function dispatchMcpMessage(
           outcome = await toolRefreshIndex(ctx, args);
           break;
         case "kai_get_lsp_status":
-          outcome = toolLspStatus();
+          outcome = await toolLspStatus();
           break;
         case "kai_plan_task":
           outcome = await toolPlanTask(ctx, args);
@@ -847,6 +848,8 @@ function safeWrite(stream: NodeJS.WritableStream, data: string): boolean {
 
 /** How often the stdio server re-reads which integration tools the project is bound to. */
 const TOOL_LIST_POLL_MS = 2000;
+/** How rarely the poll re-resolves the project's git top-level (it almost never changes). */
+const TOP_LEVEL_RECHECK_MS = 5 * 60 * 1000;
 
 function toolListPollMs(): number {
   const raw = process.env.KAI_MCP_TOOLS_POLL_MS;
@@ -901,10 +904,23 @@ export async function startMcpServer(
   // has while an agent is connected. tools/list is always read fresh, so a client
   // that is told to ask again sees the change without a restart. A client that
   // ignores the notification keeps its old list until it reconnects.
-  const toolSignature = () =>
-    integrationToolDefs(canonicalRoot)
+  //
+  // The poll runs every couple of seconds for as long as the server lives. Resolving the
+  // project's git top-level costs a synchronous `git rev-parse` each time (50-200 ms on
+  // Windows, blocking every request queued behind it, and about 1,800 process spawns an
+  // hour per agent session). The top-level is looked up once and then only re-checked now
+  // and then; each poll itself just reads the binding files.
+  let pollTopLevel = projectRootFor(canonicalRoot);
+  let pollTopLevelAt = Date.now();
+  const toolSignature = () => {
+    if (Date.now() - pollTopLevelAt >= TOP_LEVEL_RECHECK_MS) {
+      pollTopLevel = projectRootFor(canonicalRoot);
+      pollTopLevelAt = Date.now();
+    }
+    return integrationToolDefs(canonicalRoot, pollTopLevel)
       .map((tool) => tool.name)
       .join("\n");
+  };
   let lastToolSignature = toolSignature();
   const pollMs = toolListPollMs();
   const toolListTimer =

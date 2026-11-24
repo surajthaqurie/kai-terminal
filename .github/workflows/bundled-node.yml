@@ -1,0 +1,66 @@
+name: Bundled Node.js update
+
+# The release installers ship their own Node.js runtime (scripts/fetch-node.mjs), pinned in
+# scripts/bundled-node-version.txt. Node publishes security patches regularly, so this checks
+# weekly for a newer release of the pinned LTS line and opens a pull request that bumps the pin.
+# CI then runs on the PR; merging it is the only step that changes what ships. The major line is
+# never changed here (that is a deliberate edit of the file).
+#
+# Needs: Settings > Actions > General > "Allow GitHub Actions to create and approve pull requests".
+
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  bump:
+    name: Check for a newer bundled Node.js
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+
+      - name: Look for a newer release of the pinned LTS line
+        id: bump
+        run: |
+          set -euo pipefail
+          line="$(node scripts/update-bundled-node.mjs | tail -n 1)"
+          echo "$line"
+          echo "version=$(echo "$line" | sed -E 's/.*latest=([^ ]+).*/\1/')" >> "$GITHUB_OUTPUT"
+          echo "changed=$(echo "$line" | sed -E 's/.*changed=([^ ]+).*/\1/')" >> "$GITHUB_OUTPUT"
+
+      - name: Verify the new runtime downloads and matches its published checksum
+        if: steps.bump.outputs.changed == 'true'
+        run: node scripts/fetch-node.mjs && src-tauri/resources/node/node --version
+
+      - name: Open a pull request
+        if: steps.bump.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.bump.outputs.version }}
+        run: |
+          set -euo pipefail
+          branch="chore/bundled-node-${VERSION}"
+          if gh pr list --head "$branch" --state open --json number --jq 'length' | grep -qv '^0$'; then
+            echo "A pull request for ${VERSION} is already open."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add scripts/bundled-node-version.txt
+          git commit -m "chore(release): bundle Node.js ${VERSION}"
+          git push origin "$branch"
+          gh pr create --title "chore(release): bundle Node.js ${VERSION}" \
+            --body "Automated: nodejs.org lists Node.js ${VERSION} as the newest LTS release of the pinned line. The release workflow verifies the download against the published SHASUMS256.txt. Merge to ship it in the next release."

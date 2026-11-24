@@ -68,6 +68,7 @@ import {
   isFavoriteTrack,
   loadFavorites,
   parseYouTubePlayerMessage,
+  preconnectMusicEmbed,
   progressPercent,
   relatedSearchSeed,
   resolveInputToTrack,
@@ -282,6 +283,11 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     },
     [currentAtLive]
   );
+
+  // Warm up the connection to the player's host only once the player is actually opened.
+  useEffect(() => {
+    if (open) preconnectMusicEmbed();
+  }, [open]);
 
   // Focus the search box whenever the drawer opens so the footer toggle
   // feels like opening a real panel (and keyboard users land in context).

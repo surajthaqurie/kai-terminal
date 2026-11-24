@@ -32,7 +32,7 @@ sudo apt-get update && sudo apt-get install -y \
 
 ## 2. Toolchain Versions
 
-- **Node.js**: v20 LTS or higher
+- **Node.js**: v20 LTS or higher (the CLI declares `engines.node >=20`; CI and the bundled runtime use Node 24)
 - **npm**: v10 or higher
 - **Rust**: 1.75.0 or higher
 - **Tauri CLI**: v2.x (`@tauri-apps/cli`)
@@ -74,7 +74,7 @@ cargo test --no-default-features --manifest-path src-tauri/Cargo.toml --test pty
 ## 5. Docker Local Test Setup (no host toolchain install)
 
 Requires only Docker + Docker Compose. The image (`Dockerfile.test`) mirrors the
-CI Linux job: Node.js 22 + stable Rust + WebKit2GTK build deps.
+CI Linux job: Node.js 24 + the Rust in `scripts/rust-toolchain-version.txt` + WebKit2GTK build deps.
 
 ```bash
 # Build the test image once

@@ -19,6 +19,7 @@ import type { TabSeed } from "../services/terminalWindows";
 import type { SessionStatus, SplitDirection, TerminalTab } from "../types/terminal";
 import { useLatest } from "./useLatest";
 import { applyTabsUpdate } from "./tabsSync";
+import { tabAfterClose } from "../services/tabSelection";
 
 /** How long the "split refused" notice stays on screen. */
 const PANE_NOTICE_MS = 4000;
@@ -133,7 +134,7 @@ export function useTabs({ effectiveShellPath, setLastError, initialSeed }: TabsO
       const remaining = live.filter((t) => t.id !== id);
       applyTabsUpdate(tabsRef, setTabs, (prev) => prev.filter((t) => t.id !== id));
       if (activeTabIdRef.current === id) {
-        const next = remaining[remaining.length - 1].id;
+        const next = tabAfterClose(live, id) ?? remaining[0].id;
         activeTabIdRef.current = next;
         setActiveTabId(next);
       }
@@ -364,6 +365,7 @@ export function useTabs({ effectiveShellPath, setLastError, initialSeed }: TabsO
     activePane,
     paneNotice,
     dismissPaneNotice,
+    showPaneNotice: setPaneNotice,
     newTab,
     openOrFocusDir,
     closeTab,

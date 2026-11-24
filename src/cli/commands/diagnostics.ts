@@ -1,5 +1,5 @@
 import { getTelemetrySummary, clearMetricsLog } from "../../core/telemetry";
-import { detectInstalledLspServers } from "../../core/lspBridge";
+import { detectInstalledLspServersAsync } from "../../core/lspBridge";
 
 export async function runMetrics(args: string[]): Promise<number> {
   if (args[1] === "clear") {
@@ -19,7 +19,7 @@ export async function runMetrics(args: string[]): Promise<number> {
 }
 
 export async function runLsp(): Promise<number> {
-  const detected = detectInstalledLspServers();
+  const detected = await detectInstalledLspServersAsync();
   console.log(`[kai] Language Server Protocol (LSP) Bridge Status:`);
   for (const server of detected) {
     const statusIcon = server.isAvailable ? "✓" : "✗";

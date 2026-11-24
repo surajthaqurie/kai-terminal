@@ -7,8 +7,9 @@
  *   node scripts/fetch-node.mjs
  *
  * The archive is checked against the SHASUMS256.txt published beside it before
- * anything is unpacked, and only the `node` executable is kept. Set
- * KAI_NODE_VERSION to use another release (the CLI targets Node 20 and newer).
+ * anything is unpacked, and only the `node` executable is kept. The version is pinned
+ * in scripts/bundled-node-version.txt; set KAI_NODE_VERSION to try another release
+ * (the CLI targets Node 20 and newer).
  *
  * Nothing here runs in a normal dev checkout or in CI tests: the Tauri config
  * that adds the binary to the bundle is `tauri.bundled-node.conf.json`, passed
@@ -21,9 +22,17 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const VERSION = (process.env.KAI_NODE_VERSION || "22.12.0").replace(/^v/, "");
+// The pinned runtime lives in scripts/bundled-node-version.txt (kept current by
+// scripts/update-bundled-node.mjs and the weekly bundled-node workflow).
+const PINNED = fs
+  .readFileSync(
+    path.join(path.dirname(fileURLToPath(import.meta.url)), "bundled-node-version.txt"),
+    "utf8"
+  )
+  .trim();
+const VERSION = (process.env.KAI_NODE_VERSION || PINNED).replace(/^v/, "");
 if (!/^\d+\.\d+\.\d+$/.test(VERSION)) {
-  throw new Error(`KAI_NODE_VERSION must look like 22.12.0, got "${VERSION}"`);
+  throw new Error(`The Node.js version must look like 24.22.3, got "${VERSION}"`);
 }
 
 const PLATFORMS = { win32: "win", darwin: "darwin", linux: "linux" };

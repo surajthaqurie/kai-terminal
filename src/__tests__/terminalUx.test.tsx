@@ -73,7 +73,7 @@ describe("tab session status", () => {
     const el = render(
       createElement(TabBar, {
         tabs: states.map((s) => tab(s, s)),
-        activeTabId: "connected",
+        activeTabId: "connecting", // on screen: its shell really is starting
         onSelectTab: () => {},
         onCloseTab: () => {},
         onNewTab: () => {},
@@ -88,6 +88,41 @@ describe("tab session status", () => {
     // Four different lucide glyphs (the class list names the icon).
     expect(new Set(icons).size).toBe(4);
     expect(el.querySelector('[data-tab-id="connecting"] .tab-icon-spin')).not.toBeNull();
+  });
+
+  it("does not spin forever for a restored tab that has not been opened yet (FUNC-08)", () => {
+    // Hidden tabs start their shell when first shown: ten restored tabs are ten "connecting"
+    // tabs, nine of which are not on screen and have nothing in progress.
+    const el = render(
+      createElement(TabBar, {
+        tabs: [
+          tab("front", "connected"),
+          tab("restored-1", "connecting"),
+          tab("restored-2", "connecting"),
+        ],
+        activeTabId: "front",
+        onSelectTab: () => {},
+        onCloseTab: () => {},
+        onNewTab: () => {},
+      })
+    );
+    expect(el.querySelectorAll(".tab-icon-spin")).toHaveLength(0);
+    const idle = el.querySelector('[data-tab-id="restored-1"]')!;
+    expect(idle.querySelector(".tab-icon-idle")).not.toBeNull();
+    expect(idle.getAttribute("aria-label")).toBe("Terminal restored-1, not started");
+    expect(idle.getAttribute("title") ?? idle.innerHTML).toContain("not started yet");
+
+    // Once the user opens it, it is a real start-up and spins until the shell is up.
+    const opened = render(
+      createElement(TabBar, {
+        tabs: [tab("front", "connected"), tab("restored-1", "connecting")],
+        activeTabId: "restored-1",
+        onSelectTab: () => {},
+        onCloseTab: () => {},
+        onNewTab: () => {},
+      })
+    );
+    expect(opened.querySelectorAll(".tab-icon-spin")).toHaveLength(1);
   });
 
   it("names the tab colours instead of reading out a hex code", () => {

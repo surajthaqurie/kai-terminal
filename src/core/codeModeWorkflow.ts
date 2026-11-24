@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { spawn, spawnSync } from "child_process";
+import { systemToolPath } from "./spawnSafety";
 import type {
   IndexedDependency,
   IndexedSymbol,
@@ -516,6 +517,10 @@ export function resolveChangedFilesAgainstRoot(
       const real = fs.realpathSync(path.join(canonicalRoot, clean));
       if (!isWithinProjectBoundary(real, canonicalRoot)) {
         rejected.push({ path: clean.slice(0, 120), reason: "symlink escapes project" });
+        continue;
+      }
+      if (isSensitiveFile(path.basename(real))) {
+        rejected.push({ path: clean.slice(0, 120), reason: "sensitive or excluded file" });
         continue;
       }
     } catch {
@@ -1834,7 +1839,7 @@ export function runExternalAgentCommand(
         if (jobHelper && !jobStopped) jobStopped = killJob(jobHelper, jobName) === "stopped";
         if (pid !== undefined) {
           try {
-            spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], {
+            spawnSync(systemToolPath("taskkill.exe"), ["/PID", String(pid), "/T", "/F"], {
               stdio: "ignore",
               windowsHide: true,
             });

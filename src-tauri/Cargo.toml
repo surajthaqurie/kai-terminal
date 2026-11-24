@@ -13,11 +13,13 @@ tauri-build = { version = "2.0.0", features = [], optional = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 portable-pty = "0.8"
-tokio = { version = "1.40", features = ["full"] }
 uuid = { version = "1.10", features = ["v4", "fast-rng"] }
 thiserror = "1.0"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"], optional = true }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "rustls-tls-native-roots", "stream"], optional = true }
 futures-util = { version = "0.3", optional = true }
+# SHA-256 and Ed25519 for update verification. Already in the tree through rustls
+# (reqwest rustls-tls); naming it here adds no crate.
+ring = { version = "0.17", optional = true }
 tauri = { version = "2.1.0", features = [], optional = true }
 tauri-plugin-single-instance = { version = "2", optional = true }
 jsonc-parser = { version = "0.34.0", features = ["cst"] }
@@ -28,14 +30,20 @@ windows-sys = { version = "0.61", features = [
   "Win32_Graphics_Gdi",
   "Win32_Security",
   "Win32_System_Console",
+  "Win32_System_Diagnostics_ToolHelp",
   "Win32_System_Environment",
   "Win32_System_JobObjects",
   "Win32_System_LibraryLoader",
+  "Win32_System_Registry",
   "Win32_System_SystemInformation",
   "Win32_System_Threading",
   "Win32_UI_Input_KeyboardAndMouse",
   "Win32_UI_WindowsAndMessaging",
 ] }
+
+# Already in the tree (portable-pty, tauri); named here for gethostname.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 # Lets the music mini window be see-through on macOS (Dim Opacity). It also
 # requires `"macOSPrivateApi": true` in `tauri.macos.conf.json`.
@@ -44,8 +52,12 @@ tauri = { version = "2.1.0", features = ["macos-private-api"], optional = true }
 
 [features]
 default = ["tauri"]
-tauri = ["dep:tauri", "dep:tauri-build", "dep:tauri-plugin-single-instance", "dep:reqwest", "dep:futures-util"]
+tauri = ["dep:tauri", "dep:tauri-build", "dep:tauri-plugin-single-instance", "dep:reqwest", "dep:futures-util", "dep:ring"]
 tauri-build = ["dep:tauri-build"]
+# Integration tests that run the real window ACL in Tauri's mock runtime
+# (`cargo test --features gui-test --test window_acl`). Opt-in: default builds and
+# `--no-default-features` tests never compile the extra test support.
+gui-test = ["tauri", "tauri/test"]
 
 [profile.release]
 panic = "abort"

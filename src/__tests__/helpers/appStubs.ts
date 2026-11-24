@@ -14,6 +14,8 @@ export const registry = {
   panes: new Map<string, AnyProps>(),
   /** How many times each pane's TerminalView stand-in has rendered. */
   renders: new Map<string, number>(),
+  /** Live shell session behind a pane (paneId -> backend id); absent = never started. */
+  liveSessions: new Map<string, string>(),
   /** `<sessionId>:<method>` for every imperative call App makes on a pane. */
   refCalls: [] as string[],
   /** Latest props per stubbed modal/panel, keyed by stub name. */
@@ -22,6 +24,7 @@ export const registry = {
   listeners: {} as Record<string, (event: unknown) => void>,
   reset() {
     this.panes.clear();
+    this.liveSessions.clear();
     this.renders.clear();
     this.refCalls.length = 0;
     this.modals = {};
@@ -42,6 +45,7 @@ export const TerminalViewStub = forwardRef<unknown, AnyProps>((props, ref) => {
       resetModes: call("resetModes"),
       refit: call("refit"),
       focus: call("focus"),
+      handoffSessionId: () => registry.liveSessions.get(props.sessionId) ?? null,
       pasteText: (text: string) => registry.refCalls.push(`${props.sessionId}:paste:${text}`),
       copySelection: async () => {
         registry.refCalls.push(`${props.sessionId}:copy`);

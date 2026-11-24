@@ -136,6 +136,8 @@ describe("saved layout belongs to the first window only", () => {
   it("the first window still saves as before", async () => {
     await mount();
     await act(async () => api.tabsState.newTab());
+    // Written after a short quiet period (and when the window hides).
+    await act(async () => void (await new Promise((r) => setTimeout(r, 650))));
     const saved = JSON.parse(localStorage.getItem(LAYOUT_KEY) ?? "null");
     expect(saved).toHaveLength(2);
   });

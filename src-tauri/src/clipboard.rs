@@ -102,7 +102,58 @@ pub struct ClipboardChunk {
     pub next: usize,
 }
 
-static CLIPBOARD_SESSION: std::sync::Mutex<Option<(u64, String)>> = std::sync::Mutex::new(None);
+/// The text of a clipboard read in progress: session id, the text, and when it was read.
+type HeldClipboard = Option<(u64, String, std::time::Instant)>;
+
+static CLIPBOARD_SESSION: std::sync::Mutex<HeldClipboard> = std::sync::Mutex::new(None);
+
+/// How long a read may stay held. A paste takes well under a second; the text can be a password,
+/// so a frontend that crashes between `begin` and `end` must not leave it in memory (SEC-13).
+const CLIPBOARD_HOLD: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Drops the held text when it is older than `max_age` at `now`. Returns whether none is held.
+fn sweep_held_clipboard(
+    held: &mut HeldClipboard,
+    now: std::time::Instant,
+    max_age: std::time::Duration,
+) -> bool {
+    if held
+        .as_ref()
+        .is_some_and(|(_, _, at)| now.saturating_duration_since(*at) >= max_age)
+    {
+        *held = None;
+    }
+    held.is_none()
+}
+
+/// Starts (at most one) background sweeper that clears an expired held text. It sleeps while
+/// nothing is held and ends when the hold is empty, so an idle app has no timer running.
+fn schedule_clipboard_expiry() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static RUNNING: AtomicBool = AtomicBool::new(false);
+    if RUNNING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    std::thread::spawn(|| loop {
+        std::thread::sleep(CLIPBOARD_HOLD);
+        let empty = {
+            let mut guard = CLIPBOARD_SESSION.lock().unwrap_or_else(|e| e.into_inner());
+            sweep_held_clipboard(&mut guard, std::time::Instant::now(), CLIPBOARD_HOLD)
+        };
+        if empty {
+            RUNNING.store(false, Ordering::SeqCst);
+            // A read may have started between the check and the store: take over if so.
+            let again = CLIPBOARD_SESSION
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .is_some();
+            if again && !RUNNING.swap(true, Ordering::SeqCst) {
+                continue;
+            }
+            break;
+        }
+    });
+}
 static CLIPBOARD_SESSION_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// One piece of `text` starting at byte `offset` (moved forward to a character
@@ -135,7 +186,9 @@ pub fn clipboard_text_begin() -> Result<ClipboardSession, TerminalError> {
     let text = read_clipboard_text()?;
     let id = CLIPBOARD_SESSION_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
     let len = text.len();
-    *CLIPBOARD_SESSION.lock().unwrap_or_else(|e| e.into_inner()) = Some((id, text));
+    *CLIPBOARD_SESSION.lock().unwrap_or_else(|e| e.into_inner()) =
+        Some((id, text, std::time::Instant::now()));
+    schedule_clipboard_expiry();
     Ok(ClipboardSession { id, len })
 }
 
@@ -147,7 +200,7 @@ pub fn clipboard_text_chunk(
 ) -> Result<ClipboardChunk, TerminalError> {
     let guard = CLIPBOARD_SESSION.lock().unwrap_or_else(|e| e.into_inner());
     match guard.as_ref() {
-        Some((held, text)) if *held == id => {
+        Some((held, text, _)) if *held == id => {
             Ok(chunk_of(text, offset, max.min(CLIPBOARD_CHUNK_MAX)))
         }
         _ => Err(TerminalError::IoError(
@@ -159,7 +212,7 @@ pub fn clipboard_text_chunk(
 /// Drop the held text (only if it still belongs to session `id`).
 pub fn clipboard_text_end(id: u64) {
     let mut guard = CLIPBOARD_SESSION.lock().unwrap_or_else(|e| e.into_inner());
-    if guard.as_ref().is_some_and(|(held, _)| *held == id) {
+    if guard.as_ref().is_some_and(|(held, _, _)| *held == id) {
         *guard = None;
     }
 }
@@ -449,6 +502,29 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_held_clipboard_text_expires() {
+        use std::time::{Duration, Instant};
+        let t0 = Instant::now();
+        let mut held: HeldClipboard = Some((7, "hunter2".to_string(), t0));
+        // Fresh: kept.
+        assert!(!sweep_held_clipboard(
+            &mut held,
+            t0 + Duration::from_secs(5),
+            CLIPBOARD_HOLD
+        ));
+        assert!(held.is_some());
+        // Past the limit: gone, whatever session it was.
+        assert!(sweep_held_clipboard(
+            &mut held,
+            t0 + CLIPBOARD_HOLD + Duration::from_millis(1),
+            CLIPBOARD_HOLD
+        ));
+        assert!(held.is_none());
+        // Nothing held is simply "empty".
+        assert!(sweep_held_clipboard(&mut held, t0, CLIPBOARD_HOLD));
+    }
+
+    #[test]
     fn uri_list_gives_decoded_absolute_paths() {
         let text = "# copied\r\nfile:///home/a/My%20Shot.png\r\nfile://localhost/tmp/b.txt\r\nhttps://example.com/x\r\nfile://relative.png\r\n\r\n";
         assert_eq!(
@@ -532,7 +608,7 @@ mod tests {
 
     #[test]
     fn a_newer_session_invalidates_an_older_one() {
-        *CLIPBOARD_SESSION.lock().unwrap() = Some((7, "old".into()));
+        *CLIPBOARD_SESSION.lock().unwrap() = Some((7, "old".into(), std::time::Instant::now()));
         assert_eq!(clipboard_text_chunk(7, 0, 10).unwrap().text, "old");
         assert!(clipboard_text_chunk(6, 0, 10).is_err());
         clipboard_text_end(6);

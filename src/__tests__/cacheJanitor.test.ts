@@ -1,6 +1,10 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach } from "vitest";
-import { CACHE_JANITOR_VERSION_KEY, runCacheJanitor } from "../services/cacheJanitor";
+import {
+  CACHE_JANITOR_VERSION_KEY,
+  purgeLegacyPrivateKeys,
+  runCacheJanitor,
+} from "../services/cacheJanitor";
 
 beforeEach(() => {
   localStorage.clear();
@@ -19,7 +23,6 @@ describe("install/update cache janitor", () => {
     localStorage.setItem("kai_active_mode", "code");
     localStorage.setItem("kai_update_last_check", "123");
     localStorage.setItem("kai_update_dismissed_version", "0.1.1");
-    localStorage.setItem("kai_cmd_history_v1", "[]");
     localStorage.setItem("kai_custom_ai_clis", "[]");
     localStorage.setItem("terminal_custom_ai_clis", "[]");
     localStorage.setItem("kai_autostart_enabled_mock", "0");
@@ -38,7 +41,6 @@ describe("install/update cache janitor", () => {
     expect(localStorage.getItem("kai_user_settings")).toBe('{"theme":"kali"}');
     expect(localStorage.getItem("terminal_tab_layout_v1")).toBe("[]");
     expect(localStorage.getItem("kai_active_project")).toBe("/repo");
-    expect(localStorage.getItem("kai_cmd_history_v1")).toBe("[]");
     expect(localStorage.getItem("kai_project_settings_%2Frepo")).toBe("{}");
     expect(localStorage.getItem("other_app_key")).toBe("keep");
     expect(localStorage.getItem(CACHE_JANITOR_VERSION_KEY)).toBe("0.1.2");
@@ -99,5 +101,18 @@ describe("cache janitor keeps every key a feature persists", () => {
 
     expect(report.removed).toEqual(["kai_stale_experiment_flag"]);
     for (const key of kept) expect(localStorage.getItem(key), key).toBe("v");
+  });
+  it("purges the legacy typed-line history on every launch, even when the version stamp matches", () => {
+    // That store held passphrases typed at no-echo prompts and TUI input in plaintext.
+    localStorage.setItem("kai_cmd_history_v1", JSON.stringify(["sudo", "hunter2"]));
+    localStorage.setItem(CACHE_JANITOR_VERSION_KEY, "0.1.2");
+    localStorage.setItem("kai_user_settings", "{}");
+
+    const report = runCacheJanitor("0.1.2");
+
+    expect(report.ran).toBe(false);
+    expect(localStorage.getItem("kai_cmd_history_v1")).toBeNull();
+    expect(localStorage.getItem("kai_user_settings")).toBe("{}");
+    expect(purgeLegacyPrivateKeys()).toEqual([]);
   });
 });

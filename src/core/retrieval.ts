@@ -281,6 +281,9 @@ export function readIndexedSource(index: ProjectIndex, relPath: string): SourceR
     if (!isWithinProjectBoundary(realTarget, realBase)) {
       return { status: "untrusted", reason: "path resolves outside the project root" };
     }
+    if (isSensitiveFile(path.basename(realTarget))) {
+      return { status: "untrusted", reason: "path resolves to a credential file" };
+    }
 
     const stat = fs.statSync(realTarget);
     if (!stat.isFile()) return { status: "not_file" };

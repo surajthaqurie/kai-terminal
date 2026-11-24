@@ -1,9 +1,14 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execSync } from "node:child_process";
-import { describe, expect, it } from "vitest";
-import { dropCwdHits, noCwdLookupEnv } from "../core/spawnSafety";
+import { execSync, spawnSync } from "node:child_process";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  dropCwdHits,
+  hardenExecutableLookup,
+  noCwdLookupEnv,
+  systemToolPath,
+} from "../core/spawnSafety";
 
 const onWindows = process.platform === "win32";
 
@@ -75,5 +80,92 @@ describe.runIf(onWindows)("a planted command in the project folder is not run", 
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("hardenExecutableLookup", () => {
+  it("sets the flag in the given environment on Windows only", () => {
+    const winEnv = {} as NodeJS.ProcessEnv;
+    expect(hardenExecutableLookup(winEnv, "win32")).toBe(true);
+    expect(winEnv.NoDefaultCurrentDirectoryInExePath).toBe("1");
+    expect(hardenExecutableLookup(winEnv, "win32")).toBe(false); // idempotent
+
+    const posixEnv = {} as NodeJS.ProcessEnv;
+    expect(hardenExecutableLookup(posixEnv, "linux")).toBe(false);
+    expect(posixEnv.NoDefaultCurrentDirectoryInExePath).toBeUndefined();
+  });
+});
+
+describe("systemToolPath", () => {
+  it("returns an absolute System32 path on Windows, independent of PATH and cwd", () => {
+    const env = { SystemRoot: "C:\\Windows\\" } as NodeJS.ProcessEnv;
+    expect(systemToolPath("taskkill.exe", "win32", env)).toBe(
+      "C:\\Windows\\System32\\taskkill.exe"
+    );
+    expect(systemToolPath("cmd", "win32", env)).toBe("C:\\Windows\\System32\\cmd.exe");
+    expect(systemToolPath("PowerShell.exe", "win32", env)).toBe(
+      "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\PowerShell.exe"
+    );
+  });
+
+  it("falls back to %windir% and then the default Windows directory", () => {
+    expect(systemToolPath("where.exe", "win32", { windir: "D:\\WIN" } as never)).toBe(
+      "D:\\WIN\\System32\\where.exe"
+    );
+    expect(systemToolPath("where.exe", "win32", {} as never)).toBe(
+      "C:\\Windows\\System32\\where.exe"
+    );
+  });
+
+  it("leaves the bare name alone elsewhere", () => {
+    expect(systemToolPath("taskkill.exe", "linux")).toBe("taskkill.exe");
+  });
+});
+
+/**
+ * The real hazard: libuv resolves `spawn("git")` / `spawn("cmd.exe")` in the
+ * PARENT, in the working directory first. The child-env flag does not help;
+ * the flag must be in this process's own environment.
+ */
+describe.runIf(onWindows)("a planted executable in the cwd is never spawned", () => {
+  const savedCwd = process.cwd();
+  const savedFlag = process.env.NoDefaultCurrentDirectoryInExePath;
+  let dir = "";
+
+  afterEach(() => {
+    process.chdir(savedCwd);
+    if (savedFlag === undefined) delete process.env.NoDefaultCurrentDirectoryInExePath;
+    else process.env.NoDefaultCurrentDirectoryInExePath = savedFlag;
+    if (dir) fs.rmSync(dir, { recursive: true, force: true });
+    dir = "";
+  });
+
+  it("spawns the system tool, not a same-named exe planted in the working directory", () => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "kai-plant-"));
+    const system32 = path.join(process.env.SystemRoot ?? "C:\\Windows", "System32");
+    // A harmless stand-in: hostname.exe prints the host name and rejects the arguments below.
+    for (const name of ["cmd.exe", "powershell.exe", "git.exe"]) {
+      fs.copyFileSync(path.join(system32, "hostname.exe"), path.join(dir, name));
+    }
+    process.chdir(dir);
+    delete process.env.NoDefaultCurrentDirectoryInExePath;
+
+    const real = () =>
+      spawnSync("cmd.exe", ["/d", "/c", "echo", "REAL-CMD"], { encoding: "utf8" }).stdout ?? "";
+    const realViaGit = () => spawnSync("git", ["--version"], { encoding: "utf8" });
+
+    // Premise: without the flag in this process the planted exe wins (the bug).
+    expect(real()).not.toContain("REAL-CMD");
+
+    expect(hardenExecutableLookup()).toBe(true);
+    expect(real()).toContain("REAL-CMD");
+    const git = realViaGit();
+    if (!git.error) expect(git.stdout).toMatch(/^git version/);
+    // And the absolute-path form never depended on the working directory at all.
+    delete process.env.NoDefaultCurrentDirectoryInExePath;
+    const abs = spawnSync(systemToolPath("cmd.exe"), ["/d", "/c", "echo", "ABS-CMD"], {
+      encoding: "utf8",
+    });
+    expect(abs.stdout).toContain("ABS-CMD");
   });
 });

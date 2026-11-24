@@ -7,6 +7,7 @@ import { UpdateResultNotice } from "./components/UpdateResultNotice";
 import type { TerminalViewRef } from "./components/TerminalView";
 import { TabPanes } from "./components/TabPanes";
 import { SessionBanners } from "./components/SessionBanners";
+import { CloseConfirmDialog } from "./components/CloseConfirmDialog";
 import { RenameTabDialog } from "./components/RenameTabDialog";
 import { MusicHost } from "./components/MusicHost";
 import { ToastHost } from "./components/ToastHost";
@@ -28,6 +29,7 @@ import { useAppUpdates } from "./hooks/useAppUpdates";
 import { useCodeMode } from "./hooks/useCodeMode";
 import { useGitStatus } from "./hooks/useGitStatus";
 import { useLatest } from "./hooks/useLatest";
+import { watchWindowCloseRequests } from "./services/appWindow";
 import { readPasteContent } from "./services/clipboardService";
 import { useMusicPlayer } from "./hooks/useMusicPlayer";
 import { useNotices } from "./hooks/useNotices";
@@ -35,6 +37,7 @@ import { usePaneCwd } from "./hooks/usePaneCwd";
 import { usePrefetchPanels } from "./hooks/usePrefetchPanels";
 import { useProjectActions } from "./hooks/useProjectActions";
 import { useSessionExit } from "./hooks/useSessionExit";
+import { useCloseGuard } from "./hooks/useCloseGuard";
 import { useSessionPersistence } from "./hooks/useSessionPersistence";
 import { useTabDetach } from "./hooks/useTabDetach";
 import { useTabs } from "./hooks/useTabs";
@@ -238,11 +241,13 @@ function App({ initialSeed = null }: { initialSeed?: TabSeed | null }) {
     shellsRef: config.shellsRef,
     selectedShellIdRef: config.selectedShellIdRef,
     setLastError,
+    notify: tabsState.showPaneNotice,
   });
   const persistence = useSessionPersistence({
     tabs,
     setTabs,
     setActiveTabId,
+    activeTabId,
     autoRestoreSession: userSettings.autoRestoreSession,
     enabled: !secondary,
   });
@@ -252,7 +257,40 @@ function App({ initialSeed = null }: { initialSeed?: TabSeed | null }) {
     notify,
   });
   useWindowRefit({ tabsRef, activeTabIdRef, terminalRefs, getActiveTerminal });
+
+  // User-initiated closes (tab button, shortcut, palette, close pane, load workspace)
+  // ask first when they would end a running command. A shell exiting by itself
+  // still closes its pane directly (`removeTab` below), never through this guard.
+  // Closing a pane keeps the same tab, so the tab-change focus hand-off never runs: the closed
+  // pane's input is gone and typing went nowhere until a click (FUNC-10). Hand focus over here.
+  const closeActivePaneAndFocus = useCallback(() => {
+    tabsState.closeActivePane();
+    focusActiveTerminalSoon();
+  }, [tabsState.closeActivePane, focusActiveTerminalSoon]);
+  const closeGuard = useCloseGuard({
+    tabsRef,
+    activeTabIdRef,
+    terminalRefs,
+    closeTab: tabsState.closeTab,
+    closeActivePane: closeActivePaneAndFocus,
+    restoreWorkspace: persistence.restoreWorkspace,
+  });
   usePrefetchPanels();
+
+  // The system asking this window to close (Alt+F4, taskbar): ask first, like the close button.
+  const requestCloseWindowRef = useLatest(closeGuard.requestCloseWindow);
+  useEffect(() => {
+    let unwatch: (() => void) | undefined;
+    let cancelled = false;
+    void watchWindowCloseRequests(() => requestCloseWindowRef.current()).then((off) => {
+      if (cancelled) off();
+      else unwatch = off;
+    });
+    return () => {
+      cancelled = true;
+      unwatch?.();
+    };
+  }, [requestCloseWindowRef]);
 
   /** Another terminal window, like opening a second editor window. */
   const openNewWindow = useCallback(() => {
@@ -358,12 +396,12 @@ function App({ initialSeed = null }: { initialSeed?: TabSeed | null }) {
     keybindings: userSettings.keybindings,
     fixedKeybindings: userSettings.fixedKeybindings,
     newTab: newTabAndFocus,
-    closeActiveTab: () => tabsState.closeTab(activeTabId),
+    closeActiveTab: () => closeGuard.requestCloseTab(activeTabId),
     toggleCommandPalette: () => setIsCommandPaletteOpen((prev) => !prev),
     toggleSearch,
     toggleSettings: () => setIsSettingsOpen((prev) => !prev),
     splitPane: splitPaneAndFocus,
-    closeActivePane: tabsState.closeActivePane,
+    closeActivePane: closeGuard.requestCloseActivePane,
     cycleTab: tabsState.cycleTab,
     focusNextPane: tabsState.focusNextPane,
     focusPrevPane: tabsState.focusPrevPane,
@@ -396,7 +434,7 @@ function App({ initialSeed = null }: { initialSeed?: TabSeed | null }) {
     focusPrevPane: tabsState.focusPrevPane,
     openWorkspaces: () => setIsWorkspaceOpen(true),
     splitPane: splitPaneAndFocus,
-    closeActivePane: tabsState.closeActivePane,
+    closeActivePane: closeGuard.requestCloseActivePane,
     toggleMusic: toggleMusicPanel,
     musicCommand,
     renameActiveTab: () => setRenameTarget(activeTab),
@@ -406,7 +444,7 @@ function App({ initialSeed = null }: { initialSeed?: TabSeed | null }) {
     showGitStatus: () => void project.showGit("status"),
     reviewChanges: () => project.reviewChanges(true),
     checkUpdates: () => void updates.checkUpdates(true),
-    closeActiveTab: () => tabsState.closeTab(activeTabId),
+    closeActiveTab: () => closeGuard.requestCloseTab(activeTabId),
     toggleSearch,
     copySelection: () => getActiveTerminal()?.copySelection(),
     pasteClipboard: () => void pasteFromClipboard(),
@@ -426,7 +464,8 @@ function App({ initialSeed = null }: { initialSeed?: TabSeed | null }) {
             activeTabId={activeTabId}
             onSelectTab={setActiveTabId}
             onTabClicked={focusActiveTerminalSoon}
-            onCloseTab={tabsState.closeTab}
+            onCloseTab={closeGuard.requestCloseTab}
+            onCloseWindow={closeGuard.requestCloseWindow}
             onNewTab={() => newTabAndFocus()}
             onRenameTab={tabsState.renameTab}
             onMoveTab={tabsState.moveTab}
@@ -502,6 +541,7 @@ function App({ initialSeed = null }: { initialSeed?: TabSeed | null }) {
               isActive={tab.id === activeTabId}
               selectedShell={config.selectedShell}
               shells={config.shells}
+              shellsReady={config.shellsReady}
               skipShellProfile={userSettings.skipShellProfile === true}
               settings={userSettings}
               terminalRefs={terminalRefs}
@@ -559,7 +599,7 @@ function App({ initialSeed = null }: { initialSeed?: TabSeed | null }) {
             isOpen={isWorkspaceOpen}
             onClose={() => setIsWorkspaceOpen(false)}
             currentTabs={tabs}
-            onLoadWorkspace={persistence.restoreWorkspace}
+            onLoadWorkspace={closeGuard.requestRestoreWorkspace}
           />
 
           <AiCliPanel
@@ -610,6 +650,8 @@ function App({ initialSeed = null }: { initialSeed?: TabSeed | null }) {
             />
           )}
         </Suspense>
+
+        {closeGuard.pending && <CloseConfirmDialog pending={closeGuard.pending} />}
 
         {renameTarget && (
           <RenameTabDialog

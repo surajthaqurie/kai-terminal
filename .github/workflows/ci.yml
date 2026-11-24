@@ -24,10 +24,22 @@ on:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
+# Nothing here writes to the repository or to pull requests.
+permissions:
+  contents: read
+
+# A newer push to the same pull request replaces its still-running CI. Runs on main / feature
+# branches are never cancelled, so every pushed commit keeps its own result.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   matrix-test-and-build:
     name: Build & Test (${{ matrix.target-name }})
     runs-on: ${{ matrix.os }}
+    # A hung runner or a deadlocked test must fail the job, not hold it for GitHub's 6 hours.
+    timeout-minutes: 75
     strategy:
       fail-fast: false
       matrix:
@@ -53,22 +65,23 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Setup Node.js v24 environment
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
           cache: "npm"
           cache-dependency-path: "package-lock.json"
 
       - name: Install Rust stable toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
+          toolchain: "1.99.0"
           components: rustfmt, clippy
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: "src-tauri"
 
@@ -88,7 +101,8 @@ jobs:
         run: npm run typecheck
 
       - name: Frontend Vitest Unit Tests
-        run: npm run test
+        # test:ci also fails when a test file silently produced no results (scripts/check-test-run.mjs).
+        run: npm run test:ci
 
       - name: Security Regression Tests (mandatory on PRs — audit, MCP, unregister, hardening, all OSes)
         # Mandatory quality gate for pull requests: no continue-on-error, no
@@ -181,7 +195,32 @@ jobs:
       - name: Build Web Frontend Bundle
         run: npm run build
 
-      - name: Build Rust Desktop Application Binary
+      - name: Frontend Bundle Size Budget (gzip limits in scripts/bundle-budget.json)
+        run: node scripts/check-bundle-budget.mjs
+
+      - name: Rust GUI Feature Clippy (compiles the real Tauri application code)
+        # Every other Rust step above uses --no-default-features, which compiles
+        # out the `tauri` feature (lib.rs commands, windows, updater, hand-off).
+        # This is the only PR gate that type-checks and lints that code on each
+        # OS. It needs dist/ (built above) because tauri::generate_context!
+        # embeds the frontend. --all-targets also compiles the GUI-feature unit
+        # tests; they are not executed (see the ACL test below for what is).
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+
+      - name: GUI-Feature Security Tests (window command ACL, update verification)
+        # window_acl loads the app's real context (capabilities + generated app
+        # ACL) into Tauri's mock runtime and proves per-window command access:
+        # terminal windows reach every command; the music and chat windows cannot
+        # call create_pty, installers, agent wiring, ... No GUI is launched.
+        # update_verify / update_flow cover the updater's signature, checksum,
+        # downgrade and launch-gate logic on real files. event_routing proves a
+        # session's output reaches only its own window; blocking_pool proves slow
+        # commands leave the async workers free for keystrokes.
+        run: cargo test --features gui-test --manifest-path src-tauri/Cargo.toml --test window_acl --test update_verify --test update_flow --test event_routing --test blocking_pool
+
+      - name: Build Rust Helper Binary (no GUI feature; Windows Job Object helper, CLI)
+        # NOT the desktop application: --no-default-features compiles the
+        # windowless helper only. The shipping GUI binary is built by release.yml.
         run: cargo build --manifest-path src-tauri/Cargo.toml --release --no-default-features
 
       - name: Windows Job Object helper (real desktop binary)
@@ -200,16 +239,16 @@ jobs:
           echo "--- web frontend bundle ---"
           test -f dist/index.html || { echo "FAIL: dist/index.html missing"; exit 1; }
           test -f dist/cli/index.js || { echo "FAIL: dist/cli/index.js missing"; exit 1; }
-          echo "--- desktop binary ---"
+          echo "--- Rust helper binary (no GUI feature) ---"
           BIN="src-tauri/target/release/kai${{ matrix.binary-ext }}"
           test -f "$BIN" || { echo "FAIL: $BIN missing"; exit 1; }
           ls -la dist/index.html dist/cli/index.js "$BIN"
-          echo "Production build verification passed on ${{ matrix.target-name }}."
+          echo "Web bundle + helper binary verification passed on ${{ matrix.target-name }} (the GUI app is built and linted by the clippy step and bundled by release.yml)."
 
-      - name: Upload Desktop Binary Artifact
-        uses: actions/upload-artifact@v4
+      - name: Upload Rust Helper Binary Artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: desktop-binary-${{ matrix.target-name }}
+          name: rust-helper-binary-${{ matrix.target-name }}
           path: |
             src-tauri/target/release/kai${{ matrix.binary-ext }}
           if-no-files-found: error
@@ -225,7 +264,52 @@ jobs:
           echo "- PTY AI-CLI subtest (test_13) reports NOTE + passes when no AI CLI binary is on PATH."
           echo "- Symlink-boundary subtests skip (reported as skipped by Vitest, with a reason) where the runner disallows symlinks."
           echo "- WSL: not verified by this job. The separate 'wsl' job runs a WSL shell round trip through ConPTY on a hosted Windows runner."
-          echo "- Full Tauri installer bundles (.deb/.AppImage/.msi/.exe/.dmg) are built only by release.yml on native runners; this CI verifies the web bundle + release binary."
+          echo "- Full Tauri installer bundles (.deb/.AppImage/.msi/.exe/.dmg) are built only by release.yml on native runners; this CI verifies the web bundle, the helper binary and (clippy) the GUI-feature Rust code."
+
+  # Dependency advisories, once per run (not per OS). Rust and production npm
+  # advisories fail the build; dev-only and website advisories are reported as
+  # warnings so a test-tooling or marketing-site advisory never blocks a release
+  # fix. Informational RustSec notices (unmaintained, unsound, yanked) do not fail.
+  dependency-security:
+    name: Dependency Security Audit
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup Node.js v24 environment
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: "npm"
+          cache-dependency-path: "package-lock.json"
+
+      - name: Install Frontend Dependencies
+        run: npm ci
+
+      - name: npm audit (production dependencies; fails on high or critical)
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: npm audit (all dependencies including dev tooling; advisory)
+        run: npm audit --audit-level=high || echo "::warning::npm audit reports advisories in dev dependencies"
+
+      - name: npm audit (kai-website; advisory)
+        working-directory: kai-website
+        run: npm audit --omit=dev --audit-level=high || echo "::warning::npm audit reports advisories in kai-website"
+
+      - name: Install Rust stable toolchain
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+        with:
+          toolchain: "1.99.0"
+
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2
+        with:
+          tool: cargo-audit
+
+      - name: cargo audit (src-tauri/Cargo.lock; fails on known vulnerabilities)
+        run: cargo audit --file src-tauri/Cargo.lock
 
   # Snap and Flatpak repackage the .deb that Tauri builds (a --no-default-features
   # build has no desktop window), so this job builds the .deb once and then
@@ -234,22 +318,25 @@ jobs:
   linux-packages:
     name: Snap & Flatpak (linux-x86_64)
     runs-on: ubuntu-22.04
+    timeout-minutes: 60
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Setup Node.js v24 environment
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
           cache: "npm"
           cache-dependency-path: "package-lock.json"
 
       - name: Install Rust stable toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+        with:
+          toolchain: "1.99.0"
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: "src-tauri"
 
@@ -299,14 +386,14 @@ jobs:
       - name: Build snap
         id: snap
         continue-on-error: true
-        uses: snapcore/action-build@v1
+        uses: snapcore/action-build@3bdaa03e1ba6bf59a65f84a751d943d549a54e79 # v1
 
       # Second attempt covers transient store/network failures inside the
       # snapcraft LXD build itself (package and base downloads).
       - name: Build snap (retry)
         id: snap_retry
         if: steps.snap.outcome == 'failure'
-        uses: snapcore/action-build@v1
+        uses: snapcore/action-build@3bdaa03e1ba6bf59a65f84a751d943d549a54e79 # v1
 
       - name: Install and smoke-test snap
         run: |
@@ -356,12 +443,13 @@ jobs:
   wsl:
     name: WSL shell (windows-latest + Ubuntu-22.04)
     runs-on: windows-latest
+    timeout-minutes: 45
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install WSL2 distribution
-        uses: Vampire/setup-wsl@v7
+        uses: Vampire/setup-wsl@4c48163d9f981914dd8caa0fc335fe19cca5bff4 # v7
         with:
           distribution: Ubuntu-22.04
           set-as-default: "true"
@@ -414,10 +502,12 @@ jobs:
           echo "$out" | grep -qi microsoft
 
       - name: Install Rust stable toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+        with:
+          toolchain: "1.99.0"
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: "src-tauri"
 

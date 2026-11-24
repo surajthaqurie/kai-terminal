@@ -539,6 +539,19 @@ function fixedMatches(
 }
 
 /**
+ * True when the event was made with the AltGr key. Windows reports AltGr as Ctrl+Alt, so a
+ * Ctrl-based shortcut check would otherwise claim keys that type a character (AltGr+Shift+C on
+ * some layouts). Environments without `getModifierState` simply report false.
+ */
+export function isAltGraph(e: { getModifierState?: (key: string) => boolean }): boolean {
+  try {
+    return e.getModifierState?.("AltGraph") === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * True when a keyboard event is a terminal copy combo AND there is a
  * selection to copy: Ctrl+Shift+C (Win/Linux), Cmd+C / Cmd+Shift+C (macOS),
  * or Ctrl+Insert (Win/Linux standard) by default, or the user's own binding

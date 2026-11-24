@@ -18,7 +18,12 @@ import {
  * nothing on macOS, which keeps its native traffic lights (see
  * `tauri.macos.conf.json`: overlay title bar) on the left of the tab row.
  */
-export const WindowControls: FC = () => {
+interface WindowControlsProps {
+  /** Close button: the app asks first when commands are running. Default: close at once. */
+  onClose?: () => void;
+}
+
+export const WindowControls: FC<WindowControlsProps> = ({ onClose }) => {
   const [maximized, setMaximized] = useState(false);
   const [nativeState, setNativeState] = useState<MaximizeButtonState>("none");
   const maximizeRef = useRef<HTMLButtonElement>(null);
@@ -101,7 +106,7 @@ export const WindowControls: FC = () => {
       <button
         type="button"
         className="window-control-btn window-control-close"
-        onClick={() => void closeAppWindow()}
+        onClick={() => (onClose ? onClose() : void closeAppWindow())}
         title="Close"
         aria-label="Close window"
       >

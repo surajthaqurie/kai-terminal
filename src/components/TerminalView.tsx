@@ -10,17 +10,27 @@ import {
 } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
-import { ImageAddon } from "@xterm/addon-image";
-import { SearchAddon } from "@xterm/addon-search";
-import { SerializeAddon } from "@xterm/addon-serialize";
+import type { SerializeAddon } from "@xterm/addon-serialize";
+import {
+  createLazyAddonSlot,
+  loadImageAddon,
+  loadSerializeAddon,
+  type LazyAddonSlot,
+} from "../services/xtermLazyAddons";
+import { useTerminalSearch } from "../hooks/useTerminalSearch";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
-import { WebglAddon } from "@xterm/addon-webgl";
+import type { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
 import { canFitPane, createPtySizeSync, serializeLatest, type PtySizeSync } from "./terminalFit";
-import { createHiddenGpuBudget } from "./gpuBudget";
+import {
+  GPU_REATTACH_DELAYS_MS,
+  attachGpuRenderer,
+  detachGpuRenderer,
+  hiddenGpuBudget,
+} from "./gpuRenderer";
 import { ptyService, PtyService } from "../services/ptyService";
-import { describeCwdFallback, isWorkingDirectoryError } from "../services/spawnRecovery";
+import { replayHandoff, spawnPaneShell } from "../services/paneSpawn";
 import {
   claimPtyId,
   createEarlyPtyEvents,
@@ -29,36 +39,32 @@ import {
   type EarlyPtyEvents,
 } from "../services/ptyEarlyEvents";
 import {
-  isCopyKeyEvent,
-  isPasteKeyEvent,
-  matchBuiltinShortcut,
-  matchShortcut,
-  matchTerminalAction,
-} from "../services/shortcuts";
+  LISTENERS_WAIT_MS,
+  SHELL_LIST_WAIT_MS,
+  awaitBounded,
+  waitUntil,
+} from "../services/startupGate";
+import { createTerminalKeyHandler, type TerminalKeyHandler } from "../services/terminalKeyHandler";
 import { PaneAdoption, ShellProfile, SessionStatus, UserSettings } from "../types/terminal";
 import { handoffFinish, type HandoffRelease } from "../services/terminalWindows";
 import type { HandoffTerminal, PaneCapture } from "../services/tabHandoff";
 import { SettingsService, DEFAULT_SETTINGS } from "../services/settingsService";
-import { getTheme, searchDecorations } from "../theme/registry";
 import { detectHostOs, launchFailureTip } from "./launchFailure";
-import type { SearchResults, SearchOptions } from "./SearchBar";
-import { loadCommandHistory, recordCommand, saveCommandHistory } from "../services/autocomplete";
-import { TerminalOutputBuffer } from "../services/terminalOutputBuffer";
-import { readAttachmentPasteText, readPasteContent } from "../services/clipboardService";
+import { createTerminalOutputPipeline } from "../services/terminalOutputPipeline";
+import {
+  diffAppearance,
+  terminalAppearance,
+  type TerminalAppearance,
+} from "../services/terminalAppearance";
+import {
+  copyTextToClipboard,
+  readAttachmentPasteText,
+  readPasteContent,
+} from "../services/clipboardService";
 import { guardLinkClicks, isOpenLinkClick, openTerminalLink } from "../services/terminalLinks";
 import { CODE_MODE_OSC, parseCodeModeSignal } from "../core/codeModeSignal";
-import {
-  CD_PROBE_DELAYS_MS,
-  CWD_SETTLE_MS,
-  createCwdSettler,
-  lineLikelyChangesCwd,
-  type CwdSettler,
-} from "../services/cwdCommand";
-import {
-  TERMINAL_MODE_RESET_SEQ,
-  outputClearsScreen,
-  scanAgentFinishedTail,
-} from "../services/terminalModes";
+import { createPaneCwdTracker, type PaneCwdTracker } from "../services/paneCwdTracker";
+import { TERMINAL_MODE_RESET_SEQ, scanAgentFinishedTail } from "../services/terminalModes";
 import {
   STALE_REPLY_WINDOW_MS,
   preparePasteText,
@@ -70,78 +76,8 @@ import {
 // the per-pane startup path.
 const SearchBar = lazy(() => import("./SearchBar").then((m) => ({ default: m.SearchBar })));
 
-/**
- * GPU (WebGL) renderer for xterm. The default DOM renderer is the main cause
- * of typing/scroll lag and dropped frames under heavy output (TUIs, AI CLIs,
- * builds), so panes use WebGL whenever the WebView supports it.
- *
- * - Attached only to VISIBLE panes: browsers cap live WebGL contexts (~16), and
- *   hidden tabs stay mounted, so they release theirs and fall back to DOM.
- * - Any failure (no WebGL2, blocklisted GPU, context loss) silently keeps / falls
- *   back to the DOM renderer — never breaks the terminal.
- * - Escape hatch: `localStorage.kai_renderer = "dom"` forces the DOM renderer.
- */
-function gpuRendererDisabled(): boolean {
-  try {
-    return window.localStorage.getItem("kai_renderer") === "dom";
-  } catch {
-    return false;
-  }
-}
-
-function attachGpuRenderer(term: Terminal, slot: { current: WebglAddon | null }): void {
-  if (slot.current || gpuRendererDisabled()) return;
-  try {
-    const addon = new WebglAddon();
-    addon.onContextLoss(() => {
-      try {
-        addon.dispose();
-      } catch {
-        // Already disposed with the terminal.
-      }
-      if (slot.current === addon) slot.current = null;
-      // A WebView drops the GPU context of a canvas that sat hidden for a while
-      // (and may report it only after the tab is shown again). Disposing the
-      // addon hands the screen back to the DOM renderer, whose rows were never
-      // painted while the canvas drove the display, so the pane stays blank
-      // until something dirties it. Repaint every row right away.
-      requestAnimationFrame(() => {
-        try {
-          term.refresh(0, Math.max(0, term.rows - 1));
-        } catch {
-          // Terminal already disposed.
-        }
-      });
-    });
-    term.loadAddon(addon);
-    slot.current = addon;
-    term.refresh(0, Math.max(0, term.rows - 1));
-  } catch {
-    // WebGL2 unavailable: the DOM renderer keeps working.
-    slot.current = null;
-  }
-}
-
-/**
- * Hidden panes that may keep a WebGL context at once. Visible panes (splits)
- * plus this stay well under the ~16 context cap; the longest-hidden go first.
- */
-const MAX_HIDDEN_GPU_PANES = 6;
-const hiddenGpuBudget = createHiddenGpuBudget(MAX_HIDDEN_GPU_PANES);
-
 /** A pane hidden longer than this gets an extra re-fit + repaint after it is shown again. */
 const ATLAS_REBUILD_AFTER_HIDDEN_MS = 5_000;
-
-function detachGpuRenderer(slot: { current: WebglAddon | null }): void {
-  const addon = slot.current;
-  slot.current = null;
-  if (!addon) return;
-  try {
-    addon.dispose();
-  } catch {
-    // Already disposed; safe to ignore.
-  }
-}
 
 /** Most scrollback rows carried to another window with a moved tab (keeps the snapshot small). */
 const MAX_HANDOFF_SCROLLBACK = 4000;
@@ -165,6 +101,8 @@ export interface TerminalViewRef extends HandoffTerminal {
 interface TerminalViewProps {
   sessionId: string;
   selectedShell?: ShellProfile;
+  /** False while the shell list is still loading; a new shell then waits briefly for it. Default true. */
+  shellsReady?: boolean;
   cwd?: string;
   settings?: UserSettings;
   /**
@@ -203,6 +141,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
     {
       sessionId,
       selectedShell,
+      shellsReady = true,
       cwd,
       settings = DEFAULT_SETTINGS,
       visible = true,
@@ -219,7 +158,6 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
     const containerRef = useRef<HTMLDivElement>(null);
     const xtermRef = useRef<Terminal | null>(null);
     const fitAddonRef = useRef<FitAddon | null>(null);
-    const searchAddonRef = useRef<SearchAddon | null>(null);
     const webglAddonRef = useRef<WebglAddon | null>(null);
     // The key handler below is attached once per terminal; it reads the
     // remapped copy / paste / zoom / terminal-local keys through this ref so a
@@ -240,40 +178,43 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
     // writer for output that was held during a move that did not happen.
     const adoptRef = useRef(adopt);
     const pendingAdoptIdRef = useRef<string | null>(null);
-    const serializeAddonRef = useRef<SerializeAddon | null>(null);
+    // Bumped when the terminal is torn down, so the image add-on finishing its load afterwards is
+    // dropped. Search and Serialize have their own slots that do the same (`createLazyAddonSlot`).
+    const lazyAddonEpochRef = useRef(0);
+    // The serializer that snapshots the screen for a tab moved to another window, loaded on first use.
+    const serializeSlotRef = useRef<LazyAddonSlot<SerializeAddon> | null>(null);
+    serializeSlotRef.current ??= createLazyAddonSlot<SerializeAddon>(
+      loadSerializeAddon,
+      () => xtermRef.current
+    );
+    const serializeSlot = serializeSlotRef.current;
+    // Find-in-terminal: the bar, the match count and the lazily loaded search add-on.
+    const terminalSearch = useTerminalSearch(() => xtermRef.current, settings.theme);
+
     const resumeHeldRef = useRef<(released: HandoffRelease) => void>(() => {});
-    const [isSearchVisible, setIsSearchVisible] = useState(false);
     // Last PTY spawn failure for this pane. When set, an in-pane overlay
     // offers Retry (re-spawn) so a bad shell binary / cwd never leaves the
     // user staring at a dead pane with "use the + button" as the only fix.
     const [launchError, setLaunchError] = useState<string | null>(null);
-    // Match count from the search addon's own result event (null: no search yet).
-    const [searchResults, setSearchResults] = useState<SearchResults | null>(null);
 
-    // ---- Command line tracking & history ---------------------------------
-    // Native Kali/Linux terminal autocompletion (ZSH autosuggestions, compinit,
+    // ---- Command line tracking (in memory only) --------------------------
+    // Native shell autocompletion (ZSH autosuggestions, compinit,
     // bash-completion) is owned by the shell over the PTY. We do not inject
     // popup overlays over the buffer so Tab, arrow keys, and ghost text
-    // behave identically to native Kali terminals.
+    // behave identically to native terminals.
+    //
+    // The line buffer exists only so an Enter can be checked for "this line
+    // probably changes the directory" (see `lineLikelyChangesCwd`). It is never
+    // persisted: it cannot tell a password typed at a no-echo prompt, or text
+    // typed into a TUI, from a command, so recording it (as an earlier version
+    // did, in localStorage) stored secrets at rest.
     const lineBufferRef = useRef("");
-    const historyRef = useRef<string[]>([]);
-
-    const commitLine = (line: string) => {
-      const trimmed = line.trim();
-      if (trimmed) {
-        historyRef.current = recordCommand(historyRef.current, trimmed);
-        saveCommandHistory(historyRef.current);
-      }
-    };
 
     const trackInputData = (data: string) => {
-      // Enter or multiline chunk/paste: split and commit completed lines.
+      // Enter or multiline chunk/paste: keep only the unfinished last line.
       if (data.includes("\r") || data.includes("\n")) {
         const full = lineBufferRef.current + data;
         const parts = full.split(/\r\n|\r|\n/);
-        for (let i = 0; i < parts.length - 1; i++) {
-          commitLine(parts[i]);
-        }
         lineBufferRef.current = (parts[parts.length - 1] || "").slice(-4096);
         return;
       }
@@ -311,27 +252,58 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
     onStatusRef.current = onSessionStatusChange;
     const onCwdResolvedRef = useRef(onCwdResolved);
     onCwdResolvedRef.current = onCwdResolved;
-    // Directory gate: changed directories are held until typing stops and
-    // the candidate settles (see createCwdSettler); deliver() is the only
-    // place that reaches the app. Created once per pane.
-    const lastKeyAtRef = useRef(0);
-    const cwdSettlerRef = useRef<CwdSettler | null>(null);
-    if (!cwdSettlerRef.current) {
-      cwdSettlerRef.current = createCwdSettler((p) => onCwdResolvedRef.current?.(p), {
-        isTyping: () => Date.now() - lastKeyAtRef.current < CWD_SETTLE_MS,
+    // Working-directory tracking: every source (spawn reply, `pty-cwd` events, shell folder
+    // reports, focus, probes after `cd`, the poll) goes through one settler whose delivery is
+    // the only path to the app. Created once per pane; see `paneCwdTracker`.
+    const cwdTrackerRef = useRef<PaneCwdTracker | null>(null);
+    if (!cwdTrackerRef.current) {
+      cwdTrackerRef.current = createPaneCwdTracker({
+        ptyId: () => backendPtyIdRef.current,
+        readCwd: (id) => PtyService.getPtyCwd(id),
+        deliver: (p) => onCwdResolvedRef.current?.(p),
       });
     }
-    const settleCwd = (p: string) => cwdSettlerRef.current?.push(p);
+    const cwdTracker = cwdTrackerRef.current;
     const onCodeModeChangeRef = useRef(onCodeModeChange);
     onCodeModeChangeRef.current = onCodeModeChange;
     const onFocusRef = useRef(onFocus);
     onFocusRef.current = onFocus;
     const shellRef = useRef(selectedShell);
     shellRef.current = selectedShell;
+    // True once the app has the shell list (or knows it cannot get one).
+    const shellsReadyRef = useRef(shellsReady);
+    shellsReadyRef.current = shellsReady;
+    const listenersReadyRef = useRef<Promise<unknown> | undefined>(undefined);
     const cwdRef = useRef(cwd);
     cwdRef.current = cwd;
     const visibleRef = useRef(visible);
     visibleRef.current = visible;
+    // Winning the WebGL renderer back after a context loss while this pane is on screen.
+    const gpuRetryRef = useRef<{ attempt: number; timer: ReturnType<typeof setTimeout> | null }>({
+      attempt: 0,
+      timer: null,
+    });
+    const attachGpu = (term: Terminal) => {
+      attachGpuRenderer(term, webglAddonRef, () => {
+        // Lost: the pane runs on the DOM renderer now. A hidden pane waits until it is shown
+        // (the visibility effect attaches again); a visible one retries on a short backoff.
+        if (!visibleRef.current) return;
+        const retry = gpuRetryRef.current;
+        const delay = GPU_REATTACH_DELAYS_MS[retry.attempt];
+        if (delay === undefined) return;
+        retry.attempt += 1;
+        if (retry.timer !== null) clearTimeout(retry.timer);
+        retry.timer = setTimeout(() => {
+          retry.timer = null;
+          if (visibleRef.current && xtermRef.current === term) attachGpu(term);
+        }, delay);
+      });
+    };
+    const cancelGpuRetry = () => {
+      const retry = gpuRetryRef.current;
+      if (retry.timer !== null) clearTimeout(retry.timer);
+      retry.timer = null;
+    };
     // Remembers the grid the PTY has, so no-op resizes are skipped (a tab flip
     // re-fits to the same grid, and a ConPTY resize forces a reflow).
     const ptySizeSyncRef = useRef<PtySizeSync | null>(null);
@@ -395,7 +367,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       const term = xtermRef.current;
       if (!text || !backendId || !term) return;
 
-      // Pasted text updates the line buffer so command history stays in sync.
+      // Pasted text updates the in-memory line buffer (cd detection only).
       trackInputData(text.replace(/[\r\n]+$/, ""));
       PtyService.writeToPty(backendId, preparePasteText(text, term.modes.bracketedPasteMode)).catch(
         (e) => {
@@ -430,16 +402,15 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       focus: () => {
         xtermRef.current?.focus();
       },
-      toggleSearch: () => {
-        setIsSearchVisible((prev) => !prev);
-      },
+      toggleSearch: () => terminalSearch.toggle(),
       handoffSessionId: () => backendPtyIdRef.current,
       handoffCapture: async (): Promise<PaneCapture | null> => {
         const id = backendPtyIdRef.current;
         const term = xtermRef.current;
-        const serializer = serializeAddonRef.current;
-        if (!id || !term || !serializer) return null;
+        if (!id || !term) return null;
         try {
+          const serializer = await serializeSlot.ensure();
+          if (!serializer) return null;
           // Everything received so far must be on screen before it is serialized.
           flushPendingRef.current();
           await Promise.race([
@@ -463,6 +434,49 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       handoffResume: (released: HandoffRelease) => resumeHeldRef.current(released),
     }));
 
+    // ---- Shared by starting a shell and attaching to a moved one ---------------------------
+    /** The pane's session is `id`, running at the grid it was started at: make it live. */
+    const markLive = (id: string, cols: number, rows: number) => {
+      backendPtyIdRef.current = id;
+      claimPtyId(id);
+      // The shell runs at the grid measured BEFORE the async start. No backend id existed while
+      // it ran, so any resize in that window (window maximize/restore at startup, web fonts
+      // landing, a split) was dropped by `pushPtySize` and the shell would keep a stale, smaller
+      // grid until the next manual resize. Re-fit now and send the difference.
+      ptySizeSyncRef.current?.spawned(id, cols, rows);
+      const term = xtermRef.current;
+      try {
+        if (term && fitWhenShown()) pushPtySize(term);
+      } catch {
+        // Ignore fit errors during hidden-tab layout.
+      }
+      setLaunchError(null);
+      onStatusRef.current?.("connected");
+    };
+    /**
+     * The session's events that arrived before the pane knew its id (its first prompt, or its
+     * exit) go through the normal handlers now: after "connected", so an instant exit still
+     * ends in "disconnected".
+     */
+    const replayHeld = (id: string) => {
+      spawningRef.current = false;
+      replayEarlyEventsRef.current(earlyEventsRef.current?.take(id) ?? []);
+    };
+    /** A launch failed: the overlay offers Retry, the scrollback gets one dim line. */
+    const launchFailed = (seq: number, err: unknown, line: string) => {
+      if (seq !== initSeqRef.current) return;
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      setLaunchError(errorMsg);
+      xtermRef.current?.writeln(`\r\n\x1b[2m${line}\x1b[0m`);
+      onStatusRef.current?.("error", errorMsg);
+    };
+    /** A newer launch owns the early-event buffer once it has started. */
+    const endLaunch = (seq: number) => {
+      if (seq !== initSeqRef.current) return;
+      spawningRef.current = false;
+      earlyEventsRef.current?.clear();
+    };
+
     const initPtySession = async (overrideShell?: ShellProfile) => {
       const term = xtermRef.current;
       const fitAddon = fitAddonRef.current;
@@ -471,8 +485,11 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
 
       // Best-effort close of the previous backend session for this tab
       // before spawning a replacement (prevents orphan PTY processes).
-      const previousId = backendPtyIdRef.current;
+      // A moved shell this pane failed to attach to counts too: Retry starts a new shell, and the
+      // moved one would otherwise keep running with no window showing it (REL-08).
+      const previousId = backendPtyIdRef.current ?? pendingAdoptIdRef.current;
       backendPtyIdRef.current = null;
+      pendingAdoptIdRef.current = null;
       releasePtyId(previousId);
       if (previousId) {
         try {
@@ -511,6 +528,18 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       const cols = term.cols || 80;
       const rows = term.rows || 24;
 
+      // The configured shell may still be loading on a cold start: starting now would spawn
+      // the backend default while the footer shows the configured one (FUNC-05).
+      if (!overrideShell && !shellRef.current && !shellsReadyRef.current) {
+        await waitUntil(
+          () => shellsReadyRef.current || mySeq !== initSeqRef.current,
+          SHELL_LIST_WAIT_MS
+        );
+        if (mySeq !== initSeqRef.current) return;
+      }
+      await awaitBounded(listenersReadyRef.current, LISTENERS_WAIT_MS);
+      if (mySeq !== initSeqRef.current) return;
+
       earlyEventsRef.current?.clear();
       spawningRef.current = true;
       try {
@@ -518,79 +547,27 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         if (overrideShell) {
           shellRef.current = overrideShell;
         }
-        const requestedCwd = (() => {
-          const c = cwdRef.current ?? cwd;
-          return c && c.trim() ? c.trim() : undefined;
-        })();
-        const spawn = (dir: string | undefined) =>
-          PtyService.createPty({
-            shell_path: effShell?.path ?? selectedShell?.path,
-            args: effShell?.args ?? selectedShell?.args,
-            cwd: dir,
-            cols,
-            rows,
-          });
-        let sessionInfo;
-        try {
-          sessionInfo = await spawn(requestedCwd);
-        } catch (spawnErr) {
-          // A saved folder that no longer exists must not lock the pane out:
-          // say so, and open in the default (home) folder. Any other failure,
-          // or a second failure in home, falls through to the normal error UI.
-          const reason = spawnErr instanceof Error ? spawnErr.message : String(spawnErr);
-          if (!requestedCwd || !isWorkingDirectoryError(reason) || mySeq !== initSeqRef.current) {
-            throw spawnErr;
-          }
-          term.writeln(`\x1b[33m${describeCwdFallback(requestedCwd)}\x1b[0m\r\n`);
-          sessionInfo = await spawn(undefined);
-        }
-        if (mySeq !== initSeqRef.current) {
-          // A newer init superseded this attempt; reap the orphan.
-          try {
-            await PtyService.closePty(sessionInfo.id);
-          } catch {
-            // ignore
-          }
-          return;
-        }
-
-        backendPtyIdRef.current = sessionInfo.id;
-        claimPtyId(sessionInfo.id);
-        // The shell was spawned at the grid measured BEFORE the async spawn. No
-        // backend id existed while it ran, so any resize in that window (window
-        // maximize/restore at startup, web fonts landing, a split) was dropped
-        // by `pushPtySize` and the shell would keep a stale, smaller grid until
-        // the next manual resize. Re-fit now and send the difference.
-        ptySizeSyncRef.current?.spawned(sessionInfo.id, cols, rows);
-        try {
-          if (fitWhenShown()) pushPtySize(term);
-        } catch {
-          // Ignore fit errors during hidden-tab layout.
-        }
-        setLaunchError(null);
-        onStatusRef.current?.("connected");
-        if (sessionInfo.cwd) {
-          cwdSettlerRef.current?.reset();
-          settleCwd(sessionInfo.cwd);
-        }
-        // The shell may already have printed its prompt, or died, before this
-        // reply arrived: feed those events through the normal handlers now
-        // (after "connected", so an instant exit still ends in "disconnected").
-        spawningRef.current = false;
-        replayEarlyEventsRef.current(earlyEventsRef.current?.take(sessionInfo.id) ?? []);
+        // Folder fallback, the parent-folder notice and reaping an overtaken spawn: see
+        // `spawnPaneShell`.
+        const sessionInfo = await spawnPaneShell({
+          createPty: (req) => PtyService.createPty(req),
+          closePty: (id) => PtyService.closePty(id),
+          shellPath: effShell?.path ?? selectedShell?.path,
+          args: effShell?.args ?? selectedShell?.args,
+          cwd: cwdRef.current ?? cwd,
+          cols,
+          rows,
+          isCurrent: () => mySeq === initSeqRef.current,
+          notice: (text) => term.writeln(`\x1b[33m${text}\x1b[0m\r\n`),
+        });
+        if (!sessionInfo) return;
+        markLive(sessionInfo.id, cols, rows);
+        cwdTracker.sessionStarted(sessionInfo.cwd);
+        replayHeld(sessionInfo.id);
       } catch (err: unknown) {
-        if (mySeq !== initSeqRef.current) return;
-        const errorMsg = err instanceof Error ? err.message : String(err);
-        setLaunchError(errorMsg);
-        // One dim line in the scrollback; the details and Retry live in the overlay.
-        term.writeln(`\r\n\x1b[2m[Shell failed to start]\x1b[0m`);
-        onStatusRef.current?.("error", errorMsg);
+        launchFailed(mySeq, err, "[Shell failed to start]");
       } finally {
-        // A newer spawn owns the flag (and the buffer) once it has started.
-        if (mySeq === initSeqRef.current) {
-          spawningRef.current = false;
-          earlyEventsRef.current?.clear();
-        }
+        endLaunch(mySeq);
       }
     };
 
@@ -612,32 +589,48 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [resetKey]);
 
-    // React to settings changes dynamically
+    // The look this pane's xterm currently has (set when it is created, then by the
+    // effect below), so a settings object that changed only OTHER things does no work.
+    const appliedAppearanceRef = useRef<TerminalAppearance | null>(null);
+
+    // React to settings changes dynamically: only the terminal's own look matters, and
+    // only the work that look change needs is done (see `terminalAppearance`).
     useEffect(() => {
       const term = xtermRef.current;
       if (!term) return;
 
-      term.options.fontFamily = settings.fontFamily;
-      term.options.fontSize = settings.fontSize;
-      term.options.lineHeight = settings.lineHeight ?? DEFAULT_SETTINGS.lineHeight;
-      term.options.cursorBlink = settings.cursorBlink;
-      term.options.cursorStyle = settings.cursorStyle || "block";
-      term.options.scrollback = settings.scrollback;
-      term.options.theme = SettingsService.getThemeColors(settings.theme, settings.opacity ?? 1.0);
+      const next = terminalAppearance(settings);
+      const change = diffAppearance(appliedAppearanceRef.current, next);
+      if (change.changed.size === 0) return;
+      appliedAppearanceRef.current = next;
+
+      if (change.changed.has("fontFamily")) term.options.fontFamily = settings.fontFamily;
+      if (change.changed.has("fontSize")) term.options.fontSize = settings.fontSize;
+      if (change.changed.has("lineHeight")) {
+        term.options.lineHeight = settings.lineHeight ?? DEFAULT_SETTINGS.lineHeight;
+      }
+      if (change.changed.has("cursorBlink")) term.options.cursorBlink = settings.cursorBlink;
+      if (change.changed.has("cursorStyle"))
+        term.options.cursorStyle = settings.cursorStyle || "block";
+      if (change.changed.has("scrollback")) term.options.scrollback = settings.scrollback;
+      if (change.changed.has("theme") || change.changed.has("opacity")) {
+        term.options.theme = SettingsService.getThemeColors(
+          settings.theme,
+          settings.opacity ?? 1.0
+        );
+      }
       try {
-        term.clearTextureAtlas?.();
-        term.refresh(0, Math.max(0, term.rows - 1));
+        if (change.rebuildGlyphs) {
+          term.clearTextureAtlas?.();
+          term.refresh(0, Math.max(0, term.rows - 1));
+        }
         // Font family/size change cell metrics, so the grid changes without the
         // container resizing: the PTY must learn the new cols/rows too.
-        if (fitWhenShown()) pushPtySize(term);
+        if (change.refit && fitWhenShown()) pushPtySize(term);
       } catch {
         // ignore hidden-tab layout errors
       }
     }, [settings]);
-
-    useEffect(() => {
-      historyRef.current = loadCommandHistory();
-    }, []);
 
     useEffect(() => {
       if (!containerRef.current) return;
@@ -682,14 +675,9 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       });
 
       const fitAddon = new FitAddon();
-      const searchAddon = new SearchAddon();
-      // Snapshots the screen when this pane's tab is moved to another window.
-      const serializeAddon = new SerializeAddon();
-      serializeAddonRef.current = serializeAddon;
-
+      // Search and Serialize (the screen snapshot for a tab moved to another window) are loaded
+      // when first used, see `useTerminalSearch` and `serializeSlot`.
       term.loadAddon(fitAddon);
-      term.loadAddon(serializeAddon);
-      term.loadAddon(searchAddon);
       // xterm defaults to Unicode 6 cell widths, which count emoji and many
       // symbols as one cell. Shells, ConPTY and modern TUIs (AI CLIs) lay text
       // out with Unicode 11+ widths (two cells), so every such character
@@ -728,27 +716,25 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       // Inline images (iTerm2 protocol and Sixel), so `kai teams` can show the
       // pictures people send. Guarded: if the add-on cannot start here, the
       // terminal works exactly as before and the chat falls back to links.
-      try {
-        term.loadAddon(new ImageAddon({ storageLimit: 32 }));
-      } catch (e) {
-        console.warn("Inline images are unavailable:", e);
-      }
+      // Fetched after the pane is up (see `xtermLazyAddons`): the terminal paints without it.
+      const addonEpoch = lazyAddonEpochRef.current;
+      void loadImageAddon()
+        .then((ImageAddon) => {
+          if (lazyAddonEpochRef.current !== addonEpoch) return; // pane torn down meanwhile
+          term.loadAddon(new ImageAddon({ storageLimit: 32 }));
+        })
+        .catch((e) => console.warn("Inline images are unavailable:", e));
       try {
         fitAddon.fit();
       } catch {
         // ignore initial layout errors
       }
       // GPU renderer must load AFTER open() (it needs the screen element).
-      if (visibleRef.current) attachGpuRenderer(term, webglAddonRef);
+      if (visibleRef.current) attachGpu(term);
 
       const onTextareaFocus = () => {
         onFocusRef.current?.();
-        const backendId = backendPtyIdRef.current;
-        if (backendId) {
-          void PtyService.getPtyCwd(backendId).then((resolved) => {
-            if (resolved) settleCwd(resolved);
-          });
-        }
+        cwdTracker.check();
       };
       term.textarea?.addEventListener("focus", onTextareaFocus);
 
@@ -759,9 +745,10 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       // route through the same writer as the keyboard paste. Keyboard paste
       // preventDefaults its keydown, so this never fires twice for one paste.
       const container = containerRef.current;
-      let keyboardPasteFallback: ReturnType<typeof setTimeout> | undefined;
+      // Created below, once the terminal exists; the native paste handler cancels its fallback.
+      let keyHandler: TerminalKeyHandler | undefined;
       const onNativePaste = (event: ClipboardEvent) => {
-        clearTimeout(keyboardPasteFallback);
+        keyHandler?.cancelPendingPaste();
         event.preventDefault();
         event.stopPropagation();
         const text = event.clipboardData?.getData("text/plain") ?? "";
@@ -779,115 +766,40 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       container.addEventListener("paste", onNativePaste, true);
 
       xtermRef.current = term;
+      // The terminal was just built from `settings`, so that look is already applied.
+      appliedAppearanceRef.current = terminalAppearance(settings);
       fitAddonRef.current = fitAddon;
-      searchAddonRef.current = searchAddon;
-      // Fires after every find (decorations must be on): "3 of 17" / "No results".
-      // resultIndex is -1 when the match count passes the highlight limit.
-      searchAddon.onDidChangeResults(({ resultIndex, resultCount }) =>
-        setSearchResults({ index: resultIndex, count: resultCount })
-      );
 
       // 2. Custom key event handler: universal copy/paste across
       // Windows / Linux / macOS + search toggle.
       // Native shell autocompletion (Tab, Arrows, Ghost text) passes directly to PTY.
       // Plain Ctrl+C (no selection) always reaches the shell as SIGINT.
-      term.attachCustomKeyEventHandler((event: KeyboardEvent) => {
-        // Copy: Ctrl+Shift+C (Win/Linux), Cmd+C / Cmd+Shift+C (macOS),
-        // Ctrl+Insert (Win/Linux). Plain Ctrl+C always reaches the shell as
-        // SIGINT; Shift+Insert is paste on every OS, never copy.
-        const isCopy = isCopyKeyEvent(event, term.hasSelection(), fixedKeysRef.current);
-        if (isCopy) {
-          if (event.type === "keydown") {
-            const selection = term.getSelection();
-            navigator.clipboard.writeText(selection).catch(() => {});
-          }
-          return false;
-        }
-        // Paste: Ctrl+Shift+V (Win/Linux), Cmd+V (macOS), Shift+Insert.
-        // The keydown is NOT cancelled, so the WebView does a native paste:
-        // it fires a `paste` event (handled by onNativePaste above, the
-        // single writer) and never shows a clipboard permission prompt.
-        // If no paste event arrives, the backend reads the clipboard instead.
-        // Auto-repeat keydowns are swallowed so a held combo cannot queue
-        // duplicate pastes.
-        const isPaste = isPasteKeyEvent(event, fixedKeysRef.current);
-        if (isPaste) {
-          if (event.type === "keydown") {
-            if (event.repeat) {
-              event.preventDefault();
-              event.stopPropagation();
-            } else {
-              clearTimeout(keyboardPasteFallback);
-              keyboardPasteFallback = setTimeout(() => {
-                readPasteContent()
-                  .then(pasteToPty)
-                  .catch(() => {});
-              }, 150);
-            }
-          }
-          return false;
-        }
-        // Terminal-local keys: Ctrl+Shift+A select all, Ctrl+Shift+K clear,
-        // Ctrl+Shift+Home / End jump to the top / bottom of the scrollback.
-        const localAction = matchTerminalAction(event, fixedKeysRef.current);
-        if (localAction) {
-          event.preventDefault();
-          if (event.type === "keydown") {
-            if (localAction === "selectAll") term.selectAll();
-            else if (localAction === "clear") term.clear();
-            else if (localAction === "scrollTop") term.scrollToTop();
-            else term.scrollToBottom();
-          }
-          return false;
-        }
-        // App-level zoom (Ctrl+= / - / 0) and tab jump (Ctrl+1-9) are handled
-        // by App on the bubbled event; keep xterm from also sending the
-        // matching control byte to the shell.
-        if (matchBuiltinShortcut(event, fixedKeysRef.current)) return false;
-        // Handle Ctrl+Shift+F for toggling search
-        if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.code === "KeyF") {
-          if (event.type === "keydown") {
-            setIsSearchVisible((prev) => !prev);
-          }
-          return false;
-        }
-        // User-bound app shortcuts (Settings > Shortcuts) belong to App's
-        // window handler. Without this xterm ALSO forwards the key to the
-        // shell: a bare F-key as its escape code, Alt+<key> as ESC+<key>.
-        if (keybindingsRef.current && matchShortcut(event, keybindingsRef.current)) return false;
-        return true;
+      keyHandler = createTerminalKeyHandler({
+        term,
+        fixedKeys: () => fixedKeysRef.current,
+        keybindings: () => keybindingsRef.current,
+        copyText: copyTextToClipboard,
+        readPaste: readPasteContent,
+        paste: pasteToPty,
       });
+      term.attachCustomKeyEventHandler(keyHandler.handle);
 
-      // Register OSC 7 handler (supported by bash, zsh, fish for CWD reporting)
+      // OSC 7 (bash, zsh, fish) and OSC 9;9 (Windows Terminal) folder reports:
       try {
-        term.parser.registerOscHandler(7, (data) => {
-          try {
-            const url = new URL(data);
-            let p = decodeURIComponent(url.pathname);
-            if (/^\/[a-zA-Z]:/.test(p)) {
-              p = p.slice(1);
-            }
-            if (p) {
-              settleCwd(p);
-            }
-          } catch {
-            if (data.startsWith("file://")) {
-              let p = data.replace(/^file:\/\/[^/]*\//, "/");
-              if (/^\/[a-zA-Z]:/.test(p)) {
-                p = p.slice(1);
-              }
-              if (p) settleCwd(p);
-            }
-          }
+        // The shell reporting its folder (OSC 7 / OSC 9;9) is only a SIGNAL here: the folder
+        // itself is read from the backend, which has checked it (the host in an OSC 7 URL is
+        // this machine, and the folder exists). Anything that can print to the terminal can
+        // write these sequences (a `cat`ed file, a remote `ssh` shell), and taking their path
+        // at face value would let it choose the folder the git panel and new tabs use (SEC-12).
+        // The backend report also reaches us as a `pty-cwd` event when it changes.
+        term.parser.registerOscHandler(7, () => {
+          cwdTracker.check();
           return false;
         });
 
-        // Register OSC 9;9 handler (Windows Terminal / ConEmu CWD reporting)
+        // OSC 9;9 (Windows Terminal / ConEmu convention): same treatment as OSC 7.
         term.parser.registerOscHandler(9, (data) => {
-          if (data.startsWith("9;")) {
-            const p = data.slice(2);
-            if (p) settleCwd(p);
-          }
+          if (data.startsWith("9;")) cwdTracker.check();
           return false;
         });
 
@@ -903,20 +815,10 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       }
 
       // 3. User keyboard input forwarding without altering terminal escape sequences
-      const checkLiveCwd = () => {
-        const backendId = backendPtyIdRef.current;
-        if (!backendId) return;
-        void PtyService.getPtyCwd(backendId).then((resolved) => {
-          if (resolved) {
-            settleCwd(resolved);
-          }
-        });
-      };
-
       const inputDisposable = term.onData((data) => {
         // Enter submits the line (the cwd may now really change), so it must
         // not hold the footer path back as "still typing".
-        if (!/[\r\n]/.test(data)) lastKeyAtRef.current = Date.now();
+        cwdTracker.keyTyped(data);
         const backendId = backendPtyIdRef.current;
         if (backendId) {
           // Ghost-typing filter: when a fullscreen TUI dies without
@@ -980,18 +882,9 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
           ptyService.writeToPty(backendId, forward).catch(() => {
             // Backend already reaped the session; status update arrives via pty-exit.
           });
-          if (submitted && lineLikelyChangesCwd(submitted)) {
-            // Triple-tap: the shell's next prompt (OSC 7 / OSC 9;9 /
-            // getPtyCwd truth) can land well after 300 ms on slow commands
-            // and heavy profiles, and a single early probe reads the pre-cd
-            // directory — the "footer never updates after cd" report. See
-            // CD_PROBE_DELAYS_MS: each tap lands in its own backend throttle
-            // window, converging on the post-cd truth even when the user
-            // idles afterwards. Cheap (one IPC each, cd-gated).
-            for (const delay of CD_PROBE_DELAYS_MS) {
-              setTimeout(checkLiveCwd, delay);
-            }
-          }
+          // Directory- or branch-changing lines are re-checked once the command has had time
+          // (see `paneCwdTracker`); other lines rely on the shell's reports and the poll.
+          cwdTracker.lineSubmitted(submitted);
         }
         // Dead pane: input is ignored (use Close pane). No auto-restart.
       });
@@ -1011,7 +904,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         promise: Promise<() => void>,
         assign: (unlisten: () => void) => void
       ) => {
-        void promise.then((unlisten) => {
+        return promise.then((unlisten) => {
           if (listenersCancelled) {
             try {
               unlisten();
@@ -1023,89 +916,25 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
           }
         });
       };
-      let pendingOutput = new TerminalOutputBuffer();
-      let rafScheduled = false;
-      let rafId: number | null = null;
-      let flushTimer: ReturnType<typeof setTimeout> | null = null;
-      // Single xterm write of a 1 MB flood blocks the UI thread long
-      // enough for Windows to flag the window "Not Responding".
-      const MAX_TERM_WRITE_CHARS = 65536;
-
-      const flushOutput = () => {
-        rafScheduled = false;
-        if (rafId !== null) {
-          try {
-            cancelAnimationFrame(rafId);
-          } catch {
-            // ignore
-          }
-          rafId = null;
-        }
-        if (flushTimer !== null) {
-          clearTimeout(flushTimer);
-          flushTimer = null;
-        }
-        if (!pendingOutput.isEmpty) {
-          const chunk = pendingOutput.flush();
-          // `clear` / `cls` / Clear-Host: repaint every row and snap to the
-          // bottom once the last piece is parsed, so the prompt drawn right
-          // after the erase is never left unpainted.
-          const clearsScreen = outputClearsScreen(chunk);
-          const repaintAfterClear = () => {
-            try {
-              term.refresh(0, Math.max(0, term.rows - 1));
-              term.scrollToBottom();
-            } catch {
-              // Terminal disposed.
-            }
-          };
-          try {
-            for (let off = 0; off < chunk.length; off += MAX_TERM_WRITE_CHARS) {
-              const isLast = off + MAX_TERM_WRITE_CHARS >= chunk.length;
-              term.write(
-                chunk.slice(off, off + MAX_TERM_WRITE_CHARS),
-                clearsScreen && isLast ? repaintAfterClear : undefined
-              );
-            }
-          } catch {
-            // Terminal disposed; drop remaining output.
-          }
-        }
-      };
-
-      const scheduleFlush = () => {
-        if (!rafScheduled) {
-          rafScheduled = true;
-          // rAF stalls for hidden/background tabs, which would let
-          // pendingOutput sit until the 1 MB cap; the timeout guarantees
-          // progress so memory stays bounded either way.
-          let flushed = false;
-          const doFlush = () => {
-            if (!flushed) {
-              flushed = true;
-              flushOutput();
-            }
-          };
-          try {
-            rafId = requestAnimationFrame(doFlush);
-          } catch {
-            doFlush();
-          }
-          flushTimer = setTimeout(doFlush, 250);
-        }
-      };
+      // Buffering, per-frame chunked writes to xterm and flow-control acknowledgements
+      // (only once xterm has parsed the bytes): see `terminalOutputPipeline`.
+      const output = createTerminalOutputPipeline({
+        term,
+        ack: (bytes) => {
+          const id = backendPtyIdRef.current;
+          if (id) void PtyService.ackOutput(id, bytes);
+        },
+      });
+      const flushOutput = output.flush;
       // Exposed for the show-time layout effect: a tab that flipped from
       // hidden to visible flushes buffered output synchronously so the first
       // paint already contains it.
       flushPendingRef.current = flushOutput;
 
-      const handleOutput = (payload: { id: string; data: string }) => {
-        // Bounded FIFO (see TerminalOutputBuffer): a flood of output
-        // appends O(1) per chunk with memory capped at ~1 MB, instead of
-        // re-copying a megabyte string on every event. xterm scrollback
-        // bounds the rendered side as before.
-        pendingOutput.append(payload.data);
-        scheduleFlush();
+      // `counted`: the backend counted these bytes as sent to this pane (a live event).
+      // Output handed over by a window move (`HandoffRelease`) was never sent as events.
+      const handleOutput = (payload: { id: string; data: string }, counted = true) => {
+        output.push(payload.data, counted);
         // Ghost-typing auto-recovery: `kai` Code Mode runs print
         // "[kai] Agent finished" once the agent child settles. The CLI
         // already resets terminal modes on its stdout, but when that
@@ -1131,7 +960,14 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         }
       };
 
+      // Sessions whose exit was already handled: the same exit can arrive from the hand-off
+      // result AND the replayed early events, and reporting it twice would count one crash twice.
+      const exitHandled = new Set<string>();
       const handleExit = (payload: { id: string; exit_code?: number | null }) => {
+        if (payload.id) {
+          if (exitHandled.has(payload.id)) return;
+          exitHandled.add(payload.id);
+        }
         flushOutput();
         releasePtyId(backendPtyIdRef.current);
         backendPtyIdRef.current = null;
@@ -1156,44 +992,54 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         }
       };
 
-      trackUnlisten(
-        ptyService.onPtyOutput((payload) => {
-          if (payload.id === backendPtyIdRef.current) handleOutput(payload);
-          else if (spawningRef.current) {
-            earlyEventsRef.current?.hold({ kind: "output", id: payload.id, data: payload.data });
+      const listenerPromises: Promise<unknown>[] = [];
+      listenerPromises.push(
+        trackUnlisten(
+          ptyService.onPtyOutput((payload) => {
+            if (payload.id === backendPtyIdRef.current) handleOutput(payload);
+            else if (spawningRef.current) {
+              earlyEventsRef.current?.hold({ kind: "output", id: payload.id, data: payload.data });
+            }
+          }),
+          (unlisten) => {
+            unlistenOutput = unlisten;
           }
-        }),
-        (unlisten) => {
-          unlistenOutput = unlisten;
-        }
+        )
       );
 
-      trackUnlisten(
-        ptyService.onPtyExit((payload) => {
-          if (payload.id === backendPtyIdRef.current) handleExit(payload);
-          else if (spawningRef.current) {
-            earlyEventsRef.current?.hold({
-              kind: "exit",
-              id: payload.id,
-              exit_code: payload.exit_code,
-            });
+      listenerPromises.push(
+        trackUnlisten(
+          ptyService.onPtyExit((payload) => {
+            if (payload.id === backendPtyIdRef.current) handleExit(payload);
+            else if (spawningRef.current) {
+              earlyEventsRef.current?.hold({
+                kind: "exit",
+                id: payload.id,
+                exit_code: payload.exit_code,
+              });
+            }
+          }),
+          (unlisten) => {
+            unlistenExit = unlisten;
           }
-        }),
-        (unlisten) => {
-          unlistenExit = unlisten;
-        }
+        )
       );
 
-      trackUnlisten(
-        ptyService.onPtyCwd((payload) => {
-          if (payload.id === backendPtyIdRef.current && payload.cwd) {
-            settleCwd(payload.cwd);
+      listenerPromises.push(
+        trackUnlisten(
+          ptyService.onPtyCwd((payload) => {
+            if (payload.id === backendPtyIdRef.current && payload.cwd) {
+              cwdTracker.report(payload.cwd);
+            }
+          }),
+          (unlisten) => {
+            unlistenCwd = unlisten;
           }
-        }),
-        (unlisten) => {
-          unlistenCwd = unlisten;
-        }
+        )
       );
+      // Resolves once every Tauri-side listener exists. A shell must not start before that:
+      // its first prompt would be emitted to nobody (REL-09).
+      listenersReadyRef.current = Promise.all(listenerPromises);
 
       // 5. Container resize handling (debounced 150 ms so drag-resize and
       // rapid layout changes send at most one IPC resize each).
@@ -1235,7 +1081,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       // Output a moved shell printed while no window was showing it (the backend
       // held it) goes back into this terminal when the move is cancelled.
       resumeHeldRef.current = (released) => {
-        for (const chunk of released.data) handleOutput({ id: "", data: chunk });
+        for (const chunk of released.data) handleOutput({ id: "", data: chunk }, false);
         flushOutput();
         const id = backendPtyIdRef.current;
         if (released.exited && id) handleExit({ id, exit_code: released.exit_code });
@@ -1249,52 +1095,28 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       const adoptSession = async (a: PaneAdoption) => {
         const mySeq = ++initSeqRef.current;
         onStatusRef.current?.("connecting");
+        await awaitBounded(listenersReadyRef.current, LISTENERS_WAIT_MS);
+        if (mySeq !== initSeqRef.current) return;
         earlyEventsRef.current?.clear();
         spawningRef.current = true;
         pendingAdoptIdRef.current = a.ptyId;
-        const written = () => new Promise<void>((resolve) => term.write("", resolve));
         try {
-          try {
-            // The snapshot was taken at this grid; xterm reflows it on the refit below.
-            term.resize(a.cols, a.rows);
-          } catch {
-            // Keep the current grid.
-          }
-          await new Promise<void>((resolve) => term.write(a.snapshot, resolve));
-          const released = await handoffFinish(a.ptyId);
-          if (mySeq !== initSeqRef.current) return;
-          for (const chunk of released.data) term.write(chunk);
-          await written();
-          if (mySeq !== initSeqRef.current) return;
-
-          backendPtyIdRef.current = a.ptyId;
-          pendingAdoptIdRef.current = null;
-          claimPtyId(a.ptyId);
-          ptySizeSyncRef.current?.spawned(a.ptyId, a.cols, a.rows);
-          try {
-            if (fitWhenShown()) pushPtySize(term);
-          } catch {
-            // Ignore fit errors during hidden-tab layout.
-          }
-          setLaunchError(null);
-          onStatusRef.current?.("connected");
-          spawningRef.current = false;
-          replayEarlyEventsRef.current(earlyEventsRef.current?.take(a.ptyId) ?? []);
-          if (released.exited) handleExit({ id: a.ptyId, exit_code: released.exit_code });
-          void PtyService.getPtyCwd(a.ptyId).then((resolved) => {
-            if (resolved) settleCwd(resolved);
+          const released = await replayHandoff({
+            term,
+            adoption: a,
+            finish: handoffFinish,
+            isCurrent: () => mySeq === initSeqRef.current,
           });
+          if (!released) return;
+          pendingAdoptIdRef.current = null;
+          markLive(a.ptyId, a.cols, a.rows);
+          replayHeld(a.ptyId);
+          if (released.exited) handleExit({ id: a.ptyId, exit_code: released.exit_code });
+          cwdTracker.check(a.ptyId);
         } catch (err: unknown) {
-          if (mySeq !== initSeqRef.current) return;
-          const errorMsg = err instanceof Error ? err.message : String(err);
-          setLaunchError(errorMsg);
-          term.writeln(`\r\n\x1b[2m[Could not attach to the moved shell]\x1b[0m`);
-          onStatusRef.current?.("error", errorMsg);
+          launchFailed(mySeq, err, "[Could not attach to the moved shell]");
         } finally {
-          if (mySeq === initSeqRef.current) {
-            spawningRef.current = false;
-            earlyEventsRef.current?.clear();
-          }
+          endLaunch(mySeq);
         }
       };
 
@@ -1327,21 +1149,10 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         listenersCancelled = true;
         flushPendingRef.current = () => {};
         if (initialTimer) clearTimeout(initialTimer);
-        if (rafId !== null) {
-          try {
-            cancelAnimationFrame(rafId);
-          } catch {
-            // ignore
-          }
-          rafId = null;
-        }
-        if (flushTimer !== null) {
-          clearTimeout(flushTimer);
-          flushTimer = null;
-        }
+        output.dispose();
         term.textarea?.removeEventListener("focus", onTextareaFocus);
         container.removeEventListener("paste", onNativePaste, true);
-        clearTimeout(keyboardPasteFallback);
+        keyHandler?.cancelPendingPaste();
         detachGpuRenderer(webglAddonRef);
         inputDisposable.dispose();
         resizeObserver.disconnect();
@@ -1359,13 +1170,16 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         spawningRef.current = false;
         replayEarlyEventsRef.current = () => {};
         resumeHeldRef.current = () => {};
-        serializeAddonRef.current = null;
+        serializeSlot.reset();
+        terminalSearch.reset();
+        lazyAddonEpochRef.current += 1;
         if (backendId) {
           ptyService.closePty(backendId).catch(() => {
             // Already reaped; safe to ignore.
           });
         }
-        cwdSettlerRef.current?.dispose();
+        cancelGpuRetry();
+        cwdTracker.dispose();
         onCodeModeChangeRef.current?.(null);
         unguardLinkClicks();
         term.dispose();
@@ -1397,9 +1211,11 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       const release = releaseGpuRef.current;
       if (visible) {
         hiddenGpuBudget.show(release);
-        attachGpuRenderer(term, webglAddonRef);
+        gpuRetryRef.current.attempt = 0; // a fresh start every time the pane is shown
+        attachGpu(term);
         return;
       }
+      cancelGpuRetry();
       hiddenAtRef.current = Date.now();
       // Only a pane that actually holds a context counts against the budget
       // (panes that mounted hidden never attached one).
@@ -1415,14 +1231,9 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       if (!visible) return;
       const timer = setInterval(() => {
         if (typeof document !== "undefined" && document.hidden) return;
-        const backendId = backendPtyIdRef.current;
-        if (backendId) {
-          void PtyService.getPtyCwd(backendId).then((resolved) => {
-            if (resolved) {
-              settleCwd(resolved);
-            }
-          });
-        }
+        // Quiet: an unchanged folder on a timer is not a sign the shell ran anything, so it
+        // must not force a `git status` every few seconds while Kai sits idle.
+        cwdTracker.poll();
       }, 5000);
       return () => clearInterval(timer);
     }, [visible]);
@@ -1501,35 +1312,6 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [visible]);
 
-    const findOptions = (options: SearchOptions) => ({
-      ...options,
-      decorations: searchDecorations(getTheme(settings.theme)),
-    });
-
-    const handleSearch = (term: string, options: SearchOptions) => {
-      if (!term) {
-        searchAddonRef.current?.clearDecorations();
-        setSearchResults(null);
-        return;
-      }
-      searchAddonRef.current?.findNext(term, { ...findOptions(options), incremental: true });
-    };
-
-    const handleSearchNext = (term: string, options: SearchOptions) => {
-      if (term) searchAddonRef.current?.findNext(term, findOptions(options));
-    };
-
-    const handleSearchPrevious = (term: string, options: SearchOptions) => {
-      if (term) searchAddonRef.current?.findPrevious(term, findOptions(options));
-    };
-
-    const handleCloseSearch = () => {
-      setIsSearchVisible(false);
-      searchAddonRef.current?.clearDecorations();
-      setSearchResults(null);
-      xtermRef.current?.focus();
-    };
-
     return (
       <div
         className="terminal-container"
@@ -1546,14 +1328,14 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
           ["--terminal-padding-y" as string]: `${settings.terminalPaddingY ?? DEFAULT_SETTINGS.terminalPaddingY}px`,
         }}
       >
-        {isSearchVisible && (
+        {terminalSearch.visible && (
           <Suspense fallback={null}>
             <SearchBar
-              onSearch={handleSearch}
-              onSearchNext={handleSearchNext}
-              onSearchPrevious={handleSearchPrevious}
-              onClose={handleCloseSearch}
-              results={searchResults}
+              onSearch={terminalSearch.search}
+              onSearchNext={terminalSearch.next}
+              onSearchPrevious={terminalSearch.previous}
+              onClose={terminalSearch.close}
+              results={terminalSearch.results}
             />
           </Suspense>
         )}

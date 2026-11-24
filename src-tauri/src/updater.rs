@@ -1,4 +1,6 @@
 use crate::error::TerminalError;
+#[cfg(feature = "tauri")]
+use crate::update_verify;
 use std::path::{Path, PathBuf};
 #[cfg(feature = "tauri")]
 use tauri::{AppHandle, Emitter};
@@ -107,9 +109,46 @@ pub fn sanitize_update_filename(filename: &str) -> Result<String, TerminalError>
     Ok(trimmed.to_string())
 }
 
+/// Where update installers (and the install helper script) are written: a
+/// per-user directory, never the shared OS temp dir.
+///
+/// The old location, `<temp>/kai-update-<asset>`, was a predictable name in a
+/// directory other local users can write to (`/tmp` on Linux): a pre-planted
+/// symlink redirected the download, and the file could be swapped between the
+/// download and the root-level `pkexec` install. A private directory (0700 on
+/// Unix; the per-user profile on Windows) removes both.
+pub fn update_download_dir() -> PathBuf {
+    #[cfg(not(target_os = "windows"))]
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    #[cfg(target_os = "windows")]
+    let base = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
+    #[cfg(target_os = "macos")]
+    let base = home.map(|h| h.join("Library").join("Caches"));
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    let base = std::env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .or_else(|| home.map(|h| h.join(".cache")));
+    base.unwrap_or_else(std::env::temp_dir)
+        .join("kai")
+        .join("updates")
+}
+
+/// Creates [`update_download_dir`] if needed, owner-only on Unix, and returns it.
+pub fn ensure_update_download_dir() -> std::io::Result<PathBuf> {
+    let dir = update_download_dir();
+    std::fs::create_dir_all(&dir)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(dir)
+}
+
 #[cfg_attr(not(feature = "tauri"), allow(dead_code))]
 fn update_temp_path(filename: &str) -> PathBuf {
-    std::env::temp_dir().join(format!("kai-update-{filename}"))
+    update_download_dir().join(format!("kai-update-{filename}"))
 }
 
 /// Prefix marking files this updater downloaded. Cleanup only ever touches
@@ -156,8 +195,13 @@ fn is_update_download_path(path: &Path) -> bool {
 /// Returns the number of files removed. Never fails — I/O errors are simply
 /// skipped so a locked or vanishing file can never break startup/update.
 pub fn cleanup_stale_update_downloads(max_age_secs: u64) -> usize {
-    let dir = std::env::temp_dir();
-    let entries = match std::fs::read_dir(&dir) {
+    // The private directory, plus the shared temp dir where older versions left theirs.
+    sweep_update_dir(&update_download_dir(), max_age_secs)
+        + sweep_update_dir(&std::env::temp_dir(), max_age_secs)
+}
+
+fn sweep_update_dir(dir: &Path, max_age_secs: u64) -> usize {
+    let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(_) => return 0,
     };
@@ -186,12 +230,134 @@ pub fn cleanup_stale_update_downloads(max_age_secs: u64) -> usize {
     removed
 }
 
-/// Downloads a release installer to the OS temp dir.
+/// Release assets that carry the signed checksums (see `update_verify`).
+#[cfg(feature = "tauri")]
+const UPDATE_CHECKSUMS_NAME: &str = "SHA256SUMS";
+#[cfg(feature = "tauri")]
+const UPDATE_SIGNATURE_NAME: &str = "SHA256SUMS.sig";
+
+/// Installers this process downloaded AND verified, with the digest they were
+/// verified against. `launch_update_installer_cmd` runs nothing that is not here.
+#[cfg(feature = "tauri")]
+fn verified_installers() -> &'static std::sync::Mutex<std::collections::HashMap<PathBuf, [u8; 32]>>
+{
+    static VERIFIED: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<PathBuf, [u8; 32]>>,
+    > = std::sync::OnceLock::new();
+    VERIFIED.get_or_init(Default::default)
+}
+
+#[cfg(feature = "tauri")]
+fn update_error(message: impl std::fmt::Display) -> TerminalError {
+    TerminalError::IoError(message.to_string())
+}
+
+/// Message shown when an update cannot be verified. It always ends with the way
+/// out: the release page, where the user can inspect and install by hand.
+#[cfg(feature = "tauri")]
+fn unverified_update(reason: impl std::fmt::Display) -> TerminalError {
+    update_error(format!(
+        "The update was not installed because it could not be verified: {reason}. \
+         Nothing was run. You can download it from the release page instead."
+    ))
+}
+
+#[cfg(feature = "tauri")]
+/// Final step of a download: the bytes that arrived (`actual`, hashed while
+/// streaming into `part`) must equal the digest the release signed for this
+/// file. Only then is `part` renamed to `dest` and recorded as launchable; any
+/// mismatch deletes `part` and records nothing.
+pub fn finalize_verified_download(
+    part: &Path,
+    dest: &Path,
+    expected: &[u8; 32],
+    actual: &[u8; 32],
+) -> Result<(), TerminalError> {
+    if let Err(e) = update_verify::check_digest(expected, actual) {
+        let _ = std::fs::remove_file(part);
+        return Err(unverified_update(e));
+    }
+    std::fs::rename(part, dest)
+        .map_err(|e| update_error(format!("Update download failed to finish: {e}")))?;
+    if let Ok(mut verified) = verified_installers().lock() {
+        verified.insert(dest.to_path_buf(), *actual);
+    }
+    Ok(())
+}
+
+#[cfg(feature = "tauri")]
+/// Gate in front of every installer launch: `path` must have been verified by
+/// [`finalize_verified_download`] in this session AND still hash to that value
+/// (re-read from disk right now, so a file swapped or edited after verification
+/// is refused and deleted).
+pub fn ensure_installer_verified(path: &Path) -> Result<(), TerminalError> {
+    let expected = verified_installers()
+        .lock()
+        .ok()
+        .and_then(|v| v.get(path).copied());
+    let Some(expected) = expected else {
+        return Err(unverified_update(
+            "this installer was not downloaded and verified by this session",
+        ));
+    };
+    let still_verified = update_verify::sha256_file(path)
+        .and_then(|actual| update_verify::check_digest(&expected, &actual));
+    if let Err(e) = still_verified {
+        let _ = std::fs::remove_file(path);
+        if let Ok(mut v) = verified_installers().lock() {
+            v.remove(path);
+        }
+        return Err(unverified_update(e));
+    }
+    Ok(())
+}
+
+/// Fetches a small release asset (`SHA256SUMS`, its signature) into memory.
+#[cfg(feature = "tauri")]
+async fn fetch_small_asset(client: &reqwest::Client, url: &str) -> Result<Vec<u8>, TerminalError> {
+    use futures_util::StreamExt;
+    validate_update_asset_url(url)?;
+    let resp = client
+        .get(url)
+        .header("User-Agent", "kai-terminal-updater")
+        .send()
+        .await
+        .map_err(|e| unverified_update(format!("could not fetch {url}: {e}")))?;
+    if !resp.status().is_success() {
+        return Err(unverified_update(format!(
+            "this release has no signed checksums (HTTP {} for {})",
+            resp.status().as_u16(),
+            url.rsplit('/').next().unwrap_or(url)
+        )));
+    }
+    let mut body: Vec<u8> = Vec::new();
+    let mut stream = resp.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| unverified_update(format!("download failed: {e}")))?;
+        if body.len() + chunk.len() > update_verify::MAX_CHECKSUMS_BYTES {
+            return Err(unverified_update("the checksum file is unexpectedly large"));
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}
+
+/// Downloads a release installer into the private update directory and verifies it.
 ///
-/// Streams via `reqwest` so large installers never sit fully in memory, and
-/// emits `kai-update-progress` events (`{ received, total }`) for the
-/// frontend progress bar. Validation runs first — the URL reaches a native
-/// HTTP client, so arbitrary input must never get here.
+/// Verification happens BEFORE the file is made available for launch:
+/// 1. the release must be strictly newer than the running version (a validly
+///    signed OLD release can therefore not be replayed as an update);
+/// 2. `SHA256SUMS` and `SHA256SUMS.sig` are fetched from the same release and the
+///    signature must verify against the public key compiled into the app;
+/// 3. the installer streams to a `.part` file inside the owner-only directory while
+///    it is hashed and size-capped; every redirect hop must stay on https and an
+///    allow-listed host;
+/// 4. only if the hash equals the signed value for this exact file name is the
+///    file renamed into place and recorded as launchable. Anything else deletes it.
+///
+/// Emits `kai-update-progress` events (`{ received, total }`) for the progress bar.
+/// Validation runs first: the URL reaches a native HTTP client, so arbitrary
+/// input must never get here.
 #[cfg(feature = "tauri")]
 #[tauri::command]
 pub async fn download_update_asset_cmd(
@@ -204,13 +370,64 @@ pub async fn download_update_asset_cmd(
 
     validate_update_asset_url(&url)?;
     let safe_name = sanitize_update_filename(&filename)?;
-    let dest = update_temp_path(&safe_name);
+
+    // 1. No downgrades and no replays of older (validly signed) releases.
+    let tag = update_verify::release_tag(&url)
+        .ok_or_else(|| update_error("Refusing an update URL that is not a release download."))?;
+    if !update_verify::is_strictly_newer(tag, env!("CARGO_PKG_VERSION")) {
+        return Err(update_error(format!(
+            "Refusing to install {tag}: it is not newer than the running version ({}).",
+            env!("CARGO_PKG_VERSION")
+        )));
+    }
 
     let client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::limited(10))
+        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+            if attempt.previous().len() >= 10 {
+                attempt.error("too many redirects")
+            } else if update_verify::redirect_allowed(
+                attempt.url().scheme(),
+                attempt.url().host_str(),
+                ALLOWED_UPDATE_HOSTS,
+            ) {
+                attempt.follow()
+            } else {
+                attempt.error("redirect to a location that is not allowed")
+            }
+        }))
         .timeout(std::time::Duration::from_secs(600))
         .build()
-        .map_err(|e| TerminalError::IoError(format!("Update download failed to start: {e}")))?;
+        .map_err(|e| update_error(format!("Update download failed to start: {e}")))?;
+
+    // 2. Signed checksums first: nothing is downloaded for a release we cannot verify.
+    let public_key = update_verify::embedded_public_key()
+        .ok_or_else(|| unverified_update(update_verify::UpdateVerifyError::NoPublicKey))?;
+    let (sums_url, sig_url) = (
+        update_verify::companion_url(&url, UPDATE_CHECKSUMS_NAME),
+        update_verify::companion_url(&url, UPDATE_SIGNATURE_NAME),
+    );
+    let (Some(sums_url), Some(sig_url)) = (sums_url, sig_url) else {
+        return Err(unverified_update("no checksum location for this release"));
+    };
+    let checksums = fetch_small_asset(&client, &sums_url).await?;
+    let signature = fetch_small_asset(&client, &sig_url).await?;
+    let expected =
+        update_verify::trusted_digest_for(&public_key, &checksums, &signature, &safe_name)
+            .map_err(unverified_update)?;
+
+    // 3. Stream to a private `.part` file, hashing as it arrives.
+    let dir = ensure_update_download_dir()
+        .map_err(|e| update_error(format!("Update download failed to prepare its folder: {e}")))?;
+    let dest = update_temp_path(&safe_name);
+    debug_assert_eq!(dest.parent(), Some(dir.as_path()));
+    let part = dest.with_file_name(format!("kai-update-{safe_name}.part"));
+    // Remove leftovers first (a regular file, or a link: removing a link never follows
+    // it); `create_new` below then refuses to reuse anything that appears in between.
+    let _ = std::fs::remove_file(&part);
+    let _ = std::fs::remove_file(&dest);
+    if let Ok(mut verified) = verified_installers().lock() {
+        verified.remove(&dest);
+    }
 
     let resp = client
         .get(&url)
@@ -218,42 +435,58 @@ pub async fn download_update_asset_cmd(
         .header("Accept", "application/octet-stream")
         .send()
         .await
-        .map_err(|e| TerminalError::IoError(format!("Update download failed: {e}")))?;
+        .map_err(|e| update_error(format!("Update download failed: {e}")))?;
     if !resp.status().is_success() {
-        return Err(TerminalError::IoError(format!(
+        return Err(update_error(format!(
             "Update download failed (HTTP {})",
             resp.status().as_u16()
         )));
     }
     let total = resp.content_length();
+    if total.is_some_and(|t| t > update_verify::MAX_INSTALLER_BYTES) {
+        return Err(update_error(
+            "Update download refused: the file is larger than the allowed maximum.",
+        ));
+    }
 
-    let mut file = std::fs::File::create(&dest).map_err(|e| {
-        TerminalError::IoError(format!("Update download failed to write file: {e}"))
-    })?;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&part)
+        .map_err(|e| update_error(format!("Update download failed to write file: {e}")))?;
+    let mut hasher = update_verify::Sha256Stream::new();
     let mut stream = resp.bytes_stream();
     let mut received: u64 = 0;
     // Throttle progress events: every 256 KB is plenty for a bar.
     let mut since_emit: u64 = 0;
 
-    while let Some(chunk) = stream.next().await {
-        let bytes =
-            chunk.map_err(|e| TerminalError::IoError(format!("Update download failed: {e}")))?;
-        file.write_all(&bytes).map_err(|e| {
-            TerminalError::IoError(format!("Update download failed to write file: {e}"))
-        })?;
-        received += bytes.len() as u64;
-        since_emit += bytes.len() as u64;
-        if since_emit >= 256 * 1024 {
-            since_emit = 0;
-            let _ = app.emit(
-                "kai-update-progress",
-                UpdateProgressEvent { received, total },
-            );
+    let streamed: Result<(), TerminalError> = async {
+        while let Some(chunk) = stream.next().await {
+            let bytes = chunk.map_err(|e| update_error(format!("Update download failed: {e}")))?;
+            hasher
+                .update(&bytes)
+                .map_err(|e| update_error(format!("Update download refused: {e}")))?;
+            file.write_all(&bytes)
+                .map_err(|e| update_error(format!("Update download failed to write file: {e}")))?;
+            received += bytes.len() as u64;
+            since_emit += bytes.len() as u64;
+            if since_emit >= 256 * 1024 {
+                since_emit = 0;
+                let _ = app.emit(
+                    "kai-update-progress",
+                    UpdateProgressEvent { received, total },
+                );
+            }
         }
+        file.flush()
+            .map_err(|e| update_error(format!("Update download failed to write file: {e}")))
     }
-    file.flush().map_err(|e| {
-        TerminalError::IoError(format!("Update download failed to write file: {e}"))
-    })?;
+    .await;
+    drop(file);
+    if let Err(e) = streamed {
+        let _ = std::fs::remove_file(&part);
+        return Err(e);
+    }
     let _ = app.emit(
         "kai-update-progress",
         UpdateProgressEvent {
@@ -261,13 +494,13 @@ pub async fn download_update_asset_cmd(
             total: total.or(Some(received)),
         },
     );
-
     if received == 0 {
-        let _ = std::fs::remove_file(&dest);
-        return Err(TerminalError::IoError(
-            "Update download failed: empty file received.".to_string(),
-        ));
+        let _ = std::fs::remove_file(&part);
+        return Err(update_error("Update download failed: empty file received."));
     }
+
+    // 4. Only a file that hashes to the SIGNED value is kept and made launchable.
+    finalize_verified_download(&part, &dest, &expected, &hasher.finish())?;
     // AppImage must be executable to launch directly after download.
     #[cfg(target_os = "linux")]
     if dest
@@ -456,7 +689,9 @@ pub fn prepare_unattended_install(
             "exe" => "exe",
             _ => return None,
         };
-        let script = std::env::temp_dir().join(format!("{UPDATE_TEMP_PREFIX}run-{app_pid}.ps1"));
+        let script = ensure_update_download_dir()
+            .ok()?
+            .join(format!("{UPDATE_TEMP_PREFIX}run-{app_pid}.ps1"));
         std::fs::write(&script, WINDOWS_INSTALL_SCRIPT).ok()?;
         return Some(InstallHelper {
             program: "powershell.exe".to_string(),
@@ -624,6 +859,8 @@ pub fn launch_update_installer_cmd(
             "Update installer not found. Please download it again.".to_string(),
         ));
     }
+    // Never run an installer this session did not download and verify.
+    ensure_installer_verified(p)?;
 
     let current_exe = std::env::current_exe()
         .map_err(|e| TerminalError::IoError(format!("Failed to locate the running app: {e}")))?;
@@ -861,7 +1098,7 @@ mod tests {
     #[test]
     fn stale_sweep_removes_only_our_downloads() {
         let _env = crate::test_support::lock_test_env();
-        let dir = std::env::temp_dir();
+        let dir = ensure_update_download_dir().unwrap();
         // Unique names so parallel runs / real leftovers never collide.
         let stamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -882,7 +1119,7 @@ mod tests {
     #[test]
     fn stale_sweep_keeps_fresh_downloads() {
         let _env = crate::test_support::lock_test_env();
-        let dir = std::env::temp_dir();
+        let dir = ensure_update_download_dir().unwrap();
         let stamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())

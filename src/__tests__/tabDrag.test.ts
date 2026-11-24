@@ -187,4 +187,53 @@ describe("TabBar drag-to-reorder", () => {
     root.unmount();
     container.remove();
   });
+
+  it("an interrupted drag (pointercancel) is cancelled, never committed where it stopped", async () => {
+    const { React, root, container, onMoveTabToIndex, fire } = await renderBar();
+    const tabEl = container.querySelector('[data-tab-id="t2"]') as HTMLElement;
+
+    await React.act(async () => {
+      fire(tabEl, "pointerdown", 100, 10);
+      fire(window, "pointermove", 400, 10); // armed, a drop slot is showing
+      // The browser took the touch over (scrolling) or the system interrupted the pen.
+      fire(window, "pointercancel", 0, 0);
+    });
+    expect(onMoveTabToIndex).not.toHaveBeenCalled();
+    expect(document.body.classList.contains("tab-dragging")).toBe(false);
+    expect(tabEl.classList.contains("dragging")).toBe(false);
+
+    root.unmount();
+    container.remove();
+  });
+
+  it("once a touch hold lifts the tab, finger moves are not handed to the browser as a scroll", async () => {
+    const { React, root, container, fire } = await renderBar(vi.fn(), "touch");
+    const tabEl = container.querySelector('[data-tab-id="t1"]') as HTMLElement;
+    const touchMove = () => {
+      const ev = new Event("touchmove", { bubbles: true, cancelable: true });
+      tabEl.dispatchEvent(ev);
+      return ev.defaultPrevented;
+    };
+
+    await React.act(async () => {
+      fire(tabEl, "pointerdown", 100, 10);
+    });
+    // Before the hold completes a swipe must still scroll the strip.
+    expect(touchMove()).toBe(false);
+
+    await React.act(async () => {
+      vi.advanceTimersByTime(500); // held: the tab is lifted
+    });
+    expect(document.body.classList.contains("tab-dragging")).toBe(true);
+    // Left to the browser, the move would start a scroll and cancel the drag.
+    expect(touchMove()).toBe(true);
+
+    await React.act(async () => {
+      fire(window, "pointerup", 100, 10);
+    });
+    expect(touchMove()).toBe(false);
+
+    root.unmount();
+    container.remove();
+  });
 });

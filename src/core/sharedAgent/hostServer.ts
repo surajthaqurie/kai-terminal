@@ -99,6 +99,13 @@ import {
 const ONLINE_WINDOW_MS = 120_000;
 const PERSIST_SEEN_MS = 30_000;
 const MAX_BODY_BYTES = 512 * 1024;
+/**
+ * Calls that fail to decrypt before a session is dropped. The session id travels in clear, so
+ * anyone on the network could end a session with one forged POST if a single bad call did it
+ * (SEC-11). A real client sends none; an attacker needs this many forgeries per session, and each
+ * one also counts against the per-address limit (keyFailed).
+ */
+const MAX_BAD_CALLS_PER_SESSION = 5;
 const MAX_HELLO_BYTES = 2 * 1024;
 const MAX_PROMPT_CHARS = 200_000;
 const MAX_OPEN_INVITES = 10;
@@ -747,6 +754,7 @@ export class HostServer {
       lastMs: now,
       replay: new ReplayWindow(),
       proven: false,
+      badCalls: 0,
     });
     send(res, 200, {
       v: 1,
@@ -784,7 +792,9 @@ export class HostServer {
     const session = this.sessions.get(sid);
     if (!session) throw new HttpError(401, "Session ended. Reconnect.", "session");
     if (session.net !== net) {
-      this.sessions.delete(sid);
+      // Refused, not ended: the session id is public, so a call from elsewhere must not be
+      // able to end the real client's session.
+      this.keyFailed(client);
       throw new HttpError(401, "Session ended. Reconnect.", "session");
     }
     if (typeof n !== "number" || !Number.isSafeInteger(n) || n < 1) {
@@ -796,9 +806,11 @@ export class HostServer {
     } catch {
       // Wrong key, tampered or forged: whoever sent it does not hold the session keys.
       this.keyFailed(client);
-      this.sessions.delete(sid);
+      session.badCalls += 1;
+      if (session.badCalls >= MAX_BAD_CALLS_PER_SESSION) this.sessions.delete(sid);
       throw new HttpError(401, "Session ended. Reconnect.", "session");
     }
+    session.badCalls = 0;
     // Checked only after it decrypted, so nobody without the keys can burn counters.
     if (!session.replay.accept(n)) throw new HttpError(409, "Replayed message refused.", "replay");
     session.proven = true;
@@ -1135,6 +1147,8 @@ interface SecureSession {
   replay: ReplayWindow;
   /** True once a sealed call decrypted: the client really holds the keys. */
   proven: boolean;
+  /** Calls in a row that failed to decrypt (see MAX_BAD_CALLS_PER_SESSION). */
+  badCalls: number;
 }
 
 interface InnerRequest {

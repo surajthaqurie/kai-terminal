@@ -12,6 +12,7 @@ import { removePaneById } from "../services/paneLayout";
 import { sameShellPath } from "../services/paneShell";
 import { createDefaultTab, deriveTabStatus } from "../services/tabFactory";
 import { applyTabsUpdate } from "./tabsSync";
+import { tabAfterClose } from "../services/tabSelection";
 import type { ShellProfile, TerminalTab } from "../types/terminal";
 
 /** Deaths inside this window count toward a crash loop. */
@@ -35,6 +36,8 @@ interface SessionExitOptions {
   shellsRef: MutableRefObject<ShellProfile[]>;
   selectedShellIdRef: MutableRefObject<string>;
   setLastError: (message: string | null) => void;
+  /** Shows a short, transient notice (a pane or tab closed because its shell failed). */
+  notify?: (message: string) => void;
 }
 
 /**
@@ -55,8 +58,14 @@ export function useSessionExit({
   shellsRef,
   selectedShellIdRef,
   setLastError,
+  notify,
 }: SessionExitOptions) {
+  // Times of recent failed exits of shells that died right after opening. Only those count: a
+  // shell that ran for a while and then exited with a failure status (`exit` after a failed
+  // command, `wsl --shutdown`) is not a broken shell, however many do it at once (FUNC-09).
   const exitTimesRef = useRef<number[]>([]);
+  const notifyRef = useRef(notify);
+  notifyRef.current = notify;
   const tabBornRef = useRef<Record<string, number>>({});
   const [loopFault, setLoopFault] = useState<LoopFault | null>(null);
 
@@ -118,7 +127,9 @@ export function useSessionExit({
         );
       };
 
-      if (!isCleanExit) {
+      const bornEarlier = tabBornRef.current[tabId] ?? 0;
+      const diedImmediately = bornEarlier > 0 && now - bornEarlier < INSTANT_DEATH_MS;
+      if (!isCleanExit && diedImmediately) {
         const recent = exitTimesRef.current.filter((t) => now - t < CRASH_WINDOW_MS);
         recent.push(now);
         exitTimesRef.current = recent;
@@ -131,6 +142,16 @@ export function useSessionExit({
           );
           return;
         }
+      }
+
+      // The pane closes below, taking the shell's last output with it: say how it ended so a
+      // failure is not invisible (FUNC-09). A clean `exit` closes silently, as before.
+      if (
+        typeof exitCode === "number" &&
+        exitCode !== 0 &&
+        liveTabs.length + targetTab.panes.length > 2
+      ) {
+        notifyRef.current?.(`${targetTab.title}: shell exited with code ${exitCode}.`);
       }
 
       if (targetTab.panes.length > 1) {
@@ -151,9 +172,7 @@ export function useSessionExit({
         const remainingTabs = liveTabs.filter((t) => t.id !== tabId);
         applyTabsUpdate(tabsRef, setTabs, (prev) => prev.filter((t) => t.id !== tabId));
         if (activeTabIdRef.current === tabId) {
-          const targetIdx = liveTabs.findIndex((t) => t.id === tabId);
-          const nextIdx = Math.max(0, targetIdx - 1);
-          const nextId = remainingTabs[nextIdx]?.id || remainingTabs[0].id;
+          const nextId = tabAfterClose(liveTabs, tabId) ?? remainingTabs[0].id;
           activeTabIdRef.current = nextId;
           setActiveTabId(nextId);
         }

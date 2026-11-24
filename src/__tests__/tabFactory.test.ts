@@ -2,6 +2,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import {
   LAYOUT_KEY,
+  MAX_PERSISTED_TABS,
   createDefaultTab,
   loadPersistedLayout,
   newTabId,
@@ -76,10 +77,13 @@ describe("persisted layout", () => {
     expect(raw).not.toContain("-p1");
   });
 
-  it("keeps at most 10 tabs", () => {
-    const tabs = Array.from({ length: 14 }, (_, i) => createDefaultTab(`T${i}`));
+  it("keeps at most MAX_PERSISTED_TABS tabs, and more than the old limit of 10", () => {
+    const tabs = Array.from({ length: MAX_PERSISTED_TABS + 4 }, (_, i) =>
+      createDefaultTab(`T${i}`)
+    );
     savePersistedLayout(tabs);
-    expect(loadPersistedLayout()).toHaveLength(10);
+    expect(loadPersistedLayout()).toHaveLength(MAX_PERSISTED_TABS);
+    expect(MAX_PERSISTED_TABS).toBeGreaterThan(10);
   });
 
   it.each([

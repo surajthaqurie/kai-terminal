@@ -24,6 +24,30 @@ export async function closeAppWindow(): Promise<boolean> {
   }
 }
 
+/**
+ * Calls `onRequest` when the system asks this window to close (Alt+F4, the taskbar, the window
+ * menu). The backend holds that close back until the page answers: `close_request_ack` says the
+ * page has the question; the page then closes the window itself (`closeAppWindow`) or leaves it
+ * open. Without the acknowledgement the close goes ahead after a short wait, so a page that
+ * cannot answer never traps the window. Returns the unsubscribe function.
+ */
+export async function watchWindowCloseRequests(onRequest: () => void): Promise<() => void> {
+  if (!isTauriAvailable()) return () => {};
+  try {
+    const { listen } = await import("@tauri-apps/api/event");
+    const { invoke } = await import("@tauri-apps/api/core");
+    return await listen("kai-close-requested", () => {
+      // Acknowledge first: from here on the page owns the decision. A failure to acknowledge is
+      // harmless (the close then simply goes ahead after the wait).
+      void invoke("close_request_ack").catch(() => {});
+      onRequest();
+    });
+  } catch (err) {
+    console.warn("Failed to watch window close requests:", err);
+    return () => {};
+  }
+}
+
 type WindowAction = "minimize" | "toggleMaximize";
 
 /** Minimizes or maximizes/restores the app window. No-op outside Tauri. */

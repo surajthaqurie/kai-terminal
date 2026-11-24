@@ -208,17 +208,36 @@ describe("Step 9: TerminalOutputBuffer", () => {
     expect(buf.isEmpty).toBe(true);
   });
 
-  it("caps memory at ~1 MB keeping the tail", () => {
+  it("caps memory at the configured limit keeping the tail, and reports what it dropped", () => {
     const buf = new TerminalOutputBuffer();
-    const a = "a".repeat(600 * 1024);
-    const b = "b".repeat(600 * 1024);
+    const a = "a".repeat(Math.ceil(MAX_TERMINAL_PENDING_CHARS * 0.6));
+    const b = "b".repeat(Math.ceil(MAX_TERMINAL_PENDING_CHARS * 0.6));
     buf.append(a);
     buf.append(b);
     expect(buf.size).toBeLessThanOrEqual(MAX_TERMINAL_PENDING_CHARS);
+    // Nothing is lost silently: the oldest chunk's size is reported (once).
+    expect(buf.takeDropped()).toBe(a.length);
+    expect(buf.takeDropped()).toBe(0);
     const out = buf.flush();
     expect(out.length).toBeLessThanOrEqual(MAX_TERMINAL_PENDING_CHARS);
     expect(out.endsWith(b)).toBe(true);
     expect(out).not.toContain("a");
+  });
+
+  it("does not drop anything within the limit, and the limit sits far above the flow-control window", () => {
+    // The backend lets ~1 MiB be in flight before it waits for acknowledgements.
+    expect(MAX_TERMINAL_PENDING_CHARS).toBeGreaterThanOrEqual(4 * 1024 * 1024);
+    const buf = new TerminalOutputBuffer();
+    for (let i = 0; i < 40; i++) buf.append("z".repeat(32 * 1024)); // 1.25 MiB
+    expect(buf.takeDropped()).toBe(0);
+    expect(buf.flush().length).toBe(40 * 32 * 1024);
+  });
+
+  it("reports a single oversized payload's discarded head", () => {
+    const buf = new TerminalOutputBuffer(100);
+    buf.append("x".repeat(250));
+    expect(buf.takeDropped()).toBe(150);
+    expect(buf.flush().length).toBe(100);
   });
 
   it("trims a single oversized payload without splitting surrogates", () => {

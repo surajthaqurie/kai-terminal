@@ -223,8 +223,17 @@ mod runtime {
     }
 
     /// Ends the hold and returns what the session printed meanwhile.
+    ///
+    /// The calling window becomes the session's owner BEFORE the hold is released:
+    /// the new window after a successful move, or the old one when a move is rolled
+    /// back. Output released here and everything after it is routed to that window.
     #[tauri::command(async)]
-    pub fn pty_handoff_finish(state: State<'_, PtyManager>, id: String) -> HandoffRelease {
+    pub fn pty_handoff_finish(
+        window: WebviewWindow,
+        state: State<'_, PtyManager>,
+        id: String,
+    ) -> HandoffRelease {
+        state.set_owner(&id, window.label());
         state.handoff_finish(&id)
     }
 }

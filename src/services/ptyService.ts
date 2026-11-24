@@ -202,6 +202,34 @@ class PtyServiceImpl implements IPtyService {
     await invoke<void>("close_pty", { id });
   }
 
+  /**
+   * Tells the backend that `bytes` of session `id`'s output have been handed to the
+   * terminal emulator, so it may let the shell write more (output flow control).
+   * Fire and forget: the backend recovers a lost acknowledgement.
+   */
+  static async ackOutput(id: string, bytes: number): Promise<void> {
+    if (!isTauriAvailable() || !(bytes > 0)) return;
+    try {
+      await invoke<void>("pty_ack", { id, bytes: Math.floor(bytes) });
+    } catch {
+      // Session already closed (late acknowledgement) or backend gone: nothing to do.
+    }
+  }
+
+  /**
+   * Which of `ids` have a command running (more than an idle shell prompt).
+   * Failure is reported as "none busy": an unavailable backend must never be
+   * able to block closing a tab.
+   */
+  static async busySessions(ids: string[]): Promise<string[]> {
+    if (!isTauriAvailable() || ids.length === 0) return [];
+    try {
+      return await invoke<string[]>("pty_busy_sessions", { ids });
+    } catch {
+      return [];
+    }
+  }
+
   static async onPtyOutput(callback: (payload: PtyOutputPayload) => void): Promise<UnlistenFn> {
     if (!isTauriAvailable()) {
       return () => {};

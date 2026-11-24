@@ -27,9 +27,14 @@ export function releasePtyId(id: string | null | undefined): void {
   if (id) claimedIds.delete(id);
 }
 
-/** Bounds: a spawn window is short, so a small buffer is plenty. */
-const MAX_EVENTS = 256;
-const MAX_OUTPUT_CHARS = 1_048_576;
+/**
+ * Bounds: a spawn window is short, so a small buffer is plenty. Sized well above what
+ * output flow control lets the backend send before the frontend acknowledges
+ * anything (1 MiB in flight), so a held event is never dropped: a dropped one would
+ * also never be acknowledged and would eat into that credit.
+ */
+export const MAX_EARLY_EVENTS = 4096;
+export const MAX_EARLY_OUTPUT_CHARS = 4_194_304;
 
 export interface EarlyPtyEvents {
   /** Hold an event seen while spawning. Events for already-owned ids are ignored. */
@@ -51,7 +56,7 @@ export function createEarlyPtyEvents(
       held.push(event);
       chars += weight(event);
       // Drop the oldest first so the newest state (and a final exit) survives.
-      while (held.length > MAX_EVENTS || chars > MAX_OUTPUT_CHARS) {
+      while (held.length > MAX_EARLY_EVENTS || chars > MAX_EARLY_OUTPUT_CHARS) {
         const dropped = held.shift();
         if (!dropped) break;
         chars -= weight(dropped);

@@ -16,6 +16,7 @@ import { clearActiveProjectState, saveActiveProjectState } from "../cli/activePr
 import { runClose } from "../cli/commands/desktop";
 import { runCli } from "../cli/index";
 import { launchKaiApp } from "../cli/desktopApp";
+import { systemToolPath } from "../core/spawnSafety";
 
 // The module above is mocked; the real implementation is what these tests exercise.
 const { closeKaiApp: realCloseKaiApp } =
@@ -171,8 +172,13 @@ describe("closeKaiApp", () => {
     const results = realCloseKaiApp(run as never, "win32");
 
     expect(calls).toEqual([
-      { cmd: "taskkill", args: ["/F", "/IM", "kai.exe"] },
-      { cmd: "taskkill", args: ["/F", "/IM", "cross-platform-terminal-backend.exe"] },
+      // Absolute System32 path: a `taskkill.exe` planted in the folder `kai close`
+      // runs from must never be picked up through the working directory.
+      { cmd: systemToolPath("taskkill.exe", "win32"), args: ["/F", "/IM", "kai.exe"] },
+      {
+        cmd: systemToolPath("taskkill.exe", "win32"),
+        args: ["/F", "/IM", "cross-platform-terminal-backend.exe"],
+      },
     ]);
     expect(results).toEqual([
       { name: "kai.exe", outcome: "closed", count: 2 },

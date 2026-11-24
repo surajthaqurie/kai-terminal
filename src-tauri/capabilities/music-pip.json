@@ -3,5 +3,10 @@
   "identifier": "music-pip",
   "description": "Least-privilege scope for the detached music picture-in-picture window",
   "windows": ["music-pip"],
-  "permissions": ["core:default", "core:window:allow-start-dragging"]
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "allow-close-music-pip",
+    "allow-music-relay-url"
+  ]
 }

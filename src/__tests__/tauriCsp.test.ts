@@ -45,6 +45,16 @@ describe("tauri.conf.json Content Security Policy", () => {
     expect(connectSrc).toContain("https://api.github.com");
   });
 
+  it("lets the page itself talk to nothing but the app backend and GitHub (SEC-07)", () => {
+    // The page fetches only the update check; the music player is an iframe (frame-src), which
+    // brings its own network access. Hosts allowed here would be an exfiltration channel for
+    // injected script, and `*.google.com` includes user-hosted surfaces.
+    const connectSrc = (csp.match(/connect-src([^;]*)/)?.[1] ?? "").trim().split(/\s+/);
+    expect(connectSrc.sort()).toEqual(
+      ["'self'", "ipc:", "http://ipc.localhost", "https://api.github.com"].sort()
+    );
+  });
+
   it("keeps scripts locked down (no wildcards, no unsafe-inline)", () => {
     const scriptSrc = csp.match(/script-src([^;]*)/)?.[1] ?? "";
     expect(scriptSrc).not.toContain("*");

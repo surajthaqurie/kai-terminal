@@ -32,6 +32,7 @@ import {
   YOUTUBE_LISTENING_HANDSHAKE,
   adoptMusicRelayFrom,
   isYouTubeEmbedOrigin,
+  preconnectMusicEmbed,
   progressPercent,
   youtubeCommand,
 } from "../../services/musicService";
@@ -60,6 +61,10 @@ export const MusicPipWindow: FC = () => {
   const receivedRef = useRef(false);
 
   const act = (action: PipAction) => void emitPip(PIP_EVENTS.action, action);
+
+  useEffect(() => {
+    preconnectMusicEmbed();
+  }, []);
 
   // The window is transparent so Dim Opacity can show the desktop through it;
   // the page itself must not paint the app's canvas color behind the player.

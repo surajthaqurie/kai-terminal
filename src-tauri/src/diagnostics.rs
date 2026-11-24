@@ -44,29 +44,6 @@ pub fn build_diagnostics(
     }
 }
 
-/// Redacts secret-looking values from a diagnostic string.
-/// Keeps keys, replaces values for KEY= / TOKEN / SECRET / PASSWORD / API_KEY patterns.
-pub fn redact_secrets(input: &str) -> String {
-    let mut out = input.to_string();
-    for key in [
-        "API_KEY",
-        "SECRET",
-        "PASSWORD",
-        "TOKEN",
-        "PRIVATE KEY",
-        "Authorization",
-    ] {
-        // Simple case-insensitive containment redaction for free-form logs.
-        let lower = out.to_lowercase();
-        let needle = key.to_lowercase();
-        if lower.contains(&needle) {
-            out = format!("[redacted {} present — value hidden]", key);
-            break;
-        }
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -77,11 +54,5 @@ mod tests {
         let json = serde_json::to_string(&report).unwrap();
         assert!(!json.contains("PRIVATE"));
         assert!(json.contains("app_version"));
-    }
-
-    #[test]
-    fn test_redact_secrets_hides_values() {
-        let red = redact_secrets("api_key=sk-12345");
-        assert!(!red.contains("sk-12345"));
     }
 }

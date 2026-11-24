@@ -61,10 +61,39 @@ fn shell_program(shell_env: Option<&str>, macos: bool) -> String {
     }
 }
 
+/// Reads at most `limit` bytes from `source` on a helper thread and returns them
+/// as text, giving up at `deadline`.
+///
+/// Waiting for end-of-file is not bounded by the shell's own timeout: an rc file
+/// that starts a background process (`foo &`, `emacs --daemon`, an agent) leaves
+/// that process holding the pipe open after the shell is gone or killed, so a
+/// plain `join()` on the reader never returned and the app never started. Past
+/// the deadline the helper thread is simply abandoned (it ends when the pipe
+/// does) and whatever was read so far is not used.
+#[cfg(any(unix, test))]
+fn read_until_deadline<R>(source: R, limit: u64, deadline: std::time::Instant) -> Option<String>
+where
+    R: std::io::Read + Send + 'static,
+{
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        use std::io::Read;
+        let mut buf = Vec::new();
+        let mut source = source;
+        let _ = (&mut source).take(limit).read_to_end(&mut buf);
+        let _ = tx.send(String::from_utf8_lossy(&buf).into_owned());
+    });
+    let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+    // Always allow a moment for output the exited shell already wrote.
+    rx.recv_timeout(remaining.max(std::time::Duration::from_millis(250)))
+        .ok()
+}
+
 /// Runs `shell -ilc 'printf START"$PATH"END'` and returns the parsed `PATH`.
+/// The whole call, shell and reading, is bounded by [`SHELL_TIMEOUT`] (plus a
+/// short grace period for output that is already in the pipe).
 #[cfg(unix)]
 fn login_shell_path(shell: &str) -> Option<String> {
-    use std::io::Read;
     use std::process::{Command, Stdio};
 
     let script = format!("printf '%s%s%s' '{START_MARK}' \"$PATH\" '{END_MARK}'");
@@ -75,13 +104,10 @@ fn login_shell_path(shell: &str) -> Option<String> {
         .stderr(Stdio::null())
         .spawn()
         .ok()?;
-    let mut stdout = child.stdout.take()?;
-    let reader = std::thread::spawn(move || {
-        let mut buf = Vec::new();
-        let _ = (&mut stdout).take(64 * 1024).read_to_end(&mut buf);
-        String::from_utf8_lossy(&buf).into_owned()
-    });
+    let stdout = child.stdout.take()?;
     let started = std::time::Instant::now();
+    let deadline = started + SHELL_TIMEOUT;
+    let reader = std::thread::spawn(move || read_until_deadline(stdout, 64 * 1024, deadline));
     loop {
         match child.try_wait() {
             Ok(Some(_)) => break,
@@ -94,7 +120,7 @@ fn login_shell_path(shell: &str) -> Option<String> {
             Err(_) => return None,
         }
     }
-    parse_marked_path(&reader.join().ok()?)
+    parse_marked_path(&reader.join().ok()??)
 }
 
 /// Merges the login shell's `PATH` into this process's `PATH`. Call once, early,
@@ -168,6 +194,71 @@ mod tests {
         assert_eq!(shell_program(None, true), "/bin/zsh");
         assert_eq!(shell_program(None, false), "/bin/sh");
         assert_eq!(shell_program(Some(""), true), "/bin/zsh");
+    }
+
+    /// A reader that never reaches end-of-file, like a pipe a background process holds open.
+    struct NeverEnds(std::sync::mpsc::Receiver<()>);
+    impl std::io::Read for NeverEnds {
+        fn read(&mut self, _buf: &mut [u8]) -> std::io::Result<usize> {
+            let _ = self.0.recv(); // blocks until the test drops the sender
+            Ok(0)
+        }
+    }
+
+    #[test]
+    fn reading_stops_at_the_deadline_when_the_pipe_never_closes() {
+        let (hold, receiver) = std::sync::mpsc::channel::<()>();
+        let started = std::time::Instant::now();
+        let got = read_until_deadline(
+            NeverEnds(receiver),
+            1024,
+            started + std::time::Duration::from_millis(300),
+        );
+        assert_eq!(got, None, "an unfinished read must not be used");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(3),
+            "must return near the deadline, not wait for end-of-file (took {:?})",
+            started.elapsed()
+        );
+        drop(hold); // let the abandoned helper thread finish
+    }
+
+    #[test]
+    fn reading_returns_complete_output_promptly_and_caps_its_size() {
+        let far = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let started = std::time::Instant::now();
+        let got = read_until_deadline(std::io::Cursor::new(b"hello PATH".to_vec()), 1024, far);
+        assert_eq!(got.as_deref(), Some("hello PATH"));
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+
+        let big = vec![b'x'; 10_000];
+        let capped = read_until_deadline(std::io::Cursor::new(big), 100, far).unwrap();
+        assert_eq!(capped.len(), 100);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_login_shell_whose_rc_leaves_a_background_process_holding_the_pipe_does_not_hang() {
+        let _env = crate::test_support::lock_test_env();
+        // The script itself backgrounds a process that inherits stdout and outlives the shell.
+        let dir = std::env::temp_dir().join(format!("kai-login-hang-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let shell = dir.join("fake-shell.sh");
+        std::fs::write(
+            &shell,
+            "#!/bin/sh\nsleep 30 &\nprintf '%s' '__KAI_PATH_START__/opt/bin__KAI_PATH_END__'\n",
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&shell, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let started = std::time::Instant::now();
+        let _ = login_shell_path(shell.to_str().unwrap());
+        assert!(
+            started.elapsed() < SHELL_TIMEOUT + std::time::Duration::from_secs(3),
+            "login_shell_path hung for {:?}",
+            started.elapsed()
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[cfg(unix)]

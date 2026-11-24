@@ -19,8 +19,8 @@ import {
   type RankedFile,
 } from "./retrieval";
 import { estimateTokens, loadModelTokenizer } from "./tokenCounter";
-import { indexProject, isSensitiveFile, toPosixRel } from "./indexer";
-import { detectInstalledLspServers } from "./lspBridge";
+import { indexProject, isSensitiveFile, targetIsSensitive, toPosixRel } from "./indexer";
+import { detectInstalledLspServersCached } from "./lspBridge";
 import {
   getValidatedFreshness,
   isCodeMode,
@@ -206,6 +206,14 @@ function checkRelativePath(raw: string, canonicalRoot: string): PathCheck {
     return {
       ok: false,
       message: `File path escapes project boundary: ${clipChars(rel, 200)}`,
+    };
+  }
+  // A link inside the project that points at a credential file passes the name check above
+  // (`notes.txt -> .env`): judge what it resolves to as well (SEC-05).
+  if (targetIsSensitive(canonicalFile)) {
+    return {
+      ok: false,
+      message: `Access denied: sensitive or excluded file: ${clipChars(rel, 200)}`,
     };
   }
   return { ok: true, rel };
@@ -656,8 +664,10 @@ export async function toolRefreshIndex(
 // kai_get_lsp_status
 // ---------------------------------------------------------------------------
 
-export function toolLspStatus(): ToolOutcome {
-  const detected = detectInstalledLspServers();
+export async function toolLspStatus(): Promise<ToolOutcome> {
+  // Probed in parallel, off the event loop, and remembered for a few minutes: the old
+  // serial synchronous probes took ~4 s and blocked every other request meanwhile.
+  const detected = await detectInstalledLspServersCached();
   const available = detected.some((d) => d.isAvailable);
   const servers = detected.map((d) => ({
     language: d.language,

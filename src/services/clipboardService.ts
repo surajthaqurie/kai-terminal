@@ -18,6 +18,34 @@ export async function readClipboardText(): Promise<string> {
   return navigator.clipboard.readText();
 }
 
+/**
+ * Puts text on the clipboard. Never throws: resolves false when the WebView denies access (no
+ * permission, or an insecure context) and the legacy `execCommand("copy")` route fails too.
+ */
+export async function copyTextToClipboard(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    // Denied or unavailable: try the older route, which needs no permission when it runs inside
+    // the user's key press (as copy does).
+  }
+  try {
+    const field = document.createElement("textarea");
+    field.value = text;
+    field.setAttribute("readonly", "");
+    field.style.position = "fixed";
+    field.style.opacity = "0";
+    document.body.appendChild(field);
+    field.select();
+    const ok = document.execCommand("copy");
+    field.remove();
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
 /** Largest piece asked of the backend per call (bytes); the backend may send less. */
 export const CLIPBOARD_PIECE_BYTES = 4 * 1024 * 1024;
 

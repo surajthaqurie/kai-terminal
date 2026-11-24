@@ -42,6 +42,8 @@ const saved = () =>
     title: string;
   }> | null;
 const titles = () => api.tabsState.tabs.map((t) => t.title);
+/** The layout is written after a short quiet period (and when the window hides): let it pass. */
+const layoutSaved = () => act(async () => void (await new Promise((r) => setTimeout(r, 650))));
 
 beforeEach(() => {
   localStorage.clear();
@@ -82,6 +84,7 @@ describe("previous-session offer", () => {
   it("saves the user's tabs again as soon as they open one, even if the offer is ignored", async () => {
     await mount();
     await act(async () => api.tabsState.newTab());
+    await layoutSaved();
     expect(saved()).toHaveLength(2);
     expect(saved()?.map((t) => t.title)).toEqual(["Terminal 1", "Terminal 2"]);
     // ...and the offer is still loadable this launch.
@@ -93,6 +96,7 @@ describe("previous-session offer", () => {
     await act(async () => api.persistence.dismissRestore());
     expect(api.persistence.pendingRestore).toBeNull();
     expect(titles()).toEqual(["Terminal 1"]);
+    await layoutSaved();
     expect(saved()?.map((t) => t.title)).toEqual(["Terminal 1"]);
   });
 
@@ -107,6 +111,7 @@ describe("previous-session offer", () => {
     await act(async () => api.persistence.restoreWorkspace(ws));
     expect(titles()).toEqual(["from-workspace"]);
     expect(api.persistence.pendingRestore).toBeNull();
+    await layoutSaved();
     expect(saved()?.map((t) => t.title)).toEqual(["from-workspace"]);
   });
 });

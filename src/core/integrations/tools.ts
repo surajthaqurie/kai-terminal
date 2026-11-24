@@ -337,11 +337,15 @@ export function isIntegrationTool(name: string): boolean {
 }
 
 /** Tool definitions for the project's active provider; empty when nothing is bound. */
-export function integrationToolDefs(projectDir: string): Array<Omit<ToolDef, "capability">> {
+export function integrationToolDefs(
+  projectDir: string,
+  /** The git top-level of `projectDir` when already known (the poll passes it, see mcp.ts). */
+  knownTopLevel?: string
+): Array<Omit<ToolDef, "capability">> {
   let provider: IntegrationProvider | null = null;
   let writesAllowed = false;
   try {
-    const found = findBinding(projectDir);
+    const found = findBinding(projectDir, knownTopLevel);
     provider = found ? getProvider(found.binding.provider) : null;
     writesAllowed = found?.binding.writeTools === true;
   } catch {

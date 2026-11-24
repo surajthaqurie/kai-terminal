@@ -17,6 +17,8 @@ import { useShortcutTitle } from "../hooks/useShortcutHints";
 import { isMacPlatform } from "../services/shortcuts";
 
 interface TabBarProps {
+  /** The window's close button (asks first when commands are running). */
+  onCloseWindow?: () => void;
   tabs: TerminalTab[];
   activeTabId: string;
   onSelectTab: (id: string) => void;
@@ -64,11 +66,18 @@ const STATUS_TEXT: Record<SessionStatus, string> = {
  * a spinner while the shell starts, an alert when it failed, a slashed circle
  * once it exited, the terminal glyph while it runs.
  */
-function TabStatusIcon({ status }: { status: SessionStatus }) {
+function TabStatusIcon({ status, shown }: { status: SessionStatus; shown: boolean }) {
   const props = { size: 14, className: "tab-icon", "aria-hidden": true } as const;
   switch (status) {
     case "connecting":
-      return <LoaderCircle {...props} className="tab-icon tab-icon-spin" />;
+      // A tab that is not on screen has not started its shell yet (hidden tabs start when first
+      // shown, so ten restored tabs do not spawn ten shells at launch): show it as idle, not as
+      // a spinner that would turn forever (FUNC-08).
+      return shown ? (
+        <LoaderCircle {...props} className="tab-icon tab-icon-spin" />
+      ) : (
+        <TerminalIcon {...props} className="tab-icon tab-icon-idle" />
+      );
     case "error":
       return <CircleAlert {...props} />;
     case "disconnected":
@@ -119,6 +128,7 @@ export const TabBar: FC<TabBarProps> = ({
   onSelectTab,
   onTabClicked,
   onCloseTab,
+  onCloseWindow,
   onNewTab,
   onRenameTab,
   onMoveTab,
@@ -330,7 +340,14 @@ export const TabBar: FC<TabBarProps> = ({
       }
       const pending = pendingRef.current;
       if (!pending) return;
-      if (e.pointerId !== pending.pointerId && e.type !== "pointercancel") return;
+      if (e.type === "pointercancel") {
+        // The browser took the touch over (a scroll) or the system interrupted the pointer:
+        // nothing was released anywhere, so put the tab back instead of committing the drop
+        // slot the gesture happened to be over (FUNC-13).
+        cancelDrag();
+        return;
+      }
+      if (e.pointerId !== pending.pointerId) return;
       if (dragIdRef.current) {
         if (detachArmedRef.current && e.type === "pointerup") {
           // Released outside the strip: move the tab to a new window.
@@ -363,6 +380,21 @@ export const TabBar: FC<TabBarProps> = ({
     };
   }, [armDrag, cancelDrag, commitDrag, computeDropIndex]);
 
+  // Touch: `touch-action` is fixed when the finger goes down, and the strip allows panning (a
+  // swipe scrolls it). Once a hold has lifted the tab, the browser would turn the next finger
+  // move into a scroll and cancel the drag; cancelling the move keeps it a drag. Before the hold
+  // completes nothing is cancelled, so a swipe still scrolls. Attached to the strip (not the
+  // window) so a non-passive listener does not slow down scrolling anywhere else (FUNC-13).
+  useEffect(() => {
+    const strip = containerRef.current;
+    if (!strip) return;
+    const onTouchMove = (e: TouchEvent) => {
+      if (dragIdRef.current && e.cancelable) e.preventDefault();
+    };
+    strip.addEventListener("touchmove", onTouchMove, { passive: false });
+    return () => strip.removeEventListener("touchmove", onTouchMove);
+  }, []);
+
   useEffect(() => {
     if (!menu) return;
     const close = () => setMenu(null);
@@ -372,7 +404,12 @@ export const TabBar: FC<TabBarProps> = ({
       if (e.key !== "Escape" || e.defaultPrevented) return;
       e.preventDefault();
       e.stopPropagation();
+      // Keyboard users opened this from the tab: put them back on it.
+      const owner = Array.from(
+        containerRef.current?.querySelectorAll<HTMLElement>("[data-tab-id]") ?? []
+      ).find((el) => el.dataset.tabId === menu.tabId);
       setMenu(null);
+      if (menuRef.current?.contains(document.activeElement)) owner?.focus();
     };
     window.addEventListener("click", close);
     window.addEventListener("blur", close);
@@ -383,6 +420,38 @@ export const TabBar: FC<TabBarProps> = ({
       window.removeEventListener("keydown", onKey, true);
     };
   }, [menu]);
+
+  // The menu takes focus when it opens, so the arrow keys work for anyone who opened it from the
+  // keyboard (the context-menu key, Shift+F10) and not only for a mouse (FUNC-13).
+  useEffect(() => {
+    if (menu) menuRef.current?.focus();
+  }, [menu]);
+
+  /** Up/Down (and Left/Right on the colour swatches) move between the menu's buttons. */
+  const onMenuKeyDown = (e: React.KeyboardEvent) => {
+    const root = menuRef.current;
+    if (!root) return;
+    const items = Array.from(root.querySelectorAll<HTMLButtonElement>("button:not(:disabled)"));
+    if (items.length === 0) return;
+    const at = items.indexOf(document.activeElement as HTMLButtonElement);
+    const onSwatch = !!(document.activeElement as HTMLElement | null)?.closest(
+      ".tab-color-swatches"
+    );
+    let next: number | null = null;
+    if (e.key === "ArrowDown" || (onSwatch && e.key === "ArrowRight")) {
+      next = at < 0 ? 0 : (at + 1) % items.length;
+    } else if (e.key === "ArrowUp" || (onSwatch && e.key === "ArrowLeft")) {
+      next = at <= 0 ? items.length - 1 : at - 1;
+    } else if (e.key === "Home") {
+      next = 0;
+    } else if (e.key === "End") {
+      next = items.length - 1;
+    }
+    if (next === null) return;
+    e.preventDefault();
+    e.stopPropagation();
+    items[next].focus();
+  };
 
   // Clear drag state if tabs unmount mid-drag.
   useEffect(() => cancelDrag, [cancelDrag]);
@@ -521,7 +590,7 @@ export const TabBar: FC<TabBarProps> = ({
                 data-tab-id={tab.id}
                 role="tab"
                 aria-selected={isActive}
-                aria-label={`${tab.title}, ${tab.status}`}
+                aria-label={`${tab.title}, ${tab.status === "connecting" && !isActive ? "not started" : tab.status}`}
                 tabIndex={isActive ? 0 : -1}
                 className={`tab-item ${isActive ? "active" : ""} status-${tab.status}${
                   tab.color ? " has-color" : ""
@@ -538,7 +607,7 @@ export const TabBar: FC<TabBarProps> = ({
                 onClick={(e) => handleTabClick(tab.id, e.detail)}
                 onKeyDown={(e) => handleTabKeyDown(e, index)}
               >
-                <TabStatusIcon status={tab.status} />
+                <TabStatusIcon status={tab.status} shown={isActive} />
                 {isEditing ? (
                   <input
                     type="text"
@@ -570,7 +639,7 @@ export const TabBar: FC<TabBarProps> = ({
                       e.stopPropagation();
                       startEditing(tab);
                     }}
-                    title={`${tab.title} (${STATUS_TEXT[tab.status]}). Drag to reorder${
+                    title={`${tab.title} (${tab.status === "connecting" && !isActive ? "not started yet, starts when opened" : STATUS_TEXT[tab.status]}). Drag to reorder${
                       onDetachTab && tabs.length > 1 ? " or out of the bar for a new window" : ""
                     }; double-click or right-click to rename`}
                   >
@@ -640,7 +709,7 @@ export const TabBar: FC<TabBarProps> = ({
       {/* Empty strip that moves the window (and maximizes on double-click). */}
       <div className="tab-bar-drag" data-tauri-drag-region />
       {children}
-      <WindowControls />
+      <WindowControls onClose={onCloseWindow} />
 
       {menu && menuTab && (
         <div
@@ -648,8 +717,10 @@ export const TabBar: FC<TabBarProps> = ({
           className="tab-context-menu"
           role="menu"
           aria-label={`Actions for ${menuTab.title}`}
+          tabIndex={-1}
           style={{ left: menu.x, top: menu.y }}
           onClick={(e) => e.stopPropagation()}
+          onKeyDown={onMenuKeyDown}
         >
           <button
             type="button"

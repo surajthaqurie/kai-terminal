@@ -1,7 +1,7 @@
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
-use std::io::{Read, Write};
+use std::io::Write;
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
@@ -18,27 +18,88 @@ pub trait TerminalEventEmitter: Send + Sync + 'static {
     fn emit_cwd(&self, _payload: PtyCwdPayload) {}
 }
 
-/// Tauri implementation of TerminalEventEmitter.
+/// Which window shows each session. A session's output, exit and cwd events go to
+/// that window only: broadcasting them made every open window receive, JSON-decode
+/// and discard every other window's terminal output.
+#[derive(Default)]
+pub struct OwnerRoutes {
+    owners: Mutex<HashMap<String, String>>,
+}
+
+impl OwnerRoutes {
+    /// Points session `id`'s events at window `label`.
+    pub fn set(&self, id: &str, label: &str) {
+        if let Ok(mut owners) = self.owners.lock() {
+            owners.insert(id.to_string(), label.to_string());
+        }
+    }
+
+    /// The window that shows `id`, if one has been recorded.
+    pub fn owner_of(&self, id: &str) -> Option<String> {
+        self.owners.lock().ok()?.get(id).cloned()
+    }
+
+    /// Forgets a finished session.
+    pub fn remove(&self, id: &str) {
+        if let Ok(mut owners) = self.owners.lock() {
+            owners.remove(id);
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.owners.lock().map(|o| o.len()).unwrap_or(0)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+/// Tauri implementation of TerminalEventEmitter: sends each session's events to
+/// the window that shows it ([`OwnerRoutes`]), never to every window.
+///
+/// `default_owner` is the window that created the session: it receives the
+/// events until a route is recorded (the first prompt can arrive before
+/// `create_pty` has returned). A window that closed mid-stream is simply not a
+/// target, so a late event is dropped, not delivered elsewhere.
 #[cfg(feature = "tauri")]
-pub struct TauriEventEmitter {
-    pub app_handle: tauri::AppHandle,
+pub struct TauriEventEmitter<R: tauri::Runtime = tauri::Wry> {
+    pub app_handle: tauri::AppHandle<R>,
+    pub routes: Arc<OwnerRoutes>,
+    pub default_owner: String,
 }
 
 #[cfg(feature = "tauri")]
-impl TerminalEventEmitter for TauriEventEmitter {
+impl<R: tauri::Runtime> TauriEventEmitter<R> {
+    fn target(&self, id: &str) -> String {
+        self.routes
+            .owner_of(id)
+            .unwrap_or_else(|| self.default_owner.clone())
+    }
+}
+
+#[cfg(feature = "tauri")]
+impl<R: tauri::Runtime> TerminalEventEmitter for TauriEventEmitter<R> {
     fn emit_output(&self, payload: PtyOutputPayload) {
         use tauri::Emitter;
-        let _ = self.app_handle.emit("pty-output", payload);
+        let target = self.target(&payload.id);
+        let _ = self
+            .app_handle
+            .emit_to(target.as_str(), "pty-output", payload);
     }
 
     fn emit_exit(&self, payload: PtyExitPayload) {
         use tauri::Emitter;
-        let _ = self.app_handle.emit("pty-exit", payload);
+        let target = self.target(&payload.id);
+        let _ = self
+            .app_handle
+            .emit_to(target.as_str(), "pty-exit", payload);
     }
 
     fn emit_cwd(&self, payload: PtyCwdPayload) {
         use tauri::Emitter;
-        let _ = self.app_handle.emit("pty-cwd", payload);
+        let target = self.target(&payload.id);
+        let _ = self.app_handle.emit_to(target.as_str(), "pty-cwd", payload);
     }
 }
 
@@ -153,9 +214,13 @@ pub struct PtySessionHandle {
     pub pid: Option<u32>,
     pub shell_path: String,
     pub cwd: String,
-    pub master: Box<dyn MasterPty + Send>,
+    /// Behind its own `Arc<Mutex<..>>` so a resize (a native call) can run
+    /// after the manager-wide sessions lock is released.
+    pub master: Arc<Mutex<Box<dyn MasterPty + Send>>>,
     pub writer: Arc<Mutex<Box<dyn Write + Send>>>,
     pub killer: Box<dyn ChildKiller + Send + Sync>,
+    /// Output pacing for this session (see [`FlowControl`]).
+    pub flow: Arc<FlowControl>,
     pub cols: u16,
     pub rows: u16,
     pub status: SessionStatus,
@@ -169,6 +234,179 @@ pub struct PtySessionHandle {
     /// frontend (focus + interval + per-command checks) otherwise spawns
     /// processes fast enough to stall the window.
     pub last_cwd_probe: std::time::Instant,
+    /// Set by the waiter thread once the shell has been reaped (it no longer exists as a process).
+    /// Closing a session on Unix only sends SIGHUP; this tells the follow-up whether the shell
+    /// really went away or has to be killed (REL-04).
+    pub reaped: Arc<std::sync::atomic::AtomicBool>,
+}
+
+/// What is needed to finish off a shell that did not leave when asked (Unix).
+pub struct Straggler {
+    #[cfg(unix)]
+    pid: Option<u32>,
+    #[cfg(unix)]
+    foreground_group: Option<i32>,
+    #[cfg(unix)]
+    reaped: Arc<std::sync::atomic::AtomicBool>,
+}
+
+/// How long a shell gets to leave after SIGHUP before it is killed outright.
+#[cfg(unix)]
+const CLOSE_GRACE: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// Marks the session closed and tells its shell to go. On Unix the shell only gets SIGHUP, which
+/// a shell or job may trap or ignore; the returned [`Straggler`] is what lets the caller kill it
+/// after a grace period if it is still there (REL-04). On Windows the kill is already forceful.
+fn end_session(session: &mut PtySessionHandle) -> Straggler {
+    session.status = SessionStatus::Disconnected;
+    // Never leave the output thread waiting on a consumer that may be gone.
+    session.flow.close();
+    #[cfg(unix)]
+    let foreground_group = session
+        .master
+        .lock()
+        .ok()
+        .and_then(|m| m.process_group_leader());
+    let _ = session.killer.kill();
+    let straggler = Straggler {
+        #[cfg(unix)]
+        pid: session.pid,
+        #[cfg(unix)]
+        foreground_group,
+        #[cfg(unix)]
+        reaped: session.reaped.clone(),
+    };
+    #[cfg(unix)]
+    {
+        // A single closed tab: do not make the caller wait. A short-lived thread follows up.
+        let for_thread = Straggler {
+            pid: straggler.pid,
+            foreground_group: straggler.foreground_group,
+            reaped: straggler.reaped.clone(),
+        };
+        std::thread::spawn(move || {
+            std::thread::sleep(CLOSE_GRACE);
+            kill_if_still_running(&for_thread);
+        });
+    }
+    straggler
+}
+
+/// SIGKILL the shell and its foreground job when the shell has not been reaped yet.
+#[cfg(unix)]
+fn kill_if_still_running(s: &Straggler) {
+    if s.reaped.load(std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    // SAFETY: plain signal system calls with process / group ids the OS reported for this
+    // session's own shell; the shell has not been reaped, so its pid cannot have been reused.
+    unsafe {
+        if let Some(group) = s.foreground_group.filter(|g| *g > 1) {
+            libc::killpg(group, libc::SIGKILL);
+        }
+        if let Some(pid) = s.pid {
+            libc::kill(pid as libc::pid_t, libc::SIGKILL);
+        }
+    }
+}
+
+/// Shutdown path: wait up to [`CLOSE_GRACE`] for every shell to be reaped, then kill the rest.
+#[cfg(unix)]
+fn wait_then_kill_stragglers(stragglers: Vec<Straggler>) {
+    let deadline = std::time::Instant::now() + CLOSE_GRACE;
+    while std::time::Instant::now() < deadline
+        && stragglers
+            .iter()
+            .any(|s| !s.reaped.load(std::sync::atomic::Ordering::SeqCst))
+    {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    for s in &stragglers {
+        kill_if_still_running(s);
+    }
+}
+
+#[cfg(not(unix))]
+fn wait_then_kill_stragglers(_stragglers: Vec<Straggler>) {}
+
+/// Removes `id` from `map` under the lock and drops the removed value only
+/// after the lock guard is gone.
+///
+/// Dropping a session drops its PTY master, which on Windows calls
+/// `ClosePseudoConsole` — a call that can block until output is drained. If the
+/// global map lock were held across that drop, the reader thread (which needs
+/// the lock to publish cwd changes) could never drain, and every tab's
+/// create/write/resize/close would stall behind the one exiting session.
+///
+/// Returns whether `id` was still in the map. For the waiter thread that is how a natural
+/// exit (the entry is still there) is told from an explicit close (`close_pty`, `close_all` and
+/// a window closing all remove the entry first, then kill the shell).
+fn remove_and_drop_outside_lock<T>(map: &Mutex<HashMap<String, T>>, id: &str) -> bool {
+    // The guard is a temporary moved into `and_then`; it is released when the
+    // closure returns, i.e. before `removed` is dropped below.
+    let removed = map.lock().ok().and_then(|mut m| m.remove(id));
+    let was_present = removed.is_some();
+    drop(removed);
+    was_present
+}
+
+/// Helper processes the console host starts next to a shell. They are not user
+/// work: a shell that only has these as children is idle.
+#[cfg(any(windows, test))]
+fn is_console_helper_process(image_name: &str) -> bool {
+    ["conhost.exe", "openconsole.exe", "wslhost.exe"]
+        .iter()
+        .any(|helper| image_name.eq_ignore_ascii_case(helper))
+}
+
+/// Unix: the shell is idle at its prompt when it owns the terminal's foreground
+/// process group; anything else in the foreground is a running job. `fg_group`
+/// is the foreground group leader reported by the PTY (`None`: unknown, so not
+/// reported as busy).
+#[cfg(any(unix, test))]
+fn foreground_job_running(shell_pid: u32, fg_group: Option<i64>) -> bool {
+    matches!(fg_group, Some(group) if group > 0 && group != i64::from(shell_pid))
+}
+
+/// Windows: true when `shell_pid` has a child process that is not a console
+/// helper — a command the user started (`ping`, a build, an editor...).
+#[cfg(windows)]
+fn windows_shell_has_running_child(shell_pid: u32) -> bool {
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+        TH32CS_SNAPPROCESS,
+    };
+    // SAFETY: the snapshot handle is checked against INVALID_HANDLE_VALUE and always
+    // closed; `entry` is zero-initialised with `dwSize` set as the API requires and is
+    // only read after the API reported success; the exe name is read up to its NUL
+    // within the fixed-size array.
+    unsafe {
+        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if snapshot == INVALID_HANDLE_VALUE {
+            return false;
+        }
+        let mut entry: PROCESSENTRY32W = std::mem::zeroed();
+        entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+        let mut busy = false;
+        let mut more = Process32FirstW(snapshot, &mut entry);
+        while more != 0 {
+            if entry.th32ParentProcessID == shell_pid {
+                let len = entry
+                    .szExeFile
+                    .iter()
+                    .position(|&c| c == 0)
+                    .unwrap_or(entry.szExeFile.len());
+                if !is_console_helper_process(&String::from_utf16_lossy(&entry.szExeFile[..len])) {
+                    busy = true;
+                    break;
+                }
+            }
+            more = Process32NextW(snapshot, &mut entry);
+        }
+        CloseHandle(snapshot);
+        busy
+    }
 }
 
 /// Minimum gap between live-OS cwd probes for one session.
@@ -290,15 +528,148 @@ impl HandoffGate {
     }
 }
 
-/// Wraps a session's real emitter so [`HandoffGate`] can hold its events.
+/// Output flow control for one session (PERF-01).
+///
+/// The frontend acknowledges the output it has handed to the terminal emulator
+/// (`pty_ack`). Bytes emitted but not yet acknowledged are "in flight". Once that
+/// reaches the high-water mark the output thread stops emitting until the count
+/// falls to the low-water mark; it stops reading the bounded queue in front of it,
+/// the reader thread stops reading the PTY, and the child blocks on its next write
+/// exactly as it would on a terminal that cannot keep up. Nothing is dropped and
+/// nothing grows without bound: in flight is at most the high-water mark plus one
+/// batch, and the queue is a handful of chunks.
+///
+/// Waiting never outlives the session: [`FlowControl::close`] (explicit close, app
+/// exit, or the shell's output ending) wakes the waiter and disables further
+/// waiting, so closing a tab, or a shell that exited, never depends on a stalled
+/// consumer draining anything.
+pub struct FlowControl {
+    state: Mutex<FlowState>,
+    changed: std::sync::Condvar,
+    high: u64,
+    low: u64,
+    stall_timeout: std::time::Duration,
+}
+
+#[derive(Default)]
+struct FlowState {
+    in_flight: u64,
+    closed: bool,
+}
+
+impl FlowControl {
+    pub fn new(high: u64, low: u64) -> Self {
+        Self {
+            state: Mutex::new(FlowState::default()),
+            changed: std::sync::Condvar::new(),
+            high,
+            low: low.min(high),
+            stall_timeout: FLOW_STALL_RESYNC,
+        }
+    }
+
+    /// Overrides how long a pause may last with no acknowledgement at all (tests).
+    pub fn with_stall_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.stall_timeout = timeout;
+        self
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, FlowState> {
+        self.state.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Blocks while the session is at or above the high-water mark, until the
+    /// frontend has acknowledged enough to be at or below the low-water mark, or
+    /// until the session is closed.
+    pub fn wait_for_credit(&self) {
+        let mut state = self.lock();
+        if state.closed || state.in_flight < self.high {
+            return;
+        }
+        while !state.closed && state.in_flight > self.low {
+            let (guard, timeout) = self
+                .changed
+                .wait_timeout(state, self.stall_timeout)
+                .unwrap_or_else(|e| e.into_inner());
+            state = guard;
+            if timeout.timed_out() && !state.closed && state.in_flight > self.low {
+                // Last resort: no acknowledgement at all for a long time. A frontend that
+                // is merely slow still acknowledges something within this window, so
+                // this means credit was lost (output delivered to a window that no
+                // longer exists, an event the frontend never saw). Give the credit back
+                // rather than freeze the terminal for good. Bounded: another high-water
+                // mark of output, then the next pause.
+                eprintln!(
+                    "[kai] output flow control: no acknowledgement for {:?} with {} bytes in flight; resetting",
+                    self.stall_timeout, state.in_flight
+                );
+                state.in_flight = 0;
+            }
+        }
+    }
+
+    /// Forgets everything in flight. Used when the window that shows the session
+    /// changes: whatever was sent to the previous window will never be acknowledged
+    /// by the new one, and must not count against it.
+    pub fn reset(&self) {
+        self.lock().in_flight = 0;
+        self.changed.notify_all();
+    }
+
+    /// Records bytes handed to the frontend.
+    pub fn add(&self, bytes: u64) {
+        let mut state = self.lock();
+        state.in_flight = state.in_flight.saturating_add(bytes);
+    }
+
+    /// Records bytes the frontend has handed to the terminal emulator. More than
+    /// is in flight is tolerated (the surplus is ignored), never a failure.
+    pub fn ack(&self, bytes: u64) {
+        let mut state = self.lock();
+        state.in_flight = state.in_flight.saturating_sub(bytes);
+        self.changed.notify_all();
+    }
+
+    /// Ends all waiting for good (the session is over).
+    pub fn close(&self) {
+        self.lock().closed = true;
+        self.changed.notify_all();
+    }
+
+    /// Bytes emitted and not yet acknowledged.
+    pub fn in_flight(&self) -> u64 {
+        self.lock().in_flight
+    }
+}
+
+/// In flight at which the output thread stops emitting (1 MiB).
+pub const FLOW_HIGH_WATER_BYTES: u64 = 1024 * 1024;
+/// In flight at which it resumes (256 KiB); well above the frontend's ack batch so
+/// a partially acknowledged tail can never leave the session waiting.
+pub const FLOW_LOW_WATER_BYTES: u64 = 256 * 1024;
+/// How long a pause may last with no acknowledgement before the credit is assumed
+/// lost and given back (see [`FlowControl::wait_for_credit`]).
+const FLOW_STALL_RESYNC: std::time::Duration = std::time::Duration::from_secs(30);
+/// Chunks (up to 32 KiB each) the reader may queue ahead of the output thread.
+const READ_QUEUE_CHUNKS: usize = 8;
+
+/// Wraps a session's real emitter so [`HandoffGate`] can hold its events, and so
+/// output that reaches the frontend is counted and paced by [`FlowControl`].
 struct GatedEmitter {
     inner: Arc<dyn TerminalEventEmitter>,
     gate: Arc<HandoffGate>,
+    flow: Arc<FlowControl>,
 }
 
 impl TerminalEventEmitter for GatedEmitter {
     fn emit_output(&self, payload: PtyOutputPayload) {
+        // Paces the output thread (and through it the shell) while the frontend is behind.
+        self.flow.wait_for_credit();
         if let Some(payload) = self.gate.hold_output(payload) {
+            // Only what really reaches the frontend counts as in flight: it is the
+            // only thing the frontend will acknowledge. (Output held for a window
+            // move is handed over through `handoff_finish`, not as events.)
+            self.flow.add(payload.data.len() as u64);
             self.inner.emit_output(payload);
         }
     }
@@ -319,6 +690,9 @@ impl TerminalEventEmitter for GatedEmitter {
 pub struct PtyManager {
     pub sessions: Arc<Mutex<HashMap<String, PtySessionHandle>>>,
     gate: Arc<HandoffGate>,
+    routes: Arc<OwnerRoutes>,
+    flow_high: u64,
+    flow_low: u64,
 }
 
 // Maximum output batch size before flushing to event emitter (64 KB, the
@@ -365,7 +739,35 @@ impl PtyManager {
         Self {
             sessions: Arc::new(Mutex::new(HashMap::new())),
             gate: Arc::new(HandoffGate::default()),
+            routes: Arc::new(OwnerRoutes::default()),
+            flow_high: FLOW_HIGH_WATER_BYTES,
+            flow_low: FLOW_LOW_WATER_BYTES,
         }
+    }
+
+    /// Records that the frontend has handed `bytes` of session `id`'s output to the
+    /// terminal emulator, freeing credit for more. Unknown (already closed) ids are
+    /// fine: late acknowledgements are normal.
+    pub fn ack_output(&self, id: &str, bytes: u64) {
+        let flow = self
+            .sessions
+            .lock()
+            .ok()
+            .and_then(|s| s.get(id).map(|h| h.flow.clone()));
+        if let Some(flow) = flow {
+            flow.ack(bytes);
+        }
+    }
+
+    /// Output emitted to the frontend and not yet acknowledged, if `id` is live.
+    pub fn output_in_flight(&self, id: &str) -> Option<u64> {
+        let sessions = self.sessions.lock().ok()?;
+        Some(sessions.get(id)?.flow.in_flight())
+    }
+
+    /// The table that decides which window receives each session's events.
+    pub fn routes(&self) -> Arc<OwnerRoutes> {
+        self.routes.clone()
     }
 
     /// Spawns a new native shell attached to a PTY.
@@ -376,9 +778,11 @@ impl PtyManager {
     ) -> Result<PtySessionInfo, TerminalError> {
         // Every session's events go through the gate, so a tab can later be moved to
         // another window without losing output (see `HandoffGate`).
+        let flow = Arc::new(FlowControl::new(self.flow_high, self.flow_low));
         let emitter: Arc<dyn TerminalEventEmitter> = Arc::new(GatedEmitter {
             inner: emitter,
             gate: self.gate.clone(),
+            flow: flow.clone(),
         });
         let flatpak_id = flatpak_id_from_env();
         let shell_path = if flatpak_id.is_some() {
@@ -468,6 +872,11 @@ impl PtyManager {
         cmd.env("COLORTERM", "truecolor");
         cmd.env("KAI_TERMINAL", "1");
         cmd.env("TERM_PROGRAM", "kai");
+        // Directories recorded after startup (the `kai` CLI shim): given to this child's
+        // own environment instead of mutating the app's (Unix; see kai_cli).
+        if let Some(path) = crate::kai_cli::spawn_path_with_extras() {
+            cmd.env("PATH", path);
+        }
         // The parent (WebView2, or the Electron app that launched Kai) can leak
         // its crash-reporter pipe into every tab; a Chromium-based tool run
         // there then fails with "registration_protocol_win.cc: CreateFile".
@@ -554,19 +963,23 @@ impl PtyManager {
             status: SessionStatus::Connected,
         };
 
+        let reaped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let reaped_waiter = reaped.clone();
         let handle = PtySessionHandle {
             id: session_id.clone(),
             pid,
             shell_path,
             cwd,
-            master: pair.master,
+            master: Arc::new(Mutex::new(pair.master)),
             writer,
             killer,
+            flow: flow.clone(),
             cols,
             rows,
             status: SessionStatus::Connected,
             owner: String::new(),
             last_cwd_probe: std::time::Instant::now(),
+            reaped,
         };
 
         // Store active session in thread-safe map
@@ -593,7 +1006,9 @@ impl PtyManager {
         const CWD_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
 
         // Output thread: coalesces raw reads into few, larger IPC events.
-        let (out_tx, out_rx) = std::sync::mpsc::channel::<Vec<u8>>();
+        // Bounded: when the output thread is paused by flow control this fills up and
+        // the reader blocks, so the PTY itself stops being drained (see FlowControl).
+        let (out_tx, out_rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(READ_QUEUE_CHUNKS);
         let emitter_out = emitter.clone();
         let id_out = session_id.clone();
         let output_thread = std::thread::spawn(move || {
@@ -605,16 +1020,17 @@ impl PtyManager {
             });
         });
 
+        let flow_reader = flow.clone();
         let reader_thread = std::thread::spawn(move || {
             let mut read_buf = [0u8; READ_BUFFER_CHUNK_BYTES];
-            // Raw-byte window for OSC 7 / 9;9 cwd reports (primary Windows
-            // mechanism — see the prompt integration in `create_pty`). The
-            // retained tail reassembles sequences split across 4 KB reads;
-            // overlap re-scans are harmless (deduped by the equality check).
-            let mut scan_buf: Vec<u8> = Vec::with_capacity(8192);
+            // OSC 7 / 9;9 cwd reports (primary Windows mechanism — see the prompt
+            // integration in `create_pty`). The scanner returns each report once
+            // and only retains an incomplete trailing sequence, so sequences
+            // split across reads are reassembled without re-parsing old bytes.
+            let mut osc_scanner = OscCwdScanner::default();
 
             loop {
-                match reader.read(&mut read_buf) {
+                match read_retrying(&mut reader, &mut read_buf) {
                     Ok(0) => break, // EOF reached
                     Ok(n) => {
                         let _ = out_tx.send(read_buf[..n].to_vec());
@@ -624,33 +1040,20 @@ impl PtyManager {
                         // `get_pty_cwd` + focus/interval/cd probes) truthful
                         // on Windows, where `resolve_process_cwd` is
                         // unavailable. Frontend xterm parses the same bytes
-                        // independently; output forwarding below is untouched.
-                        scan_buf.extend_from_slice(&read_buf[..n]);
-                        // Fast path: an OSC sequence always starts with ESC.
-                        // Plain-text floods (logs, `cat`, installs) have no
-                        // ESC at all, so skip the scan and drop the tail —
-                        // no partial sequence can be pending without one.
-                        if scan_buf.contains(&0x1B) {
-                            for osc_cwd in extract_osc_cwds(&scan_buf) {
-                                if osc_cwd != last_emitted_cwd {
-                                    last_emitted_cwd = osc_cwd.clone();
-                                    if let Ok(mut map) = sessions_map_ref.lock() {
-                                        if let Some(handle) = map.get_mut(&id_clone) {
-                                            handle.cwd = osc_cwd.clone();
-                                        }
+                        // independently; output forwarding above is untouched.
+                        for osc_cwd in osc_scanner.push(&read_buf[..n]) {
+                            if osc_cwd != last_emitted_cwd && osc_cwd_is_usable(&osc_cwd) {
+                                last_emitted_cwd = osc_cwd.clone();
+                                if let Ok(mut map) = sessions_map_ref.lock() {
+                                    if let Some(handle) = map.get_mut(&id_clone) {
+                                        handle.cwd = osc_cwd.clone();
                                     }
-                                    emitter_reader.emit_cwd(PtyCwdPayload {
-                                        id: id_clone.clone(),
-                                        cwd: osc_cwd,
-                                    });
                                 }
+                                emitter_reader.emit_cwd(PtyCwdPayload {
+                                    id: id_clone.clone(),
+                                    cwd: osc_cwd,
+                                });
                             }
-                            if scan_buf.len() > 8192 {
-                                let excess = scan_buf.len() - 8192;
-                                scan_buf.drain(..excess);
-                            }
-                        } else {
-                            scan_buf.clear();
                         }
 
                         // Check if child working directory changed (throttled —
@@ -681,6 +1084,9 @@ impl PtyManager {
                 }
             }
 
+            // The shell's output has ended: nothing more can arrive, so nothing may wait
+            // for the frontend any more (the exit event must not depend on it).
+            flow_reader.close();
             // Closing the channel makes the output thread flush what it holds;
             // joining it keeps "all output before the exit event" (the waiter
             // joins this thread before emitting exit).
@@ -700,30 +1106,34 @@ impl PtyManager {
         // 4. We emit `emit_exit` with the real exit code.
         let id_clone_waiter = session_id.clone();
         let sessions_map = self.sessions.clone();
+        let routes_waiter = self.routes.clone();
 
         std::thread::spawn(move || {
             let mut child = child;
             let exit_status = child.wait();
             let exit_code = exit_status.ok().map(|status| status.exit_code() as i32);
 
-            // Clean up session entry & drop master so reader unblocks (hang fix on Windows ConPTY)
-            {
-                let mut sessions = sessions_map.lock().ok();
-                if let Some(mut session) =
-                    sessions.as_mut().and_then(|s| s.remove(&id_clone_waiter))
-                {
-                    session.status = SessionStatus::Disconnected;
-                }
-            }
+            // Clean up session entry & drop master so reader unblocks (hang fix on Windows ConPTY).
+            // The drop (ClosePseudoConsole on Windows) runs with the global
+            // sessions lock RELEASED: it can block until the reader drains, and the
+            // reader itself takes that lock to publish cwd changes.
+            let ended_by_itself = remove_and_drop_outside_lock(&sessions_map, &id_clone_waiter);
+            reaped_waiter.store(true, std::sync::atomic::Ordering::SeqCst);
 
             // Ensure reader thread finishes flushing before exit event is sent
             let _ = reader_thread.join();
 
-            // Emit session exit event
-            emitter.emit_exit(PtyExitPayload {
-                id: id_clone_waiter,
-                exit_code,
-            });
+            // Emit session exit event, then forget where it was routed. A session that was
+            // closed on purpose reports nothing: its pane is already gone, and the code a
+            // killed child leaves behind (1 on Windows) is indistinguishable from a real
+            // `exit 1`, so it would count as a crash (REL-03).
+            if ended_by_itself {
+                emitter.emit_exit(PtyExitPayload {
+                    id: id_clone_waiter.clone(),
+                    exit_code,
+                });
+            }
+            routes_waiter.remove(&id_clone_waiter);
         });
 
         Ok(session_info)
@@ -802,41 +1212,47 @@ impl PtyManager {
     }
 
     /// Resizes the PTY dimensions for the target session.
+    ///
+    /// The native resize (`ResizePseudoConsole` / `TIOCSWINSZ`) runs with the
+    /// global sessions lock released, so a window drag-resize cannot stall other
+    /// sessions' write lookups, creates or closes.
     pub fn resize_pty(&self, id: &str, cols: u16, rows: u16) -> Result<(), TerminalError> {
-        let mut sessions = self
-            .sessions
-            .lock()
-            .map_err(|e| TerminalError::IoError(format!("Lock failure: {}", e)))?;
+        let valid_cols = if cols == 0 {
+            80
+        } else {
+            cols.clamp(MIN_COLS, MAX_COLS)
+        };
+        let valid_rows = if rows == 0 {
+            24
+        } else {
+            rows.clamp(MIN_ROWS, MAX_ROWS)
+        };
 
-        if let Some(session) = sessions.get_mut(id) {
+        let master = {
+            let mut sessions = self
+                .sessions
+                .lock()
+                .map_err(|e| TerminalError::IoError(format!("Lock failure: {}", e)))?;
+            let Some(session) = sessions.get_mut(id) else {
+                return Err(TerminalError::SessionNotFound(id.to_string()));
+            };
             if session.status != SessionStatus::Connected {
                 return Ok(());
             }
+            session.cols = valid_cols;
+            session.rows = valid_rows;
+            Arc::clone(&session.master)
+        };
 
-            let valid_cols = if cols == 0 {
-                80
-            } else {
-                cols.clamp(MIN_COLS, MAX_COLS)
-            };
-            let valid_rows = if rows == 0 {
-                24
-            } else {
-                rows.clamp(MIN_ROWS, MAX_ROWS)
-            };
-
-            let _ = session.master.resize(PtySize {
+        if let Ok(master) = master.lock() {
+            let _ = master.resize(PtySize {
                 rows: valid_rows,
                 cols: valid_cols,
                 pixel_width: 0,
                 pixel_height: 0,
             });
-
-            session.cols = valid_cols;
-            session.rows = valid_rows;
-            Ok(())
-        } else {
-            Err(TerminalError::SessionNotFound(id.to_string()))
         }
+        Ok(())
     }
 
     /// Explicitly closes and cleans up a PTY session.
@@ -853,8 +1269,7 @@ impl PtyManager {
         };
 
         if let Some(s) = session.as_mut() {
-            s.status = SessionStatus::Disconnected;
-            let _ = s.killer.kill();
+            end_session(s);
             Ok(())
         } else {
             // Already closed or clean
@@ -862,11 +1277,67 @@ impl PtyManager {
         }
     }
 
+    /// Which of `ids` currently have a foreground command running (anything beyond
+    /// an idle shell prompt). Used to ask before closing a tab, pane, or window
+    /// that would kill running work. Unknown or exited ids and any platform
+    /// failure count as NOT busy, so a question is never asked in error and
+    /// closing is never blocked.
+    pub fn busy_sessions(&self, ids: &[String]) -> Vec<String> {
+        ids.iter()
+            .filter(|id| self.session_is_busy(id))
+            .cloned()
+            .collect()
+    }
+
+    fn session_is_busy(&self, id: &str) -> bool {
+        // Short lock: take what is needed, probe the OS afterwards.
+        let (pid, master) = {
+            let Ok(sessions) = self.sessions.lock() else {
+                return false;
+            };
+            match sessions.get(id) {
+                Some(s) if s.status == SessionStatus::Connected => (s.pid, Arc::clone(&s.master)),
+                _ => return false,
+            }
+        };
+        let Some(pid) = pid else {
+            return false;
+        };
+        #[cfg(unix)]
+        {
+            let fg_group = master
+                .lock()
+                .ok()
+                .and_then(|m| m.process_group_leader())
+                .map(i64::from);
+            foreground_job_running(pid, fg_group)
+        }
+        #[cfg(windows)]
+        {
+            let _ = master;
+            windows_shell_has_running_child(pid)
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            let _ = (pid, master);
+            false
+        }
+    }
+
     /// Records which window shows session `id` (no-op for an unknown id).
+    ///
+    /// The event route moves with it. A hand-off holds the session's events in the
+    /// gate until `handoff_finish`, so switching the owner first means everything
+    /// released afterwards (and all live output from then on) reaches this window.
     pub fn set_owner(&self, id: &str, owner: &str) {
         if let Ok(mut sessions) = self.sessions.lock() {
             if let Some(session) = sessions.get_mut(id) {
+                if session.owner != owner {
+                    // New window, clean slate: the old one cannot acknowledge any more.
+                    session.flow.reset();
+                }
                 session.owner = owner.to_string();
+                self.routes.set(id, owner);
             }
         }
     }
@@ -917,10 +1388,13 @@ impl PtyManager {
         } else {
             Vec::new()
         };
+        let mut stragglers = Vec::new();
         for (_, mut session) in drained.drain(..) {
-            session.status = SessionStatus::Disconnected;
-            let _ = session.killer.kill();
+            stragglers.push(end_session(&mut session));
         }
+        // The app is going away: nothing will be left to finish the job later, so a shell that
+        // ignored SIGHUP is dealt with here, waiting at most the grace period for all of them.
+        wait_then_kill_stragglers(stragglers);
     }
 
     /// Runs a due live-cwd probe for session `id` WITHOUT holding the
@@ -1371,6 +1845,7 @@ fn parse_osc7_data(data: &[u8]) -> Option<String> {
     let without_scheme = s.strip_prefix("file://")?;
     // Split host from path at the first `/`.
     let idx = without_scheme.find('/')?;
+    let host = &without_scheme[..idx];
     let path_part = &without_scheme[idx..];
     if path_part.is_empty() {
         return None;
@@ -1392,7 +1867,78 @@ fn parse_osc7_data(data: &[u8]) -> Option<String> {
     {
         return None;
     }
+    // A report naming another machine (an `ssh` session, a `cat`ed file) describes a folder of
+    // THAT machine, not one of ours: taking it would point the git panel and new tabs at a
+    // local folder of the same name chosen by whatever printed it (SEC-12). A path that cannot
+    // be a folder of this OS (a Linux path under Windows) cannot point at one either, and a WSL
+    // shell reports under its own host name, so only native-looking paths need the check.
+    if is_native_path(trimmed) && !osc7_host_is_local(host) {
+        return None;
+    }
     Some(trimmed.to_string())
+}
+
+/// Whether `path` is written the way this OS writes its own paths (a drive letter on Windows).
+fn is_native_path(path: &str) -> bool {
+    if cfg!(windows) {
+        let b = path.as_bytes();
+        b.len() >= 2 && b[1] == b':' && b[0].is_ascii_alphabetic()
+    } else {
+        true
+    }
+}
+
+/// This machine's host name, looked up once (`None` when the OS will not say).
+fn local_hostname() -> Option<&'static str> {
+    static NAME: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    NAME.get_or_init(|| {
+        #[cfg(windows)]
+        {
+            std::env::var("COMPUTERNAME").ok()
+        }
+        #[cfg(unix)]
+        {
+            let mut buf = [0u8; 256];
+            // SAFETY: `buf` is a valid, writable buffer of the length passed; gethostname
+            // writes at most that many bytes and NUL-terminates unless it truncates.
+            let rc = unsafe { libc::gethostname(buf.as_mut_ptr().cast(), buf.len()) };
+            if rc != 0 {
+                return None;
+            }
+            let end = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+            Some(String::from_utf8_lossy(&buf[..end]).into_owned())
+        }
+        #[cfg(not(any(windows, unix)))]
+        {
+            None
+        }
+    })
+    .as_deref()
+}
+
+/// Whether the host part of an OSC 7 URL names this machine: empty, `localhost`, or the local
+/// host name (case-insensitive, with or without a domain suffix such as `.local`).
+fn osc7_host_is_local(host: &str) -> bool {
+    host_names_this_machine(host, local_hostname())
+}
+
+fn host_names_this_machine(host: &str, local: Option<&str>) -> bool {
+    let host = host.trim();
+    if host.is_empty() || host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    let first = |s: &str| s.split('.').next().unwrap_or(s).to_ascii_lowercase();
+    match local {
+        Some(local) if !local.is_empty() => first(host) == first(local),
+        _ => false,
+    }
+}
+
+/// A cwd report is applied only when it names a real folder, if it is a path of this OS. A
+/// Windows-style path (`C:/x`) must exist; a path that cannot belong to this OS (a Linux path
+/// from a WSL shell) cannot be checked here and is accepted as before.
+fn osc_cwd_is_usable(cwd: &str) -> bool {
+    !is_native_path(cwd) || std::path::Path::new(cwd).is_dir()
 }
 
 /// Parses OSC 9;9 payload bytes (literal Windows path, e.g. `C:\Users\x`).
@@ -1412,60 +1958,129 @@ fn parse_osc9_data(data: &[u8]) -> Option<String> {
 
 /// Scans raw PTY output bytes for completed OSC 7 / OSC 9;9 cwd reports and
 /// returns each reported cwd in order. Handles BEL and ST (`ESC \`)
-/// terminators. Incomplete trailing sequences are skipped (callers retain a
-/// tail and prepend it to the next chunk).
+/// terminators. Incomplete trailing sequences are skipped (callers retain the
+/// unconsumed tail — see [`OscCwdScanner`] — and prepend it to the next chunk).
 pub fn extract_osc_cwds(chunk: &[u8]) -> Vec<String> {
+    scan_osc_cwds(chunk).0
+}
+
+/// Like [`extract_osc_cwds`], and also returns how many leading bytes are
+/// fully processed: they hold no report that a later chunk could still
+/// complete, so the caller must not scan them again. Everything from that
+/// offset on is the start of a possibly incomplete trailing sequence
+/// (`ESC`, `ESC ]`, `ESC ] 9`, `ESC ] 9 ; 9`, `ESC ] 7 ; /partial/pa`, ...).
+fn scan_osc_cwds(chunk: &[u8]) -> (Vec<String>, usize) {
     let mut out = Vec::new();
     let mut i = 0;
-    while i + 2 < chunk.len() {
-        if chunk[i] == 0x1B && chunk[i + 1] == 0x5D {
-            let mut j = i + 2;
-            let num_start = j;
-            while j < chunk.len() && chunk[j].is_ascii_digit() {
-                j += 1;
+    // Offset where a not-yet-complete report starts, once the end of `chunk`
+    // is reached before its terminator.
+    let mut pending: Option<usize> = None;
+    while i < chunk.len() {
+        if chunk[i] != 0x1B {
+            i += 1;
+            continue;
+        }
+        if i + 1 >= chunk.len() {
+            pending = Some(i); // lone ESC at the end
+            break;
+        }
+        if chunk[i + 1] != 0x5D {
+            i += 1;
+            continue;
+        }
+        let mut j = i + 2;
+        let num_start = j;
+        while j < chunk.len() && chunk[j].is_ascii_digit() {
+            j += 1;
+        }
+        if j >= chunk.len() {
+            pending = Some(i); // `ESC ]` or `ESC ] 9` at the end
+            break;
+        }
+        if j == num_start || chunk[j] != b';' {
+            i += 1;
+            continue;
+        }
+        let id: u32 = std::str::from_utf8(&chunk[num_start..j])
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(u32::MAX);
+        j += 1; // skip ';'
+        if id == 7 {
+            match find_osc_end(chunk, j) {
+                Some((end, next)) => {
+                    if let Some(cwd) = parse_osc7_data(&chunk[j..end]) {
+                        out.push(cwd);
+                    }
+                    i = next;
+                    continue;
+                }
+                None => {
+                    pending = Some(i); // incomplete tail: wait for more bytes
+                    break;
+                }
             }
-            if j == num_start || j >= chunk.len() || chunk[j] != b';' {
-                i += 1;
-                continue;
+        } else if id == 9 {
+            // Windows Terminal convention: `OSC 9;9;<dir>`.
+            if j >= chunk.len() || (chunk[j] == b'9' && j + 1 >= chunk.len()) {
+                pending = Some(i); // `ESC ] 9 ;` / `ESC ] 9 ; 9` at the end
+                break;
             }
-            let id: u32 = std::str::from_utf8(&chunk[num_start..j])
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(u32::MAX);
-            j += 1; // skip ';'
-            if id == 7 {
+            if chunk[j] == b'9' && chunk[j + 1] == b';' {
+                j += 2;
                 match find_osc_end(chunk, j) {
                     Some((end, next)) => {
-                        if let Some(cwd) = parse_osc7_data(&chunk[j..end]) {
+                        if let Some(cwd) = parse_osc9_data(&chunk[j..end]) {
                             out.push(cwd);
                         }
                         i = next;
                         continue;
                     }
-                    None => break, // incomplete tail: wait for more bytes
-                }
-            } else if id == 9 {
-                // Windows Terminal convention: `OSC 9;9;<dir>`.
-                if j + 1 < chunk.len() && chunk[j] == b'9' && chunk[j + 1] == b';' {
-                    j += 2;
-                    match find_osc_end(chunk, j) {
-                        Some((end, next)) => {
-                            if let Some(cwd) = parse_osc9_data(&chunk[j..end]) {
-                                out.push(cwd);
-                            }
-                            i = next;
-                            continue;
-                        }
-                        None => break,
+                    None => {
+                        pending = Some(i);
+                        break;
                     }
                 }
-                i += 1;
-                continue;
             }
         }
         i += 1;
     }
-    out
+    (out, pending.unwrap_or(chunk.len()))
+}
+
+/// Largest unconsumed tail [`OscCwdScanner`] keeps. A valid report is at most
+/// ~4 KiB (`parse_osc7_data` rejects longer), so an unterminated sequence
+/// beyond this is not a report and is discarded.
+const OSC_SCAN_TAIL_MAX: usize = 8192;
+
+/// Incremental OSC 7 / OSC 9;9 cwd-report scanner for the PTY reader thread.
+///
+/// Each report is returned exactly once: bytes already parsed are dropped, and
+/// only an incomplete trailing sequence is carried to the next read. (The
+/// previous implementation re-parsed the last 8 KiB on every read, so once
+/// two different reports sat in that window — `cd a`, `cd b` — every later
+/// read containing any ESC re-emitted `a` then `b`, ~100 events for 2 `cd`s.)
+#[derive(Default)]
+pub struct OscCwdScanner {
+    tail: Vec<u8>,
+}
+
+impl OscCwdScanner {
+    /// Feeds the next chunk of PTY output; returns the cwd reports completed by it.
+    pub fn push(&mut self, chunk: &[u8]) -> Vec<String> {
+        // Fast path: an OSC sequence always starts with ESC. Plain-text floods
+        // (logs, `cat`, installs) have no ESC at all, so skip the scan.
+        if self.tail.is_empty() && !chunk.contains(&0x1B) {
+            return Vec::new();
+        }
+        self.tail.extend_from_slice(chunk);
+        let (cwds, consumed) = scan_osc_cwds(&self.tail);
+        self.tail.drain(..consumed);
+        if self.tail.len() > OSC_SCAN_TAIL_MAX {
+            self.tail.clear();
+        }
+        cwds
+    }
 }
 
 /// Validates IPC-supplied spawn args without shell-string interpolation.
@@ -1618,37 +2233,145 @@ fn coalesce_output(
     }
 }
 
+/// Takes the decodable text out of `buf` and leaves a character that is split across two reads
+/// (an incomplete sequence at the very end) for the next call. Bytes that can never be valid
+/// become U+FFFD, exactly as a lossy conversion would do; a valid split character after such a
+/// byte is still kept whole (it used to be converted too, so it came out as two U+FFFD) (REL-06).
+/// One read, retried when a signal interrupts it. `Interrupted` is not the end of the stream;
+/// treating it as one would silently stop the output while the shell keeps running (REL-05).
+fn read_retrying<R: std::io::Read + ?Sized>(
+    reader: &mut R,
+    buf: &mut [u8],
+) -> std::io::Result<usize> {
+    loop {
+        match reader.read(buf) {
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            other => return other,
+        }
+    }
+}
+
 fn split_valid_utf8(buf: &mut Vec<u8>) -> String {
     if buf.is_empty() {
         return String::new();
     }
-    match std::str::from_utf8(buf) {
-        Ok(_) => {
-            // Whole buffer is valid: move it out without copying.
-            String::from_utf8(std::mem::take(buf)).unwrap_or_default()
-        }
-        Err(e) => {
-            let valid_len = e.valid_up_to();
-            if e.error_len().is_none() {
-                if valid_len > 0 {
-                    let taken: Vec<u8> = buf.drain(..valid_len).collect();
-                    // `taken` is the valid prefix of valid UTF-8, so this is infallible.
-                    String::from_utf8(taken).unwrap_or_default()
-                } else {
-                    String::new()
+    if std::str::from_utf8(buf).is_ok() {
+        // Whole buffer is valid: move it out without copying.
+        return String::from_utf8(std::mem::take(buf)).unwrap_or_default();
+    }
+    let mut out = String::with_capacity(buf.len());
+    let mut pos = 0;
+    while pos < buf.len() {
+        match std::str::from_utf8(&buf[pos..]) {
+            Ok(rest) => {
+                out.push_str(rest);
+                pos = buf.len();
+            }
+            Err(e) => {
+                let valid_len = e.valid_up_to();
+                // The prefix was just validated by `from_utf8`.
+                out.push_str(&String::from_utf8_lossy(&buf[pos..pos + valid_len]));
+                pos += valid_len;
+                match e.error_len() {
+                    Some(bad) => {
+                        out.push('\u{FFFD}');
+                        pos += bad;
+                    }
+                    // An incomplete sequence at the end: wait for the rest of it.
+                    None => break,
                 }
-            } else {
-                let text = String::from_utf8_lossy(buf).to_string();
-                buf.clear();
-                text
             }
         }
     }
+    buf.drain(..pos);
+    out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_split_valid_utf8_keeps_a_split_character_after_an_invalid_byte() {
+        // 0xFF can never be valid; "é" (C3 A9) arrives cut in two reads.
+        let mut buf = vec![b'a', 0xFF, b'b', 0xC3];
+        assert_eq!(split_valid_utf8(&mut buf), "a\u{FFFD}b");
+        assert_eq!(
+            buf,
+            vec![0xC3],
+            "the half character waits for its other half"
+        );
+        buf.push(0xA9);
+        assert_eq!(split_valid_utf8(&mut buf), "é");
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn test_split_valid_utf8_matches_lossy_conversion_when_nothing_is_split() {
+        for bytes in [
+            &b"plain"[..],
+            &[0xFF, 0xFE][..],
+            &[b'x', 0xC3, b'y'][..], // a lead byte followed by a non-continuation
+            &[0xE2, 0x82][..],       // incomplete at the end: kept, not converted
+            &[0xF0, 0x9F, 0x98, 0x80][..],
+        ] {
+            let mut buf = bytes.to_vec();
+            let got = split_valid_utf8(&mut buf);
+            let tail = buf.clone();
+            let mut whole = got.clone().into_bytes();
+            whole.extend_from_slice(&tail);
+            // Everything is accounted for: converted text plus the kept incomplete tail.
+            assert_eq!(
+                String::from_utf8_lossy(&whole).to_string(),
+                String::from_utf8_lossy(bytes).to_string(),
+                "input {bytes:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_read_retrying_does_not_treat_interrupted_as_the_end() {
+        struct Flaky {
+            interrupts_left: u32,
+            data: &'static [u8],
+        }
+        impl std::io::Read for Flaky {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                if self.interrupts_left > 0 {
+                    self.interrupts_left -= 1;
+                    return Err(std::io::Error::from(std::io::ErrorKind::Interrupted));
+                }
+                let n = self.data.len().min(buf.len());
+                buf[..n].copy_from_slice(&self.data[..n]);
+                self.data = &self.data[n..];
+                Ok(n)
+            }
+        }
+        let mut reader = Flaky {
+            interrupts_left: 3,
+            data: b"output",
+        };
+        let mut buf = [0u8; 16];
+        assert_eq!(read_retrying(&mut reader, &mut buf).unwrap(), 6);
+        assert_eq!(&buf[..6], b"output");
+        // A real error still ends the stream.
+        struct Broken;
+        impl std::io::Read for Broken {
+            fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::from(std::io::ErrorKind::BrokenPipe))
+            }
+        }
+        assert!(read_retrying(&mut Broken, &mut buf).is_err());
+    }
+
+    #[test]
+    fn test_remove_and_drop_reports_whether_the_entry_was_there() {
+        let map: Mutex<HashMap<String, u8>> = Mutex::new(HashMap::new());
+        map.lock().unwrap().insert("live".into(), 1);
+        assert!(remove_and_drop_outside_lock(&map, "live"));
+        // Already removed (an explicit close does that before killing the shell): not "ended by itself".
+        assert!(!remove_and_drop_outside_lock(&map, "live"));
+    }
 
     #[test]
     fn coalesce_output_merges_bursts_and_flushes_on_close() {
@@ -2693,10 +3416,10 @@ mod tests {
     fn test_extract_osc7_file_url() {
         let _env = crate::test_support::lock_test_env();
         // Unix path with percent-encoding.
-        let seq = b"\x1b]7;file://host/home/kai/my%20proj\x07";
+        let seq = b"\x1b]7;file://localhost/home/kai/my%20proj\x07";
         assert_eq!(extract_osc_cwds(seq), vec!["/home/kai/my proj"]);
         // Windows drive-letter URL unstripped like the frontend handler.
-        let win = b"\x1b]7;file://PC/C%3A/Users/kai\x1b\\";
+        let win = b"\x1b]7;file:///C%3A/Users/kai\x1b\\";
         assert_eq!(extract_osc_cwds(win), vec!["C:/Users/kai"]);
         // Non-file payloads are ignored.
         let other = b"\x1b]7;https://example.com/x\x07";
@@ -2704,17 +3427,430 @@ mod tests {
     }
 
     #[test]
+    fn test_osc7_from_another_machine_is_ignored() {
+        let _env = crate::test_support::lock_test_env();
+        // An ssh session, or a file printed with `cat`, reports ITS folders under ITS host name.
+        let other_win = b"\x1b]7;file://some-other-pc/C%3A/Windows\x07";
+        let other_unix = b"\x1b]7;file://build-server.example.com/home/kai/proj\x07";
+        if cfg!(windows) {
+            assert!(extract_osc_cwds(other_win).is_empty());
+            // A Linux path cannot name a local Windows folder, and a WSL shell reports under its
+            // own host name: that keeps working.
+            assert_eq!(extract_osc_cwds(other_unix), vec!["/home/kai/proj"]);
+        } else {
+            assert!(extract_osc_cwds(other_unix).is_empty());
+        }
+        // Empty host, `localhost` and this machine's own name are local.
+        assert_eq!(
+            extract_osc_cwds(b"\x1b]7;file:///home/kai/p\x07"),
+            vec!["/home/kai/p"]
+        );
+        assert_eq!(
+            extract_osc_cwds(b"\x1b]7;file://LOCALHOST/home/kai/p\x07"),
+            vec!["/home/kai/p"]
+        );
+        if let Some(me) = local_hostname() {
+            let seq = format!("\x1b]7;file://{me}/home/kai/p\x07");
+            assert_eq!(
+                extract_osc_cwds(seq.as_bytes()),
+                vec!["/home/kai/p"],
+                "own host {me}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_host_matching_rules() {
+        assert!(host_names_this_machine("", Some("Dev-PC")));
+        assert!(host_names_this_machine(" localhost ", None));
+        assert!(host_names_this_machine("dev-pc", Some("DEV-PC")));
+        // A domain suffix on either side does not matter ...
+        assert!(host_names_this_machine("dev-pc.local", Some("dev-pc")));
+        assert!(host_names_this_machine(
+            "dev-pc",
+            Some("dev-pc.corp.example")
+        ));
+        // ... a different machine does, and an unknown local name trusts nobody but localhost.
+        assert!(!host_names_this_machine("dev-pc2", Some("dev-pc")));
+        assert!(!host_names_this_machine(
+            "evil.dev-pc.example",
+            Some("dev-pc")
+        ));
+        assert!(!host_names_this_machine("dev-pc", None));
+    }
+
+    #[test]
+    fn test_osc_cwd_must_name_a_real_folder_for_native_paths() {
+        let dir = std::env::temp_dir();
+        assert!(osc_cwd_is_usable(&dir.to_string_lossy()));
+        let missing = dir.join("kai-definitely-not-a-folder-4f2a");
+        assert!(!osc_cwd_is_usable(&missing.to_string_lossy()));
+        // A file is not a folder.
+        let file = dir.join(format!("kai-osc-cwd-file-{}", std::process::id()));
+        std::fs::write(&file, b"x").unwrap();
+        assert!(!osc_cwd_is_usable(&file.to_string_lossy()));
+        let _ = std::fs::remove_file(&file);
+        // A path that cannot belong to this OS (a WSL shell's Linux path) cannot be checked.
+        if cfg!(windows) {
+            assert!(osc_cwd_is_usable("/home/kai/proj"));
+        }
+    }
+
+    #[test]
     fn test_extract_osc_split_across_chunks() {
         let _env = crate::test_support::lock_test_env();
         // A sequence split across 4 KB reads yields nothing until complete;
         // the caller's retained tail + remainder then parses (mirrors the
-        // reader thread's scan_buf behavior).
+        // reader thread's `OscCwdScanner` behavior).
         let part1 = b"\x1b]9;9;C:\\Users\\k";
         let part2 = b"ai\x07";
         assert!(extract_osc_cwds(part1).is_empty());
         let mut rejoined = part1.to_vec();
         rejoined.extend_from_slice(part2);
         assert_eq!(extract_osc_cwds(&rejoined), vec!["C:\\Users\\kai"]);
+    }
+
+    #[test]
+    fn test_busy_detection_helpers() {
+        // Console helpers never count as user work (case-insensitive).
+        assert!(is_console_helper_process("conhost.exe"));
+        assert!(is_console_helper_process("OpenConsole.exe"));
+        assert!(is_console_helper_process("WSLHOST.EXE"));
+        assert!(!is_console_helper_process("ping.exe"));
+        assert!(!is_console_helper_process("cargo.exe"));
+        // Unix: the shell owning the foreground group is idle; any other group is a job.
+        assert!(!foreground_job_running(100, Some(100)));
+        assert!(foreground_job_running(100, Some(2500)));
+        assert!(!foreground_job_running(100, None), "unknown is not busy");
+        assert!(!foreground_job_running(100, Some(0)));
+        assert!(!foreground_job_running(100, Some(-1)));
+    }
+
+    #[test]
+    fn test_busy_sessions_ignores_unknown_ids() {
+        let manager = PtyManager::new();
+        assert!(manager
+            .busy_sessions(&["nope".to_string(), String::new()])
+            .is_empty());
+    }
+
+    #[test]
+    fn test_event_routes_follow_ownership_and_are_forgotten_when_the_session_ends() {
+        let manager = PtyManager::new();
+        let routes = manager.routes();
+        let info = manager
+            .create_pty(
+                Arc::new(NoopEventEmitter),
+                PtyCreateOptions {
+                    shell_path: None,
+                    args: None,
+                    cwd: None,
+                    cols: 80,
+                    rows: 24,
+                    env: None,
+                },
+            )
+            .expect("create session");
+
+        // An id that is not a live session never gets a route.
+        manager.set_owner("no-such-session", "term-9");
+        assert_eq!(routes.owner_of("no-such-session"), None);
+
+        manager.set_owner(&info.id, "term-7");
+        assert_eq!(routes.owner_of(&info.id).as_deref(), Some("term-7"));
+        // A rolled-back move hands it back to the old window.
+        manager.set_owner(&info.id, "main");
+        assert_eq!(routes.owner_of(&info.id).as_deref(), Some("main"));
+
+        manager.close_pty(&info.id).expect("close");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while routes.owner_of(&info.id).is_some() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        assert_eq!(
+            routes.owner_of(&info.id),
+            None,
+            "a finished session's route must be removed once its exit has been emitted"
+        );
+    }
+
+    #[test]
+    fn test_flow_control_does_not_wait_below_the_high_water_mark() {
+        let flow = FlowControl::new(1000, 200);
+        flow.add(999);
+        let started = std::time::Instant::now();
+        flow.wait_for_credit(); // below high: returns at once
+        assert!(started.elapsed() < std::time::Duration::from_millis(200));
+        assert_eq!(flow.in_flight(), 999);
+    }
+
+    #[test]
+    fn test_flow_control_pauses_at_high_and_resumes_only_at_low() {
+        let flow = Arc::new(FlowControl::new(1000, 200));
+        flow.add(1000); // at the high-water mark
+        let resumed = Arc::new(AtomicBool::new(false));
+        let waiter = {
+            let (flow, resumed) = (flow.clone(), resumed.clone());
+            std::thread::spawn(move || {
+                flow.wait_for_credit();
+                resumed.store(true, Ordering::SeqCst);
+            })
+        };
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        assert!(
+            !resumed.load(Ordering::SeqCst),
+            "must wait at the high mark"
+        );
+        // Acknowledged down to 500: below high but still above low, so it keeps waiting.
+        flow.ack(500);
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        assert!(
+            !resumed.load(Ordering::SeqCst),
+            "hysteresis: resume only at the low mark"
+        );
+        flow.ack(300); // 200 left: at the low-water mark
+        waiter.join().unwrap();
+        assert!(resumed.load(Ordering::SeqCst));
+        assert_eq!(flow.in_flight(), 200);
+    }
+
+    #[test]
+    fn test_flow_control_close_releases_the_waiter_and_stays_released() {
+        let flow = Arc::new(FlowControl::new(100, 10));
+        flow.add(10_000);
+        let waiter = {
+            let flow = flow.clone();
+            std::thread::spawn(move || flow.wait_for_credit())
+        };
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        flow.close(); // the session ended: nothing may wait for the frontend any more
+        waiter.join().unwrap();
+        let started = std::time::Instant::now();
+        flow.wait_for_credit(); // and later waits return immediately too
+        assert!(started.elapsed() < std::time::Duration::from_millis(200));
+    }
+
+    #[test]
+    fn test_flow_control_ack_beyond_in_flight_is_harmless() {
+        let flow = FlowControl::new(100, 10);
+        flow.add(50);
+        flow.ack(80); // more than was emitted (e.g. late or duplicate acknowledgement)
+        assert_eq!(flow.in_flight(), 0);
+        flow.ack(u64::MAX);
+        assert_eq!(flow.in_flight(), 0);
+        flow.add(u64::MAX);
+        flow.add(10); // saturates instead of overflowing
+        assert_eq!(flow.in_flight(), u64::MAX);
+    }
+
+    #[test]
+    fn test_flow_control_low_water_is_never_above_high() {
+        let flow = Arc::new(FlowControl::new(100, 5_000)); // misconfigured
+        flow.add(100);
+        let waiter = {
+            let flow = flow.clone();
+            std::thread::spawn(move || flow.wait_for_credit())
+        };
+        flow.ack(1);
+        waiter.join().unwrap(); // would hang forever if low > high were honoured
+    }
+
+    #[test]
+    fn test_flow_control_gives_back_credit_that_never_gets_acknowledged() {
+        // Lost credit (output sent to a window that vanished) must never freeze a terminal.
+        let flow =
+            FlowControl::new(100, 10).with_stall_timeout(std::time::Duration::from_millis(150));
+        flow.add(500);
+        let started = std::time::Instant::now();
+        flow.wait_for_credit();
+        assert!(started.elapsed() >= std::time::Duration::from_millis(140));
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+        assert_eq!(flow.in_flight(), 0);
+    }
+
+    #[test]
+    fn test_flow_control_slow_but_progressing_consumer_is_never_reset() {
+        let flow = Arc::new(
+            FlowControl::new(1000, 100).with_stall_timeout(std::time::Duration::from_millis(400)),
+        );
+        flow.add(1000);
+        let waiter = {
+            let flow = flow.clone();
+            std::thread::spawn(move || flow.wait_for_credit())
+        };
+        // Acknowledges a little every 100 ms: slow, but alive, for longer than the timeout.
+        for _ in 0..9 {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            flow.ack(100);
+        }
+        waiter.join().unwrap();
+        assert_eq!(
+            flow.in_flight(),
+            100,
+            "credit is counted exactly, not reset"
+        );
+    }
+
+    #[test]
+    fn test_flow_control_reset_frees_a_waiter() {
+        let flow = Arc::new(FlowControl::new(100, 10));
+        flow.add(10_000);
+        let waiter = {
+            let flow = flow.clone();
+            std::thread::spawn(move || flow.wait_for_credit())
+        };
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        flow.reset();
+        waiter.join().unwrap();
+        assert_eq!(flow.in_flight(), 0);
+    }
+
+    #[test]
+    fn test_changing_a_sessions_window_resets_its_output_credit() {
+        let manager = PtyManager::new();
+        let info = manager
+            .create_pty(
+                Arc::new(NoopEventEmitter),
+                PtyCreateOptions {
+                    shell_path: None,
+                    args: None,
+                    cwd: None,
+                    cols: 80,
+                    rows: 24,
+                    env: None,
+                },
+            )
+            .expect("create session");
+        let flow = manager.sessions.lock().unwrap()[&info.id].flow.clone();
+        manager.set_owner(&info.id, "main");
+        flow.add(900_000); // sent to "main", not yet acknowledged
+        manager.set_owner(&info.id, "main");
+        assert_eq!(flow.in_flight(), 900_000, "same window: nothing changes");
+        // The tab moves: "main" will never acknowledge what it was sent.
+        manager.set_owner(&info.id, "term-2");
+        assert_eq!(flow.in_flight(), 0);
+        manager.close_pty(&info.id).unwrap();
+    }
+
+    fn osc9(path: &str) -> Vec<u8> {
+        format!("\x1b]9;9;{path}\x07").into_bytes()
+    }
+
+    #[test]
+    fn test_osc_scanner_reports_each_cwd_once_across_reads() {
+        // The audit probe: `cd a`, `cd b`, then coloured output. The old
+        // 8 KiB re-scan emitted a, b, a, b, ... on every ESC-bearing read.
+        let mut scanner = OscCwdScanner::default();
+        let mut all = Vec::new();
+        all.extend(scanner.push(&osc9("C:/a")));
+        let mut read2 = osc9("C:/b");
+        read2.extend_from_slice(b"\x1b[32mgreen\x1b[0m");
+        all.extend(scanner.push(&read2));
+        for _ in 0..50 {
+            all.extend(scanner.push(b"\x1b[31mred\x1b[0m output line\r\n"));
+        }
+        assert_eq!(all, vec!["C:/a", "C:/b"]);
+    }
+
+    #[test]
+    fn test_osc_scanner_reassembles_reports_split_at_every_byte() {
+        let mut stream = Vec::new();
+        stream.extend_from_slice(b"prompt \x1b[1m> \x1b[0m");
+        stream.extend(osc9(r"C:\Users\kai"));
+        stream.extend_from_slice(b"\x1b]7;file:///C%3A/proj\x1b\\");
+        stream.extend_from_slice(b"tail\x1b");
+        for cut in 0..=stream.len() {
+            let mut scanner = OscCwdScanner::default();
+            let mut got = scanner.push(&stream[..cut]);
+            got.extend(scanner.push(&stream[cut..]));
+            assert_eq!(
+                got,
+                vec![r"C:\Users\kai", "C:/proj"],
+                "split at byte {cut} must neither lose nor duplicate a report"
+            );
+        }
+    }
+
+    #[test]
+    fn test_osc_scanner_byte_at_a_time_matches_one_shot() {
+        let mut stream = Vec::new();
+        for dir in ["C:/one", "C:/two", "C:/one"] {
+            stream.extend_from_slice(b"\x1b[0m");
+            stream.extend(osc9(dir));
+        }
+        let mut scanner = OscCwdScanner::default();
+        let mut got = Vec::new();
+        for b in &stream {
+            got.extend(scanner.push(std::slice::from_ref(b)));
+        }
+        assert_eq!(got, vec!["C:/one", "C:/two", "C:/one"]);
+    }
+
+    #[test]
+    fn test_osc_scanner_bounds_an_unterminated_sequence() {
+        let mut scanner = OscCwdScanner::default();
+        scanner.push(b"\x1b]7;file://h/");
+        for _ in 0..64 {
+            assert!(scanner.push(&[b'a'; 1024]).is_empty());
+        }
+        assert!(
+            scanner.tail.len() <= OSC_SCAN_TAIL_MAX,
+            "an unterminated report must not grow without bound"
+        );
+        // It recovers for the next well-formed report.
+        let mut scanner = OscCwdScanner::default();
+        scanner.push(&[b'a'; 10]);
+        assert_eq!(scanner.push(&osc9("C:/ok")), vec!["C:/ok"]);
+    }
+
+    #[test]
+    fn test_osc_scanner_ignores_plain_text_floods() {
+        let mut scanner = OscCwdScanner::default();
+        for _ in 0..100 {
+            assert!(scanner.push(&[b'x'; 32768]).is_empty());
+        }
+        assert!(scanner.tail.is_empty());
+    }
+
+    /// A session whose `Drop` records whether the shared map lock was free —
+    /// standing in for a PTY master whose drop (`ClosePseudoConsole`) can block
+    /// until the reader thread, which needs that same lock, drains.
+    struct LockProbe {
+        map: std::sync::Weak<Mutex<HashMap<String, LockProbe>>>,
+        lock_was_free_on_drop: Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    impl Drop for LockProbe {
+        fn drop(&mut self) {
+            if let Some(map) = self.map.upgrade() {
+                self.lock_was_free_on_drop
+                    .store(map.try_lock().is_ok(), std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+    }
+
+    #[test]
+    fn test_session_is_dropped_after_sessions_lock_is_released() {
+        let map: Arc<Mutex<HashMap<String, LockProbe>>> = Arc::new(Mutex::new(HashMap::new()));
+        let free = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        map.lock().unwrap().insert(
+            "a".to_string(),
+            LockProbe {
+                map: Arc::downgrade(&map),
+                lock_was_free_on_drop: free.clone(),
+            },
+        );
+
+        remove_and_drop_outside_lock(&map, "a");
+
+        assert!(
+            free.load(std::sync::atomic::Ordering::SeqCst),
+            "the session must be dropped with the sessions lock released"
+        );
+        assert!(map.lock().unwrap().is_empty());
+        // Unknown ids and repeated removal are harmless.
+        remove_and_drop_outside_lock(&map, "a");
+        remove_and_drop_outside_lock(&map, "missing");
     }
 
     #[test]

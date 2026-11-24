@@ -1,9 +1,26 @@
 import path from "path";
 import fs from "fs";
 import os from "os";
-import { execSync, spawn, spawnSync, type SpawnOptions } from "child_process";
+import { execFileSync, spawn, spawnSync, type SpawnOptions } from "child_process";
 import { fileURLToPath } from "url";
-import { dropCwdHits, noCwdLookupEnv } from "../core/spawnSafety";
+import { dropCwdHits, noCwdLookupEnv, systemToolPath } from "../core/spawnSafety";
+
+/**
+ * `where` (Windows) / `which` output for `name`; throws when it is not found.
+ * No shell is involved and Windows uses the system `where.exe` by absolute
+ * path, so a `where.exe` planted in the working directory can never run
+ * (`where` itself lists the cwd first — see `dropCwdHits`).
+ */
+function lookupOnPath(name: string, all: boolean): string {
+  const options = {
+    encoding: "utf-8" as const,
+    stdio: ["ignore", "pipe", "ignore"] as ["ignore", "pipe", "ignore"],
+    windowsHide: true,
+  };
+  return process.platform === "win32"
+    ? execFileSync(systemToolPath("where.exe"), [name], options)
+    : execFileSync("which", all ? ["-a", name] : [name], options);
+}
 
 /**
  * Locate the installed Kai Terminal desktop executable.
@@ -112,8 +129,7 @@ export function findKaiAppBinary(): string | null {
   for (const name of binNames) {
     let lines: string[] = [];
     try {
-      const cmd = process.platform === "win32" ? `where ${name}` : `which -a ${name}`;
-      const out = execSync(cmd, { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] });
+      const out = lookupOnPath(name, true);
       lines = dropCwdHits(
         out
           .split(/\r?\n/)
@@ -123,8 +139,7 @@ export function findKaiAppBinary(): string | null {
     } catch {
       // Fallback for minimal `which` implementations without `-a`.
       try {
-        const cmd = process.platform === "win32" ? `where ${name}` : `which ${name}`;
-        const out = execSync(cmd, { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] });
+        const out = lookupOnPath(name, false);
         lines = dropCwdHits(
           out
             .split(/\r?\n/)
@@ -295,7 +310,7 @@ export function closeKaiApp(
     : ["kai", "cross-platform-terminal-backend", "kai-terminal"];
   return names.map((name): CloseResult => {
     const r = windows
-      ? run("taskkill", ["/F", "/IM", name], {
+      ? run(systemToolPath("taskkill.exe", platform), ["/F", "/IM", name], {
           encoding: "utf8",
           windowsHide: true,
           env: noCwdLookupEnv(),

@@ -75,15 +75,18 @@ describe("TerminalView keeps the PTY grid in sync with xterm", () => {
   it("pushes the PTY size after a settings (font) refit", () => {
     const effect = source.slice(source.indexOf("// React to settings changes dynamically"));
     const body = effect.slice(0, effect.indexOf("}, [settings]);"));
-    expect(body).toContain("if (fitWhenShown()) pushPtySize(term)");
+    // Only a change of cell metrics (font family / size / line height) needs it; see
+    // terminalViewRendering.test.tsx for the behaviour.
+    expect(body).toContain("if (change.refit && fitWhenShown()) pushPtySize(term)");
   });
 
   it("re-syncs the PTY right after spawn, since resizes during the spawn are dropped", () => {
-    const start = source.indexOf("backendPtyIdRef.current = sessionInfo.id;");
+    // `markLive` is how both a new and a moved shell go live.
+    const start = source.indexOf("const markLive = ");
     const body = source.slice(start, source.indexOf('onStatusRef.current?.("connected")', start));
     expect(start).toBeGreaterThan(-1);
-    expect(body).toContain("ptySizeSyncRef.current?.spawned(sessionInfo.id, cols, rows)");
-    expect(body).toContain("if (fitWhenShown()) pushPtySize(term)");
+    expect(body).toContain("ptySizeSyncRef.current?.spawned(id, cols, rows)");
+    expect(body).toContain("fitWhenShown()) pushPtySize(term)");
   });
 
   it("routes the imperative refit through the de-duplicating push", () => {
@@ -94,8 +97,10 @@ describe("TerminalView keeps the PTY grid in sync with xterm", () => {
   });
 
   it("repaints when a GPU context is lost, so an idle tab does not stay blank", () => {
-    const start = source.indexOf("addon.onContextLoss(");
-    const body = source.slice(start, source.indexOf("term.loadAddon(addon)", start));
+    // The renderer code moved to gpuRenderer.ts (which has its own behavioural tests).
+    const gpu = readFileSync(resolve(__dirname, "../components/gpuRenderer.ts"), "utf8");
+    const start = gpu.indexOf("addon.onContextLoss(");
+    const body = gpu.slice(start, gpu.indexOf("term.loadAddon(addon)", start));
     expect(start).toBeGreaterThan(-1);
     expect(body).toContain("requestAnimationFrame");
     expect(body).toContain("term.refresh(0, Math.max(0, term.rows - 1))");
