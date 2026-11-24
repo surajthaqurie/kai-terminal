@@ -4,7 +4,7 @@ The state of every finding in [EXECUTIVE-SUMMARY](EXECUTIVE-SUMMARY.md) after th
 
 Statuses: **FIXED** (changed, with a test that fails when the bug is put back), **PARTIALLY FIXED** (part done; the rest is stated), **VERIFIED NOT APPLICABLE**, **BLOCKED**, **NOT STARTED** (with the reason it was left).
 
-Only Windows (windows-gnu, ConPTY) was run. Code that only exists on Linux or macOS was compiled and linted for `x86_64-unknown-linux-gnu` and `x86_64-apple-darwin` but its tests have not executed; "Unix: not run" below marks those.
+Locally only Windows (windows-gnu, ConPTY) was run. The first CI runs on GitHub (commit `667bcc8`, 2026-11-24) passed on Linux x86_64 and ARM64, macOS Apple Silicon and Intel, and Windows x86_64 and ARM64, including the Rust unit, PTY integration, GUI-feature and frontend steps on each, so the Linux/macOS-only code and tests marked "Unix: passed in CI" below have executed there (per-test logs were not read: they need a GitHub login). Commits after `667bcc8` have not been through CI.
 
 ## Findings
 
@@ -15,11 +15,11 @@ Only Windows (windows-gnu, ConPTY) was run. Code that only exists on Linux or ma
 | SEC-02 updater without integrity check | PARTIALLY FIXED | Ed25519-signed checksums verified before launch. Needs the `UPDATE_SIGNING_KEY` secret added to GitHub; until then releases install by hand |
 | SEC-03 repo `core.fsmonitor` | FIXED | |
 | SEC-04 commands not capability-gated | FIXED | per-window ACL, tested against the real capability files |
-| SEC-05 symlink alias to a credential file | PARTIALLY FIXED | target is checked everywhere; the end-to-end link tests need Developer Mode on Windows, so they skipped here (Unix: not run) |
+| SEC-05 symlink alias to a credential file | PARTIALLY FIXED | target is checked everywhere; the end-to-end link tests need Developer Mode on Windows, so they skipped here (Unix: passed in CI) |
 | SEC-06 typed lines recorded | FIXED | recorder deleted |
 | SEC-07 CSP | FIXED | `connect-src` narrowed; `frame-src http://localhost:*` and `style-src 'unsafe-inline'` remain, documented |
-| SEC-08 agent config | FIXED | the command no longer has a launcher argument at all (the page cannot send one; a test checks the request), first backup kept, mode preserved (mode test: Unix: not run) |
-| SEC-09 PATH edits | FIXED | Windows writes the registry, keeps `REG_EXPAND_SZ`; Unix rc block appended (Unix: not run) |
+| SEC-08 agent config | FIXED | the command no longer has a launcher argument at all (the page cannot send one; a test checks the request), first backup kept, mode preserved (mode test: Unix: passed in CI) |
+| SEC-09 PATH edits | FIXED | Windows writes the registry, keeps `REG_EXPAND_SZ`; Unix rc block appended (Unix: passed in CI) |
 | SEC-10 git locks / pathspecs | FIXED | |
 | SEC-11 forged session kill | FIXED | |
 | SEC-12 untrusted OSC 7 | FIXED | host and folder checked in the backend; the page only treats OSC as a signal. A WSL shell with a custom host name keeps working (Linux paths are exempt) |
@@ -32,10 +32,10 @@ Only Windows (windows-gnu, ConPTY) was run. Code that only exists on Linux or ma
 | REL-01 global lock held across slow work | FIXED | |
 | REL-02 resize under the global lock | FIXED | |
 | REL-03 spurious exit after close | FIXED | |
-| REL-04 Unix close sends only SIGHUP | PARTIALLY FIXED | 500 ms grace then SIGKILL; test written, Unix: not run |
+| REL-04 Unix close sends only SIGHUP | FIXED | 500 ms grace then SIGKILL; test written, Unix: passed in CI |
 | REL-05 read `Interrupted` ends output | FIXED | |
 | REL-06 split character after an invalid byte | FIXED | |
-| REL-07 login-shell PATH hang | PARTIALLY FIXED | bounded read; Unix: not run |
+| REL-07 login-shell PATH hang | FIXED | bounded read; Unix: passed in CI |
 | REL-08 hand-off rough edges | PARTIALLY FIXED | orphaned moved shell on Retry, double exit. The 60 ms settle and the 4,000-row snapshot cap are unchanged |
 | REL-09 spawn before listeners | FIXED | |
 | REL-10 `set_var` from a thread | PARTIALLY FIXED | the login-shell PATH is applied first thing in `run()`, before other threads; the CLI helper no longer calls `set_var` on Unix |
@@ -56,7 +56,7 @@ Only Windows (windows-gnu, ConPTY) was run. Code that only exists on Linux or ma
 | PERF-09 JSON-in-eval transport | VERIFIED NOT APPLICABLE | benchmarked first ([PERF-09-BENCHMARK](PERF-09-BENCHMARK.md)): the transport costs about 5 ms per MiB against about 1,000 ms per MB end to end (0.5 %), so a binary channel cannot make output noticeably faster on Windows/ConPTY; revisit if the backend gets an order of magnitude faster. Linux and macOS not measured |
 | PERF-10 cold PowerShell at launch | FIXED | registry read; the PowerShell PATH write is gone too |
 | PERF-11 font gate, eager addons | PARTIALLY FIXED | Search, Serialize and Image are fetched on first use (search bar opened, tab moved to another window, right after the pane is up). The font gate is kept: it protects the first cell measurement. The WebGL add-on (66 kB gzip) stays eager, because the first paint of a pane must not switch renderers. No cold-start trace was taken, so the gain is in bytes, not milliseconds |
-| PERF-12 cwd polling | PARTIALLY FIXED | the 5 s poll is kept but quiet (never causes a git probe); macOS `lsof` cadence unchanged, Unix: not run |
+| PERF-12 cwd polling | PARTIALLY FIXED | the 5 s poll is kept but quiet (never causes a git probe); macOS `lsof` cadence unchanged, Unix: passed in CI |
 
 ### Resources
 | ID | Status | Note |
@@ -136,7 +136,7 @@ Not measured at all: cold start, idle CPU and wake-ups, memory per pane, frame t
 ## Open risks and decisions for the maintainer
 
 1. Add the `UPDATE_SIGNING_KEY` GitHub secret (then delete the local key file); until then in-app updates fall back to the release page.
-2. Run CI on Linux, macOS and Windows-MSVC once: the Unix-only code and tests, the weekly Node-update workflow, the release gate's CI check and the new bundle-budget step have never run on GitHub.
+2. CI has run on GitHub and passed on all six platforms (with the Unix-only tests and the bundle-budget step). Still never run there: the weekly Node-update workflow, the release workflow (gate, SBOM, provenance, signed checksums) and the new end-to-end job (`e2e`), which needs a push.
 3. Open the music player in a packaged build once: the narrowed CSP was checked by tests, not by playing a track.
 4. Accepted as they are: `style-src 'unsafe-inline'`, `frame-src http://localhost:*`, the 60 ms hand-off settle, JSON-in-eval output transport, the font gate.
 5. Found by the end-to-end tests and fixed: the app banners (session restore, split refused, shell keeps exiting) were painted under the terminal and their buttons took no clicks, because the terminal area became absolutely positioned in `187eb8a`; banners now have their own layer (`--z-banner`) and the end-to-end test checks the restore button is hit-test on top. Found and NOT fixed (outside this task): the inline-image add-on (`@xterm/addon-image`) fails to start in the packaged app because the CSP `script-src` does not allow WebAssembly (`'wasm-unsafe-eval'`); inline images (iTerm2 / Sixel) therefore do not work. The terminal itself is unaffected.
