@@ -21,6 +21,7 @@ import {
   listProjects,
   listRepos,
   login,
+  loginWithBrowser,
   logout,
   removeAccountEverywhere,
   resolveReady,
@@ -75,6 +76,32 @@ afterEach(() => {
 });
 
 describe("login", () => {
+  it("reports a browser sign-in that fell back to the private file (SEC-13)", async () => {
+    setProviderForTests("azure-devops", {
+      ...offlineProvider(),
+      browserLogin: async () => ({
+        secret: "refresh-token",
+        user: { name: "Test User", email: "test@contoso.com" },
+        orgs: ["contoso", "fabrikam"],
+      }),
+    });
+    const fileOnce = new (class extends MemorySecrets {
+      private first = true;
+      override async set(key: string, value: string) {
+        await super.set(key, value);
+        if (!this.first) return "file" as const;
+        this.first = false;
+        return "os" as const;
+      }
+    })();
+    const res = await loginWithBrowser("azure-devops", {}, { secrets: fileOnce });
+    expect(res.accounts).toHaveLength(2);
+    // One copy in the file is enough to say so: the person should know where it is.
+    expect(res.storedIn).toBe("file");
+    const os = await loginWithBrowser("azure-devops", {}, { secrets });
+    expect(os.storedIn).toBe("os");
+  });
+
   it("verifies, stores the token in the secret store, and keeps it out of config.json", async () => {
     const result = await login(
       "azure-devops",

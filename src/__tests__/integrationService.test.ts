@@ -122,7 +122,13 @@ describe("integration helpers", () => {
     reply({ ok: true, accounts, user });
     const res = await loginWithBrowser();
     expect(sent()).toEqual({ op: "login_browser" });
-    expect(res).toEqual({ ok: true, value: { accounts, user } });
+    expect(res).toEqual({ ok: true, value: { accounts, user, storedIn: "os" } });
+    invoke.mockReset();
+    reply({ ok: true, accounts, user, storedIn: "file" });
+    expect(await loginWithBrowser()).toEqual({
+      ok: true,
+      value: { accounts, user, storedIn: "file" },
+    });
   });
 
   it("loginWithBrowser rejects a reply without accounts and keeps an in-band error", async () => {

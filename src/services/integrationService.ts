@@ -103,8 +103,16 @@ export async function getIntegrationStatus(
  * redirect and saves an account for every organization the user belongs to, so
  * nothing is typed. This call returns once the user has finished (or gave up).
  */
+/**
+ * Where a sign-in was saved: "file" when no OS secret store was available and it went to the
+ * private file under ~/.kai/credentials (SEC-13: the person is told, not only the CLI).
+ */
+export type StoredIn = "os" | "file";
+const storedInOf = (r: Record<string, unknown>): StoredIn =>
+  r.storedIn === "file" ? "file" : "os";
+
 export async function loginWithBrowser(): Promise<
-  RpcResult<{ accounts: IntegrationAccountView[]; user: IntegrationUser }>
+  RpcResult<{ accounts: IntegrationAccountView[]; user: IntegrationUser; storedIn: StoredIn }>
 > {
   const res = await integrationRpc({ op: "login_browser" });
   return pick(
@@ -113,6 +121,7 @@ export async function loginWithBrowser(): Promise<
     (r) => ({
       accounts: r.accounts as IntegrationAccountView[],
       user: r.user as IntegrationUser,
+      storedIn: storedInOf(r),
     })
   );
 }
@@ -127,7 +136,9 @@ export async function loginWithBrowser(): Promise<
 export async function loginWithToken(input: {
   baseUrl: string;
   token: string;
-}): Promise<RpcResult<{ account: IntegrationAccountView; user: IntegrationUser }>> {
+}): Promise<
+  RpcResult<{ account: IntegrationAccountView; user: IntegrationUser; storedIn: StoredIn }>
+> {
   const res = await integrationRpc({
     op: "login",
     // Unused for a Server: its account is named by the address.
@@ -139,7 +150,11 @@ export async function loginWithToken(input: {
   return pick(
     res,
     (r) => typeof r.account === "object" && r.account !== null && typeof r.user === "object",
-    (r) => ({ account: r.account as IntegrationAccountView, user: r.user as IntegrationUser })
+    (r) => ({
+      account: r.account as IntegrationAccountView,
+      user: r.user as IntegrationUser,
+      storedIn: storedInOf(r),
+    })
   );
 }
 

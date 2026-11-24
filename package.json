@@ -32,6 +32,7 @@
     "test:e2e": "vitest run -c vitest.e2e.config.ts",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit",
+    "version:sync": "node scripts/sync-version.mjs",
     "lint:install": "npm --prefix tools/lint ci --no-audit --no-fund",
     "lint:eslint": "node tools/lint/node_modules/eslint/bin/eslint.js --config tools/lint/eslint.config.mjs --max-warnings 0 \"src/**/*.{ts,tsx}\" \"e2e/**/*.ts\"",
     "format": "prettier --write \"src/**/*.{ts,tsx,css,json}\" \"e2e/**/*.ts\" tools/lint/eslint.config.mjs",

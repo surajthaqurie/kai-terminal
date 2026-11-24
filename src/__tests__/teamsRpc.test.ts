@@ -108,6 +108,18 @@ describe("Microsoft Teams RPC (the Integrations tab)", () => {
       expect(config).not.toContain(ACCESS);
     });
 
+    it("says whether the sign-in landed in the OS store or the private file (SEC-13)", async () => {
+      const signIn = vi.fn(async () => signedIn);
+      expect(await handleTeamsRpc({ op: "teams_login" }, deps({ signIn }))).toMatchObject({
+        teams: { storedIn: "os" },
+      });
+      const d = deps({ signIn });
+      d.secrets = { ...memorySecrets(), set: async () => "file" as const };
+      expect(await handleTeamsRpc({ op: "teams_login" }, d)).toMatchObject({
+        teams: { storedIn: "file" },
+      });
+    });
+
     it("reports channel messages as on when the sign-in granted them", async () => {
       const signIn = vi.fn(async () => ({
         ...signedIn,

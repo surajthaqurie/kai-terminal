@@ -30,6 +30,7 @@ import {
   hiddenGpuBudget,
 } from "./gpuRenderer";
 import { ptyService, PtyService } from "../services/ptyService";
+import { boundedSnapshot } from "../services/handoffSnapshot";
 import { replayHandoff, spawnPaneShell } from "../services/paneSpawn";
 import {
   claimPtyId,
@@ -78,9 +79,6 @@ const SearchBar = lazy(() => import("./SearchBar").then((m) => ({ default: m.Sea
 
 /** A pane hidden longer than this gets an extra re-fit + repaint after it is shown again. */
 const ATLAS_REBUILD_AFTER_HIDDEN_MS = 5_000;
-
-/** Most scrollback rows carried to another window with a moved tab (keeps the snapshot small). */
-const MAX_HANDOFF_SCROLLBACK = 4000;
 
 export interface TerminalViewRef extends HandoffTerminal {
   clear: () => void;
@@ -417,9 +415,10 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
             new Promise<void>((resolve) => term.write("", resolve)),
             new Promise<void>((resolve) => setTimeout(resolve, 500)),
           ]);
-          const snapshot = serializer.serialize({
-            scrollback: Math.min(term.options.scrollback ?? 1000, MAX_HANDOFF_SCROLLBACK),
-          });
+          const snapshot = boundedSnapshot(
+            (rows) => serializer.serialize({ scrollback: rows }),
+            term.options.scrollback ?? 1000
+          );
           return { ptyId: id, snapshot, cols: term.cols, rows: term.rows };
         } catch {
           return null;

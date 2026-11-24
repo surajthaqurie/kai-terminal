@@ -320,11 +320,11 @@ describe("TerminalView handing its shell to another window", () => {
     expect((await ref.current!.handoffCapture())!.snapshot).toBe("SNAPSHOT(scrollback=500)");
   });
 
-  it("caps the scrollback it carries over", async () => {
+  it("carries the whole default scrollback, not just the newest 4,000 rows (REL-08)", async () => {
     const { ref } = await attached();
-    terminals[0].options.scrollback = 100_000;
+    terminals[0].options.scrollback = 10_000; // the default setting
     const cap = await ref.current!.handoffCapture();
-    expect(cap!.snapshot).toBe("SNAPSHOT(scrollback=4000)");
+    expect(cap!.snapshot).toBe("SNAPSHOT(scrollback=10000)");
   });
 
   it("lets go of the session WITHOUT closing it, so the new window keeps the shell", async () => {

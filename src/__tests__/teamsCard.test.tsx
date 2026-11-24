@@ -23,6 +23,7 @@ import {
   explainTeamsError,
   teamsBadge,
 } from "../components/teamsViewModel";
+import { SECRET_FILE_NOTE } from "../components/secretFileNote";
 
 const SIGNED_OUT: TeamsStatusView = { configured: true, account: null, channelHistory: false };
 const NOT_SET_UP: TeamsStatusView = { configured: false, account: null, channelHistory: false };
@@ -219,6 +220,16 @@ describe("TeamsIntegrationCard", () => {
     expect(svc.teamsLogin).toHaveBeenCalledWith();
     expect(text()).toContain("Signed in as");
     expect(text()).not.toContain("admin approval");
+  });
+
+  it("says where the sign-in went when no keychain took it (SEC-13)", async () => {
+    await render(SIGNED_OUT);
+    svc.teamsLogin.mockResolvedValue({
+      ok: true,
+      value: { ...SIGNED_IN, channelHistory: true, storedIn: "file" },
+    });
+    await click(button("Connect Microsoft Teams"));
+    expect(text()).toContain(SECRET_FILE_NOTE);
   });
 
   it("says channel messages need admin approval, and offers Try again, only when they were not approved", async () => {

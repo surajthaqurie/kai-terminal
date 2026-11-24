@@ -111,7 +111,7 @@ Before releasing a new version tag:
 - [ ] **Bundle size budget:** after `npm run build`, `npm run check:bundle` (gzip limits in `scripts/bundle-budget.json`; the App limit was lowered to 180 kB when the xterm add-ons became lazy; CI runs it too). Raise a limit only on purpose, in the same change.
 - [ ] **Bundled Node.js current:** merge or consider any open "bundle Node.js" pull request (section 1.5).
 - [ ] **Signing key present:** the `UPDATE_SIGNING_KEY` secret is set (section 1.3a); after publishing, confirm `SHA256SUMS` and `SHA256SUMS.sig` are attached.
-- [ ] **Update Version:** Run `npx changeset version` (bumps `package.json` and writes `CHANGELOG.md` from `.changeset/`), then set the same version in `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, `src-tauri/tauri.conf.json`, `kai-website/package.json` (and its lock file) and `kai-website/scripts/release-titles.json`, and the file names in `README.md` and `INSTALL.md`.
+- [ ] **Update Version:** Run `npx changeset version` (bumps `package.json` and writes `CHANGELOG.md` from `.changeset/`), then `npm run version:sync`: it copies that version to `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, `src-tauri/tauri.conf.json`, `kai-website/package.json` and its lock file, and the installer names and tags in `README.md` and `INSTALL.md` (`-- --check` only lists what differs). Add the release's title to `kai-website/scripts/release-titles.json` by hand.
 - [ ] **Refresh the website data:** `node kai-website/scripts/sync-changesets.mjs && node kai-website/scripts/sync-docs.mjs`, then `npm run build:website`.
 - [ ] **Tag & Push:** Create git tag (`v0.2.3`) and push to trigger automated release publishing on GitHub:
   ```bash

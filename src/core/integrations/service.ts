@@ -230,6 +230,8 @@ export interface BrowserLoginResult {
   /** One account per organization the signed-in user belongs to. */
   accounts: IntegrationAccountView[];
   user: IntegrationUser;
+  /** "file" when any copy of the sign-in fell back to the private file (no OS secret store). */
+  storedIn: SecretLocation;
 }
 
 /**
@@ -249,6 +251,7 @@ export async function loginWithBrowser(
   const secrets = secretsOf(deps);
   const result = await provider.browserLogin({ onUrl: opts.onUrl });
   const accounts: IntegrationAccountView[] = [];
+  let storedIn: SecretLocation = "os";
   for (const org of result.orgs) {
     let draft;
     try {
@@ -256,7 +259,7 @@ export async function loginWithBrowser(
     } catch {
       continue; // an organization name Kai cannot address; the rest still work
     }
-    await secrets.set(secretKeyFor(draft.id), result.secret);
+    if ((await secrets.set(secretKeyFor(draft.id), result.secret)) === "file") storedIn = "file";
     const previous = getAccount(draft.id);
     const account: IntegrationAccount = {
       ...draft,
@@ -273,7 +276,7 @@ export async function loginWithBrowser(
       "Sign in with the account you use at dev.azure.com."
     );
   }
-  return { accounts, user: result.user };
+  return { accounts, user: result.user, storedIn };
 }
 
 /** Verify first, store second: a rejected credential leaves nothing behind. */
@@ -851,7 +854,7 @@ export async function handleRpc(
       return { ok: true, status: await getStatus(providerId, request.projectDir, deps) };
     case "login_browser": {
       const result = await loginWithBrowser(providerId, { onUrl: deps.onSignInUrl }, deps);
-      return { ok: true, accounts: result.accounts, user: result.user };
+      return { ok: true, accounts: result.accounts, user: result.user, storedIn: result.storedIn };
     }
     case "login": {
       if (typeof request.pat === "string" && request.pat.length > RPC_PAT_MAX) {
@@ -867,7 +870,7 @@ export async function handleRpc(
         },
         deps
       );
-      return { ok: true, account: result.account, user: result.user };
+      return { ok: true, account: result.account, user: result.user, storedIn: result.storedIn };
     }
     case "verify":
       return { ok: true, user: await verifyAccount(request.account, deps) };
