@@ -446,7 +446,7 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Download all workflow artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           # Installers only (artifact names start with kai-); the SBOM is downloaded separately so
           # the installer checks and the release notes' installer list never see it.
@@ -455,7 +455,7 @@ jobs:
           merge-multiple: true
 
       - name: Download the bill of materials
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-sbom
           path: release-sbom
