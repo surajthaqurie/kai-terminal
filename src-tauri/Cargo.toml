@@ -20,7 +20,11 @@ futures-util = { version = "0.3", optional = true }
 # SHA-256 and Ed25519 for update verification. Already in the tree through rustls
 # (reqwest rustls-tls); naming it here adds no crate.
 ring = { version = "0.17", optional = true }
-tauri = { version = "2.1.0", features = [], optional = true }
+# `macos-private-api` lets the music mini window be see-through on macOS (Dim Opacity); it is a
+# no-op elsewhere. It must match `"macOSPrivateApi": true` in the BASE tauri.conf.json: tauri-build
+# checks only this [dependencies] entry (a [target] entry is ignored when this one exists), so a
+# macOS-only setting made `cargo build`/`clippy` fail on macOS (only `tauri build` patched it up).
+tauri = { version = "2.1.0", features = ["macos-private-api"], optional = true }
 tauri-plugin-single-instance = { version = "2", optional = true }
 jsonc-parser = { version = "0.34.0", features = ["cst"] }
 
@@ -44,11 +48,6 @@ windows-sys = { version = "0.61", features = [
 # Already in the tree (portable-pty, tauri); named here for gethostname.
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
-
-# Lets the music mini window be see-through on macOS (Dim Opacity). It also
-# requires `"macOSPrivateApi": true` in `tauri.macos.conf.json`.
-[target.'cfg(target_os = "macos")'.dependencies]
-tauri = { version = "2.1.0", features = ["macos-private-api"], optional = true }
 
 [features]
 default = ["tauri"]
