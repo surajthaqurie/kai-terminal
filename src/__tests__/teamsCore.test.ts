@@ -564,7 +564,7 @@ describe("Teams sign-in", () => {
   });
 
   it("needs an app registration and explains how to set it", () => {
-    expect(() => teamsClientId({} as NodeJS.ProcessEnv)).toThrowError(IntegrationError);
+    expect(() => teamsClientId({} as NodeJS.ProcessEnv)).toThrow(IntegrationError);
     expect(teamsClientId({ KAI_TEAMS_CLIENT_ID: CLIENT_ID } as NodeJS.ProcessEnv)).toBe(CLIENT_ID);
     // Falls back to the app Azure DevOps sign-in uses.
     expect(teamsClientId({ KAI_AZURE_CLIENT_ID: CLIENT_ID } as NodeJS.ProcessEnv)).toBe(CLIENT_ID);
@@ -584,7 +584,7 @@ describe("Teams sign-in", () => {
       path.join(home, "config.json"),
       JSON.stringify({ teams: { clientId: "not-a-guid" } })
     );
-    expect(() => teamsClientId({} as NodeJS.ProcessEnv)).toThrowError(IntegrationError);
+    expect(() => teamsClientId({} as NodeJS.ProcessEnv)).toThrow(IntegrationError);
   });
 
   it("treats an example ID (RFC 4122 / all zeros) as no app, from every source", () => {
@@ -592,14 +592,14 @@ describe("Teams sign-in", () => {
     const NIL = "00000000-0000-0000-0000-000000000000";
     // Saved by an older Kai: ignored, so the person is asked again (the Azure ID still applies).
     fs.writeFileSync(path.join(home, "config.json"), JSON.stringify({ teams: { clientId: RFC } }));
-    expect(() => teamsClientId({} as NodeJS.ProcessEnv)).toThrowError(/not set up yet/);
+    expect(() => teamsClientId({} as NodeJS.ProcessEnv)).toThrow(/not set up yet/);
     expect(teamsClientId({ KAI_AZURE_CLIENT_ID: CLIENT_ID } as NodeJS.ProcessEnv)).toBe(CLIENT_ID);
     // From the environment: refused loudly, never used for a sign-in.
     for (const id of [RFC, NIL, RFC.toUpperCase()]) {
-      expect(() => teamsClientId({ KAI_TEAMS_CLIENT_ID: id } as NodeJS.ProcessEnv)).toThrowError(
+      expect(() => teamsClientId({ KAI_TEAMS_CLIENT_ID: id } as NodeJS.ProcessEnv)).toThrow(
         /KAI_TEAMS_CLIENT_ID is not a valid client ID/
       );
-      expect(() => teamsClientId({ KAI_AZURE_CLIENT_ID: id } as NodeJS.ProcessEnv)).toThrowError(
+      expect(() => teamsClientId({ KAI_AZURE_CLIENT_ID: id } as NodeJS.ProcessEnv)).toThrow(
         /KAI_AZURE_CLIENT_ID is not a valid client ID/
       );
     }

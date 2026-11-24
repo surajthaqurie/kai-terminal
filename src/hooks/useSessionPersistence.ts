@@ -112,7 +112,7 @@ export function useSessionPersistence({
   /** Reopens saved windows, each with its own tabs (the shells start when shown). */
   const openWindows = useCallback((windows: SavedWindowLayout[]) => {
     for (const w of windows) {
-      void openTerminalWindow({ seed: restoreSeedOf(w) }).catch((err) =>
+      void openTerminalWindow({ seed: restoreSeedOf(w) }).catch((err: unknown) =>
         console.warn("Could not reopen a window from the last session:", err)
       );
     }

@@ -316,17 +316,17 @@ export function isWriteTool(name: string): boolean {
 function providerCanWrite(provider: IntegrationProvider, name: string): boolean {
   switch (name) {
     case "kai_work_item_comment":
-      return Boolean(provider.workItems?.addComment);
+      return typeof provider.workItems?.addComment === "function";
     case "kai_work_item_set_state":
-      return Boolean(provider.workItems?.setState);
+      return typeof provider.workItems?.setState === "function";
     case "kai_work_item_create":
-      return Boolean(provider.workItems?.create);
+      return typeof provider.workItems?.create === "function";
     case "kai_work_item_update":
-      return Boolean(provider.workItems?.update);
+      return typeof provider.workItems?.update === "function";
     case "kai_pr_create":
-      return Boolean(provider.pullRequests?.create);
+      return typeof provider.pullRequests?.create === "function";
     case "kai_pr_comment":
-      return Boolean(provider.pullRequests?.addComment);
+      return typeof provider.pullRequests?.addComment === "function";
     default:
       return false;
   }

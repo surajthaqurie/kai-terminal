@@ -5,7 +5,9 @@ import { installedFontStack, isMonospaceBy, filterMonospace } from "../services/
 // Fake text measurer: every glyph is 10px in "Mono", "i" is narrow in anything else.
 const measure = (font: string, text: string) => {
   const mono = font.includes('"Mono"');
-  return [...text].reduce((w, ch) => w + (mono || ch !== "i" ? 10 : 4), 0);
+  let width = 0;
+  for (const ch of text) width += mono || ch !== "i" ? 10 : 4;
+  return width;
 };
 
 describe("installed font list", () => {

@@ -13,6 +13,7 @@ import { resetDefaultSecretStore } from "../core/integrations/secretStore";
 import { bind, getStatus, handleRpc, setRules, setWriteTools } from "../core/integrations/service";
 import type { ProviderContext } from "../core/integrations/types";
 import { callTool } from "./helpers/mcpCall";
+import { integrationErrorOf } from "./helpers/rejection";
 import {
   MemorySecrets,
   azAccount,
@@ -554,7 +555,7 @@ describe("azure write methods", () => {
       ],
       "pat"
     );
-    const err = await provider.workItems!.addComment!(ctx, 7, "hi").catch((e) => e);
+    const err = await integrationErrorOf(provider.workItems!.addComment!(ctx, 7, "hi"));
     expect(err).toMatchObject({ code: "forbidden" });
     expect(err.hint).toContain("Work Items (Read & write) and Code (Read & write)");
     expect(JSON.stringify([err.message, err.hint])).not.toContain("pat-secret-123");
@@ -565,7 +566,7 @@ describe("azure write methods", () => {
       { match: "GET ", body: WORK_ITEM },
       { match: "PATCH ", status: 403, body: { message: "no" } },
     ]);
-    const err = await provider.workItems!.setState!(ctx, 7, "Closed").catch((e) => e);
+    const err = await integrationErrorOf(provider.workItems!.setState!(ctx, 7, "Closed"));
     expect(err.hint).toContain("may not be allowed");
   });
 });

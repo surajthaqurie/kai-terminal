@@ -1,4 +1,4 @@
-import type { Dispatch, MutableRefObject, SetStateAction } from "react";
+import type { Dispatch, RefObject, SetStateAction } from "react";
 import type { TerminalTab } from "../types/terminal";
 
 /**
@@ -15,7 +15,7 @@ import type { TerminalTab } from "../types/terminal";
  * own latest state.
  */
 export function applyTabsUpdate(
-  tabsRef: MutableRefObject<TerminalTab[]>,
+  tabsRef: RefObject<TerminalTab[]>,
   setTabs: Dispatch<SetStateAction<TerminalTab[]>>,
   update: (tabs: TerminalTab[]) => TerminalTab[]
 ): void {

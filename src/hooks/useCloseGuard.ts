@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, type MutableRefObject } from "react";
+import { useCallback, useRef, useState, type RefObject } from "react";
 import { closeAppWindow } from "../services/appWindow";
 import {
   countBusyPanes,
@@ -17,9 +17,9 @@ export interface PendingClose extends CloseConfirmation {
 }
 
 interface CloseGuardOptions {
-  tabsRef: MutableRefObject<TerminalTab[]>;
-  activeTabIdRef: MutableRefObject<string>;
-  terminalRefs: MutableRefObject<Record<string, HandoffTerminal | null | undefined>>;
+  tabsRef: RefObject<TerminalTab[]>;
+  activeTabIdRef: RefObject<string>;
+  terminalRefs: RefObject<Record<string, HandoffTerminal | null | undefined>>;
   closeTab: (id: string) => void;
   closeActivePane: () => void;
   restoreWorkspace: (workspace: Workspace) => void;

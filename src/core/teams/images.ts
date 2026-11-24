@@ -29,8 +29,11 @@ const be32 = (b: Uint8Array, o: number) =>
   ((b[o] << 24) | (b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3]) >>> 0;
 const be16 = (b: Uint8Array, o: number) => (b[o] << 8) | b[o + 1];
 const le16 = (b: Uint8Array, o: number) => b[o] | (b[o + 1] << 8);
-const ascii = (b: Uint8Array, o: number, s: string) =>
-  b.length >= o + s.length && [...s].every((c, i) => b[o + i] === c.charCodeAt(0));
+const ascii = (b: Uint8Array, o: number, s: string) => {
+  if (b.length < o + s.length) return false;
+  for (let i = 0; i < s.length; i++) if (b[o + i] !== s.charCodeAt(i)) return false;
+  return true;
+};
 
 function jpegSize(b: Uint8Array): { width: number; height: number } | null {
   let i = 2;

@@ -1,10 +1,4 @@
-import {
-  useCallback,
-  useRef,
-  type Dispatch,
-  type MutableRefObject,
-  type SetStateAction,
-} from "react";
+import { useCallback, useRef, type Dispatch, type RefObject, type SetStateAction } from "react";
 import { GIT_BADGE_MIN_INTERVAL_MS } from "../services/cwdCommand";
 import {
   GitInfo,
@@ -17,8 +11,8 @@ import {
 import type { TerminalTab } from "../types/terminal";
 
 interface PaneCwdOptions {
-  tabsRef: MutableRefObject<TerminalTab[]>;
-  activeTabIdRef: MutableRefObject<string>;
+  tabsRef: RefObject<TerminalTab[]>;
+  activeTabIdRef: RefObject<string>;
   setTabs: Dispatch<SetStateAction<TerminalTab[]>>;
   applyGitInfo: (dir: string, info: GitInfo, updatesFooter: boolean) => void;
 }

@@ -4,7 +4,7 @@ import {
   useRef,
   useState,
   type Dispatch,
-  type MutableRefObject,
+  type RefObject,
   type SetStateAction,
 } from "react";
 import { closeAppWindow } from "../services/appWindow";
@@ -31,10 +31,10 @@ interface SessionExitOptions {
   tabs: TerminalTab[];
   setTabs: Dispatch<SetStateAction<TerminalTab[]>>;
   setActiveTabId: (id: string) => void;
-  tabsRef: MutableRefObject<TerminalTab[]>;
-  activeTabIdRef: MutableRefObject<string>;
-  shellsRef: MutableRefObject<ShellProfile[]>;
-  selectedShellIdRef: MutableRefObject<string>;
+  tabsRef: RefObject<TerminalTab[]>;
+  activeTabIdRef: RefObject<string>;
+  shellsRef: RefObject<ShellProfile[]>;
+  selectedShellIdRef: RefObject<string>;
   setLastError: (message: string | null) => void;
 }
 

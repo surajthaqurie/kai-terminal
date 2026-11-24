@@ -122,12 +122,12 @@ describe("which registration is in force", () => {
   });
 
   it("rejects a malformed environment value instead of quietly using another app", () => {
-    expect(() => registrationFrom(env({ KAI_AZURE_CLIENT_ID: "oops" }))).toThrowError(
+    expect(() => registrationFrom(env({ KAI_AZURE_CLIENT_ID: "oops" }))).toThrow(
       /KAI_AZURE_CLIENT_ID is not a valid client ID/
     );
     expect(() =>
       registrationFrom(env({ KAI_AZURE_CLIENT_ID: ID, KAI_AZURE_TENANT_ID: "a b" }))
-    ).toThrowError(/KAI_AZURE_TENANT_ID/);
+    ).toThrow(/KAI_AZURE_TENANT_ID/);
     expect(registrationView(env({ KAI_AZURE_CLIENT_ID: "oops" }))).toEqual({
       available: false,
       source: "env",
@@ -141,16 +141,12 @@ describe("which registration is in force", () => {
   });
 
   it("lets Teams use the same registration, or its own", () => {
-    expect(() => teamsClientId(noEnv)).toThrowError(/Teams sign-in is not set up/);
+    expect(() => teamsClientId(noEnv)).toThrow(/Teams sign-in is not set up/);
     expect(teamsClientId(env({ KAI_AZURE_CLIENT_ID: ID }))).toBe(ID);
     expect(teamsClientId(env({ KAI_TEAMS_CLIENT_ID: OTHER }))).toBe(OTHER);
-    expect(() => teamsClientId(env({ KAI_TEAMS_CLIENT_ID: "bad" }))).toThrowError(
-      /KAI_TEAMS_CLIENT_ID/
-    );
+    expect(() => teamsClientId(env({ KAI_TEAMS_CLIENT_ID: "bad" }))).toThrow(/KAI_TEAMS_CLIENT_ID/);
     // A malformed Azure variable is reported as itself, not as "not set up".
-    expect(() => teamsClientId(env({ KAI_AZURE_CLIENT_ID: "bad" }))).toThrowError(
-      /KAI_AZURE_CLIENT_ID/
-    );
+    expect(() => teamsClientId(env({ KAI_AZURE_CLIENT_ID: "bad" }))).toThrow(/KAI_AZURE_CLIENT_ID/);
   });
 });
 

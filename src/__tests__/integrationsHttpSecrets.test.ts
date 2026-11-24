@@ -16,6 +16,7 @@ import {
   type SecretStore,
 } from "../core/integrations/secretStore";
 import { IntegrationError } from "../core/integrations/types";
+import { integrationErrorOf } from "./helpers/rejection";
 import { MemorySecrets, useTempKaiHome } from "./helpers/integrationsEnv";
 
 const ok = (body: string, init: ResponseInit = {}) =>
@@ -64,7 +65,7 @@ describe("httpRequest", () => {
     const err = await httpRequest(
       { url: "https://x.test/a", authHint: "Run `kai integration azure`." },
       { fetchImpl: fetchImpl as unknown as typeof fetch }
-    ).catch((e) => e);
+    ).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(IntegrationError);
     expect(err).toMatchObject({ code: "auth", hint: "Run `kai integration azure`." });
   });
@@ -75,10 +76,12 @@ describe("httpRequest", () => {
       async () =>
         new Response(JSON.stringify({ message: `token ${secret} lacks scope` }), { status: 403 })
     );
-    const err = await httpRequest(
-      { url: "https://x.test/a", redact: [secret] },
-      { fetchImpl: forbidden as unknown as typeof fetch }
-    ).catch((e) => e);
+    const err = await integrationErrorOf(
+      httpRequest(
+        { url: "https://x.test/a", redact: [secret] },
+        { fetchImpl: forbidden as unknown as typeof fetch }
+      )
+    );
     expect(err.code).toBe("forbidden");
     expect(err.message).not.toContain(secret);
     expect(err.message).toContain("[redacted]");

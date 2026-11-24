@@ -400,13 +400,14 @@ export interface IntegrationProvider {
 
 /** True when the provider can write at all (any write method exists). */
 export function supportsWrites(provider: IntegrationProvider): boolean {
-  return Boolean(
-    provider.workItems?.addComment ||
-    provider.workItems?.setState ||
-    provider.workItems?.create ||
-    provider.workItems?.update ||
-    provider.pullRequests?.create ||
-    provider.pullRequests?.addComment
+  const { workItems: w, pullRequests: pr } = provider;
+  return (
+    typeof w?.addComment === "function" ||
+    typeof w?.setState === "function" ||
+    typeof w?.create === "function" ||
+    typeof w?.update === "function" ||
+    typeof pr?.create === "function" ||
+    typeof pr?.addComment === "function"
   );
 }
 

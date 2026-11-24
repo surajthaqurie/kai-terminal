@@ -38,7 +38,9 @@ vi.mock("../services/ptyService", async (importOriginal) => {
   return {
     ...actual,
     isTauriAvailable: () => false,
-    PtyService: { ...actual.PtyService, getAvailableShells: vi.fn(async () => SHELLS) },
+    // The hook under test calls only this. (Spreading the class would copy nothing: static
+    // methods are not enumerable.)
+    PtyService: { getAvailableShells: vi.fn(async () => SHELLS) },
   };
 });
 

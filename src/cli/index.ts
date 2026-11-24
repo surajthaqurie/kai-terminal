@@ -277,7 +277,7 @@ if (!process.env.VITEST && typeof process !== "undefined" && process.argv && pro
       .then((code) => {
         if (typeof code === "number") process.exit(code);
       })
-      .catch((err) => {
+      .catch((err: unknown) => {
         console.error("[kai] Fatal error:", err);
         process.exit(1);
       });

@@ -371,7 +371,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       // Pasted text updates the in-memory line buffer (cd detection only).
       trackInputData(text.replace(/[\r\n]+$/, ""));
       PtyService.writeToPty(backendId, preparePasteText(text, term.modes.bracketedPasteMode)).catch(
-        (e) => {
+        (e: unknown) => {
           const msg = e instanceof Error ? e.message : String(e);
           term.writeln(`\r\n\x1b[31m[Paste failed: ${msg}]\x1b[0m\r\n`);
         }
@@ -654,7 +654,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         linkHandler: {
           activate: (event, uri) => {
             if (!isOpenLinkClick(event)) return;
-            openTerminalLink(uri).catch((e) => {
+            openTerminalLink(uri).catch((e: unknown) => {
               console.error("Could not open link:", e);
             });
           },
@@ -693,7 +693,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         new WebLinksAddon(
           (event, uri) => {
             if (!isOpenLinkClick(event)) return;
-            openTerminalLink(uri).catch((e) => {
+            openTerminalLink(uri).catch((e: unknown) => {
               console.error("Could not open link:", e);
             });
           },
@@ -722,7 +722,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
           if (lazyAddonEpochRef.current !== addonEpoch) return; // pane torn down meanwhile
           term.loadAddon(new ImageAddon({ storageLimit: 32 }));
         })
-        .catch((e) => console.warn("Inline images are unavailable:", e));
+        .catch((e: unknown) => console.warn("Inline images are unavailable:", e));
       try {
         fitAddon.fit();
       } catch {

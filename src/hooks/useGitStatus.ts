@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type MutableRefObject } from "react";
+import { useCallback, useEffect, useState, type RefObject } from "react";
 import {
   GitInfo,
   getCachedGitInfo,
@@ -36,9 +36,9 @@ const sameFooter = (a: GitFooter, b: GitFooter) =>
 
 interface GitStatusOptions {
   tabs: TerminalTab[];
-  tabsRef: MutableRefObject<TerminalTab[]>;
+  tabsRef: RefObject<TerminalTab[]>;
   activeTabId: string;
-  activeTabIdRef: MutableRefObject<string>;
+  activeTabIdRef: RefObject<string>;
   activeTab: TerminalTab | undefined;
   activePane: TerminalPane | undefined;
   activePaneId: string | undefined;

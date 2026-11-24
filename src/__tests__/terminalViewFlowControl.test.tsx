@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
-import { createElement, createRef } from "react";
+import { act, createElement, createRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { act } from "react-dom/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TerminalViewRef } from "../components/TerminalView";
 import type { HandoffRelease } from "../services/terminalWindows";

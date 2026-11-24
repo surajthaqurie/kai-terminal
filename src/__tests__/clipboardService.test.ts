@@ -17,6 +17,8 @@ import {
 
 /** A fake backend that holds `text` and returns it `pieceChars` characters at a time. */
 function fakeBackend(text: string, attachments: string[] = [], pieceChars = 4) {
+  // By code point, as the backend cuts only at a char (Unicode scalar) boundary.
+  // eslint-disable-next-line @typescript-eslint/no-misused-spread
   const chars = [...text];
   const enc = new TextEncoder();
   const byteOffsets: number[] = [0];

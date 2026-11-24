@@ -1,4 +1,4 @@
-import { memo, useMemo, useRef, type MutableRefObject, type ReactNode } from "react";
+import { memo, useMemo, useRef, type RefObject, type ReactNode } from "react";
 import {
   PaneRect,
   clampPaneFraction,
@@ -31,7 +31,7 @@ interface TabPanesProps {
   skipShellProfile: boolean;
   settings: UserSettings;
   /** Terminal handles keyed by pane id (toolbar actions, refit). */
-  terminalRefs: MutableRefObject<Record<string, TerminalViewRef | null>>;
+  terminalRefs: RefObject<Record<string, TerminalViewRef | null>>;
   onFocusPane: (tabId: string, paneId: string) => void;
   /** Code Mode of one pane (project path) or `null` when it ends. */
   onCodeModeChange: (paneId: string, project: string | null) => void;

@@ -89,7 +89,7 @@ export function useTerminalConfig({
           setSelectedShellId(defaultShell.id);
         }
       })
-      .catch((err) => {
+      .catch((err: unknown) => {
         console.error("Failed to load available shells:", err);
         setLastError(err instanceof Error ? err.message : String(err));
       })
@@ -160,7 +160,7 @@ export function useTerminalConfig({
       }
       if (Boolean(next.launchAtStartup) !== Boolean(userSettings.launchAtStartup)) {
         void import("../services/autostartService").then(({ setAutostartEnabled }) =>
-          setAutostartEnabled(Boolean(next.launchAtStartup)).catch((err) => {
+          setAutostartEnabled(Boolean(next.launchAtStartup)).catch((err: unknown) => {
             console.error("Failed to apply launch-at-startup setting:", err);
             setLastError(err instanceof Error ? err.message : String(err));
           })

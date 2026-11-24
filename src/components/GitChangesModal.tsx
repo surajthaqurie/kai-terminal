@@ -346,7 +346,7 @@ export const GitChangesModal: FC<GitChangesModalProps> = ({ dir, onClose }) => {
           setRawDiff(d);
         }
       })
-      .catch((err) => {
+      .catch((err: unknown) => {
         if (!cancelled) {
           setRawDiff(`Failed to load diff: ${err instanceof Error ? err.message : String(err)}`);
         }

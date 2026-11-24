@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, type MutableRefObject } from "react";
+import { useCallback, useEffect, useMemo, type RefObject } from "react";
 import type { TerminalViewRef } from "../components/TerminalView";
 import type { TerminalTab } from "../types/terminal";
 
@@ -109,9 +109,9 @@ export function createRefitScheduler(
 }
 
 interface WindowRefitOptions {
-  tabsRef: MutableRefObject<TerminalTab[]>;
-  activeTabIdRef: MutableRefObject<string>;
-  terminalRefs: MutableRefObject<Record<string, TerminalViewRef | null>>;
+  tabsRef: RefObject<TerminalTab[]>;
+  activeTabIdRef: RefObject<string>;
+  terminalRefs: RefObject<Record<string, TerminalViewRef | null>>;
   /** The active pane's terminal, refocused when the window is re-activated. */
   getActiveTerminal?: () => TerminalViewRef | null | undefined;
 }

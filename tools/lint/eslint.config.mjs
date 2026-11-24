@@ -55,6 +55,15 @@ export default tseslint.config(
         "error",
         { considerDefaultExhaustiveForUnions: true },
       ],
+      // A method passed on without its object loses `this`. Closure-based APIs are typed as
+      // function properties (`close: () => void`), which says they are safe to pass alone.
+      "@typescript-eslint/unbound-method": "error",
+      // Deprecated APIs (React 19 types, vitest), with a reasoned exception where one is needed.
+      "@typescript-eslint/no-deprecated": "error",
+      // Spreading a class (copies no static methods), a Promise, a Map, or a string (splits
+      // by code point, not by visible character).
+      "@typescript-eslint/no-misused-spread": "error",
+      "@typescript-eslint/use-unknown-in-catch-callback-variable": "error",
       // Not enabled, with the findings read: `only-throw-error` / `prefer-promise-reject-errors`
       // (Tauri's invoke rejects with strings; every hit rethrew a caught value) and `return-await`
       // (all 15 hits were style; no promise was returned unawaited inside a try).
@@ -67,6 +76,8 @@ export default tseslint.config(
     rules: {
       "@typescript-eslint/no-explicit-any": "off",
       "@typescript-eslint/no-base-to-string": "off",
+      // `expect(obj.method).toHaveBeenCalled()` references a mock method without calling it.
+      "@typescript-eslint/unbound-method": "off",
     },
   }
 );
