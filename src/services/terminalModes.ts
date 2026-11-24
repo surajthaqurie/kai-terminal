@@ -39,6 +39,7 @@ export const AGENT_EXIT_CLEANUP_SEQ = "\x1b[<u\x1b[>4;0m\x1b[?25h\x1b[?7h\x1b[?1
 
 // Erase-display (ED 2 / ED 3, what `clear` / `cls` / Clear-Host emit) and full
 // reset (RIS).
+// eslint-disable-next-line no-control-regex -- terminal escape sequences (ESC, BEL) are matched on purpose
 const CLEAR_SCREEN_RE = /\x1b\[[23]J|\x1bc/;
 
 /**
@@ -77,6 +78,7 @@ export function scanAgentFinishedTail(
 // None of these is producible by normal keyboard typing (Alt+key sends
 // ESC + key without the '['), so on the normal buffer they can only be
 // stuck TUI modes leaking mouse/focus movement as "ghost typing".
+// eslint-disable-next-line no-control-regex -- terminal escape sequences (ESC, BEL) are matched on purpose
 const STUCK_INPUT_REPORT_RE = /\x1b\[<[0-9;]*[Mm]|\x1b\[M...|\x1b\[[IO]/g;
 
 // Terminal query REPLIES (emulator -> host) that a TUI asked for at startup:
@@ -89,6 +91,7 @@ const STUCK_INPUT_REPORT_RE = /\x1b\[<[0-9;]*[Mm]|\x1b\[M...|\x1b\[[IO]/g;
 // looks "blocked". Only ever stripped inside the short post-agent window
 // (see STALE_REPLY_WINDOW_MS) because a live non-alt-screen TUI needs them.
 const STALE_TERMINAL_REPLY_RE =
+  // eslint-disable-next-line no-control-regex -- terminal escape sequences (ESC, BEL) are matched on purpose
   /\x1b\[[?>=]?[0-9;]*c|\x1b\[[0-9;]*R|\x1b\[\?[0-9;]*\$y|\x1b\[\?[0-9;]*u|\x1b\](?:4;[0-9]+|1[012]);[^\x07\x1b]*(?:\x07|\x1b\\)|\x1bP[>!]?\|[^\x1b]*\x1b\\/g;
 
 /** How long after `[kai] Agent finished` leftover terminal replies are dropped. */
@@ -155,6 +158,7 @@ export function preparePasteText(text: string, bracketedPaste: boolean): string 
   let out = text.replace(/\r\n|\r|\n/g, "\r");
   if (bracketedPaste) {
     // A pasted end marker would let the clipboard break out of the paste.
+    // eslint-disable-next-line no-control-regex -- terminal escape sequences (ESC, BEL) are matched on purpose
     out = out.replace(/\x1b\[20[01]~/g, "");
     return `\x1b[200~${out}\x1b[201~`;
   }

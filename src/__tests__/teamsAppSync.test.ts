@@ -26,6 +26,7 @@ class FakeScreen {
     return this.frames[this.frames.length - 1];
   }
   get text(): string {
+    // eslint-disable-next-line no-control-regex -- terminal escape sequences (ESC, BEL) are matched on purpose
     return this.last.rows.map((r) => r.replace(/\u001b\[[0-9;]*m/g, "")).join("\n");
   }
 }

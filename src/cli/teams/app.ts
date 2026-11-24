@@ -961,6 +961,7 @@ export class ChatApp {
   }
 
   private insert(text: string): void {
+    // eslint-disable-next-line no-control-regex -- \u0001 is a placeholder that carries newlines through sanitize()
     const clean = sanitize(text.replace(/\n/g, "\u0001")).replace(/\u0001/g, "\n");
     if (!clean) return;
     this.edit(

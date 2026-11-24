@@ -1,10 +1,11 @@
 // ESLint for Kai Terminal (CI-08). Run from the repository root: `npm run lint:eslint`
 // (paths below are relative to the working directory because the config is passed with --config).
 //
-// Rule set: typescript-eslint `recommended` (syntax-level, no type information) plus the two
-// React hooks rules. The type-checked set and ESLint's core `recommended` rules are not enabled
-// yet: measured on this code they add about 1,800 and 100 findings, mostly stylistic; add them
-// one rule at a time. `tsc --noEmit` (TypeScript 7, strict) remains the type check.
+// Rule set: ESLint core `recommended`, typescript-eslint `recommended` (syntax-level, no type
+// information) and the two React hooks rules. Deliberate exceptions are made where they occur,
+// each with a reason (e.g. `no-control-regex` where terminal escape sequences are matched). The
+// type-checked set is not enabled: about 1,800 findings, mostly stylistic; add rules one at a
+// time. `tsc --noEmit` (TypeScript 7, strict) remains the type check.
 import js from "@eslint/js";
 import tseslint from "typescript-eslint";
 import reactHooks from "eslint-plugin-react-hooks";
@@ -29,14 +30,6 @@ export default tseslint.config(
         "error",
         { argsIgnorePattern: "^_", varsIgnorePattern: "^_", caughtErrorsIgnorePattern: "^_" },
       ],
-    },
-  },
-  {
-    // ESLint core rules still being enabled one at a time (phase 31); each comes off this list
-    // once its findings are fixed or justified where they occur.
-    files,
-    rules: {
-      "no-control-regex": "off",
     },
   },
   {

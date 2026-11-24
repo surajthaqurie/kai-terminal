@@ -31,6 +31,7 @@ class FakeScreen {
     return this.frames[this.frames.length - 1];
   }
   get text(): string {
+    // eslint-disable-next-line no-control-regex -- terminal escape sequences (ESC, BEL) are matched on purpose
     return this.last.rows.map((r) => r.replace(/\u001b\[[0-9;]*m/g, "")).join("\n");
   }
 }
@@ -479,6 +480,7 @@ describe("layout", () => {
     notice: null,
     typing: "",
   };
+  // eslint-disable-next-line no-control-regex -- terminal escape sequences (ESC, BEL) are matched on purpose
   const width = (s: string) => s.replace(/\u001b\[[0-9;]*m/g, "").length;
 
   it("fills every row to exactly the terminal width", () => {
@@ -522,6 +524,7 @@ describe("layout", () => {
       100,
       30
     );
+    // eslint-disable-next-line no-control-regex -- terminal escape sequences (ESC, BEL) are matched on purpose
     const text = f.rows.map((r) => r.replace(/\u001b\[[0-9;]*m/g, ""));
     expect(text[1]).toContain("\u25cf");
     expect(text[1].indexOf("\u25cf")).toBeLessThan(28);

@@ -9,6 +9,7 @@
 
 /** Control characters (C0, DEL, C1) and bidi overrides, written as escapes so no invisible character sits in the source. */
 const CONTROL_CHARS = new RegExp(
+  // eslint-disable-next-line no-control-regex -- control characters are matched on purpose, to strip or reject them
   "[\\u0000-\\u0009\\u000b-\\u001f\\u007f-\\u009f\\u202a-\\u202e\\u2066-\\u2069]",
   "g"
 );

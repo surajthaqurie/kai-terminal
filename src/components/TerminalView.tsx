@@ -236,6 +236,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       // Escape sequences (arrows, alt combos): don't corrupt the buffer.
       if (data.startsWith("\x1b")) return;
       // Other control chars: ignore for buffer tracking.
+      // eslint-disable-next-line no-control-regex -- control characters are matched on purpose, to strip or reject them
       if (/[\x00-\x1f]/.test(data)) return;
       lineBufferRef.current = (lineBufferRef.current + data).slice(-4096);
     };

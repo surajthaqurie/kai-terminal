@@ -97,6 +97,7 @@ export class InputParser {
           i += PASTE_START.length;
           continue;
         }
+        // eslint-disable-next-line no-control-regex -- terminal escape sequences (ESC, BEL) are matched on purpose
         const mouse = /^\u001b\[<(\d+);(\d+);(\d+)([Mm])/.exec(rest);
         if (mouse) {
           events.push(
@@ -105,6 +106,7 @@ export class InputParser {
           i += mouse[0].length;
           continue;
         }
+        // eslint-disable-next-line no-control-regex -- terminal escape sequences (ESC, BEL) are matched on purpose
         const csi = /^\u001b\[([0-9;]*)([A-Za-z~])/.exec(rest);
         if (csi) {
           const final = csi[2];
@@ -119,6 +121,7 @@ export class InputParser {
           i += csi[0].length;
           continue;
         }
+        // eslint-disable-next-line no-control-regex -- terminal escape sequences (ESC, BEL) are matched on purpose
         const ss3 = /^\u001bO([A-Z])/.exec(rest);
         if (ss3) {
           const key = CSI_KEYS[ss3[1]];
@@ -127,6 +130,7 @@ export class InputParser {
           continue;
         }
         // An unfinished sequence at the end of the chunk: wait for the rest.
+        // eslint-disable-next-line no-control-regex -- terminal escape sequences (ESC, BEL) are matched on purpose
         if (/^\u001b(\[[0-9;<]*|O?)$/.test(rest)) {
           this.buffer = rest;
           return events;
