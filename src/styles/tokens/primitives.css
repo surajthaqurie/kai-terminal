@@ -42,6 +42,7 @@
   /* ——— Global layers. Values below 100 are local stacking inside one
      component and stay literal; everything that floats over the app is here. */
   --z-overlay-in-pane: 100; /* search bar, launch error */
+  --z-banner: 200; /* app banners (session restore, shell fault) over the terminals */
   --z-drawer: 900; /* music drawer (closed) */
   --z-modal: 1000; /* dialogs */
   --z-menu: 1200; /* context menus over dialogs */

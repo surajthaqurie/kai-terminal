@@ -1,6 +1,11 @@
 /* App-level notice above the terminals (<Banner>). Neutral surface; the
    severity is a left stripe (plus the role), never a full coloured frame. */
 .banner {
+  /* The terminal area is positioned (absolute, filling the app body), so a banner in normal flow
+     was painted over by the terminal and its clicks went to xterm. Its own layer keeps it visible
+     and clickable over the top rows. */
+  position: relative;
+  z-index: var(--z-banner);
   display: flex;
   align-items: center;
   justify-content: space-between;
