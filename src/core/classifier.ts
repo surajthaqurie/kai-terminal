@@ -283,7 +283,7 @@ export function extractSearchTokens(query: string): ExtractedSearchTokens {
     }
 
     // Decompose snake_case or kebab-case (e.g. create_pty -> create, pty)
-    const splitParts = clean.split(/[_\-]+/);
+    const splitParts = clean.split(/[_-]+/);
     if (splitParts.length > 1) {
       for (const part of splitParts) {
         const pLower = part.toLowerCase();

@@ -239,7 +239,7 @@ describe("parseAzureRemote: Azure DevOps Server over SSH", () => {
     "alice@tfs.corp.local:v3/a/b/c/d",
     "alice@tfs.corp.local:Billing/_git/ledger",
     "ssh://tfs.corp.local/_git/ledger",
-    "C:\work\repo",
+    "C:\\work\\repo",
     "/srv/git/repo.git",
   ])("does not mistake %s for an Azure DevOps Server", (remote) => {
     expect(parseAzureRemote(remote)).toBeNull();

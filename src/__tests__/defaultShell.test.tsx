@@ -10,9 +10,9 @@ import type { ShellProfile } from "../types/terminal";
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const SHELLS: ShellProfile[] = [
-  { id: "cmd", name: "Command Prompt", path: "C:\Windows\cmd.exe", is_default: false },
-  { id: "ps", name: "PowerShell", path: "C:\ps\pwsh.exe", is_default: true },
-  { id: "zsh", name: "Zsh", path: "C:\zsh\zsh.exe", is_default: false },
+  { id: "cmd", name: "Command Prompt", path: "C:\\Windows\\cmd.exe", is_default: false },
+  { id: "ps", name: "PowerShell", path: "C:\\ps\\pwsh.exe", is_default: true },
+  { id: "zsh", name: "Zsh", path: "C:\\zsh\\zsh.exe", is_default: false },
 ];
 
 describe("pickDefaultShell", () => {

@@ -21,9 +21,12 @@ describe("Code Mode signal through the real xterm parser", () => {
   it("reports start and stop between ordinary output, in order", async () => {
     const seen: Array<string | null> = [];
     const term = terminalReporting(seen);
-    await write(term, `$ kai claude\r\n${buildCodeModeSignal("C:\Work\My App")}[kai] running\r\n`);
+    await write(
+      term,
+      `$ kai claude\r\n${buildCodeModeSignal("C:\\Work\\My App")}[kai] running\r\n`
+    );
     await write(term, `${buildCodeModeSignal(null)}$ `);
-    expect(seen).toEqual(["C:\Work\My App", null]);
+    expect(seen).toEqual(["C:\\Work\\My App", null]);
     term.dispose();
   });
 

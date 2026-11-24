@@ -12,7 +12,7 @@ function oscPayload(bytes: string): string {
 
 describe("per-terminal Code Mode signal", () => {
   it("round-trips a project path on every OS shape", () => {
-    for (const p of ["/repo/demo", "C:\Users\Me\My Repo", "/tmp/a;b=c d/ü", "D:/x/y"]) {
+    for (const p of ["/repo/demo", "C:\\Users\\Me\\My Repo", "/tmp/a;b=c d/ü", "D:/x/y"]) {
       expect(parseCodeModeSignal(oscPayload(buildCodeModeSignal(p)))).toEqual({
         active: true,
         path: p,

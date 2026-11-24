@@ -738,7 +738,7 @@ function findStatementEnd(code: string, from: number): number {
       const nc = code[next];
       if (nc === undefined) return last;
       if (nc === "}" || nc === ")" || nc === "]") return last;
-      if (/[.?:+\-*/%&|,=<>(\[`]/.test(nc)) continue;
+      if (/[.?:+\-*/%&|,=<>([`]/.test(nc)) continue;
       return last;
     }
   }
