@@ -158,7 +158,9 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     try {
       const v = localStorage.getItem("kai_music_volume");
       if (v !== null) return Math.max(0, Math.min(100, parseInt(v, 10)));
-    } catch {}
+    } catch {
+      // Storage unavailable (private mode, blocked): fall back to the default below.
+    }
     return 75;
   });
   const [loop, setLoop] = useState(false);
@@ -1160,7 +1162,9 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     setVolume(val);
     try {
       localStorage.setItem("kai_music_volume", String(val));
-    } catch {}
+    } catch {
+      // Storage unavailable or full: the setting just is not remembered.
+    }
     if (val === 0) {
       setMuted(true);
       onMutedChange?.(true);
@@ -1223,7 +1227,9 @@ export const MusicPanel: FC<MusicPanelProps> = ({
         const parsed = parseInt(saved, 10);
         if (Number.isFinite(parsed) && parsed >= 15 && parsed <= 100) return parsed;
       }
-    } catch {}
+    } catch {
+      // Storage unavailable (private mode, blocked): fall back to the default below.
+    }
     return 40;
   });
 
@@ -1514,19 +1520,25 @@ export const MusicPanel: FC<MusicPanelProps> = ({
       setDimPercent(clamped);
       try {
         localStorage.setItem("kai_music_dim_percent", String(clamped));
-      } catch {}
+      } catch {
+        // Storage unavailable or full: the setting just is not remembered.
+      }
     }
     setIsDimmed(true);
     try {
       localStorage.setItem("kai_music_dimmed", "true");
-    } catch {}
+    } catch {
+      // Storage unavailable or full: the setting just is not remembered.
+    }
   };
 
   const disableDim = () => {
     setIsDimmed(false);
     try {
       localStorage.setItem("kai_music_dimmed", "false");
-    } catch {}
+    } catch {
+      // Storage unavailable or full: the setting just is not remembered.
+    }
   };
 
   const handleDimPercentChange = (val: number) => {
@@ -1598,7 +1610,9 @@ export const MusicPanel: FC<MusicPanelProps> = ({
         const parsed = parseInt(saved, 10);
         if (Number.isFinite(parsed) && parsed >= MIN_PANEL_WIDTH) return parsed;
       }
-    } catch {}
+    } catch {
+      // Storage unavailable (private mode, blocked): fall back to the default below.
+    }
     return isExpanded ? 520 : DEFAULT_PANEL_WIDTH;
   });
 
@@ -1611,7 +1625,9 @@ export const MusicPanel: FC<MusicPanelProps> = ({
           return Math.max(MIN_PANEL_HEIGHT, parsed);
         }
       }
-    } catch {}
+    } catch {
+      // Storage unavailable (private mode, blocked): fall back to the default below.
+    }
     return DEFAULT_PANEL_HEIGHT;
   });
 
@@ -1645,7 +1661,9 @@ export const MusicPanel: FC<MusicPanelProps> = ({
         localStorage.setItem("kai_music_panel_width", String(DEFAULT_PANEL_WIDTH));
         localStorage.setItem("kai_music_panel_height", String(DEFAULT_PANEL_HEIGHT));
         localStorage.setItem("kai_music_expanded", "false");
-      } catch {}
+      } catch {
+        // Storage unavailable or full: the setting just is not remembered.
+      }
     } else {
       setPanelWidth(EXPANDED_PANEL_WIDTH);
       setPanelHeight(EXPANDED_PANEL_HEIGHT);
@@ -1655,7 +1673,9 @@ export const MusicPanel: FC<MusicPanelProps> = ({
         localStorage.setItem("kai_music_panel_width", String(EXPANDED_PANEL_WIDTH));
         localStorage.setItem("kai_music_panel_height", String(EXPANDED_PANEL_HEIGHT));
         localStorage.setItem("kai_music_expanded", "true");
-      } catch {}
+      } catch {
+        // Storage unavailable or full: the setting just is not remembered.
+      }
     }
   };
 
@@ -1686,7 +1706,9 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     if (targetEl && typeof targetEl.setPointerCapture === "function") {
       try {
         targetEl.setPointerCapture(e.pointerId);
-      } catch {}
+      } catch {
+        // Capture is a nicety: the drag still works through the window listeners.
+      }
     }
 
     const handleMove = (ev: PointerEvent) => {
@@ -1718,7 +1740,9 @@ export const MusicPanel: FC<MusicPanelProps> = ({
       if (targetEl && typeof targetEl.releasePointerCapture === "function") {
         try {
           targetEl.releasePointerCapture(ev.pointerId);
-        } catch {}
+        } catch {
+          // Nothing is held (already released, or never captured): nothing to undo.
+        }
       }
       window.removeEventListener("pointermove", handleMove);
       window.removeEventListener("pointerup", handleUp);
@@ -1727,7 +1751,9 @@ export const MusicPanel: FC<MusicPanelProps> = ({
         localStorage.setItem("kai_music_panel_width", String(panelDimensionsRef.current.width));
         localStorage.setItem("kai_music_panel_height", String(panelDimensionsRef.current.height));
         localStorage.setItem("kai_music_expanded", String(panelDimensionsRef.current.width >= 460));
-      } catch {}
+      } catch {
+        // Storage unavailable or full: the setting just is not remembered.
+      }
     };
 
     window.addEventListener("pointermove", handleMove);
@@ -1768,7 +1794,9 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     setIsPinned(false);
     try {
       localStorage.setItem("kai_music_pinned", "false");
-    } catch {}
+    } catch {
+      // Storage unavailable or full: the setting just is not remembered.
+    }
     onClose();
   };
 
@@ -1777,7 +1805,9 @@ export const MusicPanel: FC<MusicPanelProps> = ({
       const next = !prev;
       try {
         localStorage.setItem("kai_music_pinned", String(next));
-      } catch {}
+      } catch {
+        // Storage unavailable or full: the setting just is not remembered.
+      }
       return next;
     });
   };
