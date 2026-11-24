@@ -647,7 +647,7 @@ jobs:
         run: bash scripts/sign-release-checksums.sh release-artifacts release-signing src-tauri/update-public-key.hex
 
       - name: Create GitHub Release with verified artifacts
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           # Recursive globs: installers are nested (deb/, appimage/, nsis/,
           # msi/, dmg/) after merge-multiple. A flat `release-artifacts/*`
