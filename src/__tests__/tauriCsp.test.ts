@@ -41,7 +41,7 @@ describe("tauri.conf.json Content Security Policy", () => {
     // explicit allow-list entry the WebView blocks it on every OS and the
     // check silently resolves to "no update" — the "check for updates does
     // nothing in the installed app" report.
-    const connectSrc = csp.match(/connect-src([^;]*)/)?.[1] ?? "";
+    const connectSrc = /connect-src([^;]*)/.exec(csp)?.[1] ?? "";
     expect(connectSrc).toContain("https://api.github.com");
   });
 
@@ -49,16 +49,24 @@ describe("tauri.conf.json Content Security Policy", () => {
     // The page fetches only the update check; the music player is an iframe (frame-src), which
     // brings its own network access. Hosts allowed here would be an exfiltration channel for
     // injected script, and `*.google.com` includes user-hosted surfaces.
-    const connectSrc = (csp.match(/connect-src([^;]*)/)?.[1] ?? "").trim().split(/\s+/);
+    const connectSrc = (/connect-src([^;]*)/.exec(csp)?.[1] ?? "").trim().split(/\s+/);
     expect(connectSrc.sort()).toEqual(
       ["'self'", "ipc:", "http://ipc.localhost", "https://api.github.com"].sort()
     );
   });
 
   it("keeps scripts locked down (no wildcards, no unsafe-inline)", () => {
-    const scriptSrc = csp.match(/script-src([^;]*)/)?.[1] ?? "";
+    const scriptSrc = /script-src([^;]*)/.exec(csp)?.[1] ?? "";
     expect(scriptSrc).not.toContain("*");
     expect(scriptSrc).not.toContain("unsafe-inline");
+  });
+
+  it("allows compiling WebAssembly (the inline-image add-on) but never JavaScript eval", () => {
+    // 'wasm-unsafe-eval' permits WebAssembly.compile/instantiate only; 'unsafe-eval' would also
+    // allow eval() and new Function(). Compared as whole tokens: one contains the other's text.
+    const tokens = (/script-src([^;]*)/.exec(csp)?.[1] ?? "").trim().split(/\s+/);
+    expect(tokens.sort()).toEqual(["'self'", "'wasm-unsafe-eval'"]);
+    expect(tokens).not.toContain("'unsafe-eval'");
   });
 });
 

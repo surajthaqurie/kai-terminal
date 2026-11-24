@@ -27,6 +27,8 @@ describe("copyTextToClipboard", () => {
       throw new DOMException("denied", "NotAllowedError");
     });
     const exec = vi.fn(() => true);
+    // Stubs the deprecated fallback the helper relies on.
+    // eslint-disable-next-line @typescript-eslint/no-deprecated
     document.execCommand = exec;
     expect(await copyTextToClipboard("secret text")).toBe(true);
     expect(exec).toHaveBeenCalledWith("copy");
@@ -35,6 +37,8 @@ describe("copyTextToClipboard", () => {
 
   it("resolves false, without throwing, when nothing works (no clipboard object at all)", async () => {
     setClipboard(undefined);
+    // Stubs the deprecated fallback the helper relies on.
+    // eslint-disable-next-line @typescript-eslint/no-deprecated
     document.execCommand = () => {
       throw new Error("unsupported");
     };

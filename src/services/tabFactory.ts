@@ -5,13 +5,7 @@ import {
   persistedLayoutToNode,
   sanitizeTab,
 } from "./workspaces";
-import type {
-  PaneLayoutNode,
-  PaneSplitDirection,
-  SessionStatus,
-  TerminalPane,
-  TerminalTab,
-} from "../types/terminal";
+import type { PaneLayoutNode, SessionStatus, TerminalPane, TerminalTab } from "../types/terminal";
 
 export const LAYOUT_KEY = "terminal_tab_layout_v1";
 
@@ -23,12 +17,25 @@ export const MAX_PERSISTED_TABS = 30;
 /** Which tab (by position) was in front when the layout was saved. */
 export const ACTIVE_TAB_KEY = "terminal_active_tab_v1";
 
+/**
+ * The main window was closed while other windows stayed open: its tabs are not part of the
+ * session any more (FUNC-07), so the next launch must not offer them.
+ */
+export function forgetPersistedLayout(): void {
+  try {
+    localStorage.removeItem(LAYOUT_KEY);
+    localStorage.removeItem(ACTIVE_TAB_KEY);
+  } catch {
+    // Storage unavailable: nothing was saved either.
+  }
+}
+
 let tabSeq = 0;
 
 /** Collision-safe tab id (frontend-only; distinct from backend PTY UUIDs). */
 export function newTabId(): string {
   tabSeq += 1;
-  let rand = "";
+  let rand: string;
   try {
     rand =
       typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -71,28 +78,37 @@ export interface PersistedTab {
   layout?: PersistedTabV2["layout"];
 }
 
+/**
+ * Saved tabs read back from storage: only titles/cwd/shellPath/pane structure (never command
+ * history), malformed entries dropped, at most MAX_PERSISTED_TABS. Tolerant: accepts v1 tabs and
+ * v2 tabs with panes (see workspaces.ts). Shared by the main window's layout and the other
+ * windows' layouts (windowLayouts.ts).
+ */
+export function sanitizePersistedTabs(parsed: unknown): PersistedTab[] {
+  if (!Array.isArray(parsed)) return [];
+  return parsed
+    .filter((t) => typeof t === "object" && t !== null)
+    .slice(0, MAX_PERSISTED_TABS)
+    .map((t) => sanitizeTab(t))
+    .filter((t): t is PersistedTabV2 => t !== null)
+    .map((t) => ({
+      title: t.title,
+      color: t.color,
+      shellPath: t.shellPath,
+      cwd: t.cwd,
+      splitDirection: t.splitDirection,
+      panes: t.panes,
+      layout: t.layout,
+    }));
+}
+
 export function loadPersistedLayout(): PersistedTab[] | null {
   try {
     const raw = localStorage.getItem(LAYOUT_KEY);
     if (!raw) return null;
-    const parsed = JSON.parse(raw);
+    const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return null;
-    // Only restore titles/cwd/shellPath/pane structure — never command history.
-    // Tolerant: accepts v1 tabs and v2 tabs with panes (see workspaces.ts).
-    return parsed
-      .filter((t) => typeof t === "object" && t !== null)
-      .slice(0, MAX_PERSISTED_TABS)
-      .map((t) => sanitizeTab(t))
-      .filter((t): t is PersistedTabV2 => t !== null)
-      .map((t) => ({
-        title: t.title,
-        color: t.color,
-        shellPath: t.shellPath,
-        cwd: t.cwd,
-        splitDirection: t.splitDirection,
-        panes: t.panes,
-        layout: t.layout,
-      }));
+    return sanitizePersistedTabs(parsed);
   } catch {
     return null;
   }
@@ -108,6 +124,35 @@ export function loadPersistedActiveIndex(): number | null {
   }
 }
 
+/** The saveable form of tabs: titles, color, cwd, shell, pane structure; never history. */
+export function toPersistedTabs(tabs: TerminalTab[]): PersistedTab[] {
+  return tabs.slice(0, MAX_PERSISTED_TABS).map((t) => {
+    const paneIds = t.panes.map((p) => p.id);
+    // A single-pane tab is restored from the tab-level fields, which are only
+    // updated while that pane is the sole or active one. After a split
+    // collapses (the active pane closed, or the survivor switched shell) they
+    // describe a pane that no longer exists, so prefer the survivor's own.
+    const only = t.panes.length === 1 ? t.panes[0] : undefined;
+    return {
+      title: t.title,
+      color: t.color,
+      shellPath: only?.shellPath ?? t.shellPath,
+      cwd: only?.cwd ?? t.cwd,
+      splitDirection: t.splitDirection,
+      panes:
+        t.panes.length > 1
+          ? t.panes.map((p) => ({ shellPath: p.shellPath, cwd: p.cwd }))
+          : undefined,
+      layout: t.layout && t.panes.length > 1 ? nodeToPersistedLayout(t.layout, paneIds) : undefined,
+    };
+  });
+}
+
+/** A live tab rebuilt from its saved form (fresh ids: no backend session is reused). */
+export function tabFromPersisted(t: PersistedTab): TerminalTab {
+  return createDefaultTab(t.title, t.shellPath, t.cwd, t);
+}
+
 /** Safe UI layout only (titles, color, cwd, pane structure) — never history. */
 export function savePersistedLayout(tabs: TerminalTab[], activeTabId?: string): void {
   try {
@@ -117,28 +162,7 @@ export function savePersistedLayout(tabs: TerminalTab[], activeTabId?: string): 
         localStorage.setItem(ACTIVE_TAB_KEY, String(index));
       }
     }
-    const safe: PersistedTab[] = tabs.slice(0, MAX_PERSISTED_TABS).map((t) => {
-      const paneIds = t.panes.map((p) => p.id);
-      // A single-pane tab is restored from the tab-level fields, which are only
-      // updated while that pane is the sole or active one. After a split
-      // collapses (the active pane closed, or the survivor switched shell) they
-      // describe a pane that no longer exists, so prefer the survivor's own.
-      const only = t.panes.length === 1 ? t.panes[0] : undefined;
-      return {
-        title: t.title,
-        color: t.color,
-        shellPath: only?.shellPath ?? t.shellPath,
-        cwd: only?.cwd ?? t.cwd,
-        splitDirection: t.splitDirection,
-        panes:
-          t.panes.length > 1
-            ? t.panes.map((p) => ({ shellPath: p.shellPath, cwd: p.cwd }))
-            : undefined,
-        layout:
-          t.layout && t.panes.length > 1 ? nodeToPersistedLayout(t.layout, paneIds) : undefined,
-      };
-    });
-    localStorage.setItem(LAYOUT_KEY, JSON.stringify(safe));
+    localStorage.setItem(LAYOUT_KEY, JSON.stringify(toPersistedTabs(tabs)));
   } catch {
     // ignore quota errors
   }
@@ -179,9 +203,7 @@ export function createDefaultTab(
     if (paneIds.length <= 1) {
       fullLayout = { kind: "pane", paneId: paneIds[0] };
     } else {
-      const axis = (
-        splitDirection === "horizontal" ? "horizontal" : "vertical"
-      ) as PaneSplitDirection;
+      const axis = splitDirection === "horizontal" ? "horizontal" : "vertical";
       let node: PaneLayoutNode = { kind: "pane", paneId: paneIds[0] };
       for (const id of paneIds.slice(1)) {
         node = {

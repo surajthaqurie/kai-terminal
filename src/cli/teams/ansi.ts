@@ -120,5 +120,6 @@ export function renderParts(parts: readonly Part[], width: number, fill = ""): s
 
 /** Visible width of a string that may contain SGR sequences (used by tests and the renderer's checks). */
 export function visibleWidth(s: string): number {
+  // eslint-disable-next-line no-control-regex -- terminal escape sequences (ESC, BEL) are matched on purpose
   return textWidth(s.replace(/\u001b\[[0-9;]*m/g, ""));
 }

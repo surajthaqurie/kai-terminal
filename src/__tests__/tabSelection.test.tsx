@@ -7,7 +7,10 @@ import { useTabs } from "../hooks/useTabs";
 import { tabAfterClose } from "../services/tabSelection";
 
 /** FUNC-03: closing the active tab jumped to the last tab, but a shell exiting went left. */
-vi.mock("../services/appWindow", () => ({ closeAppWindow: vi.fn(async () => false) }));
+vi.mock("../services/appWindow", () => ({
+  closeAppWindow: vi.fn(async () => false),
+  onIndividualWindowClose: vi.fn(() => () => {}),
+}));
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 describe("tabAfterClose", () => {

@@ -216,9 +216,12 @@ describe("detectAgentSession", () => {
 
   it("trusts an environment marker without even reading the process list", async () => {
     const processes = vi.fn(plainChain);
-    const found = await detectAgentSession({ KAI_AGENT_SESSION: "1" } as NodeJS.ProcessEnv, {
-      processes,
-    });
+    const found = await detectAgentSession(
+      { KAI_AGENT_SESSION: "1" },
+      {
+        processes,
+      }
+    );
     expect(found).toEqual({ by: "environment", agent: "KAI_AGENT_SESSION" });
     expect(processes).not.toHaveBeenCalled();
   });
@@ -231,46 +234,44 @@ describe("detectAgentSession", () => {
       "CURSOR_AGENT",
       "CODEX_SANDBOX_NETWORK_DISABLED",
     ]) {
-      const found = await detectAgentSession({ [name]: "1" } as NodeJS.ProcessEnv, {
-        processes: plainChain,
-      });
+      const found = await detectAgentSession(
+        { [name]: "1" },
+        {
+          processes: plainChain,
+        }
+      );
       expect(found?.agent, name).toBe(name);
     }
   });
 
   it("finds an agent from the process tree when no variable says so", async () => {
-    expect(
-      await detectAgentSession({} as NodeJS.ProcessEnv, { processes: chainWithAgent })
-    ).toEqual({
+    expect(await detectAgentSession({}, { processes: chainWithAgent })).toEqual({
       by: "process",
       agent: "Gemini CLI",
     });
   });
 
   it("lets a person through, including when the process list cannot be read", async () => {
-    expect(await detectAgentSession({} as NodeJS.ProcessEnv, { processes: plainChain })).toBeNull();
+    expect(await detectAgentSession({}, { processes: plainChain })).toBeNull();
+    expect(await detectAgentSession({}, { processes: async () => null })).toBeNull();
     expect(
-      await detectAgentSession({} as NodeJS.ProcessEnv, { processes: async () => null })
-    ).toBeNull();
-    expect(
-      await detectAgentSession({} as NodeJS.ProcessEnv, {
-        processes: async () => {
-          throw new Error("denied");
-        },
-      })
+      await detectAgentSession(
+        {},
+        {
+          processes: async () => {
+            throw new Error("denied");
+          },
+        }
+      )
     ).toBeNull();
   });
 
   it("refuses with the agent's name and what to do", async () => {
-    await expect(
-      assertNotAgentSession({} as NodeJS.ProcessEnv, { processes: chainWithAgent })
-    ).rejects.toMatchObject({
+    await expect(assertNotAgentSession({}, { processes: chainWithAgent })).rejects.toMatchObject({
       code: "forbidden",
       message: expect.stringContaining("Gemini CLI is running this command"),
       hint: expect.stringContaining("normal terminal tab"),
     });
-    await expect(
-      assertNotAgentSession({} as NodeJS.ProcessEnv, { processes: plainChain })
-    ).resolves.toBeUndefined();
+    await expect(assertNotAgentSession({}, { processes: plainChain })).resolves.toBeUndefined();
   });
 });

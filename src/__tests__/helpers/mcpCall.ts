@@ -27,7 +27,7 @@ export async function callTool(
   const bytes = Buffer.byteLength(JSON.stringify(res), "utf8");
   const content = (res.result as { content?: Array<{ text: string }> } | undefined)?.content;
   const text = content?.[0]?.text ?? "";
-  let json: Record<string, any> | null = null;
+  let json: Record<string, any> | null;
   try {
     const parsed = JSON.parse(text);
     json = parsed && typeof parsed === "object" ? parsed : null;

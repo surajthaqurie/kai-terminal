@@ -1,16 +1,9 @@
 import { CSSProperties, FC, ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { SessionStatus, ShellProfile, TerminalTab } from "../types/terminal";
-import {
-  X,
-  Plus,
-  ChevronDown,
-  Terminal as TerminalIcon,
-  LoaderCircle,
-  CircleAlert,
-  CircleSlash,
-} from "lucide-react";
+import { X, Plus, ChevronDown, LoaderCircle, CircleAlert, CircleSlash } from "lucide-react";
 import { TAB_COLORS, tabColorName, tabColorValue } from "../theme/registry";
 import { PopupMenu, type MenuEntry } from "./PopupMenu";
+import { KaiMark } from "./KaiMark";
 import { WindowControls } from "./WindowControls";
 import { isTauriAvailable } from "../services/ptyService";
 import { useShortcutTitle } from "../hooks/useShortcutHints";
@@ -21,6 +14,8 @@ interface TabBarProps {
   onCloseWindow?: () => void;
   tabs: TerminalTab[];
   activeTabId: string;
+  /** Unread Teams messages per tab id (`kai teams` running in it); shown as a badge. */
+  unreadByTab?: Readonly<Record<string, number>>;
   onSelectTab: (id: string) => void;
   /**
    * A mouse click picked a tab: typing should land in its terminal, not on the
@@ -64,7 +59,7 @@ const STATUS_TEXT: Record<SessionStatus, string> = {
 /**
  * Leading tab icon. Each state has its own shape (not only its own colour):
  * a spinner while the shell starts, an alert when it failed, a slashed circle
- * once it exited, the terminal glyph while it runs.
+ * once it exited, the Kai logo while it runs (dimmed until the shell is started).
  */
 function TabStatusIcon({ status, shown }: { status: SessionStatus; shown: boolean }) {
   const props = { size: 14, className: "tab-icon", "aria-hidden": true } as const;
@@ -76,14 +71,14 @@ function TabStatusIcon({ status, shown }: { status: SessionStatus; shown: boolea
       return shown ? (
         <LoaderCircle {...props} className="tab-icon tab-icon-spin" />
       ) : (
-        <TerminalIcon {...props} className="tab-icon tab-icon-idle" />
+        <KaiMark {...props} className="tab-icon tab-icon-kai tab-icon-idle" />
       );
     case "error":
       return <CircleAlert {...props} />;
     case "disconnected":
       return <CircleSlash {...props} />;
     default:
-      return <TerminalIcon {...props} />;
+      return <KaiMark {...props} className="tab-icon tab-icon-kai" />;
   }
 }
 
@@ -125,6 +120,7 @@ export function isTearOffZone(
 export const TabBar: FC<TabBarProps> = ({
   tabs,
   activeTabId,
+  unreadByTab,
   onSelectTab,
   onTabClicked,
   onCloseTab,
@@ -581,6 +577,9 @@ export const TabBar: FC<TabBarProps> = ({
           const isActive = tab.id === activeTabId;
           const isEditing = editingTabId === tab.id;
           const isDragging = dragId === tab.id;
+          const unread = unreadByTab?.[tab.id] ?? 0;
+          const unreadText =
+            unread > 0 ? `${unread} unread Teams message${unread === 1 ? "" : "s"}` : "";
           return (
             <div key={tab.id} style={{ display: "contents" }}>
               {dragId && dropIndex === index && (
@@ -590,11 +589,11 @@ export const TabBar: FC<TabBarProps> = ({
                 data-tab-id={tab.id}
                 role="tab"
                 aria-selected={isActive}
-                aria-label={`${tab.title}, ${tab.status === "connecting" && !isActive ? "not started" : tab.status}`}
+                aria-label={`${tab.title}, ${tab.status === "connecting" && !isActive ? "not started" : tab.status}${unreadText ? `, ${unreadText}` : ""}`}
                 tabIndex={isActive ? 0 : -1}
                 className={`tab-item ${isActive ? "active" : ""} status-${tab.status}${
                   tab.color ? " has-color" : ""
-                }${isDragging ? " dragging" : ""}${
+                }${unread > 0 ? " has-unread" : ""}${isDragging ? " dragging" : ""}${
                   isDragging && detachArmed ? " detach-armed" : ""
                 }`}
                 style={
@@ -644,6 +643,16 @@ export const TabBar: FC<TabBarProps> = ({
                     }; double-click or right-click to rename`}
                   >
                     {tab.title}
+                  </span>
+                )}
+                {unread > 0 && (
+                  <span
+                    key={unread}
+                    className="tab-unread-badge"
+                    title={unreadText}
+                    aria-hidden="true"
+                  >
+                    {unread > 99 ? "99+" : unread}
                   </span>
                 )}
                 {tabs.length > 1 && (

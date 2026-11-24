@@ -73,9 +73,9 @@ export function loadRecentProjects(): string[] {
   try {
     const raw = localStorage.getItem(RECENT_KEY) || localStorage.getItem(LEGACY_RECENT_KEY);
     if (!raw) return [];
-    const parsed = JSON.parse(raw);
+    const parsed: unknown = JSON.parse(raw);
     return Array.isArray(parsed)
-      ? parsed.filter((x) => typeof x === "string").slice(0, MAX_RECENT)
+      ? parsed.filter((x): x is string => typeof x === "string").slice(0, MAX_RECENT)
       : [];
   } catch {
     return [];
@@ -270,8 +270,8 @@ function withHomeTilde(p: string): string {
     // fall through without tilde
   }
   // Browser (no process.env): try a leading /home/<user> or /Users/<user>.
-  const m = p.match(/^(\/home\/[^/\\]+|\/Users\/[^/\\]+)([/\\]|$)/);
-  if (m) return `~${p.slice(m[1].length) || ""}` || "~";
+  const m = /^(\/home\/[^/\\]+|\/Users\/[^/\\]+)([/\\]|$)/.exec(p);
+  if (m) return `~${p.slice(m[1].length)}`;
   return p;
 }
 

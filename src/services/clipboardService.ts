@@ -38,6 +38,9 @@ export async function copyTextToClipboard(text: string): Promise<boolean> {
     field.style.opacity = "0";
     document.body.appendChild(field);
     field.select();
+    // The fallback when the Clipboard API is denied or missing: deprecated, but it is still the
+    // only way to copy without that permission.
+    // eslint-disable-next-line @typescript-eslint/no-deprecated
     const ok = document.execCommand("copy");
     field.remove();
     return ok;

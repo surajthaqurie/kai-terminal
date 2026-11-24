@@ -907,8 +907,8 @@ export function toolReadRange(ctx: ToolContext, args: Record<string, unknown>): 
   }
 
   // Resolve the symbol (if any) to a single definition before touching disk.
-  let startLine = 0;
-  let endLine = 0;
+  let startLine: number;
+  let endLine: number;
   let symbolInfo: Record<string, unknown> | undefined;
   let symbolSpan = false;
   if (symbolArg) {
@@ -1039,7 +1039,7 @@ export function toolReadRange(ctx: ToolContext, args: Record<string, unknown>): 
     return fail(`out-of-range: file has ${totalLines} lines, endLine is ${endLine}`);
   }
 
-  let from = Math.max(1, startLine - contextLines);
+  const from = Math.max(1, startLine - contextLines);
   let to = Math.min(totalLines, Math.max(endLine, startLine) + contextLines);
   let truncated = false;
   if (to - from + 1 > maxLines) {
@@ -1056,19 +1056,15 @@ export function toolReadRange(ctx: ToolContext, args: Record<string, unknown>): 
   let used = 0;
   for (let n = from; n <= to; n++) {
     let line = lines[n - 1];
-    let cost = jsonEscapedBytes(line) + 2; // +2: the escaped "\n" joining it to the next line
+    const cost = jsonEscapedBytes(line) + 2; // +2: the escaped "\n" joining it to the next line
     if (used + cost > sourceBudget) {
       if (picked.length === 0) {
         // One very long line: cut it rather than return nothing.
         line = clipEscapedBytes(line, Math.max(0, sourceBudget - 2));
-        cost = jsonEscapedBytes(line) + 2;
         picked.push(line);
-        used += cost;
-        to = n;
         truncated = true;
         break;
       }
-      to = n - 1;
       truncated = true;
       break;
     }

@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
-import { createElement } from "react";
+import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { act } from "react-dom/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS } from "../services/settingsService";
 import type { ShellProfile } from "../types/terminal";
@@ -19,6 +18,8 @@ const notes: string[] = [];
 let openedIn = "/";
 const createCalls: Array<{ shell_path?: string; args?: string[]; cwd?: string }> = [];
 let listenerDelayMs = 0;
+/** When set, the output listener registers only once this resolves (the test decides when). */
+let listenerGate: Promise<void> | null = null;
 type CreateReq = { shell_path?: string; args?: string[]; cwd?: string };
 /** Per-test override of create_pty (failures, slow spawns). */
 let createImpl: ((req: CreateReq, n: number) => Promise<unknown>) | null = null;
@@ -94,12 +95,14 @@ vi.mock("@xterm/addon-webgl", () => ({
   },
 }));
 const slowListener = () =>
-  new Promise<() => void>((resolve) =>
-    setTimeout(() => {
+  new Promise<() => void>((resolve) => {
+    const ready = () => {
       log.push("listener-ready");
       resolve(() => {});
-    }, listenerDelayMs)
-  );
+    };
+    if (listenerGate) void listenerGate.then(ready);
+    else setTimeout(ready, listenerDelayMs);
+  });
 
 vi.mock("../services/ptyService", () => ({
   isTauriAvailable: () => true,
@@ -144,7 +147,7 @@ beforeEach(() => {
     observe() {}
     unobserve() {}
     disconnect() {}
-  } as unknown as typeof ResizeObserver;
+  };
   Object.defineProperty(HTMLElement.prototype, "clientWidth", { configurable: true, value: 800 });
   Object.defineProperty(HTMLElement.prototype, "clientHeight", { configurable: true, value: 400 });
   log.length = 0;
@@ -152,6 +155,7 @@ beforeEach(() => {
   openedIn = "/";
   createCalls.length = 0;
   listenerDelayMs = 0;
+  listenerGate = null;
   createImpl = null;
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -220,11 +224,16 @@ describe("first spawn waits for the configured shell (FUNC-05)", () => {
 
 describe("a shell starts only after the pane listens for its output (REL-09)", () => {
   it("holds create_pty until the Tauri listeners are registered", async () => {
-    listenerDelayMs = 300; // a busy main thread on a cold start
+    // A busy main thread on a cold start: the listener registers only when the test says so, so
+    // the outcome never depends on how long the machine takes to run the timers (a timed delay
+    // made this flaky under load).
+    let release!: () => void;
+    listenerGate = new Promise<void>((r) => (release = r));
     await render({ selectedShell: PWSH, shellsReady: true });
-    await tick(200);
-    expect(log).not.toContain("create_pty"); // the 60 ms timer fired; the spawn is waiting
-    await tick(300);
+    await tick(300); // well past the 60 ms spawn timer, well inside the 2 s listener bound
+    expect(log).not.toContain("create_pty"); // the spawn is waiting for the listener
+    await act(async () => release());
+    await tick(100);
     expect(log.indexOf("listener-ready")).toBeGreaterThanOrEqual(0);
     expect(log.indexOf("create_pty")).toBeGreaterThan(log.indexOf("listener-ready"));
   });

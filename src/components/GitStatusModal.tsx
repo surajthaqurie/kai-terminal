@@ -70,7 +70,11 @@ export const GitStatusModal: FC<GitStatusModalProps> = ({ dir, output, onClose }
         </div>
         <div className="modal-footer">
           <div className="footer-actions">
-            <button type="button" className="btn btn-secondary btn-small" onClick={handleCopy}>
+            <button
+              type="button"
+              className="btn btn-secondary btn-small"
+              onClick={() => void handleCopy()}
+            >
               {copied ? <Check size={13} /> : <Copy size={13} />}
               <span>{copied ? "Copied!" : "Copy"}</span>
             </button>

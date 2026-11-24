@@ -1,4 +1,4 @@
-import { memo, useMemo, useRef, type MutableRefObject, type ReactNode } from "react";
+import { memo, useMemo, useRef, type RefObject, type ReactNode } from "react";
 import {
   PaneRect,
   clampPaneFraction,
@@ -16,6 +16,7 @@ import type {
 } from "../types/terminal";
 import { resolvePaneShell } from "../services/paneShell";
 import { TerminalView, type TerminalViewRef } from "./TerminalView";
+import { PaneExitBar } from "./PaneExitBar";
 
 interface TabPanesProps {
   tab: TerminalTab;
@@ -30,12 +31,17 @@ interface TabPanesProps {
   skipShellProfile: boolean;
   settings: UserSettings;
   /** Terminal handles keyed by pane id (toolbar actions, refit). */
-  terminalRefs: MutableRefObject<Record<string, TerminalViewRef | null>>;
+  terminalRefs: RefObject<Record<string, TerminalViewRef | null>>;
   onFocusPane: (tabId: string, paneId: string) => void;
   /** Code Mode of one pane (project path) or `null` when it ends. */
   onCodeModeChange: (paneId: string, project: string | null) => void;
+  /** Unread Teams messages in one pane (0 when `kai teams` is not running there). */
+  onTeamsUnreadChange?: (paneId: string, count: number) => void;
   onCwdResolved: (tabId: string, paneId: string, cwd: string) => void;
   onExit: (tabId: string, paneId: string, exitCode?: number) => void;
+  /** Restart / Close on a pane whose shell exited with a failure (FUNC-09). */
+  onRestartPane: (tabId: string, paneId: string) => void;
+  onClosePane: (tabId: string, paneId: string) => void;
   onStatusChange: (tabId: string, paneId: string, status: SessionStatus, message?: string) => void;
   onResizeSplit: (tabId: string, splitId: string, ratio: number) => void;
 }
@@ -74,8 +80,11 @@ export const TabPanes = memo(function TabPanes({
   terminalRefs,
   onFocusPane,
   onCodeModeChange,
+  onTeamsUnreadChange,
   onCwdResolved,
   onExit,
+  onRestartPane,
+  onClosePane,
   onStatusChange,
   onResizeSplit,
 }: TabPanesProps) {
@@ -168,12 +177,20 @@ export const TabPanes = memo(function TabPanes({
           adopt={pane.adopt}
           onFocus={focusPane}
           onCodeModeChange={(project) => onCodeModeChange(pane.id, project)}
+          onTeamsUnreadChange={(count) => onTeamsUnreadChange?.(pane.id, count)}
           onCwdResolved={(resolved) => onCwdResolved(tab.id, pane.id, resolved)}
           onExit={(exitCode) => onExit(tab.id, pane.id, exitCode)}
           onSessionStatusChange={(status, message) =>
             onStatusChange(tab.id, pane.id, status, message)
           }
         />
+        {pane.exited && (
+          <PaneExitBar
+            code={pane.exited.code}
+            onRestart={() => onRestartPane(tab.id, pane.id)}
+            onClose={() => onClosePane(tab.id, pane.id)}
+          />
+        )}
       </div>
     );
   };

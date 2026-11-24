@@ -81,12 +81,12 @@ export class Service${i} { execute() { return processItem${i}({ id: ${i}, name: 
       const indexStat = fs.statSync(path.join(storageDir, "index.json"));
       const indexSizeKb = Math.round(indexStat.size / 1024);
 
-      // 5. Concurrent Requests (20 parallel retrieval calls)
+      // 5. 20 retrieval calls back to back (retrieveContext is synchronous, so there is nothing to
+      // run in parallel; Promise.all over its results only wrapped plain values).
       const concStart = performance.now();
-      const concurrentQueries = Array.from({ length: 20 }, (_, i) =>
+      const concurrentResults = Array.from({ length: 20 }, (_, i) =>
         retrieveContext(index2, `processItem${i % 10}`, { tokenBudget: 4000 })
       );
-      const concurrentResults = await Promise.all(concurrentQueries);
       const tConcurrent20Ms = Math.round(performance.now() - concStart);
 
       const mem = process.memoryUsage();

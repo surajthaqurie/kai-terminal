@@ -738,7 +738,7 @@ function findStatementEnd(code: string, from: number): number {
       const nc = code[next];
       if (nc === undefined) return last;
       if (nc === "}" || nc === ")" || nc === "]") return last;
-      if (/[.?:+\-*/%&|,=<>(\[`]/.test(nc)) continue;
+      if (/[.?:+\-*/%&|,=<>([`]/.test(nc)) continue;
       return last;
     }
   }
@@ -858,7 +858,7 @@ function functionValue(
     const close = src.matchClose(header.body);
     return { signatureEnd: header.body, end: close < 0 ? undefined : close };
   }
-  let afterParams = -1;
+  let afterParams: number;
   const identArrow = /^[A-Za-z_$][\w$]*\s*=>/.exec(code.slice(p, p + 80));
   if (identArrow) {
     afterParams = p + identArrow[0].length - 2;
@@ -1105,7 +1105,7 @@ function detectTsStatement(
     const assign = findAssignment(code, p + m[0].length);
     let kind: SymbolKind = /^[A-Z0-9_]+$/.test(name) ? "constant" : "variable";
     let end: number | undefined;
-    let sigEnd = Math.min(code.length, p + m[0].length);
+    let sigEnd: number;
     if (assign >= 0) {
       const fn = functionValue(src, assign + 1);
       if (fn) {

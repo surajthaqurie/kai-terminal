@@ -191,10 +191,9 @@ export async function executeAgentWorkflow(
   }
 
   // 3. Ensure baseline index & project graph
-  let baseline = loadProjectIndex(meta.id);
-  if (!baseline) {
+  if (!loadProjectIndex(meta.id)) {
     console.log(`[kai] Indexing project for Code Mode run...`);
-    baseline = await indexProject(meta);
+    await indexProject(meta);
   }
 
   // 4. Resolve executable binary
@@ -244,13 +243,14 @@ export async function executeAgentWorkflow(
   process.once("SIGTERM", onInterrupt);
   let agentExitCode: number | null = 0;
   let agentTimedOut = false;
-  let agentSignal: string | null = null;
+  // Typed by assertion: it is set inside a callback, which narrowing cannot see.
+  let agentSignal = null as string | null;
   let agentDescendantsMaySurvive = true;
   try {
     const outcome = await runCodeTaskWithAutoSync(
       meta,
       async () => {
-        const target = resolveSpawnTarget(binaryToRun!, finalArgs);
+        const target = resolveSpawnTarget(binaryToRun, finalArgs);
         const result = await runExternalAgentCommand(target.command, target.args, {
           // Marks the agent's session, so `kai teams` and `kai integration teams`
           // refuse to run inside it: your Teams sign-in is not the agent's.

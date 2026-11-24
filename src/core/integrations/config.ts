@@ -156,7 +156,7 @@ function parseBinding(raw: string): ProjectBinding | null {
         provider: v.provider,
         account: v.account,
         project: v.project,
-        repo: v.repo as string | null,
+        repo: v.repo,
         boundAt: typeof v.boundAt === "string" ? v.boundAt : "",
         ...(rules ? { rules } : {}),
         // Only an explicit `true` counts: anything else, or a hand-edit, stays off.
@@ -234,7 +234,7 @@ function boundProjects(accountId: string): BoundProject[] {
   const out: BoundProject[] = [];
   for (const id of entries) {
     const file = path.join(projectsDir, id, BINDING_FILE);
-    let binding: ProjectBinding | null = null;
+    let binding: ProjectBinding | null;
     let label = `project ${id}`;
     try {
       const raw = fs.readFileSync(file, "utf8");

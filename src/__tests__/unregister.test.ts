@@ -317,7 +317,7 @@ describe("context budget hard enforcement", () => {
     // The footer is self-referential (the counts include their own digits),
     // so it lags the final string by the width of the footer line itself —
     // but it must be a live measurement, never the initial zeros.
-    const footerChars = Number(renderedPrompt.match(/Chars: (\d+)/)?.[1] ?? NaN);
+    const footerChars = Number(/Chars: (\d+)/.exec(renderedPrompt)?.[1] ?? NaN);
     expect(Number.isFinite(footerChars)).toBe(true);
     expect(footerChars).toBeGreaterThan(0);
     expect(Math.abs(footerChars - measured.characterCount)).toBeLessThanOrEqual(20);

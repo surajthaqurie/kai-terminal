@@ -52,11 +52,11 @@ export interface TerminalOutputPipeline {
    * Queues output and schedules a flush. `counted`: the backend counted these bytes as
    * sent to this pane (a live event) and expects them acknowledged.
    */
-  push(data: string, counted?: boolean): void;
-  /** Writes everything pending now (show-time paint, exit, hand-off release). */
-  flush(): void;
+  push: (data: string, counted?: boolean) => void;
+  /** Writes everything pending now (show-time paint, exit, hand-off release). A closure: safe to pass on its own. */
+  flush: () => void;
   /** Cancels scheduled work and pending acknowledgements; the pane is going away. */
-  dispose(): void;
+  dispose: () => void;
 }
 
 export interface TerminalOutputPipelineOptions {

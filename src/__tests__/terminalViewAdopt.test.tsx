@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
-import { createElement, createRef } from "react";
+import { act, createElement, createRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { act } from "react-dom/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PaneAdoption } from "../types/terminal";
 import type { HandoffRelease } from "../services/terminalWindows";
@@ -127,8 +126,10 @@ vi.mock("../services/terminalWindows", () => ({
   isSecondaryTerminalWindow: () => false,
 }));
 
+// async: React 19 returns a thenable for act() either way, and awaiting it flushes pending
+// work; an async callback makes the types say so (@types/react types the sync form as void).
 const emitOutput = (id: string, data: string) =>
-  act(() => outputListeners.forEach((l) => l({ id, data })));
+  act(async () => outputListeners.forEach((l) => l({ id, data })));
 
 const adoption: PaneAdoption = { ptyId: "pty-moved", snapshot: "SCREEN", cols: 120, rows: 40 };
 const none: HandoffRelease = { data: [], exited: false, exit_code: null };
@@ -141,7 +142,7 @@ beforeEach(() => {
     observe() {}
     unobserve() {}
     disconnect() {}
-  } as unknown as typeof ResizeObserver;
+  };
   terminals.length = 0;
   outputListeners.clear();
   exitListeners.clear();
@@ -319,11 +320,11 @@ describe("TerminalView handing its shell to another window", () => {
     expect((await ref.current!.handoffCapture())!.snapshot).toBe("SNAPSHOT(scrollback=500)");
   });
 
-  it("caps the scrollback it carries over", async () => {
+  it("carries the whole default scrollback, not just the newest 4,000 rows (REL-08)", async () => {
     const { ref } = await attached();
-    terminals[0].options.scrollback = 100_000;
+    terminals[0].options.scrollback = 10_000; // the default setting
     const cap = await ref.current!.handoffCapture();
-    expect(cap!.snapshot).toBe("SNAPSHOT(scrollback=4000)");
+    expect(cap!.snapshot).toBe("SNAPSHOT(scrollback=10000)");
   });
 
   it("lets go of the session WITHOUT closing it, so the new window keeps the shell", async () => {

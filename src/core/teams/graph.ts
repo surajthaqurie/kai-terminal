@@ -347,6 +347,8 @@ export interface ChatInfo {
   lastFromId: string;
   /** When you last read the chat in any Teams client (ISO), or "". */
   lastReadAt: string;
+  /** The other people in the chat, by display name (for search). */
+  members?: string[];
 }
 
 /** One page of a conversation's messages, oldest first. */
@@ -528,6 +530,7 @@ export class GraphClient {
           lastAt: str(preview.createdDateTime),
           lastFromId: str(obj(obj(preview.from).user).id),
           lastReadAt: str(obj(c.viewpoint).lastMessageReadDateTime),
+          members: others,
         };
       });
   }
@@ -677,7 +680,7 @@ export class GraphClient {
       if (reply.status === 200 || reply.status === 201) {
         onProgress?.(total, total);
         try {
-          return obj(JSON.parse(reply.text)) as Json;
+          return obj(JSON.parse(reply.text));
         } catch {
           return fail(
             new IntegrationError("bad_request", "OneDrive returned an unreadable response.")

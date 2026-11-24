@@ -25,7 +25,7 @@ import {
   type HostRecord,
   type WireEvent,
 } from "./client";
-import { fromWireTokens } from "./events";
+import { fromWireTokens, textOf } from "./events";
 import { HostStore, sharedAgentDir } from "./hostStore";
 import { HostServer, HttpError, PortInUseError, isPortFree } from "./hostServer";
 import { allowedOrigin, buildInviteLink, parseInviteLink, parsePublicUrl } from "./invite";
@@ -41,7 +41,6 @@ import {
   isSharedAgentId,
   parseGrants,
   type AgentView,
-  type InviteMinutes,
   type JoinedHost,
   type SharedAgentEvent,
   type SharedAgentRequest,
@@ -238,7 +237,7 @@ export class SharedAgentService {
         }
         const port = this.host.port;
         if (port === null) throw new BadRequest("Turn sharing on first.");
-        const invite = this.host.createInvite(req.expiresMinutes as InviteMinutes);
+        const invite = this.host.createInvite(req.expiresMinutes);
         const ip = lanAddresses(this.deps.networks?.())[0] ?? "127.0.0.1";
         const publicUrl = this.host.publicUrl;
         return {
@@ -437,33 +436,33 @@ export class SharedAgentService {
   private forward(chat: ChatState, ev: WireEvent): WireEvent | null {
     switch (ev.type) {
       case "text":
-        this.emitChat(chat.id, "text", { text: String(ev.text ?? "") });
+        this.emitChat(chat.id, "text", { text: textOf(ev.text) });
         break;
       case "delta":
         // A piece of the answer as it is written (newer hosts); `text` follows with the whole block.
-        this.emitChat(chat.id, "delta", { text: String(ev.text ?? "") });
+        this.emitChat(chat.id, "delta", { text: textOf(ev.text) });
         break;
       case "tool":
         this.emitChat(chat.id, "tool", {
-          name: String(ev.name ?? "tool"),
-          detail: String(ev.detail ?? ""),
+          name: textOf(ev.name, "tool"),
+          detail: textOf(ev.detail),
         });
         break;
       case "tool_result":
         this.emitChat(chat.id, "tool_result", {
           error: ev.error === true,
-          text: String(ev.text ?? ""),
+          text: textOf(ev.text),
         });
         break;
       case "denied":
         this.emitChat(chat.id, "denied", {
-          tool: String(ev.tool ?? "tool"),
-          text: String(ev.text ?? ""),
+          tool: textOf(ev.tool, "tool"),
+          text: textOf(ev.text),
         });
         break;
       case "log":
       case "error":
-        this.emitChat(chat.id, "log", { text: String(ev.text ?? "") });
+        this.emitChat(chat.id, "log", { text: textOf(ev.text) });
         break;
       case "end":
         return ev;
@@ -479,8 +478,8 @@ export class SharedAgentService {
     sessionId?: string
   ): { status: string; tokens: TokenTotals; costUsd: unknown } {
     const tokens = fromWireTokens(end?.tokens);
-    const status = chat.stopped ? "stopped" : String(end?.status ?? "failed");
-    const error = String(end?.error ?? "");
+    const status = chat.stopped ? "stopped" : textOf(end?.status, "failed");
+    const error = textOf(end?.error);
     this.emitChat(chat.id, "end", {
       status,
       error,

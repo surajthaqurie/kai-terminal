@@ -59,7 +59,7 @@ export async function detectAgentSession(
 ): Promise<AgentDetection | null> {
   const marker = agentSessionMarker(env);
   if (marker) return { by: "environment", agent: marker };
-  let chain: ProcessInfo[] | null = null;
+  let chain: ProcessInfo[] | null;
   try {
     chain = await (deps.processes ?? ancestorChain)();
   } catch {

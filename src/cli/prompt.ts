@@ -54,7 +54,7 @@ export async function readAllStdin(maxBytes = 64 * 1024): Promise<string> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of process.stdin) {
-    const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    const buf: Buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string);
     size += buf.length;
     if (size > maxBytes) throw new Error(`Input exceeds ${maxBytes} bytes.`);
     chunks.push(buf);

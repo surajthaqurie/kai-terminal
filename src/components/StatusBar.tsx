@@ -269,10 +269,14 @@ export const StatusBar: FC<StatusBarProps> = ({
     dragStartXRef.current = null;
     try {
       e.currentTarget.releasePointerCapture(e.pointerId);
-    } catch {}
+    } catch {
+      // Nothing is held (already released, or never captured): nothing to undo.
+    }
     try {
       localStorage.setItem("kai_music_footer_drag_x", String(dragXRef.current));
-    } catch {}
+    } catch {
+      // Storage unavailable or full: the setting just is not remembered.
+    }
   };
 
   const handleMusicToggle = () => {

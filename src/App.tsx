@@ -39,8 +39,10 @@ import { useProjectActions } from "./hooks/useProjectActions";
 import { useSessionExit } from "./hooks/useSessionExit";
 import { useCloseGuard } from "./hooks/useCloseGuard";
 import { useSessionPersistence } from "./hooks/useSessionPersistence";
+import { useExtraWindowLayout } from "./hooks/useExtraWindowLayout";
 import { useTabDetach } from "./hooks/useTabDetach";
 import { useTabs } from "./hooks/useTabs";
+import { useTeamsUnread } from "./hooks/useTeamsUnread";
 import { useTerminalConfig } from "./hooks/useTerminalConfig";
 import { shouldRestoreTerminalFocus, useWindowRefit } from "./hooks/useWindowRefit";
 import { resolvePaneShell } from "./services/paneShell";
@@ -51,7 +53,7 @@ import { RELEASES_PAGE_URL } from "./services/updateService";
 import {
   isSecondaryTerminalWindow,
   openTerminalWindow,
-  type TabSeed,
+  type WindowSeed,
 } from "./services/terminalWindows";
 import type { ShellProfile, SplitDirection, TerminalTab } from "./types/terminal";
 
@@ -61,7 +63,7 @@ import type { ShellProfile, SplitDirection, TerminalTab } from "./types/terminal
  * pane grid, lazy modals and status bar. State lives in `src/hooks`; this
  * component only composes it.
  */
-function App({ initialSeed = null }: { initialSeed?: TabSeed | null }) {
+function App({ initialSeed = null }: { initialSeed?: WindowSeed | null }) {
   // An extra window (opened with Ctrl+Shift+N, or by dragging a tab out) shares
   // this process with the first one. What must stay single belongs to the first
   // window only: the saved layout, the music player and the update checks.
@@ -99,6 +101,7 @@ function App({ initialSeed = null }: { initialSeed?: TabSeed | null }) {
     setLastError: reportError,
     isSettingsOpen,
   });
+  const { setSelectedShellId: configSetSelectedShellId } = config;
   const { userSettings } = config;
   const music = useMusicPlayer({ showMusicPlayer: !secondary && userSettings.showMusicPlayer });
 
@@ -107,6 +110,13 @@ function App({ initialSeed = null }: { initialSeed?: TabSeed | null }) {
     setLastError,
     initialSeed,
   });
+  // Stable callbacks as plain names, so hook dependency lists name exactly what they use.
+  const {
+    newTab: tabsNewTab,
+    splitPane: tabsSplitPane,
+    closeActivePane: tabsCloseActivePane,
+    setPaneShell: tabsSetPaneShell,
+  } = tabsState;
   const {
     tabs,
     setTabs,
@@ -178,34 +188,35 @@ function App({ initialSeed = null }: { initialSeed?: TabSeed | null }) {
 
   const newTabAndFocus = useCallback(
     (opts?: { cwd?: string }) => {
-      tabsState.newTab(opts);
+      tabsNewTab(opts);
       focusActiveTerminalSoon();
     },
-    [tabsState.newTab, focusActiveTerminalSoon]
+    [tabsNewTab, focusActiveTerminalSoon]
   );
 
   /** A split makes the new pane active, so type-ahead must land in it, not the pane it came from. */
   const splitPaneAndFocus = useCallback(
     (direction: SplitDirection) => {
-      tabsState.splitPane(direction);
+      tabsSplitPane(direction);
       focusActiveTerminalSoon();
     },
-    [tabsState.splitPane, focusActiveTerminalSoon]
+    [tabsSplitPane, focusActiveTerminalSoon]
   );
 
   /** "+ ▾" menu: the chosen shell becomes the default for new tabs and opens one now. */
   const newTabWithShell = useCallback(
     (shell: ShellProfile) => {
-      config.setSelectedShellId(shell.id);
-      tabsState.newTab({ shellPath: shell.path });
+      configSetSelectedShellId(shell.id);
+      tabsNewTab({ shellPath: shell.path });
       focusActiveTerminalSoon();
     },
-    [config.setSelectedShellId, tabsState.newTab, focusActiveTerminalSoon]
+    [configSetSelectedShellId, tabsNewTab, focusActiveTerminalSoon]
   );
 
   /** Active project dir: the focused pane's folder, else its tab's. Empty until a new shell reports one. */
   const effectiveProjectDir = resolveEffectiveProjectDir(activePane?.cwd, activeTab?.cwd);
 
+  const { setPaneUnread, unreadByTab } = useTeamsUnread(tabs);
   const { setPaneCodeMode, modeDisplay } = useCodeMode({
     activePaneId,
     onOpenProject: tabsState.openOrFocusDir,
@@ -241,8 +252,13 @@ function App({ initialSeed = null }: { initialSeed?: TabSeed | null }) {
     shellsRef: config.shellsRef,
     selectedShellIdRef: config.selectedShellIdRef,
     setLastError,
-    notify: tabsState.showPaneNotice,
   });
+  const {
+    markRestarted: exitMarkRestarted,
+    handleSessionExit: exitHandleSessionExit,
+    restartExitedPane: exitRestartExitedPane,
+    closeExitedPane: exitCloseExitedPane,
+  } = sessionExit;
   const persistence = useSessionPersistence({
     tabs,
     setTabs,
@@ -251,6 +267,8 @@ function App({ initialSeed = null }: { initialSeed?: TabSeed | null }) {
     autoRestoreSession: userSettings.autoRestoreSession,
     enabled: !secondary,
   });
+  // The other windows save their tabs too, so the next launch can bring them back (FUNC-07).
+  useExtraWindowLayout({ tabs, activeTabId, enabled: secondary });
   const updates = useAppUpdates({
     autoCheckUpdates: secondary ? false : userSettings.autoCheckUpdates,
     setLastError: reportError,
@@ -264,9 +282,9 @@ function App({ initialSeed = null }: { initialSeed?: TabSeed | null }) {
   // Closing a pane keeps the same tab, so the tab-change focus hand-off never runs: the closed
   // pane's input is gone and typing went nowhere until a click (FUNC-10). Hand focus over here.
   const closeActivePaneAndFocus = useCallback(() => {
-    tabsState.closeActivePane();
+    tabsCloseActivePane();
     focusActiveTerminalSoon();
-  }, [tabsState.closeActivePane, focusActiveTerminalSoon]);
+  }, [tabsCloseActivePane, focusActiveTerminalSoon]);
   const closeGuard = useCloseGuard({
     tabsRef,
     activeTabIdRef,
@@ -325,25 +343,34 @@ function App({ initialSeed = null }: { initialSeed?: TabSeed | null }) {
   const changeActiveShell = useCallback(
     (shell: ShellProfile) => {
       if (!activeTabId || !activePaneId) return;
-      sessionExit.markRestarted(activeTabId);
-      tabsState.setPaneShell(activeTabId, activePaneId, shell.path);
+      exitMarkRestarted(activeTabId);
+      tabsSetPaneShell(activeTabId, activePaneId, shell.path);
       focusActiveTerminalSoon();
     },
-    [
-      activeTabId,
-      activePaneId,
-      sessionExit.markRestarted,
-      tabsState.setPaneShell,
-      focusActiveTerminalSoon,
-    ]
+    [activeTabId, activePaneId, exitMarkRestarted, tabsSetPaneShell, focusActiveTerminalSoon]
   );
 
   const handleSessionExit = useCallback(
     (tabId: string, paneId: string, exitCode?: number) => {
-      sessionExit.handleSessionExit(tabId, paneId, exitCode);
+      exitHandleSessionExit(tabId, paneId, exitCode);
       focusActiveTerminalSoon();
     },
-    [sessionExit.handleSessionExit, focusActiveTerminalSoon]
+    [exitHandleSessionExit, focusActiveTerminalSoon]
+  );
+  // Restart / Close on a pane whose shell failed (FUNC-09); the keyboard follows either way.
+  const restartExitedPane = useCallback(
+    (tabId: string, paneId: string) => {
+      exitRestartExitedPane(tabId, paneId);
+      focusActiveTerminalSoon();
+    },
+    [exitRestartExitedPane, focusActiveTerminalSoon]
+  );
+  const closeExitedPane = useCallback(
+    (tabId: string, paneId: string) => {
+      exitCloseExitedPane(tabId, paneId);
+      focusActiveTerminalSoon();
+    },
+    [exitCloseExitedPane, focusActiveTerminalSoon]
   );
 
   const toggleSearch = useCallback(() => getActiveTerminal()?.toggleSearch(), [getActiveTerminal]);
@@ -446,7 +473,9 @@ function App({ initialSeed = null }: { initialSeed?: TabSeed | null }) {
     checkUpdates: () => void updates.checkUpdates(true),
     closeActiveTab: () => closeGuard.requestCloseTab(activeTabId),
     toggleSearch,
-    copySelection: () => getActiveTerminal()?.copySelection(),
+    copySelection: () => {
+      void getActiveTerminal()?.copySelection();
+    },
     pasteClipboard: () => void pasteFromClipboard(),
     clearTerminal: () => getActiveTerminal()?.clear(),
     openAiCli,
@@ -462,6 +491,7 @@ function App({ initialSeed = null }: { initialSeed?: TabSeed | null }) {
           <TabBar
             tabs={tabs}
             activeTabId={activeTabId}
+            unreadByTab={unreadByTab}
             onSelectTab={setActiveTabId}
             onTabClicked={focusActiveTerminalSoon}
             onCloseTab={closeGuard.requestCloseTab}
@@ -524,7 +554,8 @@ function App({ initialSeed = null }: { initialSeed?: TabSeed | null }) {
 
         <div className="app-body">
           <SessionBanners
-            pendingRestoreCount={persistence.pendingRestore?.length ?? 0}
+            pendingRestoreCount={persistence.offerTabCount}
+            pendingRestoreWindows={persistence.offerWindowCount}
             onRestoreSession={persistence.restoreSession}
             onDismissRestore={persistence.dismissRestore}
             paneNotice={tabsState.paneNotice}
@@ -547,8 +578,11 @@ function App({ initialSeed = null }: { initialSeed?: TabSeed | null }) {
               terminalRefs={terminalRefs}
               onFocusPane={tabsState.focusPane}
               onCodeModeChange={setPaneCodeMode}
+              onTeamsUnreadChange={setPaneUnread}
               onCwdResolved={handleCwdResolved}
               onExit={handleSessionExit}
+              onRestartPane={restartExitedPane}
+              onClosePane={closeExitedPane}
               onStatusChange={tabsState.setPaneStatus}
               onResizeSplit={tabsState.resizeSplit}
             />
@@ -686,7 +720,7 @@ function App({ initialSeed = null }: { initialSeed?: TabSeed | null }) {
           currentShell={activePaneShell}
           onChangeShell={changeActiveShell}
           mode={modeDisplay}
-          onOpenEditor={project.openEditor}
+          onOpenEditor={(editorBinary) => void project.openEditor(editorBinary)}
           editorPath={userSettings.editorPath}
           installedEditors={project.installedEditors}
           isLoadingEditors={project.isLoadingEditors}

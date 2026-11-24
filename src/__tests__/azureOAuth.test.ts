@@ -69,7 +69,7 @@ const browserReturning =
 describe("clientIdFrom", () => {
   it("explains how to set the app registration when none is configured", () => {
     try {
-      clientIdFrom({} as NodeJS.ProcessEnv);
+      clientIdFrom({});
       expect.unreachable();
     } catch (err) {
       expect((err as IntegrationError).code).toBe("config");
@@ -78,7 +78,7 @@ describe("clientIdFrom", () => {
       expect((err as IntegrationError).hint).toContain("KAI_AZURE_CLIENT_ID");
     }
     try {
-      clientIdFrom({ KAI_AZURE_CLIENT_ID: "not-a-guid" } as NodeJS.ProcessEnv);
+      clientIdFrom({ KAI_AZURE_CLIENT_ID: "not-a-guid" });
       expect.unreachable();
     } catch (err) {
       expect((err as IntegrationError).code).toBe("config");
@@ -93,10 +93,8 @@ describe("clientIdFrom", () => {
 
 describe("browserSignInAvailable", () => {
   it("is true only when a valid app id is configured", () => {
-    expect(browserSignInAvailable({} as NodeJS.ProcessEnv)).toBe(false);
-    expect(browserSignInAvailable({ KAI_AZURE_CLIENT_ID: "not-a-guid" } as NodeJS.ProcessEnv)).toBe(
-      false
-    );
+    expect(browserSignInAvailable({})).toBe(false);
+    expect(browserSignInAvailable({ KAI_AZURE_CLIENT_ID: "not-a-guid" })).toBe(false);
     expect(browserSignInAvailable(env)).toBe(true);
   });
 });
@@ -219,9 +217,9 @@ describe("signInWithBrowser", () => {
 
   it("never opens the browser when the app registration is missing", async () => {
     const openUrl = vi.fn();
-    await expect(
-      signInWithBrowser({}, { env: {} as NodeJS.ProcessEnv, openUrl })
-    ).rejects.toMatchObject({ code: "config" });
+    await expect(signInWithBrowser({}, { env: {}, openUrl })).rejects.toMatchObject({
+      code: "config",
+    });
     expect(openUrl).not.toHaveBeenCalled();
   });
 });

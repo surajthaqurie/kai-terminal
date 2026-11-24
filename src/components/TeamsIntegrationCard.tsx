@@ -19,6 +19,7 @@ import {
   teamsBadge,
 } from "./teamsViewModel";
 import { formatError, initialsOf } from "./integrationsViewModel";
+import { SECRET_FILE_NOTE } from "./secretFileNote";
 
 type Busy = "load" | "connect" | "channels" | "verify" | "logout" | "client-id" | null;
 
@@ -119,11 +120,10 @@ export const TeamsIntegrationCard: FC = () => {
       }
       setStatus(res.value);
       const who = res.value.account ? describeTeamsAccount(res.value.account) : "your account";
-      setNotice(
-        !res.value.channelHistory
-          ? `Signed in as ${who}. Channel messages need admin approval.`
-          : `Signed in as ${who}.`
-      );
+      const signedIn = !res.value.channelHistory
+        ? `Signed in as ${who}. Channel messages need admin approval.`
+        : `Signed in as ${who}.`;
+      setNotice(res.value.storedIn === "file" ? `${signedIn} ${SECRET_FILE_NOTE}` : signedIn);
     });
 
   const copySignInUrl = () => {

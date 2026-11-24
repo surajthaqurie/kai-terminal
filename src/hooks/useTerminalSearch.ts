@@ -24,13 +24,14 @@ export interface TerminalSearch {
   /** Match count from the last find (null: no search yet, or cleared). */
   results: SearchResults | null;
   /** Opens or closes the bar (shortcut, palette, header button). */
-  toggle(): void;
-  close(): void;
-  search(term: string, options: SearchOptions): void;
-  next(term: string, options: SearchOptions): void;
-  previous(term: string, options: SearchOptions): void;
+  // Closures, not methods: each can be passed on its own (e.g. as a SearchBar callback).
+  toggle: () => void;
+  close: () => void;
+  search: (term: string, options: SearchOptions) => void;
+  next: (term: string, options: SearchOptions) => void;
+  previous: (term: string, options: SearchOptions) => void;
   /** The terminal is being torn down: forget the add-on (a late load is dropped). */
-  reset(): void;
+  reset: () => void;
 }
 
 export function useTerminalSearch(terminal: () => Terminal | null, theme: string): TerminalSearch {

@@ -460,8 +460,8 @@ export function buildPythonLayout(root: string, indexedPaths: Iterable<string>):
       path.join(root, dir, kind === "pyproject" ? "pyproject.toml" : "setup.cfg")
     );
     if (text === null) continue;
-    let declared: string[] = [];
-    let mapping: Record<string, string> = {};
+    let declared: string[];
+    let mapping: Record<string, string>;
     try {
       if (kind === "pyproject") {
         const doc = parseTomlSubset(text);

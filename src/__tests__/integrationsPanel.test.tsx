@@ -26,6 +26,7 @@ vi.mock("../services/integrationService", () => svc);
 
 import { DEFAULT_RULES } from "../core/integrations/workflowRules";
 import { IntegrationsPanel } from "../components/IntegrationsPanel";
+import { SECRET_FILE_NOTE } from "../components/secretFileNote";
 import { AiCliPanel } from "../components/AiCliPanel";
 import {
   accountMatchesRemote,
@@ -320,8 +321,7 @@ describe("IntegrationsPanel", () => {
   const flush = () => act(async () => {});
   const q = <T extends Element>(sel: string) => container.querySelector<T>(sel);
   const button = (text: string) =>
-    [...container.querySelectorAll("button")].find((b) => b.textContent?.trim() === text) as
-      HTMLButtonElement | undefined;
+    [...container.querySelectorAll("button")].find((b) => b.textContent?.trim() === text);
   const click = async (el: Element | undefined | null) => {
     expect(el).toBeTruthy();
     await act(async () => {
@@ -421,6 +421,32 @@ describe("IntegrationsPanel", () => {
       account: "azure-devops:contoso",
     });
     expect(container.textContent).toContain("Active for this project (Payments / api).");
+  });
+
+  it("says so when the sign-in went to the private file instead of a keychain (SEC-13)", async () => {
+    svc.getIntegrationStatus
+      .mockResolvedValueOnce({ ok: true, value: status() })
+      .mockResolvedValue({
+        ok: true,
+        value: status({ accounts: [account({ authMethod: "oauth" })] }),
+      });
+    svc.loginWithBrowser.mockResolvedValue({
+      ok: true,
+      value: {
+        accounts: [account({ authMethod: "oauth" })],
+        user: { name: "Suraj", email: "s@contoso.com" },
+        storedIn: "file",
+      },
+    });
+    svc.bindIntegration.mockResolvedValue({
+      ok: true,
+      value: { account: "azure-devops:contoso", project: "Payments", repo: "api" },
+    });
+    await render();
+    await click(button("Connect Azure DevOps"));
+    await flush();
+    expect(container.textContent).toContain("Connected to contoso as s@contoso.com.");
+    expect(container.textContent).toContain(SECRET_FILE_NOTE);
   });
 
   it("asks which organization when several are found and none is the folder's", async () => {

@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
-import { createElement, type MutableRefObject } from "react";
+import { act, createElement, type RefObject } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { act } from "react-dom/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   GIT_BADGE_MIN_INTERVAL_MS,
@@ -50,8 +49,8 @@ let root: Root;
 let host: HTMLElement;
 
 function Harness() {
-  const tabsRef = { current: [tab()] } as MutableRefObject<TerminalTab[]>;
-  const activeTabIdRef = { current: "t1" } as MutableRefObject<string>;
+  const tabsRef = { current: [tab()] } as RefObject<TerminalTab[]>;
+  const activeTabIdRef = { current: "t1" } as RefObject<string>;
   report = usePaneCwd({ tabsRef, activeTabIdRef, setTabs: vi.fn(), applyGitInfo: vi.fn() });
   return null;
 }

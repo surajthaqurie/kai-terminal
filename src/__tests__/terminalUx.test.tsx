@@ -7,7 +7,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, createElement, useEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import type { SessionStatus, TerminalTab, UserSettings } from "../types/terminal";
+import type { SessionStatus, TerminalTab } from "../types/terminal";
 
 /** TerminalView stand-in that counts mounts: a remount would restart the shell. */
 const mounts: Record<string, number> = {};
@@ -64,7 +64,7 @@ function tab(id: string, status: SessionStatus, paneIds: string[] = [`${id}-p1`]
             second: { kind: "pane", paneId: paneIds[1] },
           }
         : { kind: "pane", paneId: paneIds[0] },
-  } as TerminalTab;
+  };
 }
 
 describe("tab session status", () => {
@@ -156,12 +156,14 @@ describe("split panes", () => {
     selectedShell: undefined,
     shells: [],
     skipShellProfile: false,
-    settings: DEFAULT_SETTINGS as UserSettings,
+    settings: DEFAULT_SETTINGS,
     terminalRefs: { current: {} },
     onFocusPane: () => {},
     onCodeModeChange: () => {},
     onCwdResolved: () => {},
     onExit: () => {},
+    onRestartPane: () => {},
+    onClosePane: () => {},
     onStatusChange: () => {},
     onResizeSplit: () => {},
   });

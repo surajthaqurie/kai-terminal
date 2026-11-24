@@ -124,8 +124,8 @@ async function login(deps: TeamsRpcDeps, channels = true): Promise<TeamsStatusVi
     },
     { env }
   );
-  await storeTeamsSignIn(signedIn, deps.secrets);
-  return teamsStatus(env);
+  const { storedIn } = await storeTeamsSignIn(signedIn, deps.secrets);
+  return { ...teamsStatus(env), storedIn };
 }
 
 /** Same as `--client-id`, from the desktop card. */

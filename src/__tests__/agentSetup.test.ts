@@ -50,17 +50,17 @@ describe("agent install targets (machine-readable registry)", () => {
 
   it("builds style-correct kai entries (opencode local array, vscode stdio)", () => {
     const opencode = getAgentDefinition("opencode")!;
-    const entry = buildKaiMcpEntry(opencode, KAI_BIN) as Record<string, unknown>;
+    const entry = buildKaiMcpEntry(opencode, KAI_BIN);
     expect(entry.type).toBe("local");
     expect(entry.command).toEqual(["node", KAI_BIN, "mcp", "."]);
 
     const copilot = getAgentDefinition("copilot")!;
-    const vsEntry = buildKaiMcpEntry(copilot, KAI_BIN) as Record<string, unknown>;
+    const vsEntry = buildKaiMcpEntry(copilot, KAI_BIN);
     expect(vsEntry.type).toBe("stdio");
     expect(vsEntry.args).toEqual([KAI_BIN, "mcp", "."]);
 
     const cursor = getAgentDefinition("cursor")!;
-    const cursorEntry = buildKaiMcpEntry(cursor, KAI_BIN) as Record<string, unknown>;
+    const cursorEntry = buildKaiMcpEntry(cursor, KAI_BIN);
     expect(cursorEntry.args).toEqual([KAI_BIN, "mcp", "${workspaceFolder}"]);
   });
 

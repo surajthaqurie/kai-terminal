@@ -443,8 +443,7 @@ describe("host server: end-to-end encryption", () => {
   });
 
   it("calls a tunnel's gateway error unreachable, not a foreign host", async () => {
-    const gateway: typeof fetch = (async () =>
-      new Response("Bad Gateway", { status: 502 })) as typeof fetch;
+    const gateway: typeof fetch = async () => new Response("Bad Gateway", { status: 502 });
     const viaGateway = new HostsClient({
       secrets,
       file: path.join(dir, "hosts-gw.json"),
@@ -824,8 +823,9 @@ describe("host server: per-PC permissions and history", () => {
 describe("host server: internet tunnel", () => {
   const TUNNEL = "https://share.example.com";
   /** Plays a tunnel: the https address is relayed to the local server over loopback, with X-Forwarded-For. */
-  const viaTunnel = (forwardedFor = "203.0.113.7"): typeof fetch =>
-    (async (input: string | URL | Request, init?: RequestInit) => {
+  const viaTunnel =
+    (forwardedFor = "203.0.113.7"): typeof fetch =>
+    async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input);
       const local = url.startsWith(TUNNEL)
         ? `http://127.0.0.1:${port}${url.slice(TUNNEL.length)}`
@@ -835,7 +835,7 @@ describe("host server: internet tunnel", () => {
         "x-forwarded-for": forwardedFor,
       };
       return fetch(local, { ...init, headers });
-    }) as typeof fetch;
+    };
   const remoteClient = (fetchImpl: typeof fetch = viaTunnel()) =>
     new HostsClient({
       secrets,

@@ -12,7 +12,8 @@ name: Cross-Platform Terminal CI
 #
 # Check map: 1 rust fmt, 2 clippy, 3 rust unit, 4 PTY integration, 5 frontend
 # unit, 6 typecheck, 7 MCP security, 8 CLI smoke, 9 workspace migration, 10
-# dependency/prod-config, 11 production build/packaging verification.
+# dependency/prod-config, 11 production build/packaging verification, 12 end-to-end UI
+# (job `e2e`: the built app driven through tauri-driver on Linux and Windows).
 
 on:
   push:
@@ -270,6 +271,112 @@ jobs:
   # advisories fail the build; dev-only and website advisories are reported as
   # warnings so a test-tooling or marketing-site advisory never blocks a release
   # fix. Informational RustSec notices (unmaintained, unsound, yanked) do not fail.
+  # CI-04: the real app, a real shell and real keystrokes through WebDriver (tauri-driver).
+  # Workflows: a command runs, new tab, split, find, command palette, and a failed shell keeping
+  # its pane with Restart (e2e/app.e2e.ts). Linux (WebKitWebDriver under Xvfb) and Windows
+  # (msedgedriver matching the runner's WebView2). macOS has no WebDriver for WKWebView, so
+  # tauri-driver cannot drive it; macOS stays covered by the unit, lint and PTY jobs.
+  e2e:
+    name: End-to-end UI (${{ matrix.target-name }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target-name: linux-x86_64
+          - os: windows-latest
+            target-name: windows-x86_64
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup Node.js v24 environment
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: "npm"
+          cache-dependency-path: "package-lock.json"
+
+      - name: Install Rust stable toolchain
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+        with:
+          toolchain: "1.99.0"
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: "src-tauri"
+          key: e2e
+
+      - name: Install Linux build and WebDriver dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libssl-dev libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev webkit2gtk-driver xvfb
+
+      - name: Install Edge WebDriver matching the runner's WebView2
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $id = "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+          $keys = "HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\$id", "HKLM:\SOFTWARE\Microsoft\EdgeUpdate\Clients\$id", "HKCU:\Software\Microsoft\EdgeUpdate\Clients\$id"
+          $version = $null
+          foreach ($k in $keys) { try { $version = (Get-ItemProperty -Path $k -ErrorAction Stop).pv; if ($version) { break } } catch {} }
+          if (-not $version) { throw "WebView2 runtime version not found" }
+          Write-Host "WebView2 $version"
+          $dir = Join-Path $env:RUNNER_TEMP "edgedriver"
+          Invoke-WebRequest -UseBasicParsing -Uri "https://msedgedriver.microsoft.com/$version/edgedriver_win64.zip" -OutFile "$dir.zip"
+          Expand-Archive -Path "$dir.zip" -DestinationPath $dir -Force
+          $exe = Join-Path $dir "msedgedriver.exe"
+          $sig = Get-AuthenticodeSignature $exe
+          if ($sig.Status -ne "Valid" -or $sig.SignerCertificate.Subject -notmatch "O=Microsoft Corporation") { throw "msedgedriver signature check failed: $($sig.Status)" }
+          "KAI_E2E_NATIVE_DRIVER=$exe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Install tauri-driver
+        run: cargo install tauri-driver --version 2.1.0 --locked
+
+      - name: Install Frontend Dependencies
+        run: npm ci
+
+      - name: Build the app under test (own identifier, see src-tauri/tauri.e2e.conf.json)
+        shell: bash
+        run: CARGO_TARGET_DIR=target/e2e npx tauri build --debug --no-bundle --config src-tauri/tauri.e2e.conf.json
+
+      - name: End-to-end tests (Linux, virtual display)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a npm run test:e2e
+
+      - name: End-to-end tests (Windows)
+        if: runner.os == 'Windows'
+        run: npm run test:e2e
+
+  # CI-08: ESLint (typescript-eslint recommended + React hooks), zero warnings allowed. It runs from
+  # tools/lint with its own TypeScript 6.0: typescript-eslint cannot run on TypeScript 7.0, which
+  # the app builds and type-checks with (see docs/audit/CI-08-LINT-INVESTIGATION.md). Parsing
+  # needs no app dependencies, so only the lint toolchain is installed.
+  lint:
+    name: ESLint
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup Node.js v24 environment
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: "npm"
+          cache-dependency-path: "tools/lint/package-lock.json"
+
+      - name: Install the lint toolchain (tools/lint)
+        run: npm run lint:install
+
+      - name: ESLint (no warnings allowed)
+        run: npm run lint:eslint
+
   dependency-security:
     name: Dependency Security Audit
     runs-on: ubuntu-22.04

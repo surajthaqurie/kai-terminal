@@ -124,10 +124,10 @@ describe("openReleasePage", () => {
   it("opens the given URL via window.open outside Tauri", async () => {
     const opened: string[] = [];
     const origOpen = window.open;
-    (window as unknown as { open: unknown }).open = ((target: string) => {
+    (window as unknown as { open: unknown }).open = (target: string) => {
       opened.push(target);
       return { closed: false };
-    }) as typeof window.open;
+    };
     try {
       await openReleasePage("https://github.com/surajthaqurie/kai-terminal/releases/tag/v9.9.9");
       expect(opened).toEqual(["https://github.com/surajthaqurie/kai-terminal/releases/tag/v9.9.9"]);
@@ -139,10 +139,10 @@ describe("openReleasePage", () => {
   it("falls back to the releases page for an empty URL", async () => {
     const opened: string[] = [];
     const origOpen = window.open;
-    (window as unknown as { open: unknown }).open = ((target: string) => {
+    (window as unknown as { open: unknown }).open = (target: string) => {
       opened.push(target);
       return { closed: false };
-    }) as typeof window.open;
+    };
     try {
       await openReleasePage("");
       expect(opened).toEqual([RELEASES_PAGE_URL]);

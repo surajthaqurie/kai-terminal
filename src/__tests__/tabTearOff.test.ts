@@ -94,6 +94,8 @@ describe("TabBar tab tear-off", () => {
     });
     expect(onDetachTab).toHaveBeenCalledTimes(1);
     expect(onDetachTab).toHaveBeenCalledWith("t2", 610, 500); // screen coordinates, for placing the window
+    // FUNC-13 (decided): releasing in the zone opens the window at once, with no confirmation.
+    expect(document.querySelector('[role="dialog"], [role="alertdialog"]')).toBeNull();
     expect(onMoveTabToIndex).not.toHaveBeenCalled();
     expect(document.body.classList.contains("tab-dragging")).toBe(false);
     expect(container.querySelector(".tab-detach-hint")).toBeNull();

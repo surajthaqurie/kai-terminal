@@ -36,7 +36,7 @@ export const CommandPalette: FC<CommandPaletteProps> = ({ isOpen, onClose, actio
   const [recentIds, setRecentIds] = useState<string[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
-  const dialogRef = useModalBehavior<HTMLDivElement>(isOpen, onClose);
+  const dialogRef = useModalBehavior(isOpen, onClose);
   const listId = useId();
   const optionId = (index: number) => `${listId}-option-${index}`;
 

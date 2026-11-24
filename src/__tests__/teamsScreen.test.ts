@@ -97,6 +97,7 @@ describe("Screen", () => {
     expect(writes[0]).not.toContain("three");
     writes.length = 0;
     screen.draw(frame(["one", "TWO", "three"]));
+    // eslint-disable-next-line no-control-regex -- terminal escape sequences (ESC, BEL) are matched on purpose
     expect(writes[0]).not.toMatch(/\u001b\[\d+;1H/);
   });
 

@@ -316,17 +316,17 @@ export function isWriteTool(name: string): boolean {
 function providerCanWrite(provider: IntegrationProvider, name: string): boolean {
   switch (name) {
     case "kai_work_item_comment":
-      return Boolean(provider.workItems?.addComment);
+      return typeof provider.workItems?.addComment === "function";
     case "kai_work_item_set_state":
-      return Boolean(provider.workItems?.setState);
+      return typeof provider.workItems?.setState === "function";
     case "kai_work_item_create":
-      return Boolean(provider.workItems?.create);
+      return typeof provider.workItems?.create === "function";
     case "kai_work_item_update":
-      return Boolean(provider.workItems?.update);
+      return typeof provider.workItems?.update === "function";
     case "kai_pr_create":
-      return Boolean(provider.pullRequests?.create);
+      return typeof provider.pullRequests?.create === "function";
     case "kai_pr_comment":
-      return Boolean(provider.pullRequests?.addComment);
+      return typeof provider.pullRequests?.addComment === "function";
     default:
       return false;
   }
@@ -342,7 +342,7 @@ export function integrationToolDefs(
   /** The git top-level of `projectDir` when already known (the poll passes it, see mcp.ts). */
   knownTopLevel?: string
 ): Array<Omit<ToolDef, "capability">> {
-  let provider: IntegrationProvider | null = null;
+  let provider: IntegrationProvider | null;
   let writesAllowed = false;
   try {
     const found = findBinding(projectDir, knownTopLevel);
@@ -374,7 +374,7 @@ function writeText(v: unknown, max: number): string | null {
   if (typeof v !== "string") return null;
   const t = v.trim();
   if (!t || t.length > max) return null;
-  // eslint-disable-next-line no-control-regex
+  // eslint-disable-next-line no-control-regex -- control characters are matched on purpose, to strip or reject them
   if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(t)) return null;
   return t;
 }

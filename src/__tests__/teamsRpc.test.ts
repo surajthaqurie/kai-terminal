@@ -56,7 +56,7 @@ describe("Microsoft Teams RPC (the Integrations tab)", () => {
       secrets: memorySecrets(),
       agentGuard: async () => {},
       ...over,
-    } as TeamsRpcDeps & { secrets: SecretStore };
+    };
   }
 
   describe("status", () => {
@@ -106,6 +106,18 @@ describe("Microsoft Teams RPC (the Integrations tab)", () => {
       // Nothing secret reaches the config file either.
       const config = fs.readFileSync(path.join(home, "config.json"), "utf8");
       expect(config).not.toContain(ACCESS);
+    });
+
+    it("says whether the sign-in landed in the OS store or the private file (SEC-13)", async () => {
+      const signIn = vi.fn(async () => signedIn);
+      expect(await handleTeamsRpc({ op: "teams_login" }, deps({ signIn }))).toMatchObject({
+        teams: { storedIn: "os" },
+      });
+      const d = deps({ signIn });
+      d.secrets = { ...memorySecrets(), set: async () => "file" as const };
+      expect(await handleTeamsRpc({ op: "teams_login" }, d)).toMatchObject({
+        teams: { storedIn: "file" },
+      });
     });
 
     it("reports channel messages as on when the sign-in granted them", async () => {
@@ -288,7 +300,7 @@ describe("Microsoft Teams RPC (the Integrations tab)", () => {
 
     it("uses the real process and environment check by default", async () => {
       await expect(
-        handleTeamsRpc({ op: "teams_status" }, { env: { KAI_AGENT_SESSION: "1" } as never })
+        handleTeamsRpc({ op: "teams_status" }, { env: { KAI_AGENT_SESSION: "1" } })
       ).rejects.toMatchObject({ code: "forbidden" });
     });
   });

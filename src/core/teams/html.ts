@@ -9,6 +9,7 @@
 
 /** Control characters (C0, DEL, C1) and bidi overrides, written as escapes so no invisible character sits in the source. */
 const CONTROL_CHARS = new RegExp(
+  // eslint-disable-next-line no-control-regex -- control characters are matched on purpose, to strip or reject them
   "[\\u0000-\\u0009\\u000b-\\u001f\\u007f-\\u009f\\u202a-\\u202e\\u2066-\\u2069]",
   "g"
 );
@@ -29,7 +30,7 @@ const ENTITIES: Record<string, string> = {
 
 export function decodeEntities(s: string): string {
   return s.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e: string) => {
-    if (e[0] === "#") {
+    if (e.startsWith("#")) {
       const code = e[1].toLowerCase() === "x" ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
       return Number.isFinite(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : m;
     }

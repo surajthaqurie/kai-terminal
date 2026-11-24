@@ -1,6 +1,7 @@
 import { spawn, exec, execSync } from "child_process";
 import fs from "fs";
 import path from "path";
+import { fileURLToPath, pathToFileURL } from "url";
 import { resolveCanonicalPath } from "./registry";
 import { noCwdLookupEnv } from "./spawnSafety";
 
@@ -242,10 +243,45 @@ function findLspServerForLanguage(language: string): LspServerCatalogEntry | nul
 /**
  * Format LSP JSON-RPC message with Content-Length header
  */
+/** A JSON-RPC message is an object; anything else is treated as unreadable. */
+function jsonObject(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
 export function encodeLspMessage(payload: Record<string, unknown>): string {
   const json = JSON.stringify(payload);
   const length = Buffer.byteLength(json, "utf-8");
   return `Content-Length: ${length}\r\n\r\n${json}`;
+}
+
+/**
+ * The locations in a `textDocument/definition` result (a Location, a list of them, or null),
+ * with each path relative to `root`. Entries without a string `uri` and a `range` are skipped:
+ * the server is another program, so its output is checked rather than trusted.
+ */
+export function definitionLocations(result: unknown, root: string): LspReferenceLocation[] {
+  const items: unknown[] = Array.isArray(result) ? result : result ? [result] : [];
+  const out: LspReferenceLocation[] = [];
+  for (const item of items) {
+    if (!item || typeof item !== "object") continue;
+    const { uri, range } = item as { uri?: unknown; range?: unknown };
+    if (typeof uri !== "string" || !range || typeof range !== "object") continue;
+    let filePath: string;
+    try {
+      // `file:///C:/a%20b.ts` is `C:\a b.ts` on Windows; a plain string cut left `/C:/a%20b.ts`.
+      filePath = uri.startsWith("file:") ? fileURLToPath(uri) : uri;
+    } catch {
+      continue; // a file URI for another platform (e.g. a UNC host on POSIX)
+    }
+    out.push({
+      uri,
+      filePath: path.relative(root, filePath).replace(/\\/g, "/"),
+      range: range as LspReferenceLocation["range"],
+    });
+  }
+  return out;
 }
 
 /**
@@ -257,7 +293,7 @@ export function decodeLspMessage(raw: string): Record<string, unknown> | null {
   if (sepIndex === -1) return null;
 
   const header = raw.slice(0, sepIndex);
-  const match = header.match(/Content-Length:\s*(\d+)/i);
+  const match = /Content-Length:\s*(\d+)/i.exec(header);
   if (!match) return null;
 
   const length = parseInt(match[1], 10);
@@ -269,7 +305,7 @@ export function decodeLspMessage(raw: string): Record<string, unknown> | null {
 
   const body = Buffer.from(remaining, "utf-8").subarray(0, length).toString("utf-8");
   try {
-    return JSON.parse(body);
+    return jsonObject(JSON.parse(body));
   } catch {
     return null;
   }
@@ -372,7 +408,7 @@ export async function queryLspCrossFileReferences(
           if (sepIndex === -1) break;
 
           const header = responseBuffer.subarray(0, sepIndex).toString("utf-8");
-          const match = header.match(/Content-Length:\s*(\d+)/i);
+          const match = /Content-Length:\s*(\d+)/i.exec(header);
           const bodyStart = sepIndex + 4;
           if (!match) {
             responseBuffer = responseBuffer.subarray(bodyStart);
@@ -387,9 +423,9 @@ export async function queryLspCrossFileReferences(
           const body = responseBuffer.subarray(bodyStart, bodyStart + length).toString("utf-8");
           responseBuffer = responseBuffer.subarray(bodyStart + length);
 
-          let parsed: Record<string, unknown> | null = null;
+          let parsed: Record<string, unknown> | null;
           try {
-            parsed = JSON.parse(body);
+            parsed = jsonObject(JSON.parse(body));
           } catch {
             continue;
           }
@@ -428,40 +464,7 @@ export async function queryLspCrossFileReferences(
                 // ignore
               }
 
-              const rawResult = parsed.result;
-              const defs: LspReferenceLocation[] = [];
-
-              if (Array.isArray(rawResult)) {
-                for (const loc of rawResult) {
-                  if (loc && loc.uri && loc.range) {
-                    const filePath = loc.uri.replace("file://", "");
-                    defs.push({
-                      uri: loc.uri,
-                      filePath: path.relative(canonicalRoot, filePath).replace(/\\/g, "/"),
-                      range: loc.range,
-                    });
-                  }
-                }
-              } else if (
-                rawResult &&
-                typeof rawResult === "object" &&
-                (rawResult as Record<string, unknown>).uri &&
-                (rawResult as Record<string, unknown>).range
-              ) {
-                const loc = rawResult as {
-                  uri: string;
-                  range: {
-                    start: { line: number; character: number };
-                    end: { line: number; character: number };
-                  };
-                };
-                const filePath = loc.uri.replace("file://", "");
-                defs.push({
-                  uri: loc.uri,
-                  filePath: path.relative(canonicalRoot, filePath).replace(/\\/g, "/"),
-                  range: loc.range,
-                });
-              }
+              const defs = definitionLocations(parsed.result, canonicalRoot);
 
               resolve({
                 symbolName,
@@ -518,14 +521,14 @@ export async function queryLspCrossFileReferences(
       });
 
       // Send initialize request
-      const fileUri = `file://${fullPath}`;
+      const fileUri = pathToFileURL(fullPath).href;
       const initReq = encodeLspMessage({
         jsonrpc: "2.0",
         id: 1,
         method: "initialize",
         params: {
           processId: process.pid,
-          rootUri: `file://${canonicalRoot}`,
+          rootUri: pathToFileURL(canonicalRoot).href,
           capabilities: {},
         },
       });

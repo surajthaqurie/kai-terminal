@@ -26,5 +26,4 @@
 
   /* Terminal panes */
   --pane-ring-active: var(--accent-primary);
-  --pane-inactive-dim: color-mix(in srgb, var(--bg-canvas) 35%, transparent);
 }

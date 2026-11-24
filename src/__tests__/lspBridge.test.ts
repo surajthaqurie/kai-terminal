@@ -5,8 +5,11 @@ import {
   isCommandAvailable,
   encodeLspMessage,
   decodeLspMessage,
+  definitionLocations,
   queryLspCrossFileReferences,
 } from "../core/lspBridge";
+import nodePath from "path";
+import { pathToFileURL } from "url";
 
 /**
  * Fault-injection control for child_process.spawn, declared via vi.hoisted so
@@ -14,7 +17,7 @@ import {
  * the filesystem probes real; only spawn behavior is altered.
  */
 const spawnControl = vi.hoisted(() => ({
-  mode: "real" as "real" | "throwSync" | "hang" | "crash",
+  mode: "real",
   killCalls: 0,
 }));
 
@@ -113,6 +116,26 @@ describe("LSP Bridge: Probing, Protocol & Fallbacks", () => {
     expect(decoded).not.toBeNull();
     expect(decoded?.id).toBe(1);
     expect(decoded?.method).toBe("textDocument/definition");
+  });
+
+  it("reads definition locations as real paths, skipping malformed entries", () => {
+    const root = nodePath.resolve("proj root");
+    const file = nodePath.join(root, "src", "my file.ts");
+    // What a server sends: a percent-encoded file URI (on Windows `file:///C:/...`).
+    const uri = pathToFileURL(file).href;
+    expect(uri).toContain("%20");
+    const range = { start: { line: 1, character: 2 }, end: { line: 1, character: 5 } };
+
+    expect(definitionLocations({ uri, range }, root)).toEqual([
+      { uri, filePath: "src/my file.ts", range },
+    ]);
+    expect(
+      definitionLocations(
+        [{ uri, range }, { uri: 42, range }, { uri }, null, "x", { uri, range: "bad" }],
+        root
+      )
+    ).toEqual([{ uri, filePath: "src/my file.ts", range }]);
+    expect(definitionLocations(null, root)).toEqual([]);
   });
 
   it("handles malformed LSP response strings safely", () => {

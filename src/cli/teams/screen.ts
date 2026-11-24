@@ -78,6 +78,11 @@ export class Screen {
     );
   }
 
+  /** Write a private control sequence (the unread signal to Kai Terminal's tab bar). */
+  signal(seq: string): void {
+    if (this.active) this.io.out.write(seq);
+  }
+
   /** Ring the terminal bell (a flash or sound, depending on the terminal) to get attention. */
   bell(): void {
     if (this.active) this.io.out.write(BEL);
@@ -93,9 +98,25 @@ export class Screen {
   draw(frame: Frame): void {
     if (!this.active) return;
     let buf = `${ESC}[?25l`;
+    // Rows a picture covered that it no longer covers in the same place (it scrolled, or went
+    // away) are rewritten even when their text is unchanged: an image's rows are blank text, so
+    // without this the old picture would stay on screen beside the new one.
+    const stale = new Set<number>();
+    for (const [id, before] of this.prevImages) {
+      const now = frame.images.find((p) => p.id === id);
+      if (
+        now &&
+        now.row === before.row &&
+        now.col === before.col &&
+        now.cols === before.cols &&
+        now.rows === before.rows
+      )
+        continue;
+      for (let r = before.row; r < before.row + before.rows; r++) stale.add(r);
+    }
     const touched = new Set<number>();
     frame.rows.forEach((row, i) => {
-      if (this.prev[i] === row) return;
+      if (this.prev[i] === row && !stale.has(i + 1)) return;
       buf += `${ESC}[${i + 1};1H${row}`;
       touched.add(i + 1);
     });

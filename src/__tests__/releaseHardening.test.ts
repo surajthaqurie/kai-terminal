@@ -437,7 +437,7 @@ describe("persistence consistency boundaries", () => {
     const freshSnap = crypto.randomUUID();
     indexJson.snapshotId = freshSnap;
     (indexJson.meta as Record<string, unknown>).snapshotId = freshSnap;
-    (indexJson as Record<string, unknown>).generatedAt = new Date(Date.now() + 60000).toISOString();
+    indexJson.generatedAt = new Date(Date.now() + 60000).toISOString();
     writeJson(getProjectIndexPath(meta.id), indexJson);
     const check = checkPersistenceConsistency(meta.id);
     expect(check.consistent).toBe(false);

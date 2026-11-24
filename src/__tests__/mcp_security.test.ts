@@ -263,19 +263,19 @@ describe("Phase 9 & 10: Security, Sanitization & Concurrency Safeguards", () => 
 
   describe("Adversarial MCP Protocol & Input Validation", () => {
     it("rejects non-object or null JSON-RPC payloads with -32600", async () => {
-      const nullRes = await handleMcpMessage(null as any);
+      const nullRes = await handleMcpMessage(null);
       expect(nullRes?.error?.code).toBe(-32600);
       expect(nullRes?.error?.message).toContain("expected JSON-RPC object");
 
-      const arrayRes = await handleMcpMessage([1, 2, 3] as any);
+      const arrayRes = await handleMcpMessage([1, 2, 3]);
       expect(arrayRes?.error?.code).toBe(-32600);
       expect(arrayRes?.error?.message).toContain("expected JSON-RPC object");
 
-      const stringRes = await handleMcpMessage("malformed string" as any);
+      const stringRes = await handleMcpMessage("malformed string");
       expect(stringRes?.error?.code).toBe(-32600);
       expect(stringRes?.error?.message).toContain("expected JSON-RPC object");
 
-      const numRes = await handleMcpMessage(12345 as any);
+      const numRes = await handleMcpMessage(12345);
       expect(numRes?.error?.code).toBe(-32600);
       expect(numRes?.error?.message).toContain("expected JSON-RPC object");
     });
@@ -285,7 +285,7 @@ describe("Phase 9 & 10: Security, Sanitization & Concurrency Safeguards", () => 
         jsonrpc: "1.0",
         id: 1,
         method: "initialize",
-      } as any);
+      });
       expect(wrongVersion?.error?.code).toBe(-32600);
       expect(wrongVersion?.error?.message).toContain("jsonrpc must be '2.0'");
 
@@ -706,6 +706,34 @@ describe("Phase 9 & 10: Security, Sanitization & Concurrency Safeguards", () => 
         expect(parsed.jsonrpc).toBe("2.0");
         expect(parsed.id).toBeDefined();
       }
+    });
+
+    it("keeps serving after a line that is JSON but not an object (null, a number)", async () => {
+      const projDir = path.join(tmpDir, "non-object-proj");
+      fs.mkdirSync(projDir, { recursive: true });
+
+      const { PassThrough } = await import("stream");
+      const inputStream = new PassThrough();
+      const outputStream = new PassThrough();
+      const out: string[] = [];
+      outputStream.on("data", (chunk: Buffer) => out.push(chunk.toString("utf-8")));
+
+      const serverPromise = startMcpServer(projDir, inputStream, outputStream);
+      inputStream.write("null\n");
+      inputStream.write("7\n");
+      inputStream.write(JSON.stringify({ jsonrpc: "2.0", id: 9, method: "tools/list" }) + "\n");
+
+      await new Promise((r) => setTimeout(r, 100));
+      inputStream.end();
+      await serverPromise;
+
+      const replies = out
+        .join("")
+        .split("\n")
+        .filter((l) => l.trim())
+        .map((l) => JSON.parse(l) as { id?: unknown; result?: unknown });
+      // Reading `.method` of `null` used to throw out of the read loop and close the server.
+      expect(replies.find((r) => r.id === 9)?.result).toBeDefined();
     });
 
     it("recovers gracefully from broken pipes without uncaught exceptions", async () => {

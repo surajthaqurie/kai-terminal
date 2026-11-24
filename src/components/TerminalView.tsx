@@ -30,6 +30,7 @@ import {
   hiddenGpuBudget,
 } from "./gpuRenderer";
 import { ptyService, PtyService } from "../services/ptyService";
+import { boundedSnapshot } from "../services/handoffSnapshot";
 import { replayHandoff, spawnPaneShell } from "../services/paneSpawn";
 import {
   claimPtyId,
@@ -63,6 +64,7 @@ import {
 } from "../services/clipboardService";
 import { guardLinkClicks, isOpenLinkClick, openTerminalLink } from "../services/terminalLinks";
 import { CODE_MODE_OSC, parseCodeModeSignal } from "../core/codeModeSignal";
+import { TEAMS_OSC, parseTeamsSignal } from "../core/teamsSignal";
 import { createPaneCwdTracker, type PaneCwdTracker } from "../services/paneCwdTracker";
 import { TERMINAL_MODE_RESET_SEQ, scanAgentFinishedTail } from "../services/terminalModes";
 import {
@@ -78,9 +80,6 @@ const SearchBar = lazy(() => import("./SearchBar").then((m) => ({ default: m.Sea
 
 /** A pane hidden longer than this gets an extra re-fit + repaint after it is shown again. */
 const ATLAS_REBUILD_AFTER_HIDDEN_MS = 5_000;
-
-/** Most scrollback rows carried to another window with a moved tab (keeps the snapshot small). */
-const MAX_HANDOFF_SCROLLBACK = 4000;
 
 export interface TerminalViewRef extends HandoffTerminal {
   clear: () => void;
@@ -134,6 +133,11 @@ interface TerminalViewProps {
    * pane closes. Other panes and tabs are never affected.
    */
   onCodeModeChange?: (project: string | null) => void;
+  /**
+   * Unread Teams messages when `kai teams` runs in THIS terminal (see
+   * `core/teamsSignal`); 0 when it closes, the shell restarts, or the pane closes.
+   */
+  onTeamsUnreadChange?: (count: number) => void;
 }
 
 export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
@@ -152,6 +156,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       onCwdResolved,
       onFocus,
       onCodeModeChange,
+      onTeamsUnreadChange,
     },
     ref
   ) => {
@@ -236,6 +241,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       // Escape sequences (arrows, alt combos): don't corrupt the buffer.
       if (data.startsWith("\x1b")) return;
       // Other control chars: ignore for buffer tracking.
+      // eslint-disable-next-line no-control-regex -- control characters are matched on purpose, to strip or reject them
       if (/[\x00-\x1f]/.test(data)) return;
       lineBufferRef.current = (lineBufferRef.current + data).slice(-4096);
     };
@@ -266,6 +272,8 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
     const cwdTracker = cwdTrackerRef.current;
     const onCodeModeChangeRef = useRef(onCodeModeChange);
     onCodeModeChangeRef.current = onCodeModeChange;
+    const onTeamsUnreadChangeRef = useRef(onTeamsUnreadChange);
+    onTeamsUnreadChangeRef.current = onTeamsUnreadChange;
     const onFocusRef = useRef(onFocus);
     onFocusRef.current = onFocus;
     const shellRef = useRef(selectedShell);
@@ -370,7 +378,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       // Pasted text updates the in-memory line buffer (cd detection only).
       trackInputData(text.replace(/[\r\n]+$/, ""));
       PtyService.writeToPty(backendId, preparePasteText(text, term.modes.bracketedPasteMode)).catch(
-        (e) => {
+        (e: unknown) => {
           const msg = e instanceof Error ? e.message : String(e);
           term.writeln(`\r\n\x1b[31m[Paste failed: ${msg}]\x1b[0m\r\n`);
         }
@@ -392,11 +400,10 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       },
       copySelection: async () => {
         const selection = xtermRef.current?.getSelection();
-        if (selection) {
-          await navigator.clipboard.writeText(selection);
-          return selection;
-        }
-        return "";
+        if (!selection) return "";
+        // Same copy as the keyboard path: falls back when the clipboard API is denied, and never
+        // rejects (the command palette does not await actions). "" when nothing was copied.
+        return (await copyTextToClipboard(selection)) ? selection : "";
       },
       pasteText: (text: string) => pasteToPty(text),
       focus: () => {
@@ -417,9 +424,10 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
             new Promise<void>((resolve) => term.write("", resolve)),
             new Promise<void>((resolve) => setTimeout(resolve, 500)),
           ]);
-          const snapshot = serializer.serialize({
-            scrollback: Math.min(term.options.scrollback ?? 1000, MAX_HANDOFF_SCROLLBACK),
-          });
+          const snapshot = boundedSnapshot(
+            (rows) => serializer.serialize({ scrollback: rows }),
+            term.options.scrollback ?? 1000
+          );
           return { ptyId: id, snapshot, cols: term.cols, rows: term.rows };
         } catch {
           return null;
@@ -430,6 +438,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         releasePtyId(backendPtyIdRef.current);
         backendPtyIdRef.current = null;
         onCodeModeChangeRef.current?.(null);
+        onTeamsUnreadChangeRef.current?.(0);
       },
       handoffResume: (released: HandoffRelease) => resumeHeldRef.current(released),
     }));
@@ -502,6 +511,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
 
       // A fresh shell cannot still be running the previous shell's agent.
       onCodeModeChangeRef.current?.(null);
+      onTeamsUnreadChangeRef.current?.(0);
       term.clear();
       onStatusRef.current?.("connecting");
       // Fresh PTY, fresh input modes: the xterm instance is REUSED across
@@ -586,7 +596,6 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       resetKeySeenRef.current = resetKey;
       setLaunchError(null);
       void initPtyRef.current();
-      // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [resetKey]);
 
     // The look this pane's xterm currently has (set when it is created, then by the
@@ -655,7 +664,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         linkHandler: {
           activate: (event, uri) => {
             if (!isOpenLinkClick(event)) return;
-            openTerminalLink(uri).catch((e) => {
+            openTerminalLink(uri).catch((e: unknown) => {
               console.error("Could not open link:", e);
             });
           },
@@ -694,7 +703,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         new WebLinksAddon(
           (event, uri) => {
             if (!isOpenLinkClick(event)) return;
-            openTerminalLink(uri).catch((e) => {
+            openTerminalLink(uri).catch((e: unknown) => {
               console.error("Could not open link:", e);
             });
           },
@@ -723,7 +732,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
           if (lazyAddonEpochRef.current !== addonEpoch) return; // pane torn down meanwhile
           term.loadAddon(new ImageAddon({ storageLimit: 32 }));
         })
-        .catch((e) => console.warn("Inline images are unavailable:", e));
+        .catch((e: unknown) => console.warn("Inline images are unavailable:", e));
       try {
         fitAddon.fit();
       } catch {
@@ -809,6 +818,13 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
           const signal = parseCodeModeSignal(data);
           if (signal) onCodeModeChangeRef.current?.(signal.active ? signal.path : null);
           return signal !== null;
+        });
+
+        // `kai teams` reports its unread count on this pane's output, for the tab badge.
+        term.parser.registerOscHandler(TEAMS_OSC, (data) => {
+          const count = parseTeamsSignal(data);
+          if (count !== null) onTeamsUnreadChangeRef.current?.(count);
+          return count !== null;
         });
       } catch {
         // parser handler registration not supported in some mock environments
@@ -972,6 +988,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         releasePtyId(backendPtyIdRef.current);
         backendPtyIdRef.current = null;
         onCodeModeChangeRef.current?.(null);
+        onTeamsUnreadChangeRef.current?.(0);
         // The backend sends `null` when it could not read the exit status
         // (child.wait() failed). That is NOT a clean exit: treating it as 0
         // skipped the crash-loop / instant-death guards and could quit the app
@@ -1181,6 +1198,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         cancelGpuRetry();
         cwdTracker.dispose();
         onCodeModeChangeRef.current?.(null);
+        onTeamsUnreadChangeRef.current?.(0);
         unguardLinkClicks();
         term.dispose();
       };
@@ -1221,6 +1239,9 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       // (panes that mounted hidden never attached one).
       if (webglAddonRef.current) hiddenGpuBudget.hide(release);
       return () => hiddenGpuBudget.show(release);
+      // Runs on visibility changes only: `attachGpu` is recreated every render, and re-running this
+      // on each render would re-attach the renderer and churn the hidden-pane budget.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [visible]);
 
     // Periodic live CWD synchronization for the visible pane (ensures footer updates on cd).
@@ -1236,7 +1257,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
         cwdTracker.poll();
       }, 5000);
       return () => clearInterval(timer);
-    }, [visible]);
+    }, [visible, cwdTracker]); // cwdTracker is created once per pane
 
     // First-show launcher for tabs that mounted hidden: spawn the PTY on
     // first visibility, or re-fit an already-live session (hidden mount

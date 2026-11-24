@@ -90,7 +90,7 @@ export function parseUnifiedDiff(rawDiff: string): ParsedDiff {
       continue;
     }
     // Hunk header: @@ -oldStart,oldLines +newStart,newLines @@
-    const match = line.match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$/);
+    const match = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$/.exec(line);
     if (match) {
       if (currentHunk) {
         hunks.push(currentHunk);
@@ -269,7 +269,7 @@ export const GitChangesModal: FC<GitChangesModalProps> = ({ dir, onClose }) => {
   // Shared dialog behaviour: Escape (capture phase, so it works even while the
   // terminal behind the modal has focus), focus in/out and a Tab trap. Escape
   // first dismisses the discard confirmation, then closes the modal.
-  const modalRef = useModalBehavior<HTMLDivElement>(true, () => {
+  const modalRef = useModalBehavior(true, () => {
     if (confirmDiscardFile) setConfirmDiscardFile(null);
     else onClose();
   });
@@ -346,7 +346,7 @@ export const GitChangesModal: FC<GitChangesModalProps> = ({ dir, onClose }) => {
           setRawDiff(d);
         }
       })
-      .catch((err) => {
+      .catch((err: unknown) => {
         if (!cancelled) {
           setRawDiff(`Failed to load diff: ${err instanceof Error ? err.message : String(err)}`);
         }
@@ -609,7 +609,7 @@ export const GitChangesModal: FC<GitChangesModalProps> = ({ dir, onClose }) => {
                     <button
                       type="button"
                       className="section-action-btn"
-                      onClick={handleUnstageAll}
+                      onClick={() => void handleUnstageAll()}
                       title="Unstage all changes"
                       aria-label="Unstage all changes"
                     >
@@ -669,7 +669,7 @@ export const GitChangesModal: FC<GitChangesModalProps> = ({ dir, onClose }) => {
                     <button
                       type="button"
                       className="section-action-btn"
-                      onClick={handleStageAll}
+                      onClick={() => void handleStageAll()}
                       title="Stage all changes"
                       aria-label="Stage all changes"
                     >

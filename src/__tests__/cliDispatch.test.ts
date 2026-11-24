@@ -77,6 +77,11 @@ describe("cli session/cache + config helpers", () => {
     expect(loadKaiConfig().defaultTokenBudget).toBe(1234);
     fs.writeFileSync(kaiConfigPath(), "{not json");
     expect(loadKaiConfig().defaultTokenBudget).toBe(4000);
+    // Valid JSON that is not an object: every `config[key]` read used to throw on null.
+    for (const text of ["null", "[1]", "7"]) {
+      fs.writeFileSync(kaiConfigPath(), text);
+      expect(loadKaiConfig().defaultTokenBudget).toBe(4000);
+    }
   });
 });
 

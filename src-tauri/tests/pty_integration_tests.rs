@@ -1898,3 +1898,126 @@ fn test_24_a_prompt_consumer_keeps_up_with_a_flood() {
     manager.close_pty(&s.info.id).unwrap();
     let _ = std::fs::remove_file(file);
 }
+
+// ---------------------------------------------------------------------------
+// 25. PowerShell, the default shell on Windows (CI-05: the other tests use cmd.exe there)
+// ---------------------------------------------------------------------------
+#[cfg(target_os = "windows")]
+#[test]
+fn test_25_powershell_round_trip_and_resize() {
+    let manager = PtyManager::new();
+    let (emitter, _, _) = TestEventEmitter::new();
+    let session = manager
+        .create_pty(
+            Arc::new(emitter.clone()),
+            PtyCreateOptions {
+                shell_path: Some("powershell.exe".to_string()),
+                args: Some(vec!["-NoLogo".to_string(), "-NoProfile".to_string()]),
+                cwd: None,
+                cols: 80,
+                rows: 24,
+                env: None,
+            },
+        )
+        .expect("Failed to spawn PowerShell");
+
+    // Built from parts so the typed command itself never matches.
+    manager
+        .write_to_pty(&session.id, "Write-Output ('KAI' + 'PS' + (20 + 5))\r")
+        .unwrap();
+    assert!(
+        emitter.wait_for_output("KAIPS25", 20),
+        "PowerShell must run a command, got: {}",
+        emitter.get_text()
+    );
+
+    manager.resize_pty(&session.id, 132, 41).unwrap();
+    std::thread::sleep(Duration::from_millis(300));
+    manager
+        .write_to_pty(
+            &session.id,
+            "Write-Output ('W=' + $Host.UI.RawUI.WindowSize.Width + ';')\r",
+        )
+        .unwrap();
+    assert!(
+        emitter.wait_for_output("W=132;", 10),
+        "PowerShell must see the new width, got: {}",
+        emitter.get_text()
+    );
+    manager.close_pty(&session.id).unwrap();
+}
+
+// ---------------------------------------------------------------------------
+// 26. Keystroke-to-echo latency (CI-06: what a terminal is judged on had no gate)
+// ---------------------------------------------------------------------------
+#[test]
+fn test_26_keystroke_echo_latency_stays_interactive() {
+    // Measured on a Windows desktop: median 8 ms, worst 20 ms. The limits are far above that
+    // because CI runners (virtualized, antivirus-hooked) have not been measured yet: they catch a
+    // real regression (a stalled reader, a batching delay on the output path), not noise.
+    // Tighten them once CI numbers exist (the println below reports them).
+    const MEDIAN_LIMIT: Duration = Duration::from_millis(150);
+    const WORST_LIMIT: Duration = Duration::from_millis(1500);
+
+    let manager = PtyManager::new();
+    let (emitter, _, _) = TestEventEmitter::new();
+    let session = manager
+        .create_pty(
+            Arc::new(emitter.clone()),
+            PtyCreateOptions {
+                shell_path: default_test_shell(),
+                args: None,
+                cwd: None,
+                cols: 120,
+                rows: 30,
+                env: None,
+            },
+        )
+        .expect("Failed to spawn PTY session");
+    #[cfg(target_os = "windows")]
+    let (ready, comment, newline) = ("echo READY%TIME:~0,0%\r\n", "rem", "\r\n");
+    #[cfg(not(target_os = "windows"))]
+    let (ready, comment, newline) = ("echo READY$((0))\n", ":", "\n");
+    manager.write_to_pty(&session.id, ready).unwrap();
+    assert!(
+        emitter.wait_for_output("READY", 20),
+        "shell never started: {}",
+        emitter.get_text()
+    );
+    std::thread::sleep(Duration::from_millis(300));
+
+    let mut samples = Vec::new();
+    for i in 0..25 {
+        let token = format!("K{i:03}Q");
+        let started = Instant::now();
+        manager
+            .write_to_pty(&session.id, &format!("{comment} {token}"))
+            .unwrap();
+        while started.elapsed() < Duration::from_secs(5) && !emitter.get_text().contains(&token) {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(
+            emitter.get_text().contains(&token),
+            "typed text never echoed: {token}"
+        );
+        samples.push(started.elapsed());
+        manager.write_to_pty(&session.id, newline).unwrap();
+        std::thread::sleep(Duration::from_millis(40));
+    }
+    samples.sort();
+    let median = samples[samples.len() / 2];
+    let worst = *samples.last().unwrap();
+    println!(
+        "keystroke echo latency: median {median:?}, worst {worst:?} over {} keystroke runs",
+        samples.len()
+    );
+    assert!(
+        median <= MEDIAN_LIMIT,
+        "median echo latency {median:?} is over {MEDIAN_LIMIT:?}"
+    );
+    assert!(
+        worst <= WORST_LIMIT,
+        "worst echo latency {worst:?} is over {WORST_LIMIT:?}"
+    );
+    manager.close_pty(&session.id).unwrap();
+}

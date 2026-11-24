@@ -1,12 +1,12 @@
-import { useCallback, useRef, type MutableRefObject } from "react";
+import { useCallback, useRef, type RefObject } from "react";
 import { detachTab, type HandoffTerminal } from "../services/tabHandoff";
 import { isTauriAvailable } from "../services/ptyService";
 import type { TerminalTab } from "../types/terminal";
 
 interface TabDetachOptions {
-  tabsRef: MutableRefObject<TerminalTab[]>;
+  tabsRef: RefObject<TerminalTab[]>;
   /** Terminals by pane id (the same handles the toolbar uses). */
-  terminalRefs: MutableRefObject<Record<string, HandoffTerminal | null | undefined>>;
+  terminalRefs: RefObject<Record<string, HandoffTerminal | null | undefined>>;
   /**
    * Removes the tab from this window once it has moved. Its shells were released
    * first, so removing the tab does not close them.

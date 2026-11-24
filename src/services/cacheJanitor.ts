@@ -93,7 +93,7 @@ export interface CacheJanitorReport {
 export function runCacheJanitor(appVersion: string): CacheJanitorReport {
   const version = (appVersion || "").trim() || "unknown";
   purgeLegacyPrivateKeys();
-  let stored: string | null = null;
+  let stored: string | null;
   try {
     stored = localStorage.getItem(CACHE_JANITOR_VERSION_KEY);
   } catch {

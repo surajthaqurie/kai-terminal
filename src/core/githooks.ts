@@ -142,7 +142,7 @@ export function installCommitMsgHook(repoPath: string): HookInstallResult {
   }
 
   if (fs.existsSync(hookPath)) {
-    let content = "";
+    let content: string;
     try {
       content = fs.readFileSync(hookPath, "utf-8");
     } catch {
@@ -196,7 +196,7 @@ export function removeCommitMsgHook(repoPath: string): HookRemoveResult {
   if (!fs.existsSync(hookPath)) {
     return { repoRoot, removed: false, restored: false };
   }
-  let content = "";
+  let content: string;
   try {
     content = fs.readFileSync(hookPath, "utf-8");
   } catch {

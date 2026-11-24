@@ -92,7 +92,7 @@ flowchart TD
 
 - **Security Sandboxing:** IPC permissions are declared in `capabilities/default.json` giving minimum necessary privileges (`core:default`).
 - **Content Security Policy:** Declared in `tauri.conf.json`:
-  `default-src 'self'; connect-src 'self' ipc: http://ipc.localhost https://api.github.com; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:;`
+  `default-src 'self'; connect-src 'self' ipc: http://ipc.localhost https://api.github.com; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:;` (`'wasm-unsafe-eval'` lets the inline-image add-on compile its WebAssembly decoder; JavaScript `eval` stays blocked)
 
 #### Native IPC Commands:
 - `create_pty(options)`: Spawns a shell process attached to a native PTY master/slave pair.

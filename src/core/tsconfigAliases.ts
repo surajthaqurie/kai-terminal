@@ -86,9 +86,7 @@ function readConfig(file: string): RawConfig | null {
     const st = fs.lstatSync(file);
     if (!st.isFile() || st.size > MAX_CONFIG_BYTES) return null;
     const parsed: unknown = JSON.parse(stripJsonComments(fs.readFileSync(file, "utf8")));
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? (parsed as RawConfig)
-      : null;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
   } catch {
     return null;
   }

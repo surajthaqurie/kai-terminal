@@ -233,7 +233,7 @@ export function resolveRustTargets(
       let i = 0;
       if (first === "super") {
         while (segs[i] === "super") {
-          start = parentModuleFile(start as string, rootFile, has);
+          start = parentModuleFile(start, rootFile, has);
           if (!start) return [];
           i++;
         }
@@ -248,7 +248,7 @@ export function resolveRustTargets(
     return [];
   }
 
-  const { file, consumed } = walkRustModules(start as string, rootFile, rest, has);
+  const { file, consumed } = walkRustModules(start, rootFile, rest, has);
   const reachedModule = consumed === rest.length;
   const out: string[] = [];
   let needsOwnFile = names.length === 0 || !reachedModule;

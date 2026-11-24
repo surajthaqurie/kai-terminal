@@ -394,7 +394,7 @@ export async function requestToken(
   if (!res.ok || typeof body.access_token !== "string") {
     const code = typeof body.error === "string" ? body.error : "";
     const detail = redactSecrets(
-      String(body.error_description ?? "")
+      (typeof body.error_description === "string" ? body.error_description : "")
         .replace(/\s+/g, " ")
         .trim(),
       secrets

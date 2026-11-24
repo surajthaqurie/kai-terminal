@@ -21,6 +21,7 @@ import {
   listProjects,
   listRepos,
   login,
+  loginWithBrowser,
   logout,
   removeAccountEverywhere,
   resolveReady,
@@ -75,6 +76,32 @@ afterEach(() => {
 });
 
 describe("login", () => {
+  it("reports a browser sign-in that fell back to the private file (SEC-13)", async () => {
+    setProviderForTests("azure-devops", {
+      ...offlineProvider(),
+      browserLogin: async () => ({
+        secret: "refresh-token",
+        user: { name: "Test User", email: "test@contoso.com" },
+        orgs: ["contoso", "fabrikam"],
+      }),
+    });
+    const fileOnce = new (class extends MemorySecrets {
+      private first = true;
+      override async set(key: string, value: string) {
+        await super.set(key, value);
+        if (!this.first) return "file" as const;
+        this.first = false;
+        return "os" as const;
+      }
+    })();
+    const res = await loginWithBrowser("azure-devops", {}, { secrets: fileOnce });
+    expect(res.accounts).toHaveLength(2);
+    // One copy in the file is enough to say so: the person should know where it is.
+    expect(res.storedIn).toBe("file");
+    const os = await loginWithBrowser("azure-devops", {}, { secrets });
+    expect(os.storedIn).toBe("os");
+  });
+
   it("verifies, stores the token in the secret store, and keeps it out of config.json", async () => {
     const result = await login(
       "azure-devops",
@@ -158,7 +185,7 @@ describe("binding a project", () => {
 
   it("asks for the right login when the remote's organization is not signed in", () => {
     saveAccount(azAccount("other", "az"));
-    expect(() => bind("azure-devops", repo(REMOTE))).toThrowError(
+    expect(() => bind("azure-devops", repo(REMOTE))).toThrow(
       expect.objectContaining({
         code: "no_account",
         hint: expect.stringContaining("--org Contoso"),
@@ -168,7 +195,7 @@ describe("binding a project", () => {
 
   it("needs --project outside an Azure DevOps repository", () => {
     saveAccount(azAccount("Contoso", "az"));
-    expect(() => bind("azure-devops", repo("https://github.com/a/b.git"))).toThrowError(
+    expect(() => bind("azure-devops", repo("https://github.com/a/b.git"))).toThrow(
       expect.objectContaining({ code: "no_remote" })
     );
   });
@@ -205,7 +232,7 @@ describe("binding a project", () => {
       repo: null,
       boundAt: "2026-10-29T00:00:00.000Z",
     });
-    expect(() => bind("azure-devops", dir)).toThrowError(
+    expect(() => bind("azure-devops", dir)).toThrow(
       expect.objectContaining({ code: "needs_confirmation" })
     );
     expect(findBinding(dir)?.binding.provider).toBe("jira");
@@ -695,7 +722,7 @@ describe("accounts by name, removal everywhere, access checks", () => {
 describe("auto-detection of the account and project from the remote", () => {
   it("names the sign-in command that fits the remote: --org for the cloud, --server-url for a server", () => {
     saveAccount(azAccount("Other", "az"));
-    expect(() => bind("azure-devops", repo(REMOTE))).toThrowError(
+    expect(() => bind("azure-devops", repo(REMOTE))).toThrow(
       expect.objectContaining({
         code: "no_account",
         hint: expect.stringContaining("kai integration azure --org Contoso"),
@@ -703,7 +730,7 @@ describe("auto-detection of the account and project from the remote", () => {
     );
     expect(() =>
       bind("azure-devops", repo("https://tfs.corp.local/tfs/DefaultCollection/Billing/_git/ledger"))
-    ).toThrowError(
+    ).toThrow(
       expect.objectContaining({
         hint: expect.stringContaining(
           "kai integration azure --server-url https://tfs.corp.local/tfs/DefaultCollection"
@@ -735,9 +762,7 @@ describe("auto-detection of the account and project from the remote", () => {
   it("does not use the remote's project with an account that is not the remote's own", () => {
     saveAccount(azAccount("Contoso", "az"));
     saveAccount(azAccount("Fabrikam", "az"));
-    expect(() =>
-      bind("azure-devops", repo(REMOTE), { account: "azure-devops:fabrikam" })
-    ).toThrowError(
+    expect(() => bind("azure-devops", repo(REMOTE), { account: "azure-devops:fabrikam" })).toThrow(
       expect.objectContaining({
         code: "no_remote",
         message: expect.stringContaining('remote is in "Contoso"'),

@@ -48,7 +48,7 @@ export function parseDesktopEntry(content: string): Record<string, string> {
  * Returns null when no usable target can be determined.
  */
 export function resolveExecTarget(execLine: string): string | null {
-  const m = execLine.trim().match(/^("([^"]+)"|'([^']+)'|(\S+))/);
+  const m = /^("([^"]+)"|'([^']+)'|(\S+))/.exec(execLine.trim());
   const target = (m?.[2] ?? m?.[3] ?? m?.[4] ?? "").trim();
   if (!target || target === "%f" || target === "%F" || target.startsWith("%")) return null;
   // Field codes may trail the binary (`Exec=app %F`): only the head matters.

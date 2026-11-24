@@ -15,7 +15,10 @@ import {
 import { closeAppWindow } from "../services/appWindow";
 import type { ShellProfile, TerminalPane } from "../types/terminal";
 
-vi.mock("../services/appWindow", () => ({ closeAppWindow: vi.fn(async () => false) }));
+vi.mock("../services/appWindow", () => ({
+  closeAppWindow: vi.fn(async () => false),
+  onIndividualWindowClose: vi.fn(() => () => {}),
+}));
 vi.mock("../services/projectService", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../services/projectService")>()),
   getGitInfoCached: vi.fn(async () => ({
@@ -51,7 +54,6 @@ function Harness() {
     shellsRef: shells,
     selectedShellIdRef: defaultShellId,
     setLastError: vi.fn(),
-    notify: tabsState.showPaneNotice,
   });
   const reportCwd = usePaneCwd({
     tabsRef: tabsState.tabsRef,
@@ -339,17 +341,133 @@ describe("exit status and the crash-loop guard (FUNC-09)", () => {
     expect(api.exit.loopFault).toBeNull();
   });
 
-  it("a tab that closes because its shell failed says so, with the exit code", async () => {
-    await act(async () => api.tabsState.newTab());
-    const [a] = api.tabsState.tabs;
-    await act(async () => api.exit.handleSessionExit(a.id, a.panes[0].id, 127));
-    expect(api.tabsState.paneNotice).toBe(`${a.title}: shell exited with code 127.`);
-  });
-
   it("a clean exit closes silently", async () => {
     await act(async () => api.tabsState.newTab());
     const [a] = api.tabsState.tabs;
     await act(async () => api.exit.handleSessionExit(a.id, a.panes[0].id, 0));
     expect(api.tabsState.paneNotice).toBeNull();
+  });
+});
+
+/** Runs `fn` with the clock a minute ahead, so exits are not instant deaths of new tabs. */
+async function aMinuteLater(fn: () => void | Promise<void>) {
+  const realNow = Date.now();
+  const clock = vi.spyOn(Date, "now").mockReturnValue(realNow + 60_000);
+  try {
+    await act(async () => {
+      await fn();
+    });
+  } finally {
+    clock.mockRestore();
+  }
+}
+
+describe("a failed shell keeps its pane open (FUNC-09)", () => {
+  it("keeps the pane with its exit code instead of closing it", async () => {
+    await act(async () => api.tabsState.newTab());
+    const [a, b] = api.tabsState.tabs;
+    await aMinuteLater(() => api.exit.handleSessionExit(a.id, a.panes[0].id, 127));
+    expect(api.tabsState.tabs.map((t) => t.id)).toEqual([a.id, b.id]);
+    expect(paneOf(0).exited).toEqual({ code: 127 });
+    expect(paneOf(0).status).toBe("disconnected");
+    expect(api.tabsState.paneNotice).toBeNull(); // the pane itself says it, no toast
+    expect(api.exit.loopFault).toBeNull();
+  });
+
+  it("an unknown exit status is a failure too: kept, with no code", async () => {
+    await act(async () => api.tabsState.newTab());
+    const [a] = api.tabsState.tabs;
+    await aMinuteLater(() => api.exit.handleSessionExit(a.id, a.panes[0].id, undefined));
+    expect(paneOf(0).exited).toEqual({ code: undefined });
+  });
+
+  it("keeps only the failed pane of a split; its neighbours are untouched", async () => {
+    await act(async () => api.tabsState.newTab());
+    await act(async () => api.tabsState.splitPane("vertical"));
+    const tab = api.tabsState.tabs[1];
+    const [left, right] = tab.panes;
+    await aMinuteLater(() => api.exit.handleSessionExit(tab.id, right.id, 2));
+    const after = api.tabsState.tabs[1];
+    expect(after.panes.map((p) => p.id)).toEqual([left.id, right.id]);
+    expect(after.panes[0]).toBe(left); // same object: never re-rendered into a respawn
+    expect(after.panes[1].exited).toEqual({ code: 2 });
+  });
+
+  it("the last pane of the last tab failing after a while does not quit the app", async () => {
+    const tab = api.tabsState.tabs[0];
+    await aMinuteLater(() => api.exit.handleSessionExit(tab.id, tab.panes[0].id, 1));
+    expect(closeAppWindow).not.toHaveBeenCalled();
+    expect(paneOf(0).exited).toEqual({ code: 1 });
+  });
+
+  it("a repeated exit event for an exited pane changes nothing", async () => {
+    await act(async () => api.tabsState.newTab());
+    const [a] = api.tabsState.tabs;
+    await aMinuteLater(() => api.exit.handleSessionExit(a.id, a.panes[0].id, 3));
+    const before = api.tabsState.tabs;
+    await aMinuteLater(() => api.exit.handleSessionExit(a.id, a.panes[0].id, 0));
+    expect(api.tabsState.tabs).toBe(before);
+  });
+
+  it("Restart starts a new shell in the same pane", async () => {
+    await act(async () => api.tabsState.newTab());
+    await act(async () => api.tabsState.splitPane("vertical"));
+    const tab = api.tabsState.tabs[1];
+    const failed = tab.panes[0];
+    await aMinuteLater(() => api.exit.handleSessionExit(tab.id, failed.id, 1));
+    await act(async () => api.exit.restartExitedPane(tab.id, failed.id));
+    const pane = api.tabsState.tabs[1].panes[0];
+    expect(pane.id).toBe(failed.id); // same pane, so the split layout stays as it was
+    expect(pane.exited).toBeUndefined();
+    expect(pane.status).toBe("connecting");
+    expect(pane.resetKey).toBe((failed.resetKey ?? 0) + 1); // TerminalView re-spawns on this
+    expect(api.tabsState.tabs[1].activePaneId).toBe(failed.id);
+  });
+
+  it("Restart does nothing to a pane that has not exited", async () => {
+    const before = api.tabsState.tabs[0].panes[0];
+    await act(async () => api.exit.restartExitedPane(api.tabsState.tabs[0].id, before.id));
+    expect(api.tabsState.tabs[0].panes[0].resetKey).toBe(before.resetKey);
+  });
+
+  it("a shell that dies again right after Restart is caught by the instant-death guard", async () => {
+    const tab = api.tabsState.tabs[0];
+    await aMinuteLater(() => api.exit.handleSessionExit(tab.id, tab.panes[0].id, 1));
+    await act(async () => api.exit.restartExitedPane(tab.id, tab.panes[0].id));
+    await act(async () => api.exit.handleSessionExit(tab.id, tab.panes[0].id, 1));
+    expect(api.exit.loopFault?.paneId).toBe(tab.panes[0].id);
+    expect(closeAppWindow).not.toHaveBeenCalled();
+  });
+
+  it("Close removes the exited pane from a split", async () => {
+    await act(async () => api.tabsState.newTab());
+    await act(async () => api.tabsState.splitPane("vertical"));
+    const tab = api.tabsState.tabs[1];
+    const [keep, failed] = tab.panes;
+    await aMinuteLater(() => api.exit.handleSessionExit(tab.id, failed.id, 1));
+    await act(async () => api.exit.closeExitedPane(tab.id, failed.id));
+    expect(api.tabsState.tabs[1].panes.map((p) => p.id)).toEqual([keep.id]);
+  });
+
+  it("Close removes a single-pane tab", async () => {
+    await act(async () => api.tabsState.newTab());
+    const [a, b] = api.tabsState.tabs;
+    await aMinuteLater(() => api.exit.handleSessionExit(b.id, b.panes[0].id, 1));
+    await act(async () => api.exit.closeExitedPane(b.id, b.panes[0].id));
+    expect(api.tabsState.tabs.map((t) => t.id)).toEqual([a.id]);
+  });
+
+  it("Close on the last pane of the last tab closes the window", async () => {
+    const tab = api.tabsState.tabs[0];
+    await aMinuteLater(() => api.exit.handleSessionExit(tab.id, tab.panes[0].id, 1));
+    await act(async () => api.exit.closeExitedPane(tab.id, tab.panes[0].id));
+    expect(closeAppWindow).toHaveBeenCalledTimes(1);
+  });
+
+  it("Close ignores a pane that is still running", async () => {
+    await act(async () => api.tabsState.newTab());
+    const [a] = api.tabsState.tabs;
+    await act(async () => api.exit.closeExitedPane(a.id, a.panes[0].id));
+    expect(api.tabsState.tabs).toHaveLength(2);
   });
 });

@@ -19,7 +19,7 @@ const ENTITIES: Record<string, string> = {
 
 function decodeEntities(s: string): string {
   return s.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (whole, body: string) => {
-    if (body[0] === "#") {
+    if (body.startsWith("#")) {
       const code =
         body[1].toLowerCase() === "x" ? parseInt(body.slice(2), 16) : Number(body.slice(1));
       return Number.isFinite(code) && code > 0 && code < 0x110000

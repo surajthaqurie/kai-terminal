@@ -25,6 +25,25 @@ if [ -z "${UPDATE_SIGNING_KEY:-}" ]; then
   exit 0
 fi
 
+# Expected format: an UNENCRYPTED Ed25519 private key in PKCS#8 PEM, the whole file with its line
+# breaks (openssl genpkey -algorithm ED25519). Say clearly what is wrong; never echo the key.
+case "$UPDATE_SIGNING_KEY" in
+  *"BEGIN ENCRYPTED PRIVATE KEY"*)
+    echo "UPDATE_SIGNING_KEY is passphrase-protected; CI cannot type a passphrase. Store the unencrypted PKCS#8 PEM (openssl pkey -in key.pem -out plain.pem)." >&2
+    exit 1 ;;
+  *"BEGIN OPENSSH PRIVATE KEY"*)
+    echo "UPDATE_SIGNING_KEY is an OpenSSH key; it must be a PKCS#8 PEM Ed25519 key (openssl genpkey -algorithm ED25519)." >&2
+    exit 1 ;;
+  *"-----BEGIN PRIVATE KEY-----"*"-----END PRIVATE KEY-----"*) ;;
+  *)
+    echo "UPDATE_SIGNING_KEY is not a PKCS#8 PEM private key (expected the whole file, from -----BEGIN PRIVATE KEY----- to -----END PRIVATE KEY-----)." >&2
+    exit 1 ;;
+esac
+if [ "$(printf '%s' "$UPDATE_SIGNING_KEY" | wc -l | tr -d ' ')" -lt 2 ]; then
+  echo "UPDATE_SIGNING_KEY has lost its line breaks (pasted as one line). Paste the PEM file exactly as it is." >&2
+  exit 1
+fi
+
 mkdir -p "$out"
 sums="$out/SHA256SUMS"
 : > "$sums"
@@ -53,14 +72,14 @@ chmod 600 "$key"
 printf '%s\n' "$UPDATE_SIGNING_KEY" > "$key"
 
 # Raw Ed25519 signature (64 bytes) over the exact bytes of SHA256SUMS.
-openssl pkeyutl -sign -inkey "$key" -rawin -in "$sums" -out "$out/SHA256SUMS.sig"
+openssl pkeyutl -sign -inkey "$key" -passin pass: -rawin -in "$sums" -out "$out/SHA256SUMS.sig"
 if [ "$(wc -c < "$out/SHA256SUMS.sig" | tr -d ' ')" -ne 64 ]; then
   echo "Signature is not 64 bytes; is UPDATE_SIGNING_KEY an Ed25519 private key?" >&2
   exit 1
 fi
 
 # The matching public key, as the app stores it: 32 raw bytes, lowercase hex.
-derived="$(openssl pkey -in "$key" -pubout -outform DER | tail -c 32 | od -An -tx1 | tr -d ' \n')"
+derived="$(openssl pkey -in "$key" -passin pass: -pubout -outform DER | tail -c 32 | od -An -tx1 | tr -d ' \n')"
 if [ -n "$public_key_file" ]; then
   embedded="$(tr -d '[:space:]' < "$public_key_file")"
   if [ "$derived" != "$embedded" ]; then
@@ -76,7 +95,7 @@ fi
 # Verify what was just written, the way a client will.
 pub="$(mktemp)"
 trap 'rm -f "$key" "$pub"' EXIT
-openssl pkey -in "$key" -pubout -out "$pub"
+openssl pkey -in "$key" -passin pass: -pubout -out "$pub"
 openssl pkeyutl -verify -pubin -inkey "$pub" -rawin -in "$sums" -sigfile "$out/SHA256SUMS.sig" > /dev/null
 
 echo "Signed $(wc -l < "$sums" | tr -d ' ') installer checksums with key $derived:"

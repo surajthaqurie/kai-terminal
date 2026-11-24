@@ -304,7 +304,7 @@ async function runActive(info: ProviderInfo, args: string[]): Promise<number> {
   }
 
   const binding = await withReplace(yes, (replace) =>
-    switchActive(info.id, dir, { account: account.id, project: name!, repo, replace })
+    switchActive(info.id, dir, { account: account.id, project: name, repo, replace })
   );
   if (!binding) return 1;
   console.log(`✔ Active project is now ${where(binding)} (${account.org}).`);

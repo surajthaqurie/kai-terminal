@@ -4,6 +4,7 @@ import { announceCodeMode } from "../cli/activeProject";
 
 /** What xterm hands an OSC handler: the text between `ESC ] 1337 ;` and the terminator. */
 function oscPayload(bytes: string): string {
+  // eslint-disable-next-line no-control-regex -- terminal escape sequences (ESC, BEL) are matched on purpose
   const m = /^\u001b\](\d+);(.*)\u0007$/s.exec(bytes);
   expect(m).not.toBeNull();
   expect(Number(m![1])).toBe(CODE_MODE_OSC);
@@ -12,7 +13,7 @@ function oscPayload(bytes: string): string {
 
 describe("per-terminal Code Mode signal", () => {
   it("round-trips a project path on every OS shape", () => {
-    for (const p of ["/repo/demo", "C:\Users\Me\My Repo", "/tmp/a;b=c d/ü", "D:/x/y"]) {
+    for (const p of ["/repo/demo", "C:\\Users\\Me\\My Repo", "/tmp/a;b=c d/ü", "D:/x/y"]) {
       expect(parseCodeModeSignal(oscPayload(buildCodeModeSignal(p)))).toEqual({
         active: true,
         path: p,
@@ -26,6 +27,7 @@ describe("per-terminal Code Mode signal", () => {
 
   it("keeps the wire bytes free of control characters inside the payload", () => {
     const body = oscPayload(buildCodeModeSignal("/a\u0007b\u001b]c\n"));
+    // eslint-disable-next-line no-control-regex -- control characters are matched on purpose, to strip or reject them
     expect(body).not.toMatch(/[\u0000-\u001f]/);
   });
 
@@ -50,7 +52,7 @@ describe("announceCodeMode (CLI side)", () => {
   });
 
   function run(env: string | undefined, tty: boolean, project: string | null): string[] {
-    vi.stubEnv("KAI_TERMINAL", env as string);
+    vi.stubEnv("KAI_TERMINAL", env);
     Object.defineProperty(process.stdout, "isTTY", { value: tty, configurable: true });
     const write = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
     announceCodeMode(project);

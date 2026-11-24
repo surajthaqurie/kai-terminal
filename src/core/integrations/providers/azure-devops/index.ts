@@ -95,7 +95,7 @@ function cloudOrgOf(address: string): string | null {
     return null;
   }
   const host = url.hostname.toLowerCase();
-  if (host === "dev.azure.com") return url.pathname.split("/").filter(Boolean)[0] ?? null;
+  if (host === "dev.azure.com") return url.pathname.split("/").find(Boolean) ?? null;
   if (host.endsWith(".visualstudio.com")) return host.slice(0, -".visualstudio.com".length) || null;
   return null;
 }
@@ -204,6 +204,8 @@ function page<T>(rows: T[], limit: number, offset: number): Page<T> {
 }
 
 type Json = Record<string, unknown>;
+/** A field Azure DevOps sends as text; anything else reads as empty, not "[object Object]". */
+const strOf = (v: unknown): string => (typeof v === "string" ? v : "");
 const list = (raw: unknown, key = "value"): unknown[] => {
   const v = (raw as Json | undefined)?.[key];
   return Array.isArray(v) ? v : [];
@@ -758,8 +760,8 @@ export function createAzureDevOpsProvider(deps: AzureDeps = {}): IntegrationProv
           changedFiles = list(changes, "changeEntries").map((e) => {
             const entry = e as Json;
             return {
-              path: String(((entry.item ?? {}) as Json).path ?? "").replace(/^\//, ""),
-              change: String(entry.changeType ?? "edit"),
+              path: strOf(((entry.item ?? {}) as Json).path).replace(/^\//, ""),
+              change: strOf(entry.changeType) || "edit",
             };
           });
           truncated = Number(changes.nextSkip) > 0 || changedFiles.length >= MAX_CHANGED_FILES;
@@ -767,7 +769,7 @@ export function createAzureDevOpsProvider(deps: AzureDeps = {}): IntegrationProv
         const { threads, total } = mapThreads(threadsRaw);
         return {
           ...summary,
-          description: clipText(String(raw.description ?? ""), 4000) || undefined,
+          description: clipText(strOf(raw.description), 4000) || undefined,
           mergeStatus: typeof raw.mergeStatus === "string" ? raw.mergeStatus : undefined,
           reviewers: mapReviewers(raw.reviewers),
           changedFiles,

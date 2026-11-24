@@ -187,6 +187,8 @@ export interface TeamsStatusView {
   account: { id: string; name: string; email?: string; signedInAt: string } | null;
   /** Permission to read channel messages (needs administrator approval) was granted. */
   channelHistory: boolean;
+  /** Only on a sign-in reply: "file" when no OS secret store took it (the card says so). */
+  storedIn?: "os" | "file";
 }
 
 export interface TeamsAccessView {
@@ -222,8 +224,14 @@ export type IntegrationRpcResponse =
   | { ok: true; status: IntegrationStatusView }
   | { ok: true; projects: IntegrationProjectView[] }
   | { ok: true; repos: IntegrationRepoView[] }
-  | { ok: true; account: IntegrationAccountView; user: IntegrationUser }
-  | { ok: true; accounts: IntegrationAccountView[]; user: IntegrationUser }
+  // storedIn: "file" when no OS secret store took the sign-in (the UI says so).
+  | {
+      ok: true;
+      account: IntegrationAccountView;
+      user: IntegrationUser;
+      storedIn: "os" | "file" | null;
+    }
+  | { ok: true; accounts: IntegrationAccountView[]; user: IntegrationUser; storedIn: "os" | "file" }
   | { ok: true; user: IntegrationUser }
   | { ok: true; binding: IntegrationBindingView }
   | { ok: true; done: true }

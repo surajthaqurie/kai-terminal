@@ -954,7 +954,7 @@ function isStaleKaiEntry(entry: unknown, nextBin: string): boolean {
   const e = entry as { command?: unknown; args?: unknown };
   const parts: unknown[] = Array.isArray(e.command)
     ? e.command
-    : [e.command, ...(Array.isArray(e.args) ? e.args : [])];
+    : [e.command, ...(Array.isArray(e.args) ? (e.args as unknown[]) : [])];
   const script = parts.find(
     (p): p is string => typeof p === "string" && /\.(c|m)?js$/i.test(p) && path.isAbsolute(p)
   );
@@ -1157,7 +1157,7 @@ function applyCodexTomlSetup(
       !fileExists || !cleaned.endsWith("\n")
         ? `${cleaned}${fileExists ? "\n" : ""}\n${section}`
         : `${cleaned}\n${section}`;
-    atomicWriteFile(filePath, fileExists ? next : `${section}`);
+    atomicWriteFile(filePath, fileExists ? next : section);
     return {
       wrote: true,
       created: !fileExists,

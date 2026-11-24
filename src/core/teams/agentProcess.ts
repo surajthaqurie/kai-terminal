@@ -192,7 +192,7 @@ function linuxChain(startPid: number): ProcessInfo[] {
   while (pid > 0 && !seen.has(pid) && chain.length < MAX_DEPTH) {
     seen.add(pid);
     let stat: { ppid: number; name: string } | null;
-    let cmdline = "";
+    let cmdline: string;
     try {
       stat = parseProcStat(fs.readFileSync(`/proc/${pid}/stat`, "utf8"));
       cmdline = fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").replace(/\0/g, " ").trim();

@@ -69,7 +69,7 @@ const RECENT_MAX = 5;
 /** Ids of the most recently run palette commands, newest first. */
 export function loadRecentCommands(): string[] {
   try {
-    const raw = JSON.parse(localStorage.getItem(RECENT_KEY) ?? "[]");
+    const raw: unknown = JSON.parse(localStorage.getItem(RECENT_KEY) ?? "[]");
     return Array.isArray(raw)
       ? raw.filter((v): v is string => typeof v === "string").slice(0, RECENT_MAX)
       : [];

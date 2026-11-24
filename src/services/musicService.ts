@@ -49,7 +49,7 @@ function extractVideoId(input: string): string | null {
 /** Extract a playlist id from any YouTube link carrying `list=`. */
 export function extractPlaylistId(input: string): string | null {
   if (!isYouTubeUrl(input)) return null;
-  const m = input.match(/[?&]list=([\w-]{10,64})/);
+  const m = /[?&]list=([\w-]{10,64})/.exec(input);
   return m ? m[1] : null;
 }
 
@@ -508,11 +508,19 @@ export const YOUTUBE_LISTENING_HANDSHAKE = JSON.stringify({
   channel: "widget",
 });
 
+/** IFrame Player API functions this app calls; a misspelt one is silently ignored by YouTube. */
 export type YouTubeCommand =
-  "playVideo" | "pauseVideo" | "nextVideo" | "previousVideo" | "mute" | "unMute" | "seekTo";
+  | "playVideo"
+  | "pauseVideo"
+  | "nextVideo"
+  | "previousVideo"
+  | "mute"
+  | "unMute"
+  | "seekTo"
+  | "setVolume";
 
 /** Control message for an embed that was loaded with `enablejsapi=1`. */
-export function youtubeCommand(func: YouTubeCommand | string, args: unknown = ""): string {
+export function youtubeCommand(func: YouTubeCommand, args: unknown = ""): string {
   return JSON.stringify({ event: "command", func, args });
 }
 

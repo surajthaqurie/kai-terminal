@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
-import { createElement, createRef } from "react";
+import { act, createElement, createRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { act } from "react-dom/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS } from "../services/settingsService";
 import type { ShellProfile } from "../types/terminal";
@@ -173,7 +172,7 @@ beforeEach(() => {
     observe() {}
     unobserve() {}
     disconnect() {}
-  } as unknown as typeof ResizeObserver;
+  };
   Object.defineProperty(HTMLElement.prototype, "clientWidth", { configurable: true, value: 800 });
   Object.defineProperty(HTMLElement.prototype, "clientHeight", { configurable: true, value: 400 });
   log.length = 0;

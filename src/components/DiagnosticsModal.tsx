@@ -120,7 +120,7 @@ export const DiagnosticsModal: FC<DiagnosticsModalProps> = ({ isOpen, onClose, l
         </div>
         <div className="modal-footer">
           <div className="footer-actions">
-            <button className="btn btn-secondary" onClick={handleCopy}>
+            <button className="btn btn-secondary" onClick={() => void handleCopy()}>
               <Copy size={14} />
               <span>{copied ? "Copied" : "Copy details"}</span>
             </button>

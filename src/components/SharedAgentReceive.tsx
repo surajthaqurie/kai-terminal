@@ -1,4 +1,4 @@
-import { ClipboardEvent, FC, FormEvent, useEffect, useState } from "react";
+import { ClipboardEvent, FC, SubmitEvent, useEffect, useState } from "react";
 import { ExternalLink, Link2, PictureInPicture2 } from "lucide-react";
 import { parseInviteLink } from "../core/sharedAgent/invite";
 import { joinHost, leaveHost } from "../services/sharedAgentService";
@@ -58,7 +58,7 @@ export const SharedAgentReceive: FC<ReceiveProps> = ({ active }) => {
     [hosts]
   );
 
-  const onJoin = async (ev: FormEvent) => {
+  const onJoin = async (ev: SubmitEvent) => {
     ev.preventDefault();
     setNotice(null);
     if (!parseInviteLink(link)) {

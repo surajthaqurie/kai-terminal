@@ -6,6 +6,34 @@ import type { ProjectMeta, ProjectIndex } from "./types";
 
 export const SCHEMA_VERSION = 1;
 
+/** A JSON object read from disk, or null when the text holds anything else. */
+function parseJsonObject(raw: string): Record<string, unknown> | null {
+  const value: unknown = JSON.parse(raw);
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+/**
+ * `meta.json` content that carries the fields every reader relies on (id, canonical path and,
+ * unless `requireStatus` is false, a status); null otherwise. The rest is trusted as written by
+ * this module.
+ */
+function asProjectMeta(
+  value: Record<string, unknown> | null,
+  requireStatus = true
+): ProjectMeta | null {
+  if (
+    value &&
+    typeof value.id === "string" &&
+    typeof value.canonicalPath === "string" &&
+    (!requireStatus || typeof value.status === "string")
+  ) {
+    return value as unknown as ProjectMeta;
+  }
+  return null;
+}
+
 export function getKaiHomeDir(): string {
   if (process.env.KAI_HOME) {
     return path.resolve(process.env.KAI_HOME);
@@ -436,14 +464,8 @@ export function registerProject(projectPath: string): ProjectMeta {
   if (fs.existsSync(metaPath)) {
     try {
       const raw = fs.readFileSync(metaPath, "utf-8");
-      const existing = JSON.parse(raw);
-      if (
-        typeof existing === "object" &&
-        existing !== null &&
-        typeof existing.id === "string" &&
-        typeof existing.canonicalPath === "string" &&
-        typeof existing.status === "string"
-      ) {
+      const existing = asProjectMeta(parseJsonObject(raw));
+      if (existing) {
         // Only rewrite meta.json when a field actually changes: every MCP call
         // registers the project, and an unconditional rewrite made each plain
         // read an atomic write.
@@ -473,7 +495,7 @@ export function registerProject(projectPath: string): ProjectMeta {
         // The abandoned-temp sweep stays unconditional (a cheap readdir): a
         // registration is the recovery point after an interrupted write.
         cleanupDanglingTempFiles(getProjectStorageDir(id));
-        return existing as ProjectMeta;
+        return existing;
       }
     } catch {
       // Corrupt meta; recreate
@@ -550,13 +572,8 @@ export function pruneProjectRegistrations(): { removed: string[]; kept: number }
     let label = entry.name;
     let usable = false;
     try {
-      const meta = JSON.parse(fs.readFileSync(metaPath, "utf-8"));
-      if (
-        meta &&
-        meta.id === entry.name &&
-        typeof meta.canonicalPath === "string" &&
-        typeof meta.status === "string"
-      ) {
+      const meta = asProjectMeta(parseJsonObject(fs.readFileSync(metaPath, "utf-8")));
+      if (meta && meta.id === entry.name) {
         label = meta.canonicalPath;
         usable = fs.existsSync(meta.canonicalPath);
       }
@@ -624,16 +641,8 @@ export function getProjectMeta(projectIdOrPath: string): ProjectMeta | null {
     if (fs.existsSync(metaPath)) {
       try {
         const raw = fs.readFileSync(metaPath, "utf-8");
-        const parsed = JSON.parse(raw);
-        if (
-          typeof parsed === "object" &&
-          parsed !== null &&
-          typeof parsed.id === "string" &&
-          typeof parsed.canonicalPath === "string" &&
-          typeof parsed.status === "string"
-        ) {
-          return parsed as ProjectMeta;
-        }
+        const parsed = asProjectMeta(parseJsonObject(raw));
+        if (parsed) return parsed;
       } catch {
         // ignore
       }
@@ -647,16 +656,8 @@ export function getProjectMeta(projectIdOrPath: string): ProjectMeta | null {
   if (fs.existsSync(metaPath)) {
     try {
       const raw = fs.readFileSync(metaPath, "utf-8");
-      const parsed = JSON.parse(raw);
-      if (
-        typeof parsed === "object" &&
-        parsed !== null &&
-        typeof parsed.id === "string" &&
-        typeof parsed.canonicalPath === "string" &&
-        typeof parsed.status === "string"
-      ) {
-        return parsed as ProjectMeta;
-      }
+      const parsed = asProjectMeta(parseJsonObject(raw));
+      if (parsed) return parsed;
     } catch {
       // ignore
     }
@@ -669,16 +670,8 @@ export function getProjectMeta(projectIdOrPath: string): ProjectMeta | null {
     if (fs.existsSync(legacyMetaPath)) {
       try {
         const raw = fs.readFileSync(legacyMetaPath, "utf-8");
-        const parsed = JSON.parse(raw);
-        if (
-          typeof parsed === "object" &&
-          parsed !== null &&
-          typeof parsed.id === "string" &&
-          typeof parsed.canonicalPath === "string" &&
-          typeof parsed.status === "string"
-        ) {
-          return parsed as ProjectMeta;
-        }
+        const parsed = asProjectMeta(parseJsonObject(raw));
+        if (parsed) return parsed;
       } catch {
         // ignore
       }
@@ -710,15 +703,9 @@ export function listRegisteredProjects(): ProjectMeta[] {
       if (fs.existsSync(metaPath)) {
         try {
           const raw = fs.readFileSync(metaPath, "utf-8");
-          const meta = JSON.parse(raw);
-          if (
-            typeof meta === "object" &&
-            meta !== null &&
-            typeof meta.id === "string" &&
-            typeof meta.canonicalPath === "string"
-          ) {
-            result.push(meta as ProjectMeta);
-          }
+          // Listed even without a status (older metadata), unlike a lookup.
+          const meta = asProjectMeta(parseJsonObject(raw), false);
+          if (meta) result.push(meta);
         } catch {
           // Ignore corrupt entry
         }
@@ -734,14 +721,13 @@ export function loadProjectIndex(projectId: string): ProjectIndex | null {
   if (!fs.existsSync(indexPath)) return null;
   try {
     const raw = fs.readFileSync(indexPath, "utf-8");
-    const parsed = JSON.parse(raw);
+    const parsed = parseJsonObject(raw);
     if (
-      typeof parsed !== "object" ||
-      parsed === null ||
-      typeof parsed.meta !== "object" ||
-      parsed.meta === null ||
-      typeof parsed.meta.id !== "string" ||
-      typeof parsed.meta.canonicalPath !== "string" ||
+      !parsed ||
+      !asProjectMeta(
+        typeof parsed.meta === "object" ? (parsed.meta as Record<string, unknown> | null) : null,
+        false
+      ) ||
       typeof parsed.files !== "object" ||
       parsed.files === null ||
       Array.isArray(parsed.files) ||
@@ -751,7 +737,7 @@ export function loadProjectIndex(projectId: string): ProjectIndex | null {
     ) {
       return null;
     }
-    return parsed as ProjectIndex;
+    return parsed as unknown as ProjectIndex;
   } catch {
     return null;
   }
@@ -802,7 +788,7 @@ function deepFreeze<T>(root: T): T {
     const value = stack.pop();
     if (value === null || typeof value !== "object" || Object.isFrozen(value)) continue;
     Object.freeze(value);
-    for (const key of Object.keys(value as object)) {
+    for (const key of Object.keys(value)) {
       stack.push((value as Record<string, unknown>)[key]);
     }
   }
@@ -943,8 +929,8 @@ export function markProjectGraphStatus(
     try {
       const metaPath = getProjectMetaPath(projectId);
       const raw = fs.readFileSync(metaPath, "utf-8");
-      const meta = JSON.parse(raw);
-      if (typeof meta === "object" && meta !== null) {
+      const meta = parseJsonObject(raw);
+      if (meta) {
         meta.status = status;
         if (lastError !== undefined) meta.lastError = lastError;
         atomicWriteJson(metaPath, meta);
@@ -956,11 +942,13 @@ export function markProjectGraphStatus(
       const indexPath = getProjectIndexPath(projectId);
       if (!fs.existsSync(indexPath)) return true;
       const raw = fs.readFileSync(indexPath, "utf-8");
-      const index = JSON.parse(raw);
-      if (typeof index !== "object" || index === null) return true;
-      if (typeof index.meta !== "object" || index.meta === null) return true;
-      index.meta.status = status;
-      if (lastError !== undefined) index.meta.lastError = lastError;
+      const index = parseJsonObject(raw);
+      if (!index) return true;
+      const embedded = index.meta;
+      if (typeof embedded !== "object" || embedded === null || Array.isArray(embedded)) return true;
+      const embeddedMeta = embedded as Record<string, unknown>;
+      embeddedMeta.status = status;
+      if (lastError !== undefined) embeddedMeta.lastError = lastError;
       try {
         atomicWriteJson(indexPath, index);
       } catch {
@@ -1007,10 +995,10 @@ export function checkPersistenceConsistency(projectId: string): {
     const metaPath = getProjectMetaPath(projectId);
     const indexPath = getProjectIndexPath(projectId);
     if (!fs.existsSync(metaPath) || !fs.existsSync(indexPath)) return { consistent: true };
-    let meta: Record<string, unknown>;
-    let index: Record<string, unknown>;
+    let meta: Record<string, unknown> | null;
+    let index: Record<string, unknown> | null;
     try {
-      meta = JSON.parse(fs.readFileSync(metaPath, "utf-8"));
+      meta = parseJsonObject(fs.readFileSync(metaPath, "utf-8"));
       // The (large) index copy is read-only here: reuse the parsed, frozen
       // cache entry when index.json's stat signature is unchanged instead of
       // re-parsing it on every freshness check. meta.json is always re-read.
@@ -1019,12 +1007,12 @@ export function checkPersistenceConsistency(projectId: string): {
       if (sig && cached && cached.signature === sig.signature) {
         index = cached.index as unknown as Record<string, unknown>;
       } else {
-        index = JSON.parse(fs.readFileSync(indexPath, "utf-8"));
+        index = parseJsonObject(fs.readFileSync(indexPath, "utf-8"));
       }
     } catch {
       return { consistent: false, reason: "persistence copy is truncated or malformed JSON" };
     }
-    const embedded = (index as Record<string, unknown>)?.meta as Record<string, unknown> | null;
+    const embedded = index?.meta as Record<string, unknown> | null | undefined;
     if (!meta || typeof meta !== "object" || !embedded || typeof embedded !== "object") {
       return { consistent: false, reason: "unreadable persistence copy" };
     }
@@ -1086,7 +1074,7 @@ export function checkPersistenceConsistency(projectId: string): {
       };
     }
     if (meta.status !== embedded.status) {
-      return { consistent: false, reason: `status mismatch (meta.json=${meta.status})` };
+      return { consistent: false, reason: `status mismatch (meta.json=${String(meta.status)})` };
     }
     // Shared snapshot agreement: the unambiguous pairing signal. When
     // neither copy carries one (legacy), fall through to timestamps.

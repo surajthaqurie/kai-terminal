@@ -19,6 +19,7 @@ import { extensionFor, sniffImage } from "../../core/teams/images";
 import { privateTempDir } from "../../core/teams/tempdir";
 import type { TeamsAccount } from "../../core/teams/config";
 import { IntegrationError } from "../../core/integrations/types";
+import { buildTeamsSignal } from "../../core/teamsSignal";
 import { openInBrowser } from "../../core/integrations/providers/azure-devops/oauth";
 import { InputParser, type InputEvent } from "./input";
 import { openPath } from "./open";
@@ -29,6 +30,7 @@ import {
   type Action,
   type Frame,
   type NoticeKind,
+  type SearchResult,
   type SidebarItem,
   type ViewMessage,
   type ViewModel,
@@ -132,7 +134,21 @@ interface TeamNode {
   error: string | null;
 }
 
+/** A search result and what opening it does. */
+type Found = SearchResult & {
+  open:
+    | { kind: "conv"; key: string }
+    | { kind: "person"; name: string }
+    | { kind: "message"; key: string; id: string };
+};
+
 const MAX_ATTACHMENTS = 4;
+const MAX_PEOPLE_RESULTS = 8;
+const MAX_CONV_RESULTS = 12;
+const MAX_MESSAGE_RESULTS = 40;
+/** Pictures fetched per screen when they scroll into view. */
+const MAX_VISIBLE_FETCH = 4;
+const HIGHLIGHT_MS = 4000;
 const MAX_FILE_TEXT = describeBytes(MAX_FILE_BYTES);
 const MAX_INLINE_PREFETCH = 8;
 const WATCH_FETCH = 5;
@@ -198,7 +214,11 @@ export class ChatApp {
 
   /** Newest message time (ms) the user has seen in each conversation. */
   private seen = new Map<string, number>();
-  private unread = new Set<string>();
+  /**
+   * Conversations with messages you have not seen, and how many. 0 means "unread, count not
+   * known": the chat list only says the newest message is unseen.
+   */
+  private unread = new Map<string, number>();
   /** Conversations opened this session, most recent last: kept fresh in the background. */
   private watched: string[] = [];
   private drafts = new Map<string, Draft>();
@@ -209,6 +229,20 @@ export class ChatApp {
   private notice: { text: string; kind: NoticeKind } | null = null;
   private noticeTimer: NodeJS.Timeout | null = null;
   private scroll = 0;
+  /** Sidebar rows scrolled by the wheel; null keeps the selected conversation in view. */
+  private sidebarScroll: number | null = null;
+  private search: { query: string; cursor: number; selected: number } | null = null;
+  private searchCache: { query: string; results: Found[] } | null = null;
+  /** Scroll to this message on the next draw (a search result was opened). */
+  private focusId: string | null = null;
+  private highlight: { id: string; query: string } | null = null;
+  private highlightTimer: NodeJS.Timeout | null = null;
+  /** Messages that arrived below while the reader was scrolled up. */
+  private newBelow = 0;
+  /** The newest message drawn and the lines from its start to the end, to keep the reader's place. */
+  private anchor: { key: string; id: string; below: number } | null = null;
+  /** The unread count last told to the tab bar. */
+  private lastSignal: number | null = null;
   private sending = false;
   private localSeq = 0;
 
@@ -263,7 +297,9 @@ export class ChatApp {
       this.closed = true;
       if (this.syncTimer) clearTimeout(this.syncTimer);
       if (this.noticeTimer) clearTimeout(this.noticeTimer);
+      if (this.highlightTimer) clearTimeout(this.highlightTimer);
       process.stdout.off("resize", this.onResize);
+      this.screen.signal?.(buildTeamsSignal(null));
       process.off("exit", restore);
       this.screen.leave(this.onData);
     }
@@ -354,7 +390,7 @@ export class ChatApp {
   private onFocus(focused: boolean): void {
     this.focused = focused;
     if (!focused || this.closed || this.status.state === "expired") return;
-    if (this.selKey) this.unread.delete(this.selKey);
+    this.readSelected();
     const stale = this.now() - (this.status.at ?? 0) >= this.timing.focusedMs;
     if (stale && !this.syncing) {
       if (this.syncTimer) clearTimeout(this.syncTimer);
@@ -469,15 +505,17 @@ export class ChatApp {
     for (const chat of this.chats) {
       const key = `chat:${chat.id}`;
       this.convs.set(key, { key, title: chat.title, target: { kind: "chat", chatId: chat.id } });
-      if (key === this.selKey) {
+      if (key === this.selKey && this.focused) {
         this.markSeen(key, Date.parse(chat.lastAt) || 0);
         this.unread.delete(key);
         continue;
       }
       const has = chatHasUnread(chat, this.opts.account.id, this.seen.get(key) ?? 0);
-      if (has && !this.unread.has(key) && !initial) announce.push(chat);
-      if (has) this.unread.add(key);
-      else this.unread.delete(key);
+      if (has && !this.unread.has(key) && !initial && key !== this.selKey) announce.push(chat);
+      if (has) {
+        const n = this.countUnseen(key, Date.parse(chat.lastReadAt) || 0);
+        this.unread.set(key, Math.max(n, this.unread.get(key) ?? 0));
+      } else this.unread.delete(key);
     }
     this.announce(announce.map((c) => c.title));
     this.render();
@@ -494,7 +532,7 @@ export class ChatApp {
         const page = await this.fetchLatest(conv, WATCH_FETCH);
         if (unseenFromOthers(page, this.opts.account.id, seenAt).length > 0) {
           if (!this.unread.has(key)) this.announce([conv.title]);
-          this.unread.add(key);
+          this.unread.set(key, Math.max(this.countUnseen(key), this.unread.get(key) ?? 0));
         }
       } catch (e) {
         if (isAuthError(e) || isTransient(e)) throw e;
@@ -521,6 +559,22 @@ export class ChatApp {
     }
     for (const c of this.chats ?? []) keys.push(`chat:${c.id}`);
     return keys;
+  }
+
+  /** Messages from others in a loaded conversation newer than what you have seen (0 when not loaded). */
+  private countUnseen(key: string, readAt = 0): number {
+    const d = this.data.get(key);
+    if (!d) return 0;
+    const since = Math.max(this.seen.get(key) ?? 0, readAt);
+    return unseenFromOthers(d.list, this.opts.account.id, since).length;
+  }
+
+  /** The open conversation is on screen in a focused window: everything in it is seen. */
+  private readSelected(): void {
+    if (!this.selKey) return;
+    const d = this.data.get(this.selKey);
+    if (d) this.markSeen(this.selKey, newestAt(d.list));
+    this.unread.delete(this.selKey);
   }
 
   private markSeen(key: string, ms: number): void {
@@ -554,6 +608,9 @@ export class ChatApp {
     this.cursor = draft?.cursor ?? 0;
     this.pending = draft?.pending ?? [];
     this.scroll = 0;
+    this.newBelow = 0;
+    this.anchor = null;
+    this.highlight = null;
     this.unread.delete(key);
     this.touchWatched(key);
     this.render();
@@ -618,14 +675,24 @@ export class ChatApp {
     try {
       const page = await this.fetchLatest(conv, 30);
       if (conv.key === this.selKey) {
+        // Only what arrived since the last refresh is news (not everything still unseen).
         const fresh =
-          before.length > 0 ? unseenFromOthers(page, this.opts.account.id, seenBefore) : [];
+          before.length > 0
+            ? unseenFromOthers(page, this.opts.account.id, Math.max(seenBefore, newestAt(before)))
+            : [];
         if (fresh.length > 0) {
+          if (this.scroll > 0) this.newBelow += fresh.length;
           this.setNotice(`New message from ${fresh[fresh.length - 1].from}`, "ok");
           if (!this.focused) this.screen.bell?.();
         }
-        this.markSeen(conv.key, newestAt(d.list));
-        this.unread.delete(conv.key);
+        if (this.focused) {
+          this.markSeen(conv.key, newestAt(d.list));
+          this.unread.delete(conv.key);
+        } else {
+          // Another tab or app has focus: what arrives here is not read yet.
+          const n = this.countUnseen(conv.key);
+          if (n > 0) this.unread.set(conv.key, n);
+        }
       }
       this.prefetchImages(page);
     } catch (e) {
@@ -665,7 +732,30 @@ export class ChatApp {
         }
       }
     }
-    for (const url of wanted) {
+    for (const url of wanted) this.fetchImage(url);
+  }
+
+  /** Pictures in messages on screen that were not loaded yet (scrolled back to): load them now. */
+  private loadVisibleImages(frame: Frame): void {
+    if (!this.inline || !this.selKey || !frame.visibleIds?.length) return;
+    const d = this.data.get(this.selKey);
+    if (!d) return;
+    const ids = new Set(frame.visibleIds);
+    let started = 0;
+    for (const m of d.list) {
+      if (!ids.has(m.id)) continue;
+      for (const img of m.images) {
+        if (started >= MAX_VISIBLE_FETCH) return;
+        if (img.fetchable && !this.images.has(img.url)) {
+          this.fetchImage(img.url);
+          started++;
+        }
+      }
+    }
+  }
+
+  private fetchImage(url: string): void {
+    {
       this.images.set(url, { state: "loading" });
       void this.opts.graph
         .image(url)
@@ -742,7 +832,7 @@ export class ChatApp {
           label: `# ${ch.name}`,
           key,
           selected: key === this.selKey,
-          unread: this.unread.has(key),
+          unread: this.unreadMark(key),
         });
       }
     }
@@ -755,7 +845,7 @@ export class ChatApp {
         label: c.title,
         key,
         selected: key === this.selKey,
-        unread: this.unread.has(key),
+        unread: this.unreadMark(key),
       });
     }
 
@@ -794,7 +884,36 @@ export class ChatApp {
       })),
       notice: this.notice,
       typing: "",
+      sidebarScroll: this.sidebarScroll ?? undefined,
+      search: this.search
+        ? {
+            query: this.search.query,
+            cursor: this.search.cursor,
+            selected: this.search.selected,
+            results: this.searchResults(),
+            scopeNote: this.searchScopeNote(),
+          }
+        : null,
+      focusId: this.focusId,
+      highlightId: this.highlight?.id ?? null,
+      highlightQuery: this.highlight?.query ?? "",
+      newBelow: this.newBelow,
+      unreadTotal: this.unreadTotal(),
     };
+  }
+
+  /** What the sidebar shows for a conversation: a count, a dot (count not known), or nothing. */
+  private unreadMark(key: string): number | boolean | undefined {
+    const n = this.unread.get(key);
+    if (n === undefined) return undefined;
+    return n > 0 ? n : true;
+  }
+
+  /** Unread messages in all: a conversation whose count is not known counts once. */
+  private unreadTotal(): number {
+    let total = 0;
+    for (const n of this.unread.values()) total += Math.max(1, n);
+    return total;
   }
 
   private render(): void {
@@ -804,11 +923,49 @@ export class ChatApp {
       this.renderQueued = false;
       if (this.closed) return;
       const { cols, rows } = this.screen.size();
-      const frame = layout(this.viewModel(), cols, rows);
-      if (this.scroll > frame.maxScroll) this.scroll = frame.maxScroll;
+      let frame = layout(this.viewModel(), cols, rows);
+      // Lines added under the reader (new messages, a picture that loaded) would push what
+      // they are reading up: move the scroll with them so the view stays put.
+      const a = this.anchor;
+      if (this.scroll > 0 && !this.focusId && a && a.key === this.selKey && frame.msgStart) {
+        const start = frame.msgStart[a.id];
+        const grew = start === undefined ? 0 : (frame.totalLines ?? 0) - start - a.below;
+        if (grew > 0) {
+          this.scroll += grew;
+          frame = layout(this.viewModel(), cols, rows);
+        }
+      }
+      if (frame.scroll !== undefined) this.scroll = frame.scroll;
+      else if (this.scroll > frame.maxScroll) this.scroll = frame.maxScroll;
+      this.focusId = null;
+      if (this.scroll === 0) this.newBelow = 0;
+      this.rememberAnchor(frame);
       this.frame = frame;
       this.screen.draw(frame);
+      this.loadVisibleImages(frame);
+      this.signalUnread();
     });
+  }
+
+  private rememberAnchor(frame: Frame): void {
+    let id: string | null = null;
+    let start = -1;
+    for (const [k, v] of Object.entries(frame.msgStart ?? {})) {
+      if (v > start) {
+        start = v;
+        id = k;
+      }
+    }
+    this.anchor =
+      id && this.selKey ? { key: this.selKey, id, below: (frame.totalLines ?? 0) - start } : null;
+  }
+
+  /** Tell Kai Terminal's tab bar how many messages are unread (only when it changes). */
+  private signalUnread(): void {
+    const total = this.unreadTotal();
+    if (total === this.lastSignal) return;
+    this.lastSignal = total;
+    this.screen.signal?.(buildTeamsSignal(total));
   }
 
   private setNotice(text: string, kind: NoticeKind, ms = 6000): void {
@@ -832,6 +989,7 @@ export class ChatApp {
 
   /** Public for tests: drive the app with parsed events. */
   handleEvent(ev: InputEvent): void {
+    if (this.search && ev.type !== "mouse" && ev.type !== "focus") return this.searchEvent(ev);
     if (ev.type === "text") return this.insert(ev.text);
     if (ev.type === "paste") return this.paste(ev.text);
     if (ev.type === "mouse") return this.mouse(ev);
@@ -844,6 +1002,7 @@ export class ChatApp {
       if (ev.letter === "a") return this.moveTo(0);
       if (ev.letter === "e") return this.moveTo(this.input.length);
       if (ev.letter === "w") return this.deleteWord();
+      if (ev.letter === "k" || ev.letter === "f") return this.openSearch();
       return;
     }
     switch (ev.key) {
@@ -862,6 +1021,8 @@ export class ChatApp {
       case "home":
         return this.moveTo(0);
       case "end":
+        // With nothing typed, End jumps to the newest message.
+        if (this.input === "" && this.scroll > 0) return this.jumpToLatest();
         return this.moveTo(this.input.length);
       case "up":
       case "down":
@@ -902,15 +1063,263 @@ export class ChatApp {
     const keys = this.orderedKeys();
     if (keys.length === 0) return;
     const i = this.selKey ? keys.indexOf(this.selKey) : -1;
+    this.sidebarScroll = null;
     this.select(keys[(i + delta + keys.length) % keys.length]);
+  }
+
+  private jumpToLatest(): void {
+    this.scroll = 0;
+    this.newBelow = 0;
+    this.render();
+  }
+
+  // ---- search ----------------------------------------------------------------
+
+  private openSearch(): void {
+    if (this.search) return this.closeSearch();
+    this.search = { query: "", cursor: 0, selected: 0 };
+    this.render();
+  }
+
+  private closeSearch(): void {
+    this.search = null;
+    this.searchCache = null;
+    this.render();
+  }
+
+  /** Keys and typing while search is open go to the search field. */
+  private searchEvent(ev: InputEvent): void {
+    const s = this.search;
+    if (!s) return;
+    const setQuery = (query: string, cursor: number) => {
+      s.query = query;
+      s.cursor = Math.max(0, Math.min(cursor, query.length));
+      s.selected = 0;
+      this.render();
+    };
+    if (ev.type === "text" || ev.type === "paste") {
+      const clean = sanitize(ev.text.replace(/\s+/g, " "));
+      if (!clean) return;
+      return setQuery(
+        s.query.slice(0, s.cursor) + clean + s.query.slice(s.cursor),
+        s.cursor + clean.length
+      );
+    }
+    if (ev.type === "ctrl") {
+      if (ev.letter === "c" || ev.letter === "q") return this.quit();
+      if (ev.letter === "k" || ev.letter === "f") return this.closeSearch();
+      if (ev.letter === "u") return setQuery("", 0);
+      if (ev.letter === "a") return setQuery(s.query, 0);
+      if (ev.letter === "e") return setQuery(s.query, s.query.length);
+      return;
+    }
+    if (ev.type !== "key") return;
+    const count = this.searchResults().length;
+    const move = (d: number) => {
+      if (count === 0) return;
+      s.selected = Math.max(0, Math.min(count - 1, s.selected + d));
+      this.render();
+    };
+    switch (ev.key) {
+      case "escape":
+        return this.closeSearch();
+      case "enter":
+      case "newline":
+        return this.openResult(s.selected);
+      case "up":
+        return move(-1);
+      case "down":
+      case "tab":
+        return move(1);
+      case "pageup":
+        return move(-8);
+      case "pagedown":
+        return move(8);
+      case "backspace":
+        if (s.cursor === 0) return;
+        return setQuery(s.query.slice(0, s.cursor - 1) + s.query.slice(s.cursor), s.cursor - 1);
+      case "delete":
+        return setQuery(s.query.slice(0, s.cursor) + s.query.slice(s.cursor + 1), s.cursor);
+      case "left":
+        s.cursor = Math.max(0, s.cursor - 1);
+        return this.render();
+      case "right":
+        s.cursor = Math.min(s.query.length, s.cursor + 1);
+        return this.render();
+      case "home":
+        s.cursor = 0;
+        return this.render();
+      case "end":
+        s.cursor = s.query.length;
+        return this.render();
+      default:
+        return;
+    }
+  }
+
+  private searchScopeNote(): string | undefined {
+    const loaded = [...this.data.values()].filter((d) => d.list.length > 0).length;
+    if (!this.search?.query.trim()) return undefined;
+    return `Messages are searched in the ${loaded} conversation${loaded === 1 ? "" : "s"} opened this session, as far back as they are loaded.`;
+  }
+
+  /**
+   * People (by name, from chat members and message senders), chats and channels (by name or
+   * member), then messages (by text, sender or attachment name) in what is loaded here.
+   */
+  private searchResults(): Found[] {
+    const q = this.search?.query.trim().toLowerCase() ?? "";
+    if (!q) return [];
+    if (this.searchCache?.query === q) return this.searchCache.results;
+    const me = this.opts.account.id;
+    const myName = this.opts.account.name.toLowerCase();
+    const now = new Date(this.now());
+
+    const people = new Map<string, { name: string; keys: Set<string> }>();
+    const addPerson = (name: string, key: string) => {
+      const k = name.trim().toLowerCase();
+      if (!k || k === myName) return;
+      const p = people.get(k) ?? { name: name.trim(), keys: new Set<string>() };
+      p.keys.add(key);
+      people.set(k, p);
+    };
+    for (const c of this.chats ?? []) for (const n of c.members ?? []) addPerson(n, `chat:${c.id}`);
+    for (const [key, d] of this.data) {
+      for (const m of d.list) if (!m.system && m.fromId !== me && m.from) addPerson(m.from, key);
+    }
+    const rank = (text: string) => (text.toLowerCase().startsWith(q) ? 0 : 1);
+    const personHits: Found[] = [...people.values()]
+      .filter((p) => p.name.toLowerCase().includes(q))
+      .sort((a, b) => rank(a.name) - rank(b.name) || a.name.localeCompare(b.name))
+      .slice(0, MAX_PEOPLE_RESULTS)
+      .map((p) => ({
+        kind: "person" as const,
+        title: p.name,
+        detail: `${p.keys.size} conversation${p.keys.size === 1 ? "" : "s"}`,
+        open: { kind: "person" as const, name: p.name },
+      }));
+
+    const membersOf = (key: string): string[] =>
+      key.startsWith("chat:")
+        ? ((this.chats ?? []).find((c) => `chat:${c.id}` === key)?.members ?? [])
+        : [];
+    const convHits: Found[] = [];
+    for (const key of this.orderedKeys()) {
+      const conv = this.convs.get(key);
+      if (!conv) continue;
+      const members = membersOf(key);
+      const hay = [conv.title, conv.teamName ?? "", ...members].join(" ").toLowerCase();
+      if (!hay.includes(q)) continue;
+      const n = this.unread.get(key);
+      const kindLabel = conv.teamName
+        ? `channel in ${conv.teamName}`
+        : members.length > 1
+          ? members.join(", ")
+          : "chat";
+      convHits.push({
+        kind: "conv",
+        title: conv.teamName ? `${conv.teamName} › ${conv.title}` : conv.title,
+        detail: n === undefined ? kindLabel : `${n > 0 ? n : "new"} unread · ${kindLabel}`,
+        open: { kind: "conv", key },
+      });
+      if (convHits.length >= MAX_CONV_RESULTS) break;
+    }
+
+    const messageHits: Array<Found & { at: number }> = [];
+    for (const [key, d] of this.data) {
+      const conv = this.convs.get(key);
+      if (!conv) continue;
+      for (const m of d.list) {
+        if (m.system) continue;
+        const names = [...m.images.map((i) => i.alt), ...m.files.map((f) => f.name)].join(" ");
+        const inText = m.text.toLowerCase().includes(q);
+        if (!inText && !m.from.toLowerCase().includes(q) && !names.toLowerCase().includes(q))
+          continue;
+        const { time, day } = timeParts(m.at, now);
+        const flat = (m.text || names || "(attachment)").replace(/\s+/g, " ");
+        const at = inText ? flat.toLowerCase().indexOf(q) : 0;
+        const from = Math.max(0, at - 24);
+        const snippet = `${from > 0 ? "…" : ""}${flat.slice(from, from + 160)}`;
+        messageHits.push({
+          kind: "message",
+          title: `${m.fromId === me ? "You" : m.from || "Someone"} in ${conv.title} · ${day} ${time}`,
+          detail: snippet,
+          open: { kind: "message", key, id: m.id },
+          at: Date.parse(m.at) || 0,
+        });
+      }
+    }
+    messageHits.sort((a, b) => b.at - a.at);
+    const results: Found[] = [
+      ...personHits,
+      ...convHits,
+      ...messageHits.slice(0, MAX_MESSAGE_RESULTS).map(({ at: _at, ...r }) => r),
+    ];
+    this.searchCache = { query: q, results };
+    return results;
+  }
+
+  /** The chat to open for a person: your 1:1 with them, else the newest chat they are in. */
+  private chatWith(name: string): string | null {
+    const lower = name.toLowerCase();
+    const chats = this.chats ?? [];
+    const has = (c: ChatInfo) => (c.members ?? []).some((m) => m.toLowerCase() === lower);
+    const direct = chats.find((c) => c.kind === "oneOnOne" && has(c));
+    if (direct) return `chat:${direct.id}`;
+    const any = chats.find(has);
+    if (any) return `chat:${any.id}`;
+    for (const [key, d] of this.data) {
+      if (d.list.some((m) => m.from.toLowerCase() === lower)) return key;
+    }
+    return null;
+  }
+
+  private openResult(index: number): void {
+    const r = this.searchResults()[index];
+    if (!r) return;
+    const query = this.search?.query.trim() ?? "";
+    this.search = null;
+    this.searchCache = null;
+    if (r.open.kind === "conv") return this.select(r.open.key);
+    if (r.open.kind === "person") {
+      const key = this.chatWith(r.open.name);
+      if (key) return this.select(key);
+      return this.setNotice(`No chat with ${r.open.name} here yet.`, "info");
+    }
+    if (r.open.key !== this.selKey) this.select(r.open.key);
+    this.focusId = r.open.id;
+    this.highlight = { id: r.open.id, query };
+    if (this.highlightTimer) clearTimeout(this.highlightTimer);
+    this.highlightTimer = setTimeout(() => {
+      this.highlight = null;
+      this.render();
+    }, HIGHLIGHT_MS);
+    this.highlightTimer.unref?.();
+    this.render();
   }
 
   private mouse(ev: Extract<InputEvent, { type: "mouse" }>): void {
     const f = this.frame;
     if (!f) return;
     if (ev.action === "wheelup" || ev.action === "wheeldown") {
-      if (ev.x >= f.pane.x1 && ev.x <= f.pane.x2 && ev.y >= f.pane.y1 && ev.y <= f.pane.y2) {
-        this.scrollBy(ev.action === "wheelup" ? 3 : -3);
+      const up = ev.action === "wheelup";
+      const inBox = (b?: { x1: number; y1: number; x2: number; y2: number }) =>
+        !!b && ev.x >= b.x1 && ev.x <= b.x2 && ev.y >= b.y1 && ev.y <= b.y2;
+      if (inBox(f.sidebarPane)) {
+        const from = this.sidebarScroll ?? f.sidebarTop ?? 0;
+        this.sidebarScroll = Math.max(0, Math.min(from + (up ? -3 : 3), f.maxSidebarScroll ?? 0));
+        return this.render();
+      }
+      if (inBox(f.pane)) {
+        if (this.search) {
+          const count = this.searchResults().length;
+          this.search.selected = Math.max(
+            0,
+            Math.min(count - 1, this.search.selected + (up ? -1 : 1))
+          );
+          return this.render();
+        }
+        this.scrollBy(up ? 3 : -3);
       }
       return;
     }
@@ -931,6 +1340,9 @@ export class ChatApp {
       const conv = this.selKey ? this.convs.get(this.selKey) : null;
       return conv ? this.loadOlder(conv) : undefined;
     }
+    if (a.type === "search") return this.openSearch();
+    if (a.type === "result") return this.openResult(a.index);
+    if (a.type === "jump") return this.jumpToLatest();
     return this.openRef(a.messageId, a.kind, a.index);
   }
 
@@ -961,6 +1373,7 @@ export class ChatApp {
   }
 
   private insert(text: string): void {
+    // eslint-disable-next-line no-control-regex -- \u0001 is a placeholder that carries newlines through sanitize()
     const clean = sanitize(text.replace(/\n/g, "\u0001")).replace(/\u0001/g, "\n");
     if (!clean) return;
     this.edit(

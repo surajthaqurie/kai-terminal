@@ -153,12 +153,12 @@ const tabEls = () => [...container.querySelectorAll<HTMLElement>('[role="tab"]')
 const tabTitles = () => tabEls().map((el) => el.getAttribute("aria-label")!.split(", ")[0]);
 const activeTitle = () =>
   container.querySelector(".tab-item.active")?.getAttribute("aria-label")?.split(", ")[0];
-const terminalsIn = (tabIndex: number) =>
-  [
-    ...container
-      .querySelectorAll(".tab-content")
-      [tabIndex].querySelectorAll<HTMLElement>('[data-testid="terminal"]'),
-  ].map((el) => el.dataset.session!);
+const terminalsIn = (tabIndex: number) => {
+  const tabContent = container.querySelectorAll(".tab-content")[tabIndex];
+  return [...tabContent.querySelectorAll<HTMLElement>('[data-testid="terminal"]')].map(
+    (el) => el.dataset.session!
+  );
+};
 const paneId = (tabIndex: number, paneIndex = 0) => terminalsIn(tabIndex)[paneIndex];
 const activeTabContent = () =>
   [...container.querySelectorAll<HTMLElement>(".tab-content")].find(
@@ -460,6 +460,57 @@ describe("App shell: panes", () => {
 });
 
 describe("App shell: shell exit and crash-loop guards", () => {
+  /** Lets the shell run past the instant-death window before it exits. */
+  async function exitAfterAMinute(id: string, code: number) {
+    const realNow = Date.now();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(realNow + 60_000);
+    try {
+      await exitPane(id, code);
+    } finally {
+      clock.mockRestore();
+    }
+  }
+  const exitBar = () => container.querySelector(".pane-exit-bar");
+  const exitBarButton = (label: string) =>
+    [...(exitBar()?.querySelectorAll("button") ?? [])].find((b) => b.textContent === label)!;
+
+  it("a failed shell keeps its pane, with the exit code, Restart and Close (FUNC-09)", async () => {
+    await mount();
+    await newTabKey();
+    await exitAfterAMinute(paneId(1), 127);
+    expect(tabTitles()).toEqual(["Terminal 1", "Terminal 2"]);
+    expect(exitBar()?.getAttribute("aria-label")).toBe("Shell exited with code 127");
+    expect(registry.panes.has(paneId(1))).toBe(true); // the terminal (and its output) stays
+  });
+
+  it("Restart on the exit bar starts a new shell in the same pane", async () => {
+    await mount();
+    await newTabKey();
+    const id = paneId(1);
+    await exitAfterAMinute(id, 1);
+    await act(async () => exitBarButton("Restart").click());
+    expect(exitBar()).toBeNull();
+    expect(registry.panes.get(id)!.resetKey).toBe(1);
+    expect(tabEls()[1].getAttribute("aria-label")).toBe("Terminal 2, connecting");
+  });
+
+  it("Close on the exit bar removes the pane", async () => {
+    await mount();
+    await newTabKey();
+    await exitAfterAMinute(paneId(1), 1);
+    await act(async () => exitBarButton("Close").click());
+    expect(tabTitles()).toEqual(["Terminal 1"]);
+    expect(exitBar()).toBeNull();
+  });
+
+  it("a clean exit still closes the pane with no exit bar", async () => {
+    await mount();
+    await newTabKey();
+    await exitAfterAMinute(paneId(1), 0);
+    expect(tabTitles()).toEqual(["Terminal 1"]);
+    expect(exitBar()).toBeNull();
+  });
+
   it("exiting one pane of a split closes only that pane", async () => {
     await mount();
     await splitVerticalKey();
@@ -517,7 +568,10 @@ describe("App shell: shell exit and crash-loop guards", () => {
     const alert = banner("Shell keeps exiting");
     expect(alert).not.toBeNull();
     expect(alert!.textContent).toContain("3 times in 10 s");
-    expect(tabTitles()).toEqual(["Terminal 1", "Terminal 2"]);
+    // The first two failures keep their panes open with the exit code (FUNC-09); the third
+    // trips the crash-loop guard instead.
+    expect(tabTitles()).toEqual(["Terminal 1", "Terminal 2", "Terminal 3", "Terminal 4"]);
+    expect(container.querySelectorAll('[aria-label="Shell exited with code 1"]')).toHaveLength(2);
     expect(tabEls()[1].getAttribute("aria-label")).toBe("Terminal 2, error");
     expect(registry.panes.get(parked)!.resetKey).toBe(0);
 
@@ -525,7 +579,9 @@ describe("App shell: shell exit and crash-loop guards", () => {
     await act(async () => retry.click());
     expect(banner("Shell keeps exiting")).toBeNull();
     expect(registry.panes.get(parked)!.resetKey).toBe(1);
-    expect(tabEls()[1].getAttribute("aria-label")).toBe("Terminal 2, connecting");
+    // Connecting, shown as "not started" because Terminal 4 (kept with its exit bar) is still in
+    // front: a tab that is not on screen starts its shell when it is opened.
+    expect(tabEls()[1].getAttribute("aria-label")).toBe("Terminal 2, not started");
     expect(modal("diagnostics").lastError).toBeNull();
   });
 

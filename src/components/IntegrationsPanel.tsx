@@ -48,6 +48,8 @@ import { effectiveRules } from "../core/integrations/workflowRules";
 import { WorkflowRulesSection } from "./WorkflowRulesSection";
 import { TeamsIntegrationCard } from "./TeamsIntegrationCard";
 
+import { SECRET_FILE_NOTE } from "./secretFileNote";
+
 interface IntegrationsPanelProps {
   projectDir: string;
 }
@@ -208,6 +210,7 @@ const ProviderCard: FC<ProviderCardProps> = ({ provider, projectDir }) => {
       const extra = [
         ...summary.taken.map((t) => `${t.org} now uses ${who} (was ${t.from}).`),
         ...(summary.alreadySignedIn ? ["Already signed in with this account; refreshed."] : []),
+        ...(res.value.storedIn === "file" ? [SECRET_FILE_NOTE] : []),
       ].join(" ");
       const withExtra = (text: string) => (extra ? `${text} ${extra}` : text);
       // The folder's own organization, else the only one: nothing to choose.
@@ -309,9 +312,11 @@ const ProviderCard: FC<ProviderCardProps> = ({ provider, projectDir }) => {
       }
       // The token is saved by the CLI now; this window keeps no copy.
       closeServerForm();
-      const { account, user } = res.value;
+      const { account, user, storedIn } = res.value;
       const who = user.email ?? user.name;
       const name = accountName(account);
+      const withNote = (text: string) =>
+        storedIn === "file" ? `${text} ${SECRET_FILE_NOTE}` : text;
       setAccountChoice(account.id);
 
       const ownRemote = accountMatchesRemote(account, detected);
@@ -326,9 +331,11 @@ const ProviderCard: FC<ProviderCardProps> = ({ provider, projectDir }) => {
         if (!mounted.current) return;
         if (bound.ok) {
           setNotice(
-            `Connected to ${name} as ${who}. Active for this project (${bound.value.project}${
-              bound.value.repo ? ` / ${bound.value.repo}` : ""
-            }).`
+            withNote(
+              `Connected to ${name} as ${who}. Active for this project (${bound.value.project}${
+                bound.value.repo ? ` / ${bound.value.repo}` : ""
+              }).`
+            )
           );
           return;
         }
@@ -338,12 +345,12 @@ const ProviderCard: FC<ProviderCardProps> = ({ provider, projectDir }) => {
         } else {
           setError(bound.error);
         }
-        setNotice(`Connected to ${name} as ${who}.`);
+        setNotice(withNote(`Connected to ${name} as ${who}.`));
         return;
       }
       await refresh();
       if (!mounted.current) return;
-      setNotice(`Connected to ${name} as ${who}.`);
+      setNotice(withNote(`Connected to ${name} as ${who}.`));
       // Nothing says which project: let the user pick it, unless another account is active already.
       if (!binding) chooseProjectFor = account.id;
     }).then(() => {

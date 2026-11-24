@@ -109,12 +109,10 @@ describe("systemToolPath", () => {
   });
 
   it("falls back to %windir% and then the default Windows directory", () => {
-    expect(systemToolPath("where.exe", "win32", { windir: "D:\\WIN" } as never)).toBe(
+    expect(systemToolPath("where.exe", "win32", { windir: "D:\\WIN" })).toBe(
       "D:\\WIN\\System32\\where.exe"
     );
-    expect(systemToolPath("where.exe", "win32", {} as never)).toBe(
-      "C:\\Windows\\System32\\where.exe"
-    );
+    expect(systemToolPath("where.exe", "win32", {})).toBe("C:\\Windows\\System32\\where.exe");
   });
 
   it("leaves the bare name alone elsewhere", () => {

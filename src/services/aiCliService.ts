@@ -3,7 +3,8 @@ import { isTauriAvailable } from "./ptyService";
 import { CustomAiCliConfig } from "../types/terminal";
 
 export interface AiCliStatus {
-  id: "codex" | "claude" | "gemini" | string;
+  /** "codex", "claude", "gemini", or the id of a custom CLI the user added. */
+  id: string;
   name: string;
   available: boolean;
   path: string | null;
@@ -123,9 +124,12 @@ export function loadUserCustomClis(): CustomAiCliConfig[] {
       localStorage.getItem(CUSTOM_CLI_STORAGE_KEY) ||
       localStorage.getItem(LEGACY_CUSTOM_CLI_STORAGE_KEY);
     if (!raw) return [];
-    const parsed = JSON.parse(raw);
+    const parsed: unknown = JSON.parse(raw);
     return Array.isArray(parsed)
-      ? parsed.filter((c) => c && typeof c.id === "string" && typeof c.path === "string")
+      ? (parsed as unknown[]).filter((c): c is CustomAiCliConfig => {
+          const entry = c as Partial<CustomAiCliConfig> | null;
+          return !!entry && typeof entry.id === "string" && typeof entry.path === "string";
+        })
       : [];
   } catch {
     return [];
@@ -266,7 +270,7 @@ export async function getAiCliDetails(opts?: { force?: boolean }): Promise<AiCli
     return composeDetails(await detailsInflight, customClis);
   }
   detailsInflight = fetchAiCliDetailsBase();
-  let baseDetails: AiCliDetails[] = [];
+  let baseDetails: AiCliDetails[];
   try {
     baseDetails = await detailsInflight;
     detailsCache = { at: Date.now(), data: baseDetails };
