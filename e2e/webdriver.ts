@@ -151,5 +151,8 @@ export async function waitFor<T>(
     }
     await new Promise((r) => setTimeout(r, intervalMs));
   }
-  throw new Error(`Timed out after ${timeoutMs} ms waiting for ${what}${last ? ` (${last})` : ""}`);
+  const reason = last instanceof Error ? last.message : last ? JSON.stringify(last) : "";
+  throw new Error(
+    `Timed out after ${timeoutMs} ms waiting for ${what}${reason ? ` (${reason})` : ""}`
+  );
 }

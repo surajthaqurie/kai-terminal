@@ -1086,7 +1086,7 @@ export function checkPersistenceConsistency(projectId: string): {
       };
     }
     if (meta.status !== embedded.status) {
-      return { consistent: false, reason: `status mismatch (meta.json=${meta.status})` };
+      return { consistent: false, reason: `status mismatch (meta.json=${String(meta.status)})` };
     }
     // Shared snapshot agreement: the unambiguous pairing signal. When
     // neither copy carries one (legacy), fall through to timestamps.

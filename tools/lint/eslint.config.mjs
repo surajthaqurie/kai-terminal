@@ -44,11 +44,29 @@ export default tseslint.config(
       "@typescript-eslint/no-floating-promises": "error",
       "@typescript-eslint/no-misused-promises": "error",
       "@typescript-eslint/await-thenable": "error",
+      // A value that would print as "[object Object]" (in String() or a template), and a union
+      // member swallowed by a wider one (`"a" | string`) so its names go unchecked.
+      "@typescript-eslint/no-base-to-string": "error",
+      "@typescript-eslint/restrict-template-expressions": "error",
+      "@typescript-eslint/no-redundant-type-constituents": "error",
+      // A switch over a union with neither every case nor a `default`: a new member would fall
+      // through silently. An explicit `default` counts as handling the rest.
+      "@typescript-eslint/switch-exhaustiveness-check": [
+        "error",
+        { considerDefaultExhaustiveForUnions: true },
+      ],
+      // Not enabled, with the findings read: `only-throw-error` / `prefer-promise-reject-errors`
+      // (Tauri's invoke rejects with strings; every hit rethrew a caught value) and `return-await`
+      // (all 15 hits were style; no promise was returned unawaited inside a try).
     },
   },
   {
-    // Tests may use `any` for loose fixtures and mocks.
+    // Tests may use `any` for loose fixtures and mocks. Their fetch fakes stringify inputs that
+    // are always URL strings; a wrong one fails the test, so base-to-string adds nothing there.
     files: ["src/__tests__/**/*.{ts,tsx}", "e2e/**/*.ts"],
-    rules: { "@typescript-eslint/no-explicit-any": "off" },
+    rules: {
+      "@typescript-eslint/no-explicit-any": "off",
+      "@typescript-eslint/no-base-to-string": "off",
+    },
   }
 );

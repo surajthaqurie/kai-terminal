@@ -508,11 +508,19 @@ export const YOUTUBE_LISTENING_HANDSHAKE = JSON.stringify({
   channel: "widget",
 });
 
+/** IFrame Player API functions this app calls; a misspelt one is silently ignored by YouTube. */
 export type YouTubeCommand =
-  "playVideo" | "pauseVideo" | "nextVideo" | "previousVideo" | "mute" | "unMute" | "seekTo";
+  | "playVideo"
+  | "pauseVideo"
+  | "nextVideo"
+  | "previousVideo"
+  | "mute"
+  | "unMute"
+  | "seekTo"
+  | "setVolume";
 
 /** Control message for an embed that was loaded with `enablejsapi=1`. */
-export function youtubeCommand(func: YouTubeCommand | string, args: unknown = ""): string {
+export function youtubeCommand(func: YouTubeCommand, args: unknown = ""): string {
   return JSON.stringify({ event: "command", func, args });
 }
 

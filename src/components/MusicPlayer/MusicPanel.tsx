@@ -360,7 +360,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
       playingRef.current && clock.at > 0 ? Math.min(10, (performance.now() - clock.at) / 1000) : 0;
     frameRef.current?.contentWindow?.postMessage(youtubeCommand("pauseVideo"), "*");
     if (!pipActiveRef.current) return;
-    const toPip = (func: YouTubeCommand | string, args: unknown = "") =>
+    const toPip = (func: YouTubeCommand, args: unknown = "") =>
       void emitPip(PIP_EVENTS.command, youtubeCommand(func, args));
     toPip("seekTo", [Math.max(0, clock.time + elapsed), true]);
     toPip("setVolume", [volumeRef.current]);
@@ -376,7 +376,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
     loopOffPendingRef.current = false;
   }, [src, track?.videoId, track?.playlistId]);
 
-  const sendCommand = useCallback((func: YouTubeCommand | string, args: unknown = "") => {
+  const sendCommand = useCallback((func: YouTubeCommand, args: unknown = "") => {
     const command = youtubeCommand(func, args);
     // During a pop-out handoff the parked docked embed is still the one playing.
     if (pipActiveRef.current && !pipHandoffRef.current) {
@@ -1278,7 +1278,7 @@ export const MusicPanel: FC<MusicPanelProps> = ({
       // The parked docked embed is still on this song: no reload, just catch
       // it up. (Mid-handoff it never stopped playing.)
       if (!wasHandoff) {
-        const post = (func: YouTubeCommand | string, args: unknown = "") =>
+        const post = (func: YouTubeCommand, args: unknown = "") =>
           frame.postMessage(youtubeCommand(func, args), "*");
         post("seekTo", [Math.max(0, currentTimeRef.current), true]);
         post("setVolume", [volumeRef.current]);

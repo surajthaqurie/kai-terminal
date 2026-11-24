@@ -386,6 +386,35 @@ describe("agent output parsing", () => {
     expect(st.costUsd).toBeCloseTo(0.2);
   });
 
+  it("never shows a non-text field as [object Object]", () => {
+    const st = newParseState();
+    const events = [
+      { type: "system", subtype: "init", session_id: "s-2", model: { id: "sonnet" } },
+      {
+        type: "assistant",
+        message: {
+          content: [
+            { type: "tool_use", name: { n: 1 }, input: { query: { term: "x" } } },
+            { type: "text", text: { nested: true } },
+          ],
+        },
+      },
+    ].flatMap((l) => parseClaude(l, st));
+    expect(JSON.stringify(events)).not.toContain("[object Object]");
+    expect(events).toEqual([
+      { type: "session", session_id: "s-2", model: "" },
+      // An object argument is shown as JSON, so the person still sees what was asked.
+      { type: "tool", name: "tool", detail: '{"term":"x"}' },
+    ]);
+
+    const err = newParseState();
+    const failed = parseOpencode(
+      { type: "error", error: { name: "ProviderError", data: { message: { code: 5 } } } },
+      err
+    );
+    expect(failed).toEqual([{ type: "error", text: "ProviderError" }]);
+  });
+
   it("converts token totals to and from the wire spelling", () => {
     const wire = toWireTokens({ input: 1, output: 2, cacheRead: 3, cacheWrite: 4 });
     expect(wire).toEqual({ input: 1, output: 2, cache_read: 3, cache_write: 4 });

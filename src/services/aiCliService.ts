@@ -3,7 +3,8 @@ import { isTauriAvailable } from "./ptyService";
 import { CustomAiCliConfig } from "../types/terminal";
 
 export interface AiCliStatus {
-  id: "codex" | "claude" | "gemini" | string;
+  /** "codex", "claude", "gemini", or the id of a custom CLI the user added. */
+  id: string;
   name: string;
   available: boolean;
   path: string | null;

@@ -58,10 +58,17 @@ const SUMMARY_KEYS = [
   "prompt",
 ];
 
+/**
+ * A field of an agent's output that should be text. Anything else (an object, a number where a
+ * name was expected) becomes `fallback`, not "[object Object]".
+ */
+export const textOf = (v: unknown, fallback = ""): string => (typeof v === "string" ? v : fallback);
+
 export function summarizeInput(data: unknown): string {
   if (data && typeof data === "object" && !Array.isArray(data)) {
     const rec = data as Record<string, unknown>;
-    for (const key of SUMMARY_KEYS) if (rec[key]) return clip(String(rec[key]), 200);
+    // `clip` writes a non-string value (an object or array argument) as JSON.
+    for (const key of SUMMARY_KEYS) if (rec[key]) return clip(rec[key], 200);
     return Object.keys(rec).length ? clip(rec, 200) : "";
   }
   return data ? clip(data, 200) : "";
@@ -72,7 +79,7 @@ function blockText(content: unknown): string {
   if (Array.isArray(content)) {
     return content
       .filter((c) => c && typeof c === "object" && (c as { type?: unknown }).type === "text")
-      .map((c) => String((c as { text?: unknown }).text ?? ""))
+      .map((c) => textOf((c as { text?: unknown }).text))
       .join("\n");
   }
   return "";
@@ -99,12 +106,12 @@ export function parseClaude(obj: Record<string, unknown>, state: ParseState): Ev
     if (obj.subtype === "init") {
       const id = typeof obj.session_id === "string" ? obj.session_id : undefined;
       state.sessionId = id;
-      events.push({ type: "session", session_id: id ?? null, model: String(obj.model ?? "") });
+      events.push({ type: "session", session_id: id ?? null, model: textOf(obj.model) });
     } else if (obj.subtype === "permission_denied") {
       if (typeof obj.tool_use_id === "string") state.denied.add(obj.tool_use_id);
       events.push({
         type: "denied",
-        tool: String(obj.tool_name ?? "tool"),
+        tool: textOf(obj.tool_name, "tool"),
         text: "Blocked: shared agents are read-only",
       });
     }
@@ -116,8 +123,8 @@ export function parseClaude(obj: Record<string, unknown>, state: ParseState): Ev
     // grow instead of waiting for the whole block. The full block still follows as `text`.
     const ev = rec(obj.event);
     const delta = rec(ev.delta);
-    if (ev.type === "content_block_delta" && delta.type === "text_delta" && delta.text) {
-      events.push({ type: "delta", text: String(delta.text) });
+    if (ev.type === "content_block_delta" && delta.type === "text_delta" && textOf(delta.text)) {
+      events.push({ type: "delta", text: textOf(delta.text) });
     }
     return events;
   }
@@ -126,12 +133,12 @@ export function parseClaude(obj: Record<string, unknown>, state: ParseState): Ev
   if (kind === "assistant") {
     for (const raw of blocks) {
       const block = rec(raw);
-      if (block.type === "text" && String(block.text ?? "").trim()) {
-        events.push({ type: "text", text: String(block.text) });
+      if (block.type === "text" && textOf(block.text).trim()) {
+        events.push({ type: "text", text: textOf(block.text) });
       } else if (block.type === "tool_use") {
         events.push({
           type: "tool",
-          name: String(block.name ?? "tool"),
+          name: textOf(block.name, "tool"),
           detail: summarizeInput(block.input),
         });
       }
@@ -172,12 +179,12 @@ export function parseOpencode(obj: Record<string, unknown>, state: ParseState): 
   }
   const part = rec(obj.part);
   if (obj.type === "text") {
-    if (String(part.text ?? "").trim()) events.push({ type: "text", text: String(part.text) });
+    if (textOf(part.text).trim()) events.push({ type: "text", text: textOf(part.text) });
   } else if (obj.type === "tool_use") {
     const st = rec(part.state);
     events.push({
       type: "tool",
-      name: String(part.tool ?? "tool"),
+      name: textOf(part.tool, "tool"),
       detail: summarizeInput(st.input),
     });
     if (st.status === "error") {
@@ -205,7 +212,7 @@ export function parseOpencode(obj: Record<string, unknown>, state: ParseState): 
     });
   } else if (obj.type === "error") {
     const err = rec(obj.error ?? part.error);
-    const text = String(rec(err.data).message ?? err.name ?? "error");
+    const text = textOf(rec(err.data).message) || textOf(err.name) || "error";
     state.ok = false;
     state.error = clip(text, 500);
     events.push({ type: "error", text: state.error });

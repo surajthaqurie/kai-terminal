@@ -31,7 +31,7 @@ export async function runConfig(args: string[]): Promise<number> {
       );
       return 1;
     }
-    console.log(`${key} = ${currentConfig[key]}`);
+    console.log(`${key} = ${JSON.stringify(currentConfig[key])}`);
     return 0;
   }
 

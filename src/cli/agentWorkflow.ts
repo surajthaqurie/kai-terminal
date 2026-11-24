@@ -243,7 +243,8 @@ export async function executeAgentWorkflow(
   process.once("SIGTERM", onInterrupt);
   let agentExitCode: number | null = 0;
   let agentTimedOut = false;
-  let agentSignal: string | null = null;
+  // Typed by assertion: it is set inside a callback, which narrowing cannot see.
+  let agentSignal = null as string | null;
   let agentDescendantsMaySurvive = true;
   try {
     const outcome = await runCodeTaskWithAutoSync(
