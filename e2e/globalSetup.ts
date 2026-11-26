@@ -16,7 +16,7 @@
  *   TAURI_DRIVER    the tauri-driver binary (default: `tauri-driver` on PATH)
  *   KAI_E2E_NATIVE_DRIVER  WebView2: path to msedgedriver; Linux: WebKitWebDriver (optional)
  */
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -115,6 +115,16 @@ async function primeProfile(app: string): Promise<void> {
  */
 async function warmUp(app: string): Promise<void> {
   const started = Date.now();
+  // Windows: while the attempts run, keep the latest picture of the WebView2 browser the driver
+  // started, so a failure says why (no debugging switch, no DevToolsActivePort, no browser).
+  let snapshot = "";
+  const watch =
+    process.platform === "win32"
+      ? setInterval(() => {
+          const now = webviewSnapshot();
+          if (now) snapshot = now;
+        }, 10_000)
+      : undefined;
   try {
     // Up to three attempts (msedgedriver gives each 60 s); see primeProfile for why a first
     // launch on Windows can fail to attach.
@@ -122,6 +132,11 @@ async function warmUp(app: string): Promise<void> {
     await s.quit().catch(() => {});
     console.log(`[e2e] the app started and quit (warm-up) in ${Date.now() - started} ms`);
   } catch (err) {
+    if (watch) clearInterval(watch);
+    if (process.platform === "win32") {
+      console.warn(`[e2e] WebView2 browser during the attempts:\n${snapshot || "(none seen)"}`);
+      console.warn(`[e2e] msedgedriver log:\n${driverLogDigest()}`);
+    }
     console.warn(`[e2e] launched directly: ${await probeDirectLaunch(app)}`);
     await teardown();
     const reason = err instanceof Error ? err.message : String(err);
@@ -130,8 +145,48 @@ async function warmUp(app: string): Promise<void> {
       cause: err,
     });
   } finally {
+    if (watch) clearInterval(watch);
     killApp(app);
   }
+}
+
+/**
+ * Windows: the browser process msedgedriver's launch produced (its profile is a `scoped_dir`
+ * temp folder): full command line and the files in its profile. Empty when there is none.
+ */
+function webviewSnapshot(): string {
+  const script = [
+    "Get-CimInstance Win32_Process -Filter \"Name='msedgewebview2.exe'\" |",
+    "  Where-Object { $_.CommandLine -match 'scoped_dir' -and $_.CommandLine -notmatch '--type=' } |",
+    "  ForEach-Object {",
+    '    "browser pid $($_.ProcessId), parent $($_.ParentProcessId)"',
+    '    "command line: $($_.CommandLine)"',
+    "    $d = [regex]::Match($_.CommandLine, 'user-data-dir=\"?([^\"]+)').Groups[1].Value",
+    "    \"profile ${d}: \" + ((Get-ChildItem -Force -LiteralPath $d -ErrorAction SilentlyContinue | ForEach-Object Name) -join ', ')",
+    "  }",
+  ].join("\n");
+  // -EncodedCommand (UTF-16LE base64): the script's quotes reach PowerShell unmangled.
+  const encoded = Buffer.from(script, "utf16le").toString("base64");
+  const r = spawnSync(
+    "powershell.exe",
+    ["-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+    { encoding: "utf8", timeout: 20_000 }
+  );
+  return (r.stdout ?? "").trim();
+}
+
+/** The lines of the msedgedriver log (KAI_E2E_DRIVER_LOG, set in CI) that show each launch. */
+function driverLogDigest(): string {
+  const path = process.env.KAI_E2E_DRIVER_LOG;
+  if (!path || !existsSync(path))
+    return "(no log: set KAI_E2E_DRIVER_LOG to msedgedriver's --log-path)";
+  const keep =
+    /Starting Microsoft Edge WebDriver|WEBVIEW2_|Launching|DevTools|Failed|RESPONSE InitSession|ERROR/;
+  const lines = readFileSync(path, "utf8")
+    .split(/\r?\n/)
+    .filter((l) => keep.test(l))
+    .map((l) => l.slice(0, 1200));
+  return lines.slice(-40).join("\n") || "(log has no matching lines)";
 }
 
 /**

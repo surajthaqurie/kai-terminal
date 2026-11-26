@@ -349,6 +349,8 @@ jobs:
           $wrapper = Join-Path $dir "msedgedriver-logged.cmd"
           "@`"$exe`" --verbose `"--log-path=$log`" %*" | Out-File -FilePath $wrapper -Encoding ascii
           "KAI_E2E_NATIVE_DRIVER=$wrapper" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          # e2e/globalSetup.ts prints the key lines of this log when the app cannot be attached to.
+          "KAI_E2E_DRIVER_LOG=$log" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Install tauri-driver
         run: cargo install tauri-driver --version 2.1.0 --locked
