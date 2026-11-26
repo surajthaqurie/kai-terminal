@@ -118,7 +118,7 @@ jobs:
         # behavior, crash-split snapshot recovery, incarnation identity, and
         # cross-platform path handling (drive-letter/UNC forms, case-only
         # renames, lock retries). Failing platform jobs are never optional.
-        run: npx vitest run src/__tests__/releaseHardening.test.ts src/__tests__/finalHardening.test.ts src/__tests__/autoSyncLifecycle.test.ts src/__tests__/codeModeWorkflow.test.ts src/__tests__/codeMode.test.ts
+        run: npx vitest run src/__tests__/releaseHardening.test.ts src/__tests__/finalHardening.test.ts src/__tests__/autoSyncLifecycle.test.ts src/__tests__/codeModeWorkflow.test.ts src/__tests__/freshnessFailClosed.test.ts src/__tests__/codeMode.test.ts
 
       - name: Workspace Migration and Persistence Tests (all OSes)
         # Explicit check (also covered by the full suite above): workspace
@@ -186,8 +186,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Fail if anything that looks like a private key or password assignment is tracked in git.
-          if git grep -n -i -E "BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|WINDOWS_CERTIFICATE_PASSWORD\s*=\s*['\"][^'\"]+|APPLE_PASSWORD\s*=\s*['\"][^'\"]+" -- ':!package-lock.json' ':!dist/**' -- .; then
+          # Fail if actual private-key material or a password assignment is tracked in git.
+          # Docs, format checks and short test fixtures mention the PEM header text, so match
+          # real key shapes instead: a header alone on its own line (a PEM file), or a header
+          # followed by an escaped newline and a real-length base64 body (a key pasted into a string).
+          PEM_FILE='^[[:space:]]*-----BEGIN ([A-Z0-9]+ )*PRIVATE KEY-----[[:space:]]*$'
+          PEM_INLINE='-----BEGIN ([A-Z0-9]+ )*PRIVATE KEY-----(\\n|\\r\\n)[A-Za-z0-9+/=]{40,}'
+          PASSWORDS="(WINDOWS_CERTIFICATE_PASSWORD|APPLE_PASSWORD)[[:space:]]*=[[:space:]]*['\"][^'\"]+"
+          if git grep -n -E -e "$PEM_FILE" -e "$PEM_INLINE" -e "$PASSWORDS" -- . ':!package-lock.json' ':!dist/**'; then
             echo "Possible committed secret material found above. Keep credentials in GitHub Actions secrets only."
             exit 1
           fi

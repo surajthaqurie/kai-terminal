@@ -626,15 +626,23 @@ export function getValidatedFreshness(
   index: ProjectIndex | null | undefined
 ): GraphFreshness {
   if (!index) return "unindexed";
-  let mismatched: boolean;
-  try {
-    mismatched = !checkPersistenceConsistency(projectId).consistent;
-  } catch {
-    mismatched = false;
-  }
   const actual = getGraphFreshness(index);
-  if (mismatched) return actual === "fresh" ? "stale" : actual;
+  if (isPersistenceMismatched(projectId)) return actual === "fresh" ? "stale" : actual;
   return actual;
+}
+
+/**
+ * The one rule every freshness check follows: a persistence-consistency check
+ * that cannot complete counts as a mismatch (fail closed). A torn or
+ * unreadable snapshot must never be reported as `fresh`; the cost of a false
+ * mismatch is only one extra safe rebuild, which converges.
+ */
+export function isPersistenceMismatched(projectId: string): boolean {
+  try {
+    return !checkPersistenceConsistency(projectId).consistent;
+  } catch {
+    return true;
+  }
 }
 
 /** Read actual freshness, coercing `fresh` to `stale` on failure paths so a
@@ -721,13 +729,7 @@ export async function synchronizeGraphAfterChanges(
     // A torn persistence snapshot must never be reported as fresh just
     // because no caller-reported change was in scope: validate the pairing
     // before skipping, and take a safe broader refresh on mismatch.
-    let mismatched: boolean;
-    try {
-      mismatched = !checkPersistenceConsistency(meta.id).consistent;
-    } catch {
-      mismatched = true;
-    }
-    if (mismatched) {
+    if (isPersistenceMismatched(meta.id)) {
       impact = {
         scope: "full",
         reason: "persisted snapshot is inconsistent; safe broader refresh",
@@ -997,12 +999,7 @@ export async function ensureFreshIndex(
   const freshnessBefore = getGraphFreshness(index);
   // Crash-recovery: a partial write between meta.json and index.json must
   // never read as fresh. Force a rebuild when the copies disagree.
-  let persistenceMismatched: boolean;
-  try {
-    persistenceMismatched = !checkPersistenceConsistency(meta.id).consistent;
-  } catch {
-    persistenceMismatched = false;
-  }
+  const persistenceMismatched = isPersistenceMismatched(meta.id);
   if (freshnessBefore === "fresh" && !persistenceMismatched) {
     return {
       index,
@@ -1307,9 +1304,7 @@ export async function planCodeTask(
   // persistence pairing before trusting a `fresh` reading.
   const rawFreshness = getGraphFreshness(index);
   const freshness =
-    rawFreshness === "fresh" && !checkPersistenceConsistency(meta.id).consistent
-      ? "stale"
-      : rawFreshness;
+    rawFreshness === "fresh" && isPersistenceMismatched(meta.id) ? "stale" : rawFreshness;
 
   let canonicalRoot: string;
   try {
