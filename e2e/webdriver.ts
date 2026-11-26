@@ -39,8 +39,8 @@ export class Session {
   ) {}
 
   /**
-   * Starts the app. Retried: on a cold start (a brand-new WebView2 profile is being created)
-   * msedgedriver can give up attaching with "DevToolsActivePort file doesn't exist".
+   * Starts the app. Retried: on a cold start (the runtime and the debug binary read from a cold
+   * disk) the driver can give up before the window is up.
    *
    * Every attempt starts from no running copy of the app under test: a copy left by an attempt
    * that failed (or by an earlier test) holds the app's single-instance lock, so the next launch

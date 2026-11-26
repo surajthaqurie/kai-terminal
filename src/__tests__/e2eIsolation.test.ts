@@ -46,10 +46,8 @@ describe("end-to-end isolation", () => {
     expect(setup).toMatch(/mkdtempSync\(/);
     expect(setup).toMatch(/HOME:\s*dir,/);
     expect(setup).toMatch(/KAI_HOME:\s*join\(dir,\s*"\.kai"\)/);
-    expect(setup).toMatch(/replacesUserProfile\(\)\s*\?\s*\{\s*USERPROFILE:\s*dir\s*\}/);
+    expect(setup).toMatch(/USERPROFILE:\s*dir,/);
     expect(setup).toMatch(/env:\s*testEnv\(home\)/);
-    // USERPROFILE is kept only on a Windows CI runner (discarded after the job), never locally.
-    expect(setup).toMatch(/return !\(process\.platform === "win32" && process\.env\.CI\);/);
   });
 
   it("the unit suite never collects the end-to-end specs", () => {

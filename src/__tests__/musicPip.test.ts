@@ -124,6 +124,7 @@ describe("music picture-in-picture", () => {
     // music window reads the very same string instead of keeping a copy that can drift.
     expect(rs).toContain('include_str!("../tauri.windows.conf.json")');
     expect(rs).toContain(".additional_browser_args(&args)");
-    expect(rs).not.toContain("--disable-features");
+    // No copy of the configured switches (lib.rs only merges in the driver's for the e2e build).
+    expect(rs).not.toContain("msWebOOUI");
   });
 });

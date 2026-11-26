@@ -286,10 +286,11 @@ jobs:
     name: End-to-end UI (${{ matrix.target-name }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
-    # Windows is non-blocking for now: on the hosted runner msedgedriver never attaches to the
-    # app's WebView2 ("DevToolsActivePort file doesn't exist" on every attempt), while the same
-    # build attaches locally. The job still runs and uploads the msedgedriver log on failure;
-    # make it blocking again once that is fixed.
+    # Windows is non-blocking until it has passed on the hosted runner. It used to fail there with
+    # "DevToolsActivePort file doesn't exist": the runner is elevated, and WebView2 ignores
+    # msedgedriver's WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS (--remote-debugging-port=0) for an
+    # elevated process. The e2e build now passes those switches itself (browser_args_for in
+    # src-tauri/src/lib.rs). Make the job blocking once it is green.
     continue-on-error: ${{ matrix.os == 'windows-latest' }}
     strategy:
       fail-fast: false
@@ -369,8 +370,6 @@ jobs:
 
       - name: End-to-end tests (Windows)
         if: runner.os == 'Windows'
-        # USERPROFILE stays the runner's own here (CI is set); KAI_HOME isolates ~/.kai instead.
-        # See replacesUserProfile in e2e/globalSetup.ts.
         run: npm run test:e2e
 
       - name: Upload the msedgedriver log

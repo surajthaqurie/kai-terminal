@@ -178,10 +178,74 @@ const WINDOWS_CONF: &str = include_str!("../tauri.windows.conf.json");
 /// fresh page nobody has clicked in yet, and without autoplay the YouTube embed
 /// it loads (with sound) would be blocked and the song would stop.
 #[cfg(any(all(feature = "tauri", target_os = "windows"), test))]
-fn webview2_browser_args() -> Option<String> {
+fn configured_browser_args() -> Option<String> {
     let conf: serde_json::Value = serde_json::from_str(WINDOWS_CONF).ok()?;
     let args = conf["app"]["windows"][0]["additionalBrowserArgs"].as_str()?;
     (!args.trim().is_empty()).then(|| args.to_string())
+}
+
+/// The WebView2 arguments every window of this process is built with, decided
+/// once in `run` (see `browser_args_for`). Unset (tests): the configured ones.
+#[cfg(any(all(feature = "tauri", target_os = "windows"), test))]
+static WEBVIEW2_ARGS: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+
+#[cfg(any(all(feature = "tauri", target_os = "windows"), test))]
+fn webview2_browser_args() -> Option<String> {
+    WEBVIEW2_ARGS
+        .get()
+        .cloned()
+        .unwrap_or_else(configured_browser_args)
+}
+
+/// Identifier of the end-to-end build (src-tauri/tauri.e2e.conf.json).
+#[cfg(any(all(feature = "tauri", target_os = "windows"), test))]
+const E2E_IDENTIFIER: &str = "com.kai.terminal.e2e";
+
+/// WebView2 arguments for an app with `identifier`. msedgedriver attaches by
+/// putting `--remote-debugging-port=0` (and its other switches) in
+/// `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`, but WebView2 does not apply that
+/// variable for an elevated process (a CI runner), so the browser never opens
+/// its DevTools port and every session fails with "DevToolsActivePort file
+/// doesn't exist". The end-to-end build therefore passes the driver's switches
+/// itself. Only that build: the identifier is compiled in, so an environment
+/// variable can never open a debugging port in the real app.
+#[cfg(any(all(feature = "tauri", target_os = "windows"), test))]
+fn browser_args_for(
+    configured: Option<String>,
+    identifier: &str,
+    driver: Option<&str>,
+) -> Option<String> {
+    match driver {
+        Some(extra) if identifier == E2E_IDENTIFIER && !extra.trim().is_empty() => Some(
+            merge_browser_args(configured.as_deref().unwrap_or(""), extra),
+        ),
+        _ => configured,
+    }
+}
+
+/// `base` followed by `extra`, each switch once, and every `--disable-features`
+/// list folded into one (Chromium reads only one of them).
+#[cfg(any(all(feature = "tauri", target_os = "windows"), test))]
+fn merge_browser_args(base: &str, extra: &str) -> String {
+    let mut disabled: Vec<&str> = Vec::new();
+    let mut others: Vec<&str> = Vec::new();
+    for arg in base.split_whitespace().chain(extra.split_whitespace()) {
+        if let Some(list) = arg.strip_prefix("--disable-features=") {
+            for feature in list.split(',').filter(|f| !f.is_empty()) {
+                if !disabled.contains(&feature) {
+                    disabled.push(feature);
+                }
+            }
+        } else if !others.contains(&arg) {
+            others.push(arg);
+        }
+    }
+    let mut args = Vec::with_capacity(others.len() + 1);
+    if !disabled.is_empty() {
+        args.push(format!("--disable-features={}", disabled.join(",")));
+    }
+    args.extend(others.into_iter().map(str::to_string));
+    args.join(" ")
 }
 
 /// Smallest size of the music window (logical pixels).
@@ -850,6 +914,24 @@ pub fn run() {
     #[cfg(target_os = "windows")]
     crate::shell::warm_host_pty_cache();
 
+    #[allow(unused_mut)] // only Windows changes the context
+    let mut context = tauri::generate_context!();
+    // One set of WebView2 arguments for the config's windows and the ones made
+    // in code (WebView2 refuses a window whose arguments differ).
+    #[cfg(target_os = "windows")]
+    {
+        let driver = std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").ok();
+        let args = browser_args_for(
+            configured_browser_args(),
+            &context.config().identifier,
+            driver.as_deref(),
+        );
+        for window in context.config_mut().app.windows.iter_mut() {
+            window.additional_browser_args = args.clone();
+        }
+        let _ = WEBVIEW2_ARGS.set(args);
+    }
+
     tauri::Builder::default()
         .manage(pty_manager)
         .manage(terminal_windows::WindowSeeds::default())
@@ -1052,7 +1134,7 @@ pub fn run() {
             updater::get_update_install_hint_cmd,
             updater::get_update_arch_cmd
         ])
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while building tauri application")
         .run(|app_handle, event| {
             if let tauri::RunEvent::ExitRequested { .. } = event {
@@ -1099,12 +1181,62 @@ mod music_pip_size_tests {
 
 #[cfg(test)]
 mod webview2_args_tests {
-    use super::webview2_browser_args;
+    use super::{browser_args_for, merge_browser_args, webview2_browser_args, E2E_IDENTIFIER};
 
     #[test]
     fn come_from_the_windows_config_with_autoplay_allowed() {
         let args =
             webview2_browser_args().expect("tauri.windows.conf.json sets additionalBrowserArgs");
         assert!(args.contains("--autoplay-policy=no-user-gesture-required"));
+    }
+
+    #[test]
+    fn the_e2e_identifier_matches_the_e2e_config() {
+        let conf: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.e2e.conf.json")).unwrap();
+        assert_eq!(conf["identifier"], E2E_IDENTIFIER);
+    }
+
+    const DRIVER: &str = "--disable-features=IgnoreDuplicateNavs,Prewarm --enable-automation \
+                          --remote-debugging-port=0 --test-type=webdriver";
+
+    #[test]
+    fn the_e2e_build_takes_the_drivers_switches() {
+        let args = browser_args_for(
+            Some("--disable-features=AppFeature --autoplay-policy=no-user-gesture-required".into()),
+            E2E_IDENTIFIER,
+            Some(DRIVER),
+        )
+        .unwrap();
+        assert_eq!(
+            args,
+            "--disable-features=AppFeature,IgnoreDuplicateNavs,Prewarm \
+             --autoplay-policy=no-user-gesture-required --enable-automation \
+             --remote-debugging-port=0 --test-type=webdriver"
+        );
+    }
+
+    #[test]
+    fn the_real_app_ignores_the_variable() {
+        let configured = Some("--autoplay-policy=no-user-gesture-required".to_string());
+        assert_eq!(
+            browser_args_for(configured.clone(), "com.kai.terminal", Some(DRIVER)),
+            configured
+        );
+        assert_eq!(
+            browser_args_for(configured.clone(), E2E_IDENTIFIER, None),
+            configured
+        );
+    }
+
+    #[test]
+    fn merging_keeps_each_switch_once() {
+        assert_eq!(
+            merge_browser_args(
+                "--a --disable-features=X,Y",
+                "--a --b --disable-features=Y,Z"
+            ),
+            "--disable-features=X,Y,Z --a --b"
+        );
     }
 }
