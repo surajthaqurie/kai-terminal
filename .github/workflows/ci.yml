@@ -367,6 +367,11 @@ jobs:
 
       - name: End-to-end tests (Windows)
         if: runner.os == 'Windows'
+        # The first launch with the run's fresh profile does per-profile first-run work, during
+        # which msedgedriver cannot attach (e2e/globalSetup.ts primeProfile). The hosted runner is
+        # slower than a desktop, so it gets a longer priming launch than the 45 s default.
+        env:
+          KAI_E2E_PRIME_MS: "90000"
         run: npm run test:e2e
 
       - name: Upload the msedgedriver log
