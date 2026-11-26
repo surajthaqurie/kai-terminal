@@ -8,7 +8,7 @@
  */
 import { afterEach, describe, expect, it } from "vitest";
 import { DRIVER_URL, appPath } from "./globalSetup";
-import { Key, Session, waitFor } from "./webdriver";
+import { Key, Session, killApp, waitFor } from "./webdriver";
 
 let s: Session | undefined;
 
@@ -29,6 +29,7 @@ const savedExtras = () =>
 afterEach(async () => {
   await s?.quit().catch(() => {});
   s = undefined;
+  killApp(appPath());
 });
 
 describe("windows of the last session (FUNC-07)", () => {

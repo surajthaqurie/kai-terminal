@@ -7,7 +7,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DRIVER_URL, appPath } from "./globalSetup";
-import { Key, Session, waitFor } from "./webdriver";
+import { Key, Session, killApp, waitFor } from "./webdriver";
 
 /** The visible tab's area (hidden tabs stay mounted with display: none). */
 const VISIBLE = '.tab-content[style*="block"]';
@@ -72,6 +72,8 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await s?.quit().catch(() => {});
+  // Whatever the quit left (or a session that never started): the next test starts clean.
+  killApp(appPath());
 });
 
 describe("Kai end to end", () => {

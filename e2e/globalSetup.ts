@@ -20,6 +20,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { Session, killApp } from "./webdriver";
 
 export const DRIVER_URL = "http://127.0.0.1:4444";
 
@@ -83,9 +84,36 @@ export async function setup(): Promise<void> {
     console.error(`[e2e] tauri-driver could not start: ${err.message}`);
   });
   await driverReady(30_000);
+  await warmUp(app);
+}
+
+/**
+ * Starts and quits the app once before any test. The very first launch on a fresh machine (a CI
+ * runner) is the slow one: the WebView2 / WebKit runtime and the large debug binary are read from
+ * a cold disk and scanned. Taking it here keeps it out of the first test's time limit. If the app
+ * cannot start even with this long allowance, the run stops now with that reason instead of
+ * failing every test the same way.
+ */
+async function warmUp(app: string): Promise<void> {
+  const started = Date.now();
+  try {
+    const s = await Session.create(DRIVER_URL, app, 2, 150_000);
+    await s.quit().catch(() => {});
+    console.log(`[e2e] the app started and quit (warm-up) in ${Date.now() - started} ms`);
+  } catch (err) {
+    await teardown();
+    const reason = err instanceof Error ? err.message : String(err);
+    // `cause` keeps the original error (the project's lib is ES2020, before Error's options).
+    throw Object.assign(new Error(`[e2e] the app under test never started (warm-up): ${reason}`), {
+      cause: err,
+    });
+  } finally {
+    killApp(app);
+  }
 }
 
 export async function teardown(): Promise<void> {
+  killApp(appPath());
   driver?.kill();
   driver = undefined;
   if (home) {

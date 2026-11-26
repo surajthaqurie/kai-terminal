@@ -9,8 +9,9 @@ import { afterAll, describe, expect, it } from "vitest";
  * (scripts/sign-release-checksums.sh). Every key here is a throwaway generated for the test in a
  * temporary folder and deleted afterwards; the real key is never needed or touched.
  *
- * Runs where a bash with an OpenSSL that can make Ed25519 keys exists (Linux CI, Windows with Git
- * Bash). The real signing step runs on the Ubuntu publish job.
+ * Runs where a bash with an OpenSSL that can make Ed25519 keys and sign raw input exists (Linux
+ * CI, Windows with Git Bash). macOS's own `openssl` is LibreSSL, whose `pkeyutl` has no `-rawin`:
+ * skipped there. The real signing step runs on the Ubuntu publish job.
  */
 const repo = resolve(__dirname, "../..");
 const script = join(repo, "scripts/sign-release-checksums.sh");
@@ -33,7 +34,11 @@ const run = (cmd: string, env: Record<string, string | undefined> = {}) =>
     stdio: ["ignore", "pipe", "pipe"], // no terminal: a passphrase prompt must fail, not hang
     timeout: 30_000,
   });
-const usable = bash !== null && run("openssl genpkey -algorithm ED25519 >/dev/null").status === 0;
+const usable =
+  bash !== null &&
+  run("openssl genpkey -algorithm ED25519 >/dev/null").status === 0 &&
+  // What the script signs with (scripts/sign-release-checksums.sh).
+  run("openssl pkeyutl -help 2>&1 | grep -q -- -rawin").status === 0;
 
 const work = mkdtempSync(join(tmpdir(), "kai-sign-test-"));
 afterAll(() => rmSync(work, { recursive: true, force: true }));

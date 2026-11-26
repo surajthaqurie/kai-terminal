@@ -112,4 +112,13 @@ function main() {
   );
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();
+/** Real path, so a symlinked folder (macOS's /var -> /private/var temp dir) still matches. */
+const real = (p) => {
+  try {
+    return fs.realpathSync(p);
+  } catch {
+    return path.resolve(p);
+  }
+};
+// Node resolves this module's URL through symlinks but leaves argv[1] as typed: compare both real.
+if (process.argv[1] && real(process.argv[1]) === real(fileURLToPath(import.meta.url))) main();

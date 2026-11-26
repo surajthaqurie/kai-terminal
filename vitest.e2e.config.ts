@@ -12,6 +12,8 @@ export default defineConfig({
     globalSetup: ["e2e/globalSetup.ts"],
     fileParallelism: false,
     testTimeout: 180_000,
-    hookTimeout: 180_000,
+    // beforeEach starts the app (up to 3 bounded attempts, e2e/webdriver.ts) and then waits for
+    // the terminal; globalSetup's warm-up launch gets its own, longer allowance.
+    hookTimeout: 300_000,
   },
 });

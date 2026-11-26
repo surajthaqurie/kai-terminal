@@ -1,3 +1,7 @@
+import { spawnSync } from "node:child_process";
+import { readdirSync, readlinkSync } from "node:fs";
+import { resolve } from "node:path";
+
 /**
  * Minimal W3C WebDriver client for driving the real Kai window through `tauri-driver` (CI-04).
  *
@@ -37,21 +41,46 @@ export class Session {
   /**
    * Starts the app. Retried: on a cold start (a brand-new WebView2 profile is being created)
    * msedgedriver can give up attaching with "DevToolsActivePort file doesn't exist".
+   *
+   * Every attempt starts from no running copy of the app under test: a copy left by an attempt
+   * that failed (or by an earlier test) holds the app's single-instance lock, so the next launch
+   * is handed to it and exits at once ("Chrome instance exited"), and every later test fails the
+   * same way. Each attempt is also bounded, so a launch that never attaches fails here instead of
+   * using up the whole hook timeout.
    */
-  static async create(base: string, application: string, attempts = 3): Promise<Session> {
+  static async create(
+    base: string,
+    application: string,
+    attempts = 3,
+    attemptTimeoutMs = SESSION_TIMEOUT_MS
+  ): Promise<Session> {
     let lastError: unknown;
     for (let i = 0; i < attempts; i++) {
+      killApp(application);
+      const started = Date.now();
       try {
-        const value = await call<{ sessionId: string }>(base, "POST", "/session", {
-          capabilities: { alwaysMatch: { "tauri:options": { application } } },
-        });
+        const value = await call<{ sessionId: string }>(
+          base,
+          "POST",
+          "/session",
+          { capabilities: { alwaysMatch: { "tauri:options": { application } } } },
+          attemptTimeoutMs
+        );
         return new Session(base, value.sessionId);
       } catch (err) {
         lastError = err;
-        if (!(err instanceof WebDriverError) || err.code !== "session not created") throw err;
+        const retryable =
+          err instanceof WebDriverError &&
+          (err.code === "session not created" || err.code === "timeout");
+        console.warn(
+          `[e2e] session attempt ${i + 1}/${attempts} failed after ${Date.now() - started} ms: ` +
+            (err instanceof Error ? err.message : String(err))
+        );
+        if (!retryable) break;
         await new Promise((r) => setTimeout(r, 2000));
       }
     }
+    killApp(application);
     throw lastError;
   }
 
@@ -112,17 +141,32 @@ export class Session {
   }
 }
 
+/** How long one session start may take (msedgedriver itself gives up attaching after 60 s). */
+export const SESSION_TIMEOUT_MS = 75_000;
+/** Any other command: a hung webview must fail the probe, not block the test until its timeout. */
+const COMMAND_TIMEOUT_MS = 30_000;
+
 async function call<T>(
   base: string,
   method: "GET" | "POST" | "DELETE",
   path: string,
-  body?: unknown
+  body?: unknown,
+  timeoutMs = COMMAND_TIMEOUT_MS
 ): Promise<T> {
-  const res = await fetch(`${base}${path}`, {
-    method,
-    headers: body === undefined ? undefined : { "content-type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${base}${path}`, {
+      method,
+      headers: body === undefined ? undefined : { "content-type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (err) {
+    if (err instanceof Error && err.name === "TimeoutError") {
+      throw new WebDriverError(0, "timeout", `${method} ${path} had no answer in ${timeoutMs} ms`);
+    }
+    throw err;
+  }
   const json = (await res.json().catch(() => ({}))) as {
     value?: T & { error?: string; message?: string };
   };
@@ -155,4 +199,39 @@ export async function waitFor<T>(
   throw new Error(
     `Timed out after ${timeoutMs} ms waiting for ${what}${reason ? ` (${reason})` : ""}`
   );
+}
+
+/**
+ * Ends every running copy of the app under test, matched by its full executable path, so a Kai
+ * the developer is running (another binary) is never touched. Synchronous and best effort.
+ */
+export function killApp(application: string): void {
+  const target = resolve(application);
+  if (process.platform === "win32") {
+    // The path goes in through the environment: no quoting of it inside the script.
+    spawnSync(
+      "powershell.exe",
+      [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        "Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath -ieq $env:KAI_E2E_KILL } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }",
+      ],
+      { env: { ...process.env, KAI_E2E_KILL: target }, stdio: "ignore", timeout: 30_000 }
+    );
+    return;
+  }
+  let pids: string[];
+  try {
+    pids = readdirSync("/proc").filter((d) => /^\d+$/.test(d));
+  } catch {
+    return; // no /proc (macOS): there is no WebDriver there anyway
+  }
+  for (const pid of pids) {
+    try {
+      if (readlinkSync(`/proc/${pid}/exe`) === target) process.kill(Number(pid), "SIGKILL");
+    } catch {
+      // gone already, or not ours to read
+    }
+  }
 }

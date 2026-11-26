@@ -1921,6 +1921,14 @@ fn test_25_powershell_round_trip_and_resize() {
         )
         .expect("Failed to spawn PowerShell");
 
+    // A cold PowerShell start (fresh CI runner, .NET not warmed, ARM64) can take well over 20 s;
+    // wait for its prompt before typing, so the time limit below is about running a command.
+    assert!(
+        emitter.wait_for_output("PS ", 120),
+        "PowerShell never showed its prompt, got: {}",
+        emitter.get_text()
+    );
+
     // Built from parts so the typed command itself never matches.
     manager
         .write_to_pty(&session.id, "Write-Output ('KAI' + 'PS' + (20 + 5))\r")

@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, it } from "vitest";
 import { DRIVER_URL, appPath } from "./globalSetup";
-import { Key, Session, waitFor } from "./webdriver";
+import { Key, Session, killApp, waitFor } from "./webdriver";
 
 const VISIBLE = '.tab-content[style*="block"]';
 const enabled = process.env.KAI_E2E_BENCH === "1";
@@ -57,6 +57,7 @@ describe.skipIf(!enabled)("PERF-09 output transport benchmark", () => {
 
   afterAll(async () => {
     await s?.quit().catch(() => {});
+    killApp(appPath());
     if (dir) rmSync(dir, { recursive: true, force: true });
   });
 
