@@ -286,6 +286,11 @@ jobs:
     name: End-to-end UI (${{ matrix.target-name }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
+    # Windows is non-blocking for now: on the hosted runner msedgedriver never attaches to the
+    # app's WebView2 ("DevToolsActivePort file doesn't exist" on every attempt), while the same
+    # build attaches locally. The job still runs and uploads the msedgedriver log on failure;
+    # make it blocking again once that is fixed.
+    continue-on-error: ${{ matrix.os == 'windows-latest' }}
     strategy:
       fail-fast: false
       matrix:
