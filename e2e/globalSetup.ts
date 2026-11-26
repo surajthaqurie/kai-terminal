@@ -84,7 +84,26 @@ export async function setup(): Promise<void> {
     console.error(`[e2e] tauri-driver could not start: ${err.message}`);
   });
   await driverReady(30_000);
+  if (process.platform === "win32") await primeProfile(app);
   await warmUp(app);
+}
+
+/**
+ * Windows: runs the app once without a driver before the first WebDriver session. The first
+ * launch with a brand-new USERPROFILE (the throwaway home above) does per-profile first-run work
+ * (Windows identity cache, WinINet, PowerShell caches), and while it does, the WebView2 browser
+ * that msedgedriver starts never opens its DevTools port: the session fails after 60 s with
+ * "DevToolsActivePort file doesn't exist", on a slow CI runner on every attempt. Once one launch
+ * has run with the profile, sessions attach in about a second. KAI_E2E_PRIME_MS sets how long the
+ * priming launch runs (default 45 s).
+ */
+async function primeProfile(app: string): Promise<void> {
+  const ms = Number(process.env.KAI_E2E_PRIME_MS) || 45_000;
+  const started = Date.now();
+  const result = await probeDirectLaunch(app, ms);
+  console.log(
+    `[e2e] primed the profile with a direct launch (${Date.now() - started} ms): ${result}`
+  );
 }
 
 /**
@@ -97,9 +116,8 @@ export async function setup(): Promise<void> {
 async function warmUp(app: string): Promise<void> {
   const started = Date.now();
   try {
-    // Three attempts: on Windows the first session after tauri-driver starts reliably fails with
-    // "DevToolsActivePort file doesn't exist" (the WebView2 browser never opens its DevTools port)
-    // while later ones attach at once; msedgedriver gives each attempt 60 s.
+    // Up to three attempts (msedgedriver gives each 60 s); see primeProfile for why a first
+    // launch on Windows can fail to attach.
     const s = await Session.create(DRIVER_URL, app, 3, 150_000);
     await s.quit().catch(() => {});
     console.log(`[e2e] the app started and quit (warm-up) in ${Date.now() - started} ms`);
@@ -117,9 +135,10 @@ async function warmUp(app: string): Promise<void> {
 }
 
 /**
- * Diagnostic for a warm-up that failed: starts the app without any driver and reports whether it
- * stays up (then the driver cannot attach to its webview) or exits, with its code and output (then
- * the app itself fails to start on this machine).
+ * Starts the app without any driver for `watchMs` and reports whether it stays up or exits, with
+ * its code and output. Primes the profile on Windows (primeProfile), and diagnoses a warm-up that
+ * failed: staying up means the driver cannot attach to its webview, exiting means the app itself
+ * fails to start on this machine.
  */
 async function probeDirectLaunch(app: string, watchMs = 20_000): Promise<string> {
   killApp(app);
