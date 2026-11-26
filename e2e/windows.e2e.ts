@@ -43,7 +43,7 @@ describe("windows of the last session (FUNC-07)", () => {
     const main = (await s.windowHandles())[0];
 
     // A second window saves its tabs under its own label.
-    await s.type((await s.findAll(".xterm-helper-textarea"))[0], "");
+    await s.focus((await s.findAll(".xterm-helper-textarea"))[0]);
     await s.chord(Key.Control, Key.Shift, "n");
     await waitFor("a second window", async () => (await windowLabels()).length === 2);
     const live = (await windowLabels()).find((l) => l !== "main")!;
@@ -51,7 +51,7 @@ describe("windows of the last session (FUNC-07)", () => {
 
     // The main window gets a second tab, saved the normal way (the reload below flushes it).
     await s.switchToWindow(main);
-    await s.type((await s.findAll(".xterm-helper-textarea"))[0], "");
+    await s.focus((await s.findAll(".xterm-helper-textarea"))[0]);
     await s.chord(Key.Control, Key.Shift, "t");
     await waitFor(
       "a second tab in the main window",

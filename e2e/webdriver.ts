@@ -119,7 +119,14 @@ export class Session {
   }
 
   async type(el: ElementRef, text: string): Promise<void> {
+    // WebKitWebDriver (Linux) rejects an empty `text` as missing; use `focus` to just focus.
+    if (text === "") throw new Error("Session.type needs text; use Session.focus to focus");
     await this.cmd("POST", `/element/${el[ELEMENT]}/value`, { text });
+  }
+
+  /** Focuses `el` (for keyboard shortcuts that go to the focused element). */
+  async focus(el: ElementRef): Promise<void> {
+    await this.execute("arguments[0].focus();", el);
   }
 
   async text(el: ElementRef): Promise<string> {

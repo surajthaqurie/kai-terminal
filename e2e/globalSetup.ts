@@ -101,6 +101,7 @@ async function warmUp(app: string): Promise<void> {
     await s.quit().catch(() => {});
     console.log(`[e2e] the app started and quit (warm-up) in ${Date.now() - started} ms`);
   } catch (err) {
+    console.warn(`[e2e] launched directly: ${await probeDirectLaunch(app)}`);
     await teardown();
     const reason = err instanceof Error ? err.message : String(err);
     // `cause` keeps the original error (the project's lib is ES2020, before Error's options).
@@ -110,6 +111,39 @@ async function warmUp(app: string): Promise<void> {
   } finally {
     killApp(app);
   }
+}
+
+/**
+ * Diagnostic for a warm-up that failed: starts the app without any driver and reports whether it
+ * stays up (then the driver cannot attach to its webview) or exits, with its code and output (then
+ * the app itself fails to start on this machine).
+ */
+async function probeDirectLaunch(app: string, watchMs = 20_000): Promise<string> {
+  killApp(app);
+  const child = spawn(app, [], {
+    stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env, ...(home ? { HOME: home, USERPROFILE: home } : {}) },
+  });
+  let output = "";
+  const keep = (chunk: Buffer) => {
+    output = (output + chunk.toString()).slice(-4000);
+  };
+  child.stdout?.on("data", keep);
+  child.stderr?.on("data", keep);
+  const result = await new Promise<string>((done) => {
+    const timer = setTimeout(() => done(`still running after ${watchMs} ms`), watchMs);
+    child.on("error", (e) => {
+      clearTimeout(timer);
+      done(`could not start: ${e.message}`);
+    });
+    child.on("exit", (code, signal) => {
+      clearTimeout(timer);
+      done(`exited within ${watchMs} ms (code ${code}, signal ${signal})`);
+    });
+  });
+  child.kill();
+  killApp(app);
+  return `${result}${output.trim() ? `\n--- app output ---\n${output.trim()}` : ""}`;
 }
 
 export async function teardown(): Promise<void> {

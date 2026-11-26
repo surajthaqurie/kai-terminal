@@ -338,7 +338,12 @@ jobs:
           $exe = Join-Path $dir "msedgedriver.exe"
           $sig = Get-AuthenticodeSignature $exe
           if ($sig.Status -ne "Valid" -or $sig.SignerCertificate.Subject -notmatch "O=Microsoft Corporation") { throw "msedgedriver signature check failed: $($sig.Status)" }
-          "KAI_E2E_NATIVE_DRIVER=$exe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          # tauri-driver cannot pass flags to msedgedriver, so a wrapper turns on its verbose log
+          # (uploaded when the job fails: it says why a webview never attached).
+          $log = Join-Path $env:RUNNER_TEMP "msedgedriver.log"
+          $wrapper = Join-Path $dir "msedgedriver-logged.cmd"
+          "@`"$exe`" --verbose `"--log-path=$log`" %*" | Out-File -FilePath $wrapper -Encoding ascii
+          "KAI_E2E_NATIVE_DRIVER=$wrapper" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Install tauri-driver
         run: cargo install tauri-driver --version 2.1.0 --locked
@@ -357,6 +362,15 @@ jobs:
       - name: End-to-end tests (Windows)
         if: runner.os == 'Windows'
         run: npm run test:e2e
+
+      - name: Upload the msedgedriver log
+        if: failure() && runner.os == 'Windows'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: msedgedriver-log
+          path: ${{ runner.temp }}/msedgedriver.log
+          if-no-files-found: ignore
+          retention-days: 7
 
   # CI-08: ESLint (typescript-eslint recommended + React hooks), zero warnings allowed. It runs from
   # tools/lint with its own TypeScript 6.0: typescript-eslint cannot run on TypeScript 7.0, which

@@ -26,13 +26,21 @@ const paneText = () =>
 const count = (css: string) =>
   s.execute<number>("return document.querySelectorAll(arguments[0]).length;", css);
 
-/** Types into the visible tab's active terminal. */
-async function typeInTerminal(text: string) {
-  const input = await waitFor("the terminal's input", async () => {
+/** The visible tab's active terminal input. */
+const terminalInput = () =>
+  waitFor("the terminal's input", async () => {
     const found = await s.findAll(`${VISIBLE} .active-pane .xterm-helper-textarea`);
     return found[0] ?? (await s.findAll(`${VISIBLE} .xterm-helper-textarea`))[0];
   });
-  await s.type(input, text);
+
+/** Types into the visible tab's active terminal. */
+async function typeInTerminal(text: string) {
+  await s.type(await terminalInput(), text);
+}
+
+/** Focuses the visible tab's active terminal, as a user would have it before a shortcut. */
+async function focusTerminal() {
+  await s.focus(await terminalInput());
 }
 
 /** The window's visible text, for a failure message (what the user would have seen). */
@@ -88,27 +96,27 @@ describe("Kai end to end", () => {
 
   it("Ctrl+Shift+T opens a second tab", async () => {
     expect(await count("[data-tab-id]")).toBe(1);
-    await typeInTerminal(""); // focus the terminal, as a user would be
+    await focusTerminal();
     await s.chord(Key.Control, Key.Shift, "t");
     await waitFor("a second tab", async () => (await count("[data-tab-id]")) === 2);
     await waitForPrompt(); // the new tab has its own shell
   });
 
   it("Alt+Shift+= splits the terminal into two panes", async () => {
-    await typeInTerminal("");
+    await focusTerminal();
     await s.chord(Key.Alt, Key.Shift, "=");
     await waitFor("two panes", async () => (await count(`${VISIBLE} .pane-grid-pane`)) === 2);
     await waitFor("two terminals", async () => (await count(`${VISIBLE} .xterm-rows`)) === 2);
   });
 
   it("Ctrl+Shift+F opens find in terminal", async () => {
-    await typeInTerminal("");
+    await focusTerminal();
     await s.chord(Key.Control, Key.Shift, "f");
     await waitFor("the search bar", async () => (await count(".terminal-search-bar")) === 1);
   });
 
   it("Ctrl+Shift+P opens the command palette and Escape closes it", async () => {
-    await typeInTerminal("");
+    await focusTerminal();
     await s.chord(Key.Control, Key.Shift, "p");
     await waitFor("the command palette", async () => (await count(".command-palette-modal")) === 1);
     await s.chord(Key.Escape);
@@ -143,7 +151,7 @@ describe("Kai end to end", () => {
   it("a failed shell keeps its pane with the exit code, and Restart starts a new shell (FUNC-09)", async () => {
     // In a second tab: the only shell of a window dying within seconds of opening is treated as
     // a shell that never started (Retry banner), which is a different guard.
-    await typeInTerminal("");
+    await focusTerminal();
     await s.chord(Key.Control, Key.Shift, "t");
     await waitFor("a second tab", async () => (await count("[data-tab-id]")) === 2);
     await waitForPrompt();
