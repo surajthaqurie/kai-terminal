@@ -73,10 +73,21 @@ describe("windows of the last session (FUNC-07)", () => {
     // The live second window is not part of the offer. Read from the DOM, not WebDriver's
     // rendered text: the message is a shrinkable, overflow-hidden flex item, and in a narrow
     // window (Xvfb's default screen) WebKitWebDriver reports only the button labels.
-    const offer = await s.execute<string>(
-      "return arguments[0].querySelector('.banner-text').textContent;",
-      banner
-    );
+    const offerText = () =>
+      s!.execute<string>("return arguments[0].querySelector('.banner-text').textContent;", banner);
+    // The banner shows this window's own tabs first ("2 tabs"); the other windows join once the
+    // async live-window query answers, so wait for the full offer instead of reading it once.
+    let offer = "";
+    try {
+      await waitFor("the offer to include the other window", async () => {
+        offer = await offerText();
+        return offer.includes("in 2 windows");
+      });
+    } catch {
+      // Say whether the saved window was lost from storage or just not offered.
+      const saved = Object.keys(await savedExtras()).join(", ");
+      throw new Error(`restore offer was "${offer}"; saved extra windows: [${saved}]`);
+    }
     expect(offer).toContain("4 tabs in 2 windows");
     expect(await count("[data-tab-id]")).toBe(1); // a fresh starter tab until Load
 
