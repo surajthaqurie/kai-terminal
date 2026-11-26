@@ -496,6 +496,25 @@ async function dispatchMcpMessage(
         };
       }
 
+      // Missing required arguments are refused before touching storage too: otherwise a call
+      // that can only fail first registers, auto-indexes and refreshes the project. Same message
+      // as the tools' own checks (all required arguments are non-empty strings).
+      const schema = MCP_TOOLS.find((t) => t.name === toolName)?.inputSchema as
+        { required?: readonly string[] } | undefined;
+      for (const key of schema?.required ?? []) {
+        const value = args[key];
+        if (typeof value !== "string" || !value.trim()) {
+          return {
+            jsonrpc: "2.0",
+            id: reqId,
+            error: {
+              code: -32602,
+              message: `${key} parameter is required and must be a non-empty string`,
+            },
+          };
+        }
+      }
+
       if (args.projectPath !== undefined) {
         if (typeof args.projectPath !== "string") {
           return {
