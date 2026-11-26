@@ -70,8 +70,14 @@ describe("windows of the last session (FUNC-07)", () => {
       async () => (await s!.findAll('[aria-label="Restore previous session"]'))[0],
       60_000
     );
-    // The live second window is not part of the offer.
-    expect(await s.text(banner)).toContain("4 tabs in 2 windows");
+    // The live second window is not part of the offer. Read from the DOM, not WebDriver's
+    // rendered text: the message is a shrinkable, overflow-hidden flex item, and in a narrow
+    // window (Xvfb's default screen) WebKitWebDriver reports only the button labels.
+    const offer = await s.execute<string>(
+      "return arguments[0].querySelector('.banner-text').textContent;",
+      banner
+    );
+    expect(offer).toContain("4 tabs in 2 windows");
     expect(await count("[data-tab-id]")).toBe(1); // a fresh starter tab until Load
 
     // The banner sits over the terminal area: its buttons must take the click, not xterm.

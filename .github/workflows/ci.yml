@@ -357,7 +357,8 @@ jobs:
 
       - name: End-to-end tests (Linux, virtual display)
         if: runner.os == 'Linux'
-        run: xvfb-run -a npm run test:e2e
+        # xvfb-run's default screen is 640x480, smaller than the app's 1000x650 window.
+        run: xvfb-run -a -s "-screen 0 1920x1080x24" npm run test:e2e
 
       - name: End-to-end tests (Windows)
         if: runner.os == 'Windows'

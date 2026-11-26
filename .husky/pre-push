@@ -1,6 +1,8 @@
 #!/usr/bin/env sh
 set -e
 
+# Pre-push: every test suite CI runs, so a push does not find out from CI.
+# Typecheck, Prettier, Rust fmt / clippy / unit tests.
 npm run prepush
 
 # ESLint (same check as CI). Installs the lint toolchain on first use.
@@ -8,3 +10,10 @@ if [ ! -d tools/lint/node_modules ]; then
   npm run lint:install
 fi
 npm run lint:eslint
+
+# Frontend unit tests (Vitest).
+npm run test
+
+# End-to-end UI tests against the built app (skipped with the reason where they cannot run;
+# KAI_SKIP_E2E=1 skips them).
+npm run test:e2e:prepush

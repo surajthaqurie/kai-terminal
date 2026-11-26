@@ -97,7 +97,10 @@ export async function setup(): Promise<void> {
 async function warmUp(app: string): Promise<void> {
   const started = Date.now();
   try {
-    const s = await Session.create(DRIVER_URL, app, 2, 150_000);
+    // Three attempts: on Windows the first session after tauri-driver starts reliably fails with
+    // "DevToolsActivePort file doesn't exist" (the WebView2 browser never opens its DevTools port)
+    // while later ones attach at once; msedgedriver gives each attempt 60 s.
+    const s = await Session.create(DRIVER_URL, app, 3, 150_000);
     await s.quit().catch(() => {});
     console.log(`[e2e] the app started and quit (warm-up) in ${Date.now() - started} ms`);
   } catch (err) {

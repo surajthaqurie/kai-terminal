@@ -30,6 +30,7 @@
     "test:ci": "vitest run --reporter=default --reporter=json --outputFile=test-results/vitest.json && node scripts/check-test-run.mjs test-results/vitest.json",
     "test:live": "vitest run -c vitest.live.config.ts",
     "test:e2e": "vitest run -c vitest.e2e.config.ts",
+    "test:e2e:prepush": "node scripts/prepush-e2e.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit",
     "version:sync": "node scripts/sync-version.mjs",
