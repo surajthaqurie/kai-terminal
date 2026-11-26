@@ -9,7 +9,8 @@
  *   target/debug/kai(.exe): `cargo test` compiles the windowless helper there. And the binary
  *   is refused unless it carries the e2e identifier, so the real app can never be launched.
  * - HOME / USERPROFILE point at a fresh temporary folder for the driver and everything it starts,
- *   so `~/.kai` (credentials, projects, metrics) is a throwaway copy.
+ *   and KAI_HOME at its `.kai`, so `~/.kai` (credentials, projects, metrics) is a throwaway copy.
+ *   Exception: on a Windows CI runner USERPROFILE stays the runner's own (see testEnv).
  *
  * Environment:
  *   KAI_E2E_APP     the app binary (default: src-tauri/target/e2e/debug/kai[.exe])
@@ -37,6 +38,27 @@ export const BUILD_COMMAND =
 
 let driver: ChildProcess | undefined;
 let home: string | undefined;
+
+/**
+ * Whether USERPROFILE is replaced by the throwaway home. Not on a Windows CI runner: the WebView2
+ * browser msedgedriver starts inherits it, and with a brand-new, empty profile it never opened its
+ * DevTools port there ("DevToolsActivePort file doesn't exist" on every attempt, even after a
+ * priming launch). The runner is discarded after the job, and KAI_HOME still sends `~/.kai` to
+ * the throwaway folder. Locally (no CI variable) the full isolation stays.
+ */
+function replacesUserProfile(): boolean {
+  return !(process.platform === "win32" && process.env.CI);
+}
+
+/** Environment for the driver and every app launch: the throwaway home (see the header). */
+function testEnv(dir: string): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    HOME: dir,
+    ...(replacesUserProfile() ? { USERPROFILE: dir } : {}),
+    KAI_HOME: join(dir, ".kai"),
+  };
+}
 
 export function appPath(): string {
   const exe = process.platform === "win32" ? "kai.exe" : "kai";
@@ -78,13 +100,13 @@ export async function setup(): Promise<void> {
     args.push("--native-driver", process.env.KAI_E2E_NATIVE_DRIVER);
   driver = spawn(process.env.TAURI_DRIVER ?? "tauri-driver", args, {
     stdio: ["ignore", "inherit", "inherit"],
-    env: { ...process.env, HOME: home, USERPROFILE: home },
+    env: testEnv(home),
   });
   driver.on("error", (err) => {
     console.error(`[e2e] tauri-driver could not start: ${err.message}`);
   });
   await driverReady(30_000);
-  if (process.platform === "win32") await primeProfile(app);
+  if (process.platform === "win32" && replacesUserProfile()) await primeProfile(app);
   await warmUp(app);
 }
 
@@ -199,7 +221,7 @@ async function probeDirectLaunch(app: string, watchMs = 20_000): Promise<string>
   killApp(app);
   const child = spawn(app, [], {
     stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, ...(home ? { HOME: home, USERPROFILE: home } : {}) },
+    env: home ? testEnv(home) : process.env,
   });
   let output = "";
   const keep = (chunk: Buffer) => {
