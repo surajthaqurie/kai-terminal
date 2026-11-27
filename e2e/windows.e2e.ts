@@ -65,16 +65,21 @@ describe("windows of the last session (FUNC-07)", () => {
        localStorage.setItem('terminal_extra_windows_v1', JSON.stringify(extras));
        location.reload();`
     );
-    const banner = await waitFor(
+    await waitFor(
       "the restore offer",
       async () => (await s!.findAll('[aria-label="Restore previous session"]'))[0],
       60_000
     );
     // The live second window is not part of the offer. Read from the DOM, not WebDriver's
     // rendered text: the message is a shrinkable, overflow-hidden flex item, and in a narrow
-    // window (Xvfb's default screen) WebKitWebDriver reports only the button labels.
+    // window (Xvfb's default screen) WebKitWebDriver reports only the button labels. Query the
+    // banner afresh on every read: a held element reference goes stale when React re-renders it,
+    // and every read then throws.
     const offerText = () =>
-      s!.execute<string>("return arguments[0].querySelector('.banner-text').textContent;", banner);
+      s!.execute<string>(
+        `const t = document.querySelector('[aria-label="Restore previous session"] .banner-text');
+         return t ? t.textContent : "(no banner)";`
+      );
     // The banner shows this window's own tabs first ("2 tabs"); the other windows join once the
     // async live-window query answers, so wait for the full offer instead of reading it once.
     let offer = "";
@@ -83,10 +88,14 @@ describe("windows of the last session (FUNC-07)", () => {
         offer = await offerText();
         return offer.includes("in 2 windows");
       });
-    } catch {
+    } catch (err) {
       // Say whether the saved window was lost from storage or just not offered.
       const saved = Object.keys(await savedExtras()).join(", ");
-      throw new Error(`restore offer was "${offer}"; saved extra windows: [${saved}]`);
+      // waitFor always throws an Error; its message carries the last probe failure.
+      if (err instanceof Error) {
+        err.message = `restore offer was "${offer}"; saved extra windows: [${saved}]; ${err.message}`;
+      }
+      throw err;
     }
     expect(offer).toContain("4 tabs in 2 windows");
     expect(await count("[data-tab-id]")).toBe(1); // a fresh starter tab until Load
