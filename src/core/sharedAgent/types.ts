@@ -162,6 +162,15 @@ export interface ShareOtherCli {
   reason: string;
 }
 
+/** One address PCs can join through, with the network adapter it belongs to. */
+export interface ShareAddress {
+  url: string;
+  /** The adapter's name, e.g. "Wi-Fi", "Ethernet" or "vEthernet (WSL)". */
+  adapter: string;
+  /** A virtual switch (WSL, Hyper-V, Docker…): other PCs usually can't reach it. */
+  virtual: boolean;
+}
+
 export interface ShareInvite {
   id: string;
   createdAt: string;
@@ -384,8 +393,8 @@ export interface ShareStatus {
   enabled: boolean;
   /** The port sharing uses (the one listening now, or the next start's). */
   port: number;
-  /** Present while the server is listening. */
-  listening: { port: number; urls: string[] } | null;
+  /** Present while the server is listening. `urls` are ranked: real network cards first. */
+  listening: { port: number; urls: string[]; addresses?: ShareAddress[] } | null;
   /**
    * The internet (tunnel) address, e.g. `https://my-pc.example.com`. While set
    * (and sharing is on) PCs can also join through it. null = LAN only.

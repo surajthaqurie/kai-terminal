@@ -29,7 +29,7 @@ import { fromWireTokens, textOf } from "./events";
 import { HostStore, sharedAgentDir } from "./hostStore";
 import { HostServer, HttpError, PortInUseError, isPortFree } from "./hostServer";
 import { allowedOrigin, buildInviteLink, parsePublicUrl, readInviteLink } from "./invite";
-import { lanAddresses, type LocalNetwork } from "./netcheck";
+import { lanAddresses, rankedNetworks, type LocalNetwork } from "./netcheck";
 import {
   INVITE_MINUTES,
   MAX_MESSAGE_CHARS,
@@ -664,10 +664,14 @@ export class SharedAgentService {
       listening:
         port === null
           ? null
-          : {
-              port,
-              urls: lanAddresses(this.deps.networks?.()).map((ip) => `http://${ip}:${port}`),
-            },
+          : (() => {
+              const addresses = rankedNetworks(this.deps.networks?.()).map((n) => ({
+                url: `http://${n.address}:${port}`,
+                adapter: n.adapter ?? "",
+                virtual: n.virtual === true,
+              }));
+              return { port, urls: addresses.map((a) => a.url), addresses };
+            })(),
       publicUrl: this.host.publicUrl,
       agents: this.host.agentRows(),
       otherClis: this.host.otherClis(),

@@ -669,8 +669,21 @@ In chat: "Use kai_project_info to inspect the codebase."
 // ---------------------------------------------------------------------------
 
 export function findBinaryOnPath(bin: string): string | null {
-  if (!/^[a-zA-Z0-9_.-]+$/.test(bin)) return null;
   const envPath = process.env.PATH || process.env.Path || "";
+  return findBinaryIn(bin, envPath.split(path.delimiter));
+}
+
+/**
+ * Like {@link findBinaryOnPath}, then the well-known per-user install folders a
+ * desktop app's PATH often lacks (the same ones the AI Providers detection
+ * searches), so an agent shown as found there is found here too.
+ */
+export function findAgentBinary(bin: string): string | null {
+  return findBinaryOnPath(bin) ?? findBinaryIn(bin, supplementaryAgentDirs());
+}
+
+function findBinaryIn(bin: string, dirs: string[]): string | null {
+  if (!/^[a-zA-Z0-9_.-]+$/.test(bin)) return null;
   const isWindows = process.platform === "win32";
   const exts = isWindows
     ? [
@@ -681,7 +694,7 @@ export function findBinaryOnPath(bin: string): string | null {
         "",
       ]
     : [""];
-  for (const dir of envPath.split(path.delimiter)) {
+  for (const dir of dirs) {
     if (!dir) continue;
     for (const ext of exts) {
       const name = isWindows && ext && bin.toLowerCase().endsWith(ext) ? bin : bin + ext;
@@ -694,6 +707,44 @@ export function findBinaryOnPath(bin: string): string | null {
     }
   }
   return null;
+}
+
+/**
+ * Per-user install folders that agent installers use but a desktop app's PATH
+ * may miss (it is fixed when the app starts, and some installers never touch it).
+ * Mirrors `supplementary_search_dirs` in src-tauri/src/ai_cli.rs. Fixed,
+ * home-relative locations only: never user input.
+ */
+export function supplementaryAgentDirs(): string[] {
+  const home = os.homedir();
+  const dirs: string[] = [];
+  if (home) {
+    for (const rel of [
+      "bin",
+      ".local/bin",
+      ".opencode/bin",
+      ".cargo/bin",
+      "go/bin",
+      ".npm-global/bin",
+      ".local/share/mise/shims",
+      ".bun/bin",
+    ]) {
+      dirs.push(path.join(home, rel));
+    }
+    const nvm = path.join(home, ".nvm", "versions", "node");
+    try {
+      for (const v of fs.readdirSync(nvm)) dirs.push(path.join(nvm, v, "bin"));
+    } catch {
+      // no nvm
+    }
+  }
+  if (process.platform === "win32") {
+    if (process.env.APPDATA) dirs.push(path.join(process.env.APPDATA, "npm"));
+    if (process.env.NVM_SYMLINK) dirs.push(process.env.NVM_SYMLINK);
+  } else {
+    dirs.push("/usr/local/bin", "/opt/homebrew/bin", "/opt/local/bin", "/snap/bin");
+  }
+  return dirs;
 }
 
 export interface DetectedAgent {

@@ -1,6 +1,12 @@
-import { FC } from "react";
+import { FC, useEffect, useState } from "react";
 import { Lock, LoaderCircle } from "lucide-react";
-import type { SharedAgentId, ShareStatus } from "../core/sharedAgent/types";
+import {
+  isSharedAgentId,
+  type ShareAgentRow,
+  type SharedAgentId,
+  type ShareStatus,
+} from "../core/sharedAgent/types";
+import { getAiCliDetails, versionBadgeLabel, type AiCliDetails } from "../services/aiCliService";
 
 interface Props {
   share: ShareStatus;
@@ -8,104 +14,169 @@ interface Props {
   onToggle: (agent: SharedAgentId, enabled: boolean) => void;
 }
 
+/** Why an agent found by AI Providers can't be shared, when the sharing service did not say. */
+const EDITOR_AGENTS = new Set(["cursor", "windsurf", "cline"]);
+const reasonFor = (id: string): string =>
+  id.startsWith("custom:")
+    ? "Custom CLI: Kai has no verified read-only mode for it, so it can't be shared."
+    : EDITOR_AGENTS.has(id)
+      ? "Runs inside its editor: there is no command-line chat Kai can hold to read-only."
+      : "Kai has no verified read-only mode for it yet, so it can't be shared.";
+
+type Row =
+  | { kind: "shareable"; key: string; name: string; agent: ShareAgentRow; detail: string }
+  | { kind: "other"; key: string; name: string; reason: string; detail: string };
+
 /**
- * Every coding-agent CLI Kai knows about on this PC: the ones that can be shared
- * (with an on/off switch, installed or not), then the installed ones that can't,
- * with the reason. Shown whether sharing is on or off, so the person can pick
- * agents before starting.
+ * The agents found on this PC, the same ones the AI Providers tab finds: the
+ * ones that can be shared (with an on/off switch), then the rest, with the
+ * reason they can't be. Agents that are not installed are not listed.
  */
 export const SharedAgentProviders: FC<Props> = ({ share, onToggle }) => {
-  const others = share.otherClis ?? [];
-  const installed = share.agents.filter((a) => a.available).length + others.length;
-  const total = share.agents.length + others.length;
+  const providers = useFoundProviders();
   const checking = share.agentsChecking === true;
+  const found = new Map((providers ?? []).map((p) => [p.id, p]));
+
+  const rows: Row[] = [];
+  for (const a of share.agents) {
+    const p = found.get(a.id);
+    if (!a.available && !p) continue; // not on this PC: nothing to share
+    const version = a.version || p?.version || "";
+    rows.push({
+      kind: "shareable",
+      key: a.id,
+      name: a.name,
+      agent: a,
+      detail: a.available
+        ? version
+          ? `Installed · ${versionBadgeLabel(version) ?? version}`
+          : checking
+            ? "Installed · checking version…"
+            : "Installed"
+        : "Found in AI Providers, but sharing can't start it. Restart Kai, then try again.",
+    });
+  }
+  const seen = new Set(rows.map((r) => r.key));
+  for (const o of share.otherClis ?? []) {
+    if (seen.has(o.id)) continue;
+    seen.add(o.id);
+    const v = found.get(o.id)?.version;
+    rows.push({
+      kind: "other",
+      key: o.id,
+      name: o.name,
+      reason: o.reason,
+      detail: v ? (versionBadgeLabel(v) ?? "") : "",
+    });
+  }
+  for (const p of providers ?? []) {
+    if (seen.has(p.id) || isSharedAgentId(p.id)) continue;
+    seen.add(p.id);
+    rows.push({
+      kind: "other",
+      key: p.id,
+      name: p.name,
+      reason: reasonFor(p.id),
+      detail: p.version ? (versionBadgeLabel(p.version) ?? "") : "",
+    });
+  }
+
+  const shareable = rows.filter((r) => r.kind === "shareable");
+  const others = rows.filter((r) => r.kind === "other");
+  const sharedCount = shareable.filter(
+    (r) => r.kind === "shareable" && r.agent.available && r.agent.enabled
+  ).length;
 
   return (
     <section className="sa-card sa-providers" aria-labelledby="sa-agents-title">
       <div className="sa-card-head">
         <h4 id="sa-agents-title" className="sa-card-title">
-          Agent CLIs on this PC
+          Agents on this PC
         </h4>
-        <span className="sa-badge" title="Installed agent CLIs">
-          {installed} of {total} installed
+        <span className="sa-badge" title="Agents found on this PC, as in the AI Providers tab">
+          {rows.length} found · {sharedCount} shared
         </span>
-        {checking && (
+        {(checking || providers === null) && (
           <span className="sa-muted sa-checking" role="status">
             <LoaderCircle size={12} className="sa-spin" aria-hidden="true" />
-            Checking versions…
+            {providers === null ? "Detecting agents…" : "Checking versions…"}
           </span>
         )}
       </div>
 
-      <span className="sa-group-label">Can be shared</span>
-      <span className="sa-muted">
-        These switches apply to every PC. Switch an agent off here and no PC can use it, whatever
-        its own settings say.
-      </span>
-      {share.agents.map((a) => (
-        <div
-          key={a.id}
-          className={`sa-agent${a.available ? "" : " is-missing"}`}
-          title={a.available ? undefined : a.error}
-        >
-          <span className={`sa-agent-logo sa-agent-${a.id}`} aria-hidden="true">
-            {a.name.charAt(0)}
+      {rows.length === 0 && providers !== null && (
+        <p className="sa-empty" role="status">
+          No agents found on this PC. Install Claude Code or OpenCode (see the AI Providers tab),
+          then reopen this tab.
+        </p>
+      )}
+
+      {shareable.length > 0 && (
+        <>
+          <span className="sa-group-label">Can be shared</span>
+          <span className="sa-muted">
+            These switches apply to every PC. Switch an agent off here and no PC can use it,
+            whatever its own settings say.
           </span>
-          <span className="sa-grow">
-            {a.name}
-            <span className="sa-muted sa-block">
-              {a.available
-                ? a.version
-                  ? `Installed · ${a.version}`
-                  : checking
-                    ? "Installed · checking version…"
-                    : "Installed"
-                : "Not installed · install it, then reopen this tab"}
-            </span>
-          </span>
-          <span className={`sa-badge ${a.available ? "sa-badge-ok" : ""}`}>
-            {a.available ? "Installed" : "Missing"}
-          </span>
-          <label className="sa-switch">
-            <input
-              type="checkbox"
-              role="switch"
-              aria-label={`Share ${a.name}`}
-              checked={a.enabled && a.available}
-              disabled={!a.available}
-              onChange={(e) => onToggle(a.id, e.target.checked)}
-            />
-            <span aria-hidden="true" />
-          </label>
-        </div>
-      ))}
+          {shareable.map(
+            (r) =>
+              r.kind === "shareable" && (
+                <div
+                  key={r.key}
+                  className={`sa-agent${r.agent.available ? "" : " is-missing"}`}
+                  title={r.agent.available ? undefined : r.agent.error}
+                >
+                  <span className={`sa-agent-logo sa-agent-${r.key}`} aria-hidden="true">
+                    {r.name.charAt(0)}
+                  </span>
+                  <span className="sa-grow">
+                    {r.name}
+                    <span className="sa-muted sa-block">{r.detail}</span>
+                  </span>
+                  <span
+                    className={`sa-badge ${r.agent.available && r.agent.enabled ? "sa-badge-ok" : ""}`}
+                  >
+                    {!r.agent.available ? "Unavailable" : r.agent.enabled ? "Shared" : "Off"}
+                  </span>
+                  <label className="sa-switch">
+                    <input
+                      type="checkbox"
+                      role="switch"
+                      aria-label={`Share ${r.name}`}
+                      checked={r.agent.enabled && r.agent.available}
+                      disabled={!r.agent.available}
+                      onChange={(e) => onToggle(r.agent.id, e.target.checked)}
+                    />
+                    <span aria-hidden="true" />
+                  </label>
+                </div>
+              )
+          )}
+        </>
+      )}
 
       {others.length > 0 && (
         <>
-          <span className="sa-group-label">Installed · can&apos;t be shared yet</span>
-          {others.map((o) => (
-            <div key={o.id} className="sa-agent is-unshareable" title={o.reason}>
-              <span className={`sa-agent-logo sa-agent-${o.id}`} aria-hidden="true">
-                {o.name.charAt(0)}
-              </span>
-              <span className="sa-grow">
-                {o.name}
-                <span className="sa-muted sa-block">{o.reason}</span>
-              </span>
-              <span className="sa-badge sa-badge-ok">Installed</span>
-              <label className="sa-switch">
-                <input
-                  type="checkbox"
-                  role="switch"
-                  aria-label={`Share ${o.name} (not available)`}
-                  checked={false}
-                  disabled
-                  readOnly
-                />
-                <span aria-hidden="true" />
-              </label>
-            </div>
-          ))}
+          <span className="sa-group-label">Found · can&apos;t be shared yet</span>
+          {others.map(
+            (r) =>
+              r.kind === "other" && (
+                <div key={r.key} className="sa-agent is-unshareable" title={r.reason}>
+                  <span
+                    className={`sa-agent-logo sa-agent-${r.key.replace(/[^a-z0-9-]/gi, "-")}`}
+                    aria-hidden="true"
+                  >
+                    {r.name.charAt(0)}
+                  </span>
+                  <span className="sa-grow">
+                    {r.name}
+                    {r.detail && <span className="sa-muted"> · {r.detail}</span>}
+                    <span className="sa-muted sa-block">{r.reason}</span>
+                  </span>
+                  <span className="sa-badge">Not shareable</span>
+                </div>
+              )
+          )}
         </>
       )}
 
@@ -117,3 +188,18 @@ export const SharedAgentProviders: FC<Props> = ({ share, onToggle }) => {
     </section>
   );
 };
+
+/** The agents the AI Providers tab finds on this PC (installed only); null while detecting. */
+function useFoundProviders(): AiCliDetails[] | null {
+  const [found, setFound] = useState<AiCliDetails[] | null>(null);
+  useEffect(() => {
+    let live = true;
+    getAiCliDetails()
+      .then((all) => live && setFound(all.filter((p) => p.available)))
+      .catch(() => live && setFound([]));
+    return () => {
+      live = false;
+    };
+  }, []);
+  return found;
+}

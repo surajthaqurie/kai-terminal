@@ -18,6 +18,8 @@ import {
 import {
   classifyRequest,
   isTunnelled,
+  isVirtualAdapter,
+  lanAddresses,
   localNetworks,
   networkFor,
   normalizeRemote,
@@ -225,6 +227,48 @@ describe("same-network check", () => {
     expect(networkFor("8.8.8.8", nets)).toBeNull();
     expect(networkFor(undefined, nets)).toBeNull();
     expect(normalizeRemote("::ffff:10.0.0.1")).toBe("10.0.0.1");
+  });
+});
+
+describe("network adapters", () => {
+  const nic = (address: string) => [
+    {
+      address,
+      netmask: "255.255.240.0",
+      family: "IPv4" as const,
+      mac: "",
+      internal: false,
+      cidr: null,
+    },
+  ];
+
+  it("ranks real network cards before WSL and Hyper-V switches", () => {
+    // Windows lists the WSL switch first; an invite must still name the Wi-Fi address.
+    const nets = localNetworks({
+      "vEthernet (WSL (Hyper-V firewall))": nic("172.25.32.1"),
+      "Wi-Fi": nic("192.168.110.37"),
+    });
+    expect(nets.map((n) => [n.adapter, n.virtual])).toEqual([
+      ["vEthernet (WSL (Hyper-V firewall))", true],
+      ["Wi-Fi", false],
+    ]);
+    expect(lanAddresses(nets)).toEqual(["192.168.110.37", "172.25.32.1"]);
+  });
+
+  it("tells virtual adapters from real ones by name", () => {
+    for (const name of [
+      "vEthernet (Default Switch)",
+      "VirtualBox Host-Only Network",
+      "VMware Network Adapter VMnet8",
+      "docker0",
+      "br-1a2b3c",
+      "virbr0",
+    ]) {
+      expect(isVirtualAdapter(name)).toBe(true);
+    }
+    for (const name of ["Wi-Fi", "Ethernet", "eth0", "en0", "wlan0", "Ethernet 2"]) {
+      expect(isVirtualAdapter(name)).toBe(false);
+    }
   });
 });
 

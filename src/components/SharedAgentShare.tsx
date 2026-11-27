@@ -18,6 +18,7 @@ import {
   totalTokens,
   type InviteMinutes,
   type ShareDevice,
+  type ShareAddress,
   type ShareStatus,
 } from "../core/sharedAgent/types";
 import {
@@ -328,34 +329,12 @@ export const SharedAgentShare: FC<ShareProps> = ({ active }) => {
                   PCs with an invite can chat with your agents ·{" "}
                   {share.publicUrl ? "same network + internet" : "same-network only"}
                 </span>
-                <div className="sa-addr">
-                  <span className="sa-muted">Listening on </span>
-                  {share.listening.urls.map((u) => (
-                    <span key={u} className="sa-chip">
-                      {u}
-                      <button
-                        type="button"
-                        aria-label={`Copy ${u}`}
-                        onClick={() => void copy(u, u)}
-                      >
-                        {copied === u ? <Check size={11} /> : <Copy size={11} />}
-                      </button>
-                    </span>
-                  ))}
-                  {share.publicUrl && (
-                    <span className="sa-chip sa-chip-net">
-                      <Globe size={11} aria-hidden="true" />
-                      {share.publicUrl}
-                      <button
-                        type="button"
-                        aria-label={`Copy ${share.publicUrl}`}
-                        onClick={() => void copy("public", share.publicUrl!)}
-                      >
-                        {copied === "public" ? <Check size={11} /> : <Copy size={11} />}
-                      </button>
-                    </span>
-                  )}
-                </div>
+                <ShareAddresses
+                  addresses={addressesOf(share)}
+                  publicUrl={share.publicUrl}
+                  copied={copied}
+                  onCopy={(key, value) => void copy(key, value)}
+                />
                 {share.safetyCode && (
                   <span
                     className="sa-muted sa-safety"
@@ -817,6 +796,95 @@ export const SharedAgentShare: FC<ShareProps> = ({ active }) => {
             )}
           </section>
         </div>
+      )}
+    </div>
+  );
+};
+
+/** The listening addresses, ranked (real network cards first); older services send only urls. */
+function addressesOf(share: ShareStatus): ShareAddress[] {
+  const l = share.listening;
+  if (!l) return [];
+  return l.addresses?.length
+    ? l.addresses
+    : l.urls.map((url) => ({ url, adapter: "", virtual: false }));
+}
+
+interface AddressesProps {
+  addresses: ShareAddress[];
+  publicUrl: string | null;
+  copied: string | null;
+  onCopy: (key: string, value: string) => void;
+}
+
+/**
+ * Where PCs join: the main address (the one invite links use) on its own line,
+ * the internet address if set, and every other adapter folded away below with
+ * its name, so a WSL or Hyper-V switch is never mistaken for the real one.
+ */
+const ShareAddresses: FC<AddressesProps> = ({ addresses, publicUrl, copied, onCopy }) => {
+  const [primary, ...rest] = addresses;
+  const [open, setOpen] = useState(false);
+  if (!primary) return null;
+  const copyBtn = (key: string, value: string) => (
+    <button
+      type="button"
+      className="sa-addr-copy"
+      aria-label={`Copy ${value}`}
+      title="Copy"
+      onClick={() => onCopy(key, value)}
+    >
+      {copied === key ? <Check size={12} /> : <Copy size={12} />}
+    </button>
+  );
+  return (
+    <div className="sa-addr" aria-label="Addresses PCs join through">
+      <div className="sa-addr-row is-primary">
+        <span className="sa-addr-label">Same network</span>
+        <code className="sa-addr-url">{primary.url}</code>
+        {primary.adapter && <span className="sa-addr-adapter">{primary.adapter}</span>}
+        {copyBtn(primary.url, primary.url)}
+      </div>
+      {publicUrl && (
+        <div className="sa-addr-row is-net">
+          <span className="sa-addr-label">
+            <Globe size={11} aria-hidden="true" /> Internet
+          </span>
+          <code className="sa-addr-url">{publicUrl}</code>
+          {copyBtn("public", publicUrl)}
+        </div>
+      )}
+      {rest.length > 0 && (
+        <>
+          <button
+            type="button"
+            className="sa-addr-more"
+            aria-expanded={open}
+            onClick={() => setOpen((o) => !o)}
+          >
+            <ChevronDown size={12} aria-hidden="true" className={open ? "is-open" : undefined} />
+            {rest.length} other network adapter{rest.length === 1 ? "" : "s"}
+          </button>
+          {open && (
+            <ul className="sa-addr-list">
+              {rest.map((a) => (
+                <li key={a.url} className="sa-addr-row">
+                  <code className="sa-addr-url">{a.url}</code>
+                  {a.adapter && <span className="sa-addr-adapter">{a.adapter}</span>}
+                  {a.virtual && (
+                    <span
+                      className="sa-badge"
+                      title="A virtual adapter (WSL, Hyper-V, Docker…). Other PCs usually can't reach it."
+                    >
+                      Virtual
+                    </span>
+                  )}
+                  {copyBtn(a.url, a.url)}
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
       )}
     </div>
   );

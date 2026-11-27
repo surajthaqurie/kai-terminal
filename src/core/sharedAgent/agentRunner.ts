@@ -16,7 +16,7 @@ import { spawn, execFile, type ChildProcess } from "child_process";
 import { systemToolPath } from "../spawnSafety";
 import crypto from "crypto";
 import fs from "fs";
-import { AGENT_REGISTRY, findBinaryOnPath } from "../agents";
+import { AGENT_REGISTRY, findAgentBinary } from "../agents";
 import { resolveSpawnTarget, type SpawnTarget } from "../codeModeWorkflow";
 import {
   clip,
@@ -57,7 +57,7 @@ export type AgentLocator = (agent: SharedAgentId) => string[];
 export const defaultLocator: AgentLocator = (agent) => {
   const def = AGENT_REGISTRY.find((a) => a.id === agent);
   for (const bin of def?.binaries ?? [agent]) {
-    const found = findBinaryOnPath(bin);
+    const found = findAgentBinary(bin);
     if (found) return [found];
   }
   throw new AgentError(`${SHARED_AGENT_NAMES[agent]} was not found on this PC.`);
@@ -215,7 +215,7 @@ export type OtherCliDetector = () => ShareOtherCli[];
 
 export const detectOtherClis: OtherCliDetector = () =>
   AGENT_REGISTRY.filter((def) => def.kind === "cli" && !isSharedAgentId(def.id)).flatMap((def) =>
-    def.binaries.some((bin) => findBinaryOnPath(bin))
+    def.binaries.some((bin) => findAgentBinary(bin))
       ? [
           {
             id: def.id,

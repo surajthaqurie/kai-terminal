@@ -210,172 +210,178 @@ export const DevicePermissions: FC<PermissionsProps> = ({ device, agents, apply,
         </button>
       </div>
 
-      {agents.map((a) => {
-        const d = draft[a.id];
-        const parentOff = !a.enabled || !a.available;
-        const on = d.allowed && !parentOff;
-        const expanded = open.has(a.id);
-        const use = device.today?.[a.id];
-        const daily = optionalNumber(d.dailyTokens);
-        const perHour = optionalNumber(d.perHour);
-        const pct = daily && use ? Math.min(100, (use.tokens / daily) * 100) : 0;
-        const fid = `${idBase}-${a.id}`;
-        return (
-          <div
-            key={a.id}
-            className={`sa-acfg${on ? "" : " is-off"}${parentOff ? " is-parent-off" : ""}`}
-          >
-            <div className="sa-acfg-head">
-              <span className={`sa-agent-logo sa-agent-${a.id}`} aria-hidden="true">
-                {a.name.charAt(0)}
-              </span>
-              <button
-                type="button"
-                className="sa-acfg-toggle"
-                aria-expanded={expanded}
-                aria-controls={`${fid}-body`}
-                onClick={() => toggleOpen(a.id)}
-              >
-                <strong>{a.name}</strong>
-                {parentOff && (
-                  <span className="sa-badge sa-badge-warn">
-                    {a.available ? "off for every PC" : "not installed"}
-                  </span>
-                )}
-                <span className="sa-muted sa-block">
-                  {parentOff
-                    ? a.available
-                      ? "Off for every PC · switch it on in Agent CLIs on this PC"
-                      : "Not installed on this PC"
-                    : draftSummary(d)}
+      {agents.every((a) => !a.available) && (
+        <p className="sa-muted">No shareable agent is installed on this PC.</p>
+      )}
+      {/* Only agents installed here: one that isn't can't be used by any PC. */}
+      {agents
+        .filter((a) => a.available)
+        .map((a) => {
+          const d = draft[a.id];
+          const parentOff = !a.enabled || !a.available;
+          const on = d.allowed && !parentOff;
+          const expanded = open.has(a.id);
+          const use = device.today?.[a.id];
+          const daily = optionalNumber(d.dailyTokens);
+          const perHour = optionalNumber(d.perHour);
+          const pct = daily && use ? Math.min(100, (use.tokens / daily) * 100) : 0;
+          const fid = `${idBase}-${a.id}`;
+          return (
+            <div
+              key={a.id}
+              className={`sa-acfg${on ? "" : " is-off"}${parentOff ? " is-parent-off" : ""}`}
+            >
+              <div className="sa-acfg-head">
+                <span className={`sa-agent-logo sa-agent-${a.id}`} aria-hidden="true">
+                  {a.name.charAt(0)}
                 </span>
-              </button>
-              <label className="sa-switch">
-                <input
-                  type="checkbox"
-                  role="switch"
-                  aria-label={`Allow ${a.name}`}
-                  checked={on}
-                  disabled={parentOff}
-                  onChange={(e) => edit(a.id, { allowed: e.target.checked })}
-                />
-                <span aria-hidden="true" />
-              </label>
-            </div>
-            {expanded && (
-              <div className="sa-acfg-body" id={`${fid}-body`}>
-                <div className="sa-acfg-grid">
-                  <label className="sa-fld" htmlFor={`${fid}-model`}>
-                    <span className="sa-field-label">Model</span>
-                    <input
-                      id={`${fid}-model`}
-                      className="text-input sa-mono"
-                      aria-label={`${a.name} model`}
-                      list={MODEL_SUGGESTIONS[a.id] ? `${fid}-models` : undefined}
-                      placeholder="Agent's default model"
-                      maxLength={100}
-                      spellCheck={false}
-                      disabled={!on}
-                      value={d.model}
-                      onChange={(e) => edit(a.id, { model: e.target.value })}
-                    />
-                    {MODEL_SUGGESTIONS[a.id] && (
-                      <datalist id={`${fid}-models`}>
-                        {MODEL_SUGGESTIONS[a.id]!.map((m) => (
-                          <option key={m} value={m} />
-                        ))}
-                      </datalist>
-                    )}
-                  </label>
-                  <label className="sa-fld" htmlFor={`${fid}-minutes`}>
-                    <span className="sa-field-label">Stop a task after</span>
-                    <span className="sa-row">
-                      <input
-                        id={`${fid}-minutes`}
-                        className="text-input sa-num"
-                        type="number"
-                        aria-label={`${a.name} time limit in minutes`}
-                        min={1}
-                        max={MAX_RUN_MINUTES_LIMIT}
-                        step={1}
-                        disabled={!on}
-                        value={d.minutes}
-                        onChange={(e) => edit(a.id, { minutes: e.target.value })}
-                      />
-                      <span className="sa-muted">minutes</span>
+                <button
+                  type="button"
+                  className="sa-acfg-toggle"
+                  aria-expanded={expanded}
+                  aria-controls={`${fid}-body`}
+                  onClick={() => toggleOpen(a.id)}
+                >
+                  <strong>{a.name}</strong>
+                  {parentOff && (
+                    <span className="sa-badge sa-badge-warn">
+                      {a.available ? "off for every PC" : "not installed"}
                     </span>
-                  </label>
-                  <label className="sa-fld" htmlFor={`${fid}-daily`}>
-                    <span className="sa-field-label">Daily token limit</span>
-                    <span className="sa-row">
-                      <input
-                        id={`${fid}-daily`}
-                        className="text-input sa-num sa-num-wide"
-                        type="number"
-                        aria-label={`${a.name} daily token limit`}
-                        min={MIN_DAILY_TOKENS}
-                        max={MAX_DAILY_TOKENS}
-                        step={1000}
-                        placeholder="No limit"
-                        disabled={!on}
-                        value={d.dailyTokens}
-                        onChange={(e) => edit(a.id, { dailyTokens: e.target.value })}
-                      />
-                      <span className="sa-muted">tokens</span>
-                    </span>
-                  </label>
-                  <label className="sa-fld" htmlFor={`${fid}-hour`}>
-                    <span className="sa-field-label">Requests per hour</span>
-                    <span className="sa-row">
-                      <input
-                        id={`${fid}-hour`}
-                        className="text-input sa-num"
-                        type="number"
-                        aria-label={`${a.name} requests per hour`}
-                        min={1}
-                        max={MAX_REQUESTS_PER_HOUR}
-                        step={1}
-                        placeholder="No limit"
-                        disabled={!on}
-                        value={d.perHour}
-                        onChange={(e) => edit(a.id, { perHour: e.target.value })}
-                      />
-                      <span className="sa-muted">max</span>
-                    </span>
-                  </label>
-                </div>
-                {use && (
-                  <div className="sa-acfg-use">
-                    <span className="sa-muted">
-                      Today: <b>{formatCompact(use.tokens)}</b>
-                      {daily ? ` of ${formatCompact(daily)}` : ""} tokens · {use.lastHour} request
-                      {use.lastHour === 1 ? "" : "s"} in the last hour
-                      {perHour ? ` of ${perHour}` : ""}
-                    </span>
-                    {daily ? (
-                      <span className="sa-meter" aria-hidden="true">
-                        <i className={pct >= 90 ? "is-hot" : ""} style={{ width: `${pct}%` }} />
-                      </span>
-                    ) : null}
-                  </div>
-                )}
-                {parentOff && (
-                  <p className="sa-muted sa-line">
-                    {a.available
-                      ? `${a.name} is switched off in Agent CLIs on this PC, so no PC can use it. This PC's settings are kept for when you switch it back on.`
-                      : `${a.name} is not installed on this PC. Install it, then reopen this tab.`}
-                  </p>
-                )}
-                {problems[a.id] && (
-                  <p className="error-text sa-line" role="alert">
-                    {problems[a.id]}
-                  </p>
-                )}
+                  )}
+                  <span className="sa-muted sa-block">
+                    {parentOff
+                      ? a.available
+                        ? "Off for every PC · switch it on in Agents on this PC"
+                        : "Not installed on this PC"
+                      : draftSummary(d)}
+                  </span>
+                </button>
+                <label className="sa-switch">
+                  <input
+                    type="checkbox"
+                    role="switch"
+                    aria-label={`Allow ${a.name}`}
+                    checked={on}
+                    disabled={parentOff}
+                    onChange={(e) => edit(a.id, { allowed: e.target.checked })}
+                  />
+                  <span aria-hidden="true" />
+                </label>
               </div>
-            )}
-          </div>
-        );
-      })}
+              {expanded && (
+                <div className="sa-acfg-body" id={`${fid}-body`}>
+                  <div className="sa-acfg-grid">
+                    <label className="sa-fld" htmlFor={`${fid}-model`}>
+                      <span className="sa-field-label">Model</span>
+                      <input
+                        id={`${fid}-model`}
+                        className="text-input sa-mono"
+                        aria-label={`${a.name} model`}
+                        list={MODEL_SUGGESTIONS[a.id] ? `${fid}-models` : undefined}
+                        placeholder="Agent's default model"
+                        maxLength={100}
+                        spellCheck={false}
+                        disabled={!on}
+                        value={d.model}
+                        onChange={(e) => edit(a.id, { model: e.target.value })}
+                      />
+                      {MODEL_SUGGESTIONS[a.id] && (
+                        <datalist id={`${fid}-models`}>
+                          {MODEL_SUGGESTIONS[a.id]!.map((m) => (
+                            <option key={m} value={m} />
+                          ))}
+                        </datalist>
+                      )}
+                    </label>
+                    <label className="sa-fld" htmlFor={`${fid}-minutes`}>
+                      <span className="sa-field-label">Stop a task after</span>
+                      <span className="sa-row">
+                        <input
+                          id={`${fid}-minutes`}
+                          className="text-input sa-num"
+                          type="number"
+                          aria-label={`${a.name} time limit in minutes`}
+                          min={1}
+                          max={MAX_RUN_MINUTES_LIMIT}
+                          step={1}
+                          disabled={!on}
+                          value={d.minutes}
+                          onChange={(e) => edit(a.id, { minutes: e.target.value })}
+                        />
+                        <span className="sa-muted">minutes</span>
+                      </span>
+                    </label>
+                    <label className="sa-fld" htmlFor={`${fid}-daily`}>
+                      <span className="sa-field-label">Daily token limit</span>
+                      <span className="sa-row">
+                        <input
+                          id={`${fid}-daily`}
+                          className="text-input sa-num sa-num-wide"
+                          type="number"
+                          aria-label={`${a.name} daily token limit`}
+                          min={MIN_DAILY_TOKENS}
+                          max={MAX_DAILY_TOKENS}
+                          step={1000}
+                          placeholder="No limit"
+                          disabled={!on}
+                          value={d.dailyTokens}
+                          onChange={(e) => edit(a.id, { dailyTokens: e.target.value })}
+                        />
+                        <span className="sa-muted">tokens</span>
+                      </span>
+                    </label>
+                    <label className="sa-fld" htmlFor={`${fid}-hour`}>
+                      <span className="sa-field-label">Requests per hour</span>
+                      <span className="sa-row">
+                        <input
+                          id={`${fid}-hour`}
+                          className="text-input sa-num"
+                          type="number"
+                          aria-label={`${a.name} requests per hour`}
+                          min={1}
+                          max={MAX_REQUESTS_PER_HOUR}
+                          step={1}
+                          placeholder="No limit"
+                          disabled={!on}
+                          value={d.perHour}
+                          onChange={(e) => edit(a.id, { perHour: e.target.value })}
+                        />
+                        <span className="sa-muted">max</span>
+                      </span>
+                    </label>
+                  </div>
+                  {use && (
+                    <div className="sa-acfg-use">
+                      <span className="sa-muted">
+                        Today: <b>{formatCompact(use.tokens)}</b>
+                        {daily ? ` of ${formatCompact(daily)}` : ""} tokens · {use.lastHour} request
+                        {use.lastHour === 1 ? "" : "s"} in the last hour
+                        {perHour ? ` of ${perHour}` : ""}
+                      </span>
+                      {daily ? (
+                        <span className="sa-meter" aria-hidden="true">
+                          <i className={pct >= 90 ? "is-hot" : ""} style={{ width: `${pct}%` }} />
+                        </span>
+                      ) : null}
+                    </div>
+                  )}
+                  {parentOff && (
+                    <p className="sa-muted sa-line">
+                      {a.available
+                        ? `${a.name} is switched off in Agent CLIs on this PC, so no PC can use it. This PC's settings are kept for when you switch it back on.`
+                        : `${a.name} is not installed on this PC. Install it, then reopen this tab.`}
+                    </p>
+                  )}
+                  {problems[a.id] && (
+                    <p className="error-text sa-line" role="alert">
+                      {problems[a.id]}
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
 
       {error && (
         <p className="error-text sa-line" role="alert">

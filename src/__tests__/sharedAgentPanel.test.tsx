@@ -53,6 +53,21 @@ vi.mock("../services/sharedChatWindow", async (orig) => ({
   },
 }));
 
+const providers = vi.hoisted(() => ({
+  list: [] as {
+    id: string;
+    name: string;
+    available: boolean;
+    path: string | null;
+    version: string | null;
+  }[],
+}));
+vi.mock("../services/aiCliService", async (orig) => ({
+  ...(await orig<typeof import("../services/aiCliService")>()),
+  getAiCliDetails: async () =>
+    providers.list.map((p) => ({ ...p, install_guidance: "", diagnostic: "" })),
+}));
+
 import { SharedAgentPanel } from "../components/SharedAgentPanel";
 import { resetJoinedHostsCache } from "../hooks/useJoinedHosts";
 
@@ -156,6 +171,7 @@ beforeEach(() => {
     return () => handlers.delete(h);
   });
   resetJoinedHostsCache();
+  providers.list = [];
   desktop.tauri = false;
   chatWindow.popOutChat.mockReset().mockResolvedValue(true);
   chatWindow.closeChatWindow.mockReset().mockResolvedValue(true);
@@ -564,7 +580,7 @@ describe("Share my agent", () => {
     await openShare();
     expect(text()).toContain("Let PCs on your network chat with your agents");
     // Off: only the Start sharing line (with the port). Nothing else shows yet.
-    expect(text()).not.toContain("Agent CLIs on this PC");
+    expect(text()).not.toContain("Agents on this PC");
     expect(text()).not.toContain("Invite a PC");
     expect(buttonByText("Check port")).toBeUndefined();
     expect(container.querySelector<HTMLInputElement>("#sa-port")!.value).toBe("8765");
@@ -572,16 +588,70 @@ describe("Share my agent", () => {
     expect(svc.checkPort).toHaveBeenCalledWith(8765);
     expect(svc.setSharing).toHaveBeenCalledWith(true, 8765);
     expect(container.querySelector<HTMLInputElement>("#sa-port")!.disabled).toBe(true);
-    expect(text()).toContain("Listening on http://192.168.1.20:8765");
-    expect(text()).toContain("Agent CLIs on this PC");
-    expect(text()).toContain("1 of 2 installed");
+    expect(text()).toContain("Same networkhttp://192.168.1.20:8765");
+    expect(text()).toContain("Agents on this PC");
+    expect(text()).toContain("1 found · 1 shared");
     expect(text()).toContain("Invite a PC");
     expect(text()).toContain("Installed · 2.1.0");
-    // A missing agent is still listed, marked missing, and can't be switched on.
-    expect(text()).toContain("Not installed");
-    expect(
-      container.querySelector<HTMLInputElement>('input[aria-label="Share OpenCode"]')!.disabled
-    ).toBe(true);
+    // An agent that is not installed is not listed at all.
+    expect(text()).not.toContain("OpenCode");
+    expect(container.querySelector('input[aria-label="Share OpenCode"]')).toBeNull();
+  });
+
+  it("lists the agents AI Providers finds, and only those", async () => {
+    providers.list = [
+      { id: "claude", name: "Claude Code", available: true, path: "/bin/claude", version: "2.1.0" },
+      { id: "cursor", name: "Cursor", available: true, path: "/bin/cursor", version: "1.4.2" },
+      { id: "custom:mine", name: "My CLI", available: true, path: "/bin/mine", version: null },
+      { id: "gemini", name: "Gemini CLI", available: false, path: null, version: null },
+    ];
+    svc.getShareStatus.mockResolvedValue({
+      ok: true,
+      value: shareStatus({
+        enabled: true,
+        listening: { port: 8765, urls: ["http://192.168.1.20:8765"] },
+        otherClis: [{ id: "agy", name: "Antigravity", reason: "No read-only mode." }],
+      }),
+    });
+    await openShare();
+    const card = container.querySelector('[aria-labelledby="sa-agents-title"]')!;
+    expect(card.textContent).toContain("4 found · 1 shared");
+    expect(card.textContent).toContain("Claude Code");
+    expect(card.textContent).toContain("Antigravity");
+    expect(card.textContent).toContain("No read-only mode.");
+    expect(card.textContent).toContain("Cursor");
+    expect(card.textContent).toContain("My CLI");
+    // Not installed: not listed, even though AI Providers knows about it.
+    expect(card.textContent).not.toContain("Gemini");
+    expect(card.textContent).not.toContain("OpenCode");
+    // Only shareable agents get a switch.
+    expect(card.querySelectorAll('input[role="switch"]').length).toBe(1);
+  });
+
+  it("shows one main address and folds virtual adapters away", async () => {
+    svc.getShareStatus.mockResolvedValue({
+      ok: true,
+      value: shareStatus({
+        enabled: true,
+        listening: {
+          port: 8765,
+          urls: ["http://192.168.110.37:8765", "http://172.25.32.1:8765"],
+          addresses: [
+            { url: "http://192.168.110.37:8765", adapter: "Wi-Fi", virtual: false },
+            { url: "http://172.25.32.1:8765", adapter: "vEthernet (WSL)", virtual: true },
+          ],
+        },
+      }),
+    });
+    await openShare();
+    const addr = container.querySelector('[aria-label="Addresses PCs join through"]')!;
+    expect(addr.textContent).toContain("http://192.168.110.37:8765");
+    expect(addr.textContent).toContain("Wi-Fi");
+    expect(addr.textContent).not.toContain("172.25.32.1");
+    await click(buttonByText("1 other network adapter"));
+    expect(addr.textContent).toContain("http://172.25.32.1:8765");
+    expect(addr.textContent).toContain("vEthernet (WSL)");
+    expect(addr.textContent).toContain("Virtual");
   });
 
   const on = shareStatus({
@@ -810,10 +880,8 @@ describe("Share my agent", () => {
     expect(panel).not.toBeNull();
     expect(panel.textContent).not.toContain("Copy settings");
 
-    // OpenCode is not installed here: its switch is off and locked for this PC.
-    const openSwitch = panel.querySelector<HTMLInputElement>('input[aria-label="Allow OpenCode"]')!;
-    expect(openSwitch.disabled).toBe(true);
-    expect(openSwitch.checked).toBe(false);
+    // OpenCode is not installed here: it is not offered for this PC at all.
+    expect(panel.querySelector('input[aria-label="Allow OpenCode"]')).toBeNull();
 
     await click(buttonByText(/^Claude Code/));
     const minutes = panel.querySelector<HTMLInputElement>(

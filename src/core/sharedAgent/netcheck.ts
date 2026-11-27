@@ -18,6 +18,23 @@ export interface LocalNetwork {
   cidr: string;
   base: number;
   mask: number;
+  /** The adapter's name as the OS reports it, e.g. "Wi-Fi" or "vEthernet (WSL)". */
+  adapter?: string;
+  /**
+   * True for a virtual adapter (WSL, Hyper-V, Docker, VirtualBox, VMware…).
+   * Its address lives on a private network inside this PC, so other PCs
+   * usually can't reach it.
+   */
+  virtual?: boolean;
+}
+
+/** Adapter names of virtual switches and VMs: reachable from this PC only. */
+const VIRTUAL_ADAPTER_RE =
+  /vethernet|\bwsl\b|hyper-?v|virtualbox|vboxnet|vmware|^vmnet|docker|^veth|^virbr|^br-|^cni|flannel|podman|default switch|loopback|npcap/i;
+
+/** True when an adapter name looks like a virtual switch rather than a real network card. */
+export function isVirtualAdapter(name: string): boolean {
+  return VIRTUAL_ADAPTER_RE.test(name);
 }
 
 const toInt = (ip: [number, number, number, number]): number =>
@@ -37,7 +54,7 @@ export function localNetworks(
   interfaces: NodeJS.Dict<os.NetworkInterfaceInfo[]> = os.networkInterfaces()
 ): LocalNetwork[] {
   const out: LocalNetwork[] = [];
-  for (const list of Object.values(interfaces)) {
+  for (const [adapter, list] of Object.entries(interfaces)) {
     for (const info of list ?? []) {
       if (info.family !== "IPv4" || info.internal) continue;
       const ip = parseIPv4(info.address);
@@ -46,15 +63,32 @@ export function localNetworks(
       const mask = prefix === 0 ? 0 : (~0 << (32 - prefix)) >>> 0;
       const base = (toInt(ip) & mask) >>> 0;
       const cidr = `${[24, 16, 8, 0].map((s) => (base >>> s) & 255).join(".")}/${prefix}`;
-      if (!out.some((n) => n.cidr === cidr)) out.push({ address: info.address, cidr, base, mask });
+      if (!out.some((n) => n.cidr === cidr)) {
+        out.push({
+          address: info.address,
+          cidr,
+          base,
+          mask,
+          adapter,
+          virtual: isVirtualAdapter(adapter),
+        });
+      }
     }
   }
   return out;
 }
 
-/** This PC's LAN addresses, for building invite links. */
+/**
+ * This PC's LAN addresses, real network cards first, so an invite link names an
+ * address other PCs can reach rather than a WSL or Hyper-V switch.
+ */
 export function lanAddresses(networks: LocalNetwork[] = localNetworks()): string[] {
-  return networks.map((n) => n.address);
+  return rankedNetworks(networks).map((n) => n.address);
+}
+
+/** The networks with real adapters first (order otherwise kept). */
+export function rankedNetworks(networks: LocalNetwork[] = localNetworks()): LocalNetwork[] {
+  return [...networks.filter((n) => !n.virtual), ...networks.filter((n) => n.virtual)];
 }
 
 /** Strips the IPv4-mapped IPv6 prefix Node reports for IPv4 clients. */
