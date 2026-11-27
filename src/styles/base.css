@@ -132,6 +132,13 @@ html[data-theme="kai-light"] #root {
   color: var(--text-secondary);
 }
 
+/* Helper / explanatory copy inside panels and modals. */
+.muted-text {
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
 /* Secondary explanatory line (was `muted-text` + inline 12px). */
 .muted-sm {
   margin: 0;

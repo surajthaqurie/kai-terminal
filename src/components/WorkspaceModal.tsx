@@ -186,7 +186,7 @@ export const WorkspaceModal: FC<WorkspaceModalProps> = ({
             </p>
           )}
 
-          <div className="setting-field mt-3">
+          <div className="setting-field">
             <label>Saved Workspaces ({workspaces.length})</label>
             {workspaces.length === 0 ? (
               <p className="muted-text">No saved workspaces yet.</p>

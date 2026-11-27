@@ -21,23 +21,27 @@
   position: relative;
 }
 
-/* The active-pane ring is an overlay, not a border: a real (even transparent)
- * border insets the terminal by 1px on every side, and the darker `--bg-canvas`
- * behind it showed as a visible gap against the header and footer. */
+/* The active-pane marker is a 2px accent strip across the top edge, drawn as an
+ * overlay so it never insets the terminal. It used to be a 1px box on all four
+ * sides, which ran along the window edges, tab bar and status bar, and doubled
+ * up with the grey divider on the shared seam into a blurry two-tone line. */
 .pane-item::after {
   content: "";
   position: absolute;
-  inset: 0;
-  border: 1px solid transparent;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background-color: transparent;
   pointer-events: none;
   z-index: 5;
-  transition: border-color var(--transition-fast);
+  transition: background-color var(--transition-fast);
 }
 
 /* Only a split has more than one place input can go, so only a split shows
- * which pane is active. A lone pane gets no frame (it framed the whole window). */
+ * which pane is active. A lone pane gets no marker. */
 .pane-grid[data-split="true"] .pane-item.active-pane::after {
-  border-color: var(--pane-ring-active);
+  background-color: var(--pane-ring-active);
 }
 
 /* Inactive panes in a split are drawn exactly as they are: no veil or dimming.
@@ -112,9 +116,9 @@
 }
 .pane-grid .pane-grid-pane {
   position: absolute;
-  /* The active pane's 1px border must paint INSIDE its fractional rect
-   * (default content-box would add 2px outside the % width/height, pushing
-   * the pane 1px over its neighbor and the divider off the true seam). */
+  /* Anything with a border must paint INSIDE its fractional rect (default
+   * content-box would add it outside the % width/height, pushing the pane over
+   * its neighbor and the divider off the true seam). */
   box-sizing: border-box;
 }
 .pane-grid .pane-divider-abs {

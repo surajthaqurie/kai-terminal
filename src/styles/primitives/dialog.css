@@ -28,13 +28,22 @@
 }
 
 .dialog-compact .modal-body {
-  padding: var(--space-4);
+  padding: 20px var(--space-4) var(--space-4);
+  gap: 20px;
+}
+
+/* Body copy of a confirmation (close-guard): readable, secondary, wraps paths. */
+.dialog-message {
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
 }
 
 .dialog-form {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: 20px;
 }
 
 .dialog-actions {

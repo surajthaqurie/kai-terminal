@@ -119,4 +119,31 @@ describe("split panes", () => {
     expect(css).toMatch(/\.pane-grid\[data-split="true"\] \.pane-item\.active-pane::after/);
     expect(css).not.toMatch(/\n\.pane-item\.active-pane::after/);
   });
+
+  it("marks the active pane with a top strip, not a four-sided box", () => {
+    const marker = /\n\.pane-item::after\s*\{[^}]*\}/.exec(css)?.[0] ?? "";
+    expect(marker).toMatch(/height:\s*2px/);
+    expect(marker).not.toMatch(/inset:\s*0|border:/);
+  });
+});
+
+describe("modal spacing", () => {
+  // The global reset zeroes every margin, so stacked modal content only gets
+  // space from these rules. Without them the close-tab warning's text sat on
+  // its buttons and helper copy rendered as plain body text.
+  const rule = (selector: string) =>
+    new RegExp(`\\n${selector.replace(/[.]/g, "\\.")}\\s*\\{[^}]*\\}`).exec(rules)?.[0] ?? "";
+
+  it("spaces the sections of every modal body", () => {
+    expect(rule(".modal-body")).toMatch(/gap:/);
+  });
+
+  it("styles the confirmation message and separates it from the actions", () => {
+    expect(rule(".dialog-message")).toMatch(/color:\s*var\(--text-secondary\)/);
+    expect(rule(".dialog-compact .modal-body")).toMatch(/gap:/);
+  });
+
+  it("defines the muted helper text used across modals", () => {
+    expect(rule(".muted-text")).toMatch(/color:\s*var\(--text-secondary\)/);
+  });
 });

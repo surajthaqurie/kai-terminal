@@ -121,6 +121,8 @@
   padding: 20px;
   display: flex;
   flex-direction: column;
+  /* The global reset zeroes every margin, so the body spaces its sections. */
+  gap: var(--space-3);
   overflow-y: auto;
   max-height: calc(92vh - 130px);
   min-height: 0;

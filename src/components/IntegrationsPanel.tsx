@@ -60,15 +60,8 @@ interface IntegrationsPanelProps {
  * project, and a project has at most one active integration.
  */
 export const IntegrationsPanel: FC<IntegrationsPanelProps> = ({ projectDir }) => (
-  <div
-    className="modal-body"
-    role="tabpanel"
-    aria-labelledby="ai-cli-tab-integrations"
-    style={{ gap: "12px" }}
-  >
-    <p className="muted-text" style={{ margin: 0 }}>
-      Connect a service once, then choose it for each project.
-    </p>
+  <div className="modal-body" role="tabpanel" aria-labelledby="ai-cli-tab-integrations">
+    <p className="muted-text">Connect a service once, then choose it for each project.</p>
     <div className="ai-provider-list">
       {PROVIDER_CATALOG.map((provider) => (
         <ProviderCard key={provider.id} provider={provider} projectDir={projectDir} />

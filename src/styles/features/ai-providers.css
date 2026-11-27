@@ -115,10 +115,6 @@
   min-width: 0;
 }
 
-.ai-providers-body {
-  gap: var(--space-3);
-}
-
 /* Inline result of an action inside a panel: neutral surface + severity stripe. */
 .inline-notice {
   display: flex;
