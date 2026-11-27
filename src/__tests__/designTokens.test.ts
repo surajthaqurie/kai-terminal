@@ -1,4 +1,6 @@
 // @vitest-environment node
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { readStylesheet } from "./helpers/styles";
 
@@ -145,5 +147,17 @@ describe("modal spacing", () => {
 
   it("defines the muted helper text used across modals", () => {
     expect(rule(".muted-text")).toMatch(/color:\s*var\(--text-secondary\)/);
+  });
+});
+
+describe("AI CLI Providers modal", () => {
+  it("keeps one size on every tab, so switching tabs never resizes it", () => {
+    const sized =
+      /\n\.settings-modal\.settings-tabs-modal\.ai-cli-modal\s*\{[^}]*\}/.exec(rules)?.[0] ?? "";
+    expect(sized).toMatch(/width:\s*min\(1040px, 96vw\)/);
+    expect(sized).toMatch(/height:\s*min\(720px, 92vh\)/);
+    expect(rules).not.toMatch(/\.is-wide\b/);
+    const panel = readFileSync(join(__dirname, "../components/AiCliPanel.tsx"), "utf8");
+    expect(panel).toContain('className="settings-modal settings-tabs-modal ai-cli-modal"');
   });
 });

@@ -2,9 +2,23 @@
    AI CLI Panel
    ========================================================================= */
 
+/* AI CLI Providers modal: one size for every tab, so switching tabs never
+   resizes or shifts it. Wide enough for Shared Agent's chat beside its PC
+   list; each tab scrolls inside its own body. */
+.settings-modal.settings-tabs-modal.ai-cli-modal {
+  width: min(1040px, 96vw);
+  max-width: 96vw;
+  height: min(720px, 92vh);
+  min-height: min(720px, 92vh);
+  max-height: 92vh;
+}
+
+/* Provider cards in two columns when there is room; a card that opens its
+   manual setup grows on its own without stretching its neighbour. */
 .ai-provider-list {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 440px), 1fr));
+  align-items: start;
   gap: 12px;
   margin-top: 12px;
   min-width: 0;

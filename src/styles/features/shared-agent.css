@@ -1,12 +1,5 @@
 /* ===== Shared Agent (AI CLI Providers → Shared Agent) ===== */
 
-/* The modal widens on this tab: the chat and the PC list sit side by side. */
-.settings-modal.settings-tabs-modal.is-wide {
-  width: 1040px;
-  height: min(720px, 92vh);
-  min-height: min(720px, 92vh);
-}
-
 .sa-panel {
   gap: 0;
   padding: 0;
