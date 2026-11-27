@@ -842,7 +842,11 @@ const ShareAddresses: FC<AddressesProps> = ({ addresses, publicUrl, copied, onCo
       <div className="sa-addr-row is-primary">
         <span className="sa-addr-label">Same network</span>
         <code className="sa-addr-url">{primary.url}</code>
-        {primary.adapter && <span className="sa-addr-adapter">{primary.adapter}</span>}
+        {primary.adapter && (
+          <span className="sa-addr-adapter" title={primary.adapter}>
+            {primary.adapter}
+          </span>
+        )}
         {copyBtn(primary.url, primary.url)}
       </div>
       {publicUrl && (
@@ -870,7 +874,11 @@ const ShareAddresses: FC<AddressesProps> = ({ addresses, publicUrl, copied, onCo
               {rest.map((a) => (
                 <li key={a.url} className="sa-addr-row">
                   <code className="sa-addr-url">{a.url}</code>
-                  {a.adapter && <span className="sa-addr-adapter">{a.adapter}</span>}
+                  {a.adapter && (
+                    <span className="sa-addr-adapter" title={a.adapter}>
+                      {a.adapter}
+                    </span>
+                  )}
                   {a.virtual && (
                     <span
                       className="sa-badge"

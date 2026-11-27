@@ -21,31 +21,25 @@
   position: relative;
 }
 
-/* The active-pane marker is a 2px accent strip across the top edge, drawn as an
- * overlay so it never insets the terminal. It used to be a 1px box on all four
- * sides, which ran along the window edges, tab bar and status bar, and doubled
- * up with the grey divider on the shared seam into a blurry two-tone line. */
-.pane-item::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background-color: transparent;
-  pointer-events: none;
-  z-index: 5;
-  transition: background-color var(--transition-fast);
+/* Active pane in a split: the other panes' terminal output is faded slightly,
+ * and nothing is drawn on any edge. Edge markers all failed: a four-sided box
+ * ran along the window edges and over the divider, and a top strip read as the
+ * active-tab underline (side by side) or merged into the divider (stacked), and
+ * was barely visible with kai-dark's grey accent.
+ *
+ * - Only a split dims: a lone pane always has the input, so it is never faded.
+ * - Only the xterm host fades (opacity, not a veil on top), so text stays crisp
+ *   and selectable, and the exit bar / launch error in the pane stay at full
+ *   strength.
+ * - Light on purpose: the old 35% canvas veil was too heavy and was removed;
+ *   `--pane-inactive-opacity` keeps inactive output easy to read. */
+.pane-item .terminal-xterm-host {
+  transition: opacity var(--transition-fast);
 }
 
-/* Only a split has more than one place input can go, so only a split shows
- * which pane is active. A lone pane gets no marker. */
-.pane-grid[data-split="true"] .pane-item.active-pane::after {
-  background-color: var(--pane-ring-active);
+.pane-grid[data-split="true"] .pane-item:not(.active-pane) .terminal-xterm-host {
+  opacity: var(--pane-inactive-opacity);
 }
-
-/* Inactive panes in a split are drawn exactly as they are: no veil or dimming.
- * The accent ring on the active pane alone shows where input goes. */
 
 /* Split Pane Divider: `--border-strong` (not `--border-subtle`) so the seam
  * between two same-background terminals stays visible in every theme. The old

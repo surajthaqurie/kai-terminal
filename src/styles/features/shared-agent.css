@@ -882,13 +882,16 @@
   flex-direction: column;
   gap: 4px;
   margin: 8px 0 4px;
-  max-width: 520px;
+  max-width: 640px;
 }
 
+/* An address is never cut off: a long one wraps, and the adapter name drops
+   to its own line before it squeezes the URL. */
 .sa-addr-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 2px 8px;
   min-width: 0;
   min-height: 28px;
   padding: 2px 4px 2px 10px;
@@ -917,11 +920,9 @@
 }
 
 .sa-addr-url {
-  flex: 1 1 auto;
+  flex: 1 1 14em;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   color: var(--text-primary);
@@ -1027,9 +1028,12 @@
   font-size: var(--text-xs);
 }
 
+/* Two equal columns: the agents / internet cards were pinned to 330px beside a
+   stretching Connected PCs card, so one looked big and the other cramped (and
+   the tunnel address had no room). */
 .sa-share-grid {
   display: grid;
-  grid-template-columns: 330px minmax(0, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: start;
   gap: 14px;
 }
@@ -1231,13 +1235,13 @@
   flex: 1;
   min-width: 0;
   padding: 6px 8px;
-  overflow: hidden;
   background: var(--bg-surface-sunken);
   border-radius: var(--radius-sm);
   font-family: var(--font-mono);
   font-size: var(--text-xs);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  /* Show the whole address: wrap a long one rather than cut it off. */
+  overflow-wrap: anywhere;
+  user-select: all;
   user-select: all;
 }
 

@@ -117,15 +117,24 @@ describe("button states", () => {
 });
 
 describe("split panes", () => {
-  it("only frames the active pane when the tab is split", () => {
-    expect(css).toMatch(/\.pane-grid\[data-split="true"\] \.pane-item\.active-pane::after/);
-    expect(css).not.toMatch(/\n\.pane-item\.active-pane::after/);
+  it("fades only the inactive panes' terminal output, and only in a split", () => {
+    expect(css).toMatch(
+      /\.pane-grid\[data-split="true"\] \.pane-item:not\(\.active-pane\) \.terminal-xterm-host\s*\{\s*opacity:\s*var\(--pane-inactive-opacity\)/
+    );
+    // Never the whole pane (that would fade the exit bar / launch error too).
+    expect(css).not.toMatch(/\.pane-item:not\(\.active-pane\)\s*\{[^}]*opacity/);
   });
 
-  it("marks the active pane with a top strip, not a four-sided box", () => {
-    const marker = /\n\.pane-item::after\s*\{[^}]*\}/.exec(css)?.[0] ?? "";
-    expect(marker).toMatch(/height:\s*2px/);
-    expect(marker).not.toMatch(/inset:\s*0|border:/);
+  it("keeps the inactive fade light", () => {
+    const m = /--pane-inactive-opacity:\s*([\d.]+)/.exec(css);
+    expect(m).not.toBeNull();
+    const v = Number(m![1]);
+    expect(v).toBeGreaterThanOrEqual(0.7);
+    expect(v).toBeLessThan(1);
+  });
+
+  it("draws no edge marker on panes (no box, no strip)", () => {
+    expect(css).not.toMatch(/\.pane-item(\.active-pane)?::(after|before)/);
   });
 });
 

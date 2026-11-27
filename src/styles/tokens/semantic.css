@@ -25,5 +25,5 @@
   --color-info-bg: var(--accent-subtle);
 
   /* Terminal panes */
-  --pane-ring-active: var(--accent-primary);
+  --pane-inactive-opacity: 0.8;
 }

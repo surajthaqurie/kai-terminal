@@ -43,7 +43,7 @@ values. A theme colour token (`--accent-primary: …`) declared outside `themes/
 | Accent | `--accent-primary/hover/subtle/glow/ring` | `subtle` = selected-row tint |
 | Semantic | `--color-{success,warning,danger,purple}` + `-bg`, `--color-info(-bg)` | |
 | State | `--state-hover`, `--state-active`, `--state-disabled-opacity`, `--focus-ring-color/width` | derived from text colour → works in light and dark |
-| Panes | `--pane-ring-active`, `--pane-inactive-dim` | |
+| Panes | `--pane-inactive-opacity` | |
 | Type | `--text-micro` 10 (music counters only), `--text-xs` 11 (UI floor), `sm` 12, `base` 13, `md` 14, `lg` 16, `xl` 18; `--weight-medium/semibold/bold`; `--leading-normal` | |
 | Spacing | `--space-1` 4, `-1-5` 6, `-2` 8, `-3` 12, `-4` 16 | add steps only when a rule needs them |
 | Controls | `--control-h-sm` 24, `--control-h-md` 28 | |
@@ -84,8 +84,10 @@ and disabled (`opacity: var(--state-disabled-opacity)`, `cursor: not-allowed`, h
 
 - **Tab status**: connecting = spinner (warning), running = terminal glyph, exited = slashed circle +
   italic tertiary title, failed = alert icon (danger). State is also in the tab's accessible name.
-- **Split panes**: only when split — active pane gets a 1px accent ring, inactive panes a canvas veil,
-  each pane a 20px folder label (live cwd). A single pane has no frame. xterm is never remounted.
+- **Split panes**: only when split, the inactive panes' terminal output fades slightly
+  (`--pane-inactive-opacity`, 0.8). No border, ring or strip on any pane edge. A single pane is never
+  faded. No visible pane heading (the folder is in the status bar; screen readers get it from the
+  pane's label). xterm is never remounted.
 - **Search**: `n of m` / `No results` / `N+ matches` from the search addon's result event.
 - **Launch failure**: one overlay (danger stripe, error detail, OS-specific tip, Retry) + one dim ANSI line.
 
