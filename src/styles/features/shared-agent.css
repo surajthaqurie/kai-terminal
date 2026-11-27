@@ -1670,3 +1670,13 @@
   padding-top: 12px;
   border-top: 1px solid var(--border-subtle);
 }
+
+/* Host-wide model for one shareable agent, in its row before the badge. */
+.sa-agent-model {
+  flex: none;
+}
+
+.sa-agent-model .text-input {
+  width: 130px;
+  font-size: var(--text-xs);
+}

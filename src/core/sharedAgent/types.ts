@@ -149,6 +149,11 @@ export interface ShareAgentRow {
   version: string;
   error: string;
   enabled: boolean;
+  /**
+   * The model every PC's runs use with this agent, unless a PC has its own
+   * (see {@link DeviceGrants.models}). Empty = the agent's own default.
+   */
+  model?: string;
 }
 
 /**
@@ -186,6 +191,11 @@ export type DeviceState = "connected" | "offline" | "disconnected";
  */
 export const MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._:/#@\-[\]]{0,99}$/;
 
+/** Model names offered while typing; any name matching {@link MODEL_RE} may be entered. */
+export const MODEL_SUGGESTIONS: Partial<Record<SharedAgentId, readonly string[]>> = {
+  claude: ["sonnet", "opus", "haiku"],
+};
+
 /** Longest run a host can allow one PC, and the default. */
 export const MAX_RUN_MINUTES_LIMIT = 240;
 export const DEFAULT_RUN_MINUTES = 10;
@@ -217,7 +227,10 @@ export interface AgentLimits {
  */
 export interface DeviceGrants {
   agents: Record<SharedAgentId, boolean>;
-  /** The model this PC's runs use, per agent. Empty / missing = the agent's default. */
+  /**
+   * The model this PC's runs use, per agent. Empty / missing = the host-wide
+   * model set for that agent ({@link ShareAgentRow.model}), else the agent's default.
+   */
   models: Partial<Record<SharedAgentId, string>>;
   /**
    * The time limit for an agent with no row in {@link limits} (permissions saved
@@ -458,6 +471,8 @@ export type SharedAgentRequest =
   /** Is this port free? (Tries to open it for a moment, then releases it.) */
   | { op: "port_check"; port: number }
   | { op: "share_agent"; agent: SharedAgentId; enabled: boolean }
+  /** Sets (or with null / "", clears) the model every PC uses with this agent. */
+  | { op: "share_agent_model"; agent: SharedAgentId; model: string | null }
   /** Sets (or with null, removes) the internet address PCs may join through. */
   | { op: "share_public_url"; url: string | null }
   | { op: "invite_create"; expiresMinutes: InviteMinutes }

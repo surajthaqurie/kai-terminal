@@ -17,6 +17,7 @@ import {
   DEFAULT_SHARE_PORT,
   defaultGrants,
   emptyUsage,
+  MODEL_RE,
   parseSharePort,
   type AgentUse,
   type DeviceGrants,
@@ -113,7 +114,8 @@ export interface SessionRecord {
 
 export interface HostFile {
   version: 1;
-  agents: Partial<Record<SharedAgentId, { enabled: boolean }>>;
+  /** Host-wide switch and model per agent (model absent = the agent's default). */
+  agents: Partial<Record<SharedAgentId, { enabled: boolean; model?: string }>>;
   invites: Record<string, InviteRecord>;
   devices: Record<string, DeviceRecord>;
   sessions: Record<string, SessionRecord>;
@@ -217,6 +219,13 @@ export class HostStore {
 
   agentEnabled(agent: SharedAgentId): boolean {
     return this.data.agents[agent]?.enabled ?? true;
+  }
+
+  /** The model every PC uses with this agent, or "" for the agent's default. */
+  agentModel(agent: SharedAgentId): string {
+    // A hand-edited file can't put a flag on the command line: re-validate on every read.
+    const m = this.data.agents[agent]?.model ?? "";
+    return MODEL_RE.test(m) ? m : "";
   }
 }
 

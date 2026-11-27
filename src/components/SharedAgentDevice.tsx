@@ -7,6 +7,7 @@ import {
   MAX_TASKS_PER_DEVICE,
   MIN_DAILY_TOKENS,
   MODEL_RE,
+  MODEL_SUGGESTIONS,
   SHARED_AGENT_IDS,
   SHARED_AGENT_NAMES,
   defaultGrants,
@@ -51,11 +52,6 @@ interface AgentDraft {
   dailyTokens: string;
   perHour: string;
 }
-
-/** Model names offered while typing; any valid name may be entered. */
-const MODEL_SUGGESTIONS: Partial<Record<SharedAgentId, string[]>> = {
-  claude: ["sonnet", "opus", "haiku"],
-};
 
 const draftFrom = (grants: DeviceGrants): Record<SharedAgentId, AgentDraft> =>
   Object.fromEntries(
@@ -102,12 +98,12 @@ function draftProblem(d: AgentDraft): string | null {
   return null;
 }
 
-function draftSummary(d: AgentDraft): string {
+function draftSummary(d: AgentDraft, hostModel = ""): string {
   if (!d.allowed) return "Not allowed for this PC";
   const daily = optionalNumber(d.dailyTokens);
   const perHour = optionalNumber(d.perHour);
   return [
-    d.model.trim() || "default model",
+    d.model.trim() || hostModel || "default model",
     `${d.minutes || "?"} min per task`,
     daily ? `${formatCompact(daily)} tokens/day` : "no daily limit",
     perHour ? `${perHour} requests/hour` : null,
@@ -253,7 +249,7 @@ export const DevicePermissions: FC<PermissionsProps> = ({ device, agents, apply,
                       ? a.available
                         ? "Off for every PC · switch it on in Agents on this PC"
                         : "Not installed on this PC"
-                      : draftSummary(d)}
+                      : draftSummary(d, a.model)}
                   </span>
                 </button>
                 <label className="sa-switch">
@@ -278,7 +274,9 @@ export const DevicePermissions: FC<PermissionsProps> = ({ device, agents, apply,
                         className="text-input sa-mono"
                         aria-label={`${a.name} model`}
                         list={MODEL_SUGGESTIONS[a.id] ? `${fid}-models` : undefined}
-                        placeholder="Agent's default model"
+                        placeholder={
+                          a.model ? `Same as all PCs: ${a.model}` : "Agent's default model"
+                        }
                         maxLength={100}
                         spellCheck={false}
                         disabled={!on}

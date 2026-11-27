@@ -444,15 +444,36 @@ export class HostServer {
         version: p?.version ?? "",
         error: p?.error ?? "",
         enabled: this.opts.store.agentEnabled(id),
+        model: this.opts.store.agentModel(id),
       };
     });
   }
 
   setAgentEnabled(agent: SharedAgentId, enabled: boolean): void {
     this.opts.store.write((d) => {
-      d.agents[agent] = { enabled };
+      d.agents[agent] = { ...d.agents[agent], enabled };
     });
     this.opts.onChange?.();
+  }
+
+  /**
+   * Sets the model every PC uses with this agent ("" = the agent's default).
+   * A PC with its own model keeps it. Applies from each PC's next run.
+   */
+  setAgentModel(agent: SharedAgentId, model: string): void {
+    if (model && !MODEL_RE.test(model)) throw new Error("Model name has invalid characters.");
+    this.opts.store.write((d) => {
+      const row = { enabled: this.opts.store.agentEnabled(agent), ...d.agents[agent] };
+      if (model) row.model = model;
+      else delete row.model;
+      d.agents[agent] = row;
+    });
+    this.opts.onChange?.();
+  }
+
+  /** The model one PC's runs use with an agent: its own, else the host-wide one; "" = default. */
+  private modelFor(grants: DeviceGrants, agent: SharedAgentId): string {
+    return grants.models[agent] || this.opts.store.agentModel(agent);
   }
 
   openInvites(): ShareInvite[] {
@@ -1044,7 +1065,7 @@ export class HostServer {
           level_label: "Read-only: chat only",
           available: a.available,
           model_hint: "",
-          model: grants.models[a.id] ?? "",
+          model: this.modelFor(grants, a.id),
           max_minutes: limitsFor(grants, a.id).maxMinutes,
         })),
       workspaces: [],
@@ -1093,7 +1114,7 @@ export class HostServer {
     }
     const prompt = text(body.prompt, 1, MAX_PROMPT_CHARS, "prompt");
     // Only the host picks the model (its account pays): what the PC asks for is ignored.
-    const model = grants.models[agent] || null;
+    const model = this.modelFor(grants, agent) || null;
     if (model && !MODEL_RE.test(model)) {
       throw new HttpError(422, "Model name has invalid characters");
     }

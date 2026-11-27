@@ -39,7 +39,9 @@ import {
   type PortCheck,
   GrantsError,
   isSharedAgentId,
+  MODEL_RE,
   parseGrants,
+  SHARED_AGENT_NAMES,
   type AgentView,
   type JoinedHost,
   type SharedAgentEvent,
@@ -216,6 +218,18 @@ export class SharedAgentService {
       case "share_agent": {
         if (!isSharedAgentId(req.agent)) throw new BadRequest("Unknown agent.");
         this.host.setAgentEnabled(req.agent, req.enabled === true);
+        return { ok: true, share: this.shareStatus() };
+      }
+      case "share_agent_model": {
+        if (!isSharedAgentId(req.agent)) throw new BadRequest("Unknown agent.");
+        const model =
+          req.model === null || req.model === "" ? "" : str(req.model, "model", 200).trim();
+        if (model && !MODEL_RE.test(model)) {
+          throw new BadRequest(
+            `Model name for ${SHARED_AGENT_NAMES[req.agent]} has invalid characters.`
+          );
+        }
+        this.host.setAgentModel(req.agent, model);
         return { ok: true, share: this.shareStatus() };
       }
       case "share_public_url": {

@@ -30,6 +30,7 @@ import {
   onSharedAgentEvent,
   peekShareStatus,
   removeDevice,
+  setAgentModel,
   setAgentShared,
   setPublicUrl,
   setSharing,
@@ -297,6 +298,7 @@ export const SharedAgentShare: FC<ShareProps> = ({ active }) => {
     <SharedAgentProviders
       share={share}
       onToggle={(id, enabled) => void run(() => setAgentShared(id, enabled))}
+      onModel={(id, model) => void run(() => setAgentModel(id, model))}
     />
   );
 

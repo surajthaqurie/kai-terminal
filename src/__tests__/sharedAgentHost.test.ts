@@ -688,6 +688,42 @@ describe("host server: per-PC permissions and history", () => {
     });
   });
 
+  it("runs with the host-wide model, unless that PC has its own", async () => {
+    const host = await join();
+    const [device] = server.devices();
+    server.setAgentModel("claude", "claude-opus-test");
+    expect(server.agentRows().find((a) => a.id === "claude")?.model).toBe("claude-opus-test");
+    expect(server.agentRows().find((a) => a.id === "claude")?.enabled).toBe(true);
+    const me = await raw(host.id, "GET", "/me");
+    expect((me.json.agents as Array<Record<string, unknown>>)[0].model).toBe("claude-opus-test");
+
+    const runWith = async () => {
+      const started = await raw(host.id, "POST", "/runs", {
+        agent: "claude",
+        workspace: "chat",
+        prompt: "which model",
+      });
+      const run = server.runs.get(started.json.run_id as string)!;
+      await run.done();
+      return run.init.model;
+    };
+    expect(await runWith()).toBe("claude-opus-test");
+
+    server.setDeviceGrants(device.id, grants({ models: { claude: "claude-haiku-test" } }));
+    expect(await runWith()).toBe("claude-haiku-test");
+
+    server.setDeviceGrants(device.id, grants({}));
+    server.setAgentModel("claude", "");
+    expect(await runWith()).toBeNull();
+  });
+
+  it("keeps the host-wide model when the agent is switched off and on", () => {
+    server.setAgentModel("claude", "opus");
+    server.setAgentEnabled("claude", false);
+    server.setAgentEnabled("claude", true);
+    expect(server.agentRows().find((a) => a.id === "claude")?.model).toBe("opus");
+  });
+
   it("never lets a PC pick the model: the host's account pays", async () => {
     const host = await join();
     const ok = await raw(host.id, "POST", "/runs", {

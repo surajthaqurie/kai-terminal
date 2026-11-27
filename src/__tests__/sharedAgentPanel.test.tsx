@@ -22,6 +22,7 @@ const svc = vi.hoisted(() => ({
   setSharing: vi.fn(),
   checkPort: vi.fn(),
   setAgentShared: vi.fn(),
+  setAgentModel: vi.fn(),
   createInvite: vi.fn(),
   cancelInvite: vi.fn(),
   disconnectDevice: vi.fn(),
@@ -626,6 +627,29 @@ describe("Share my agent", () => {
     expect(card.textContent).not.toContain("OpenCode");
     // Only shareable agents get a switch.
     expect(card.querySelectorAll('input[role="switch"]').length).toBe(1);
+  });
+
+  it("sets the model every PC uses with an agent, and refuses one that looks like a flag", async () => {
+    const live = shareStatus({
+      enabled: true,
+      listening: { port: 8765, urls: ["http://192.168.1.20:8765"] },
+    });
+    svc.getShareStatus.mockResolvedValue({ ok: true, value: live });
+    svc.setAgentModel.mockResolvedValue({ ok: true, value: live });
+    await openShare();
+    const input = container.querySelector<HTMLInputElement>(
+      'input[aria-label="Claude Code model for shared PCs"]'
+    )!;
+    expect(input.placeholder).toBe("Default model");
+
+    await type(input, "--yolo");
+    expect(input.getAttribute("aria-invalid")).toBe("true");
+    await act(async () => input.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
+    expect(svc.setAgentModel).not.toHaveBeenCalled();
+
+    await type(input, "opus");
+    await act(async () => input.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
+    expect(svc.setAgentModel).toHaveBeenCalledWith("claude", "opus");
   });
 
   it("shows one main address and folds virtual adapters away", async () => {

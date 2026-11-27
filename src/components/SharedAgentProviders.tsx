@@ -1,7 +1,9 @@
-import { FC, useEffect, useState } from "react";
+import { FC, useEffect, useId, useState } from "react";
 import { Lock, LoaderCircle } from "lucide-react";
 import {
   isSharedAgentId,
+  MODEL_RE,
+  MODEL_SUGGESTIONS,
   type ShareAgentRow,
   type SharedAgentId,
   type ShareStatus,
@@ -12,6 +14,8 @@ interface Props {
   share: ShareStatus;
   /** Switches one agent on or off for sharing. */
   onToggle: (agent: SharedAgentId, enabled: boolean) => void;
+  /** Sets the model every PC uses with one agent ("" = the agent's default). */
+  onModel: (agent: SharedAgentId, model: string) => void;
 }
 
 /** Why an agent found by AI Providers can't be shared, when the sharing service did not say. */
@@ -32,7 +36,7 @@ type Row =
  * ones that can be shared (with an on/off switch), then the rest, with the
  * reason they can't be. Agents that are not installed are not listed.
  */
-export const SharedAgentProviders: FC<Props> = ({ share, onToggle }) => {
+export const SharedAgentProviders: FC<Props> = ({ share, onToggle, onModel }) => {
   const providers = useFoundProviders();
   const checking = share.agentsChecking === true;
   const found = new Map((providers ?? []).map((p) => [p.id, p]));
@@ -115,8 +119,9 @@ export const SharedAgentProviders: FC<Props> = ({ share, onToggle }) => {
         <>
           <span className="sa-group-label">Can be shared</span>
           <span className="sa-muted">
-            These switches apply to every PC. Switch an agent off here and no PC can use it,
-            whatever its own settings say.
+            These switches and models apply to every PC. Switch an agent off here and no PC can use
+            it, whatever its own settings say. A PC given its own model in its Agent settings keeps
+            that one.
           </span>
           {shareable.map(
             (r) =>
@@ -133,6 +138,12 @@ export const SharedAgentProviders: FC<Props> = ({ share, onToggle }) => {
                     {r.name}
                     <span className="sa-muted sa-block">{r.detail}</span>
                   </span>
+                  {r.agent.available && (
+                    <AgentModelField
+                      agent={r.agent}
+                      onSave={(model) => onModel(r.agent.id, model)}
+                    />
+                  )}
                   <span
                     className={`sa-badge ${r.agent.available && r.agent.enabled ? "sa-badge-ok" : ""}`}
                   >
@@ -186,6 +197,59 @@ export const SharedAgentProviders: FC<Props> = ({ share, onToggle }) => {
         MCP tools.
       </span>
     </section>
+  );
+};
+
+/**
+ * The model shared PCs use with one agent. Saved on Enter or when the box loses
+ * focus; Escape puts back the saved one. Empty = the agent's own default.
+ */
+const AgentModelField: FC<{ agent: ShareAgentRow; onSave: (model: string) => void }> = ({
+  agent,
+  onSave,
+}) => {
+  const saved = agent.model ?? "";
+  const [text, setText] = useState(saved);
+  const listId = useId();
+  // Follow the saved value when it changes elsewhere (another save, a refresh).
+  useEffect(() => setText(saved), [saved]);
+  const value = text.trim();
+  const invalid = value !== "" && !MODEL_RE.test(value);
+  const commit = () => {
+    if (!invalid && value !== saved) onSave(value);
+  };
+  const suggestions = MODEL_SUGGESTIONS[agent.id];
+  return (
+    <span className="sa-agent-model">
+      <input
+        className="text-input sa-mono"
+        aria-label={`${agent.name} model for shared PCs`}
+        aria-invalid={invalid}
+        title={
+          invalid
+            ? "Use letters, digits and . _ : / # @ - [ ], starting with a letter or digit."
+            : `The model PCs use with ${agent.name}. Leave empty for its default.`
+        }
+        list={suggestions ? listId : undefined}
+        placeholder="Default model"
+        maxLength={100}
+        spellCheck={false}
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") commit();
+          else if (e.key === "Escape") setText(saved);
+        }}
+      />
+      {suggestions && (
+        <datalist id={listId}>
+          {suggestions.map((m) => (
+            <option key={m} value={m} />
+          ))}
+        </datalist>
+      )}
+    </span>
   );
 };
 

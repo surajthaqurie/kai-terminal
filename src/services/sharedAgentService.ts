@@ -152,6 +152,9 @@ export const setSharing = (enabled: boolean, port?: number) =>
   share(port === undefined ? { op: "share_set", enabled } : { op: "share_set", enabled, port });
 export const setAgentShared = (agent: SharedAgentId, enabled: boolean) =>
   share({ op: "share_agent", agent, enabled });
+/** Sets the model every PC uses with this agent; "" or null = the agent's default. */
+export const setAgentModel = (agent: SharedAgentId, model: string | null) =>
+  share({ op: "share_agent_model", agent, model: model?.trim() || null });
 export const setPublicUrl = (url: string | null) => share({ op: "share_public_url", url });
 export const cancelInvite = (id: string) => share({ op: "invite_cancel", id });
 export const disconnectDevice = (id: string) => share({ op: "device_disconnect", id });

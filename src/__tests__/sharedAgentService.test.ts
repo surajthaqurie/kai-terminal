@@ -287,6 +287,16 @@ describe("sharing and joining", () => {
     expect(stopped.share).toMatchObject({ enabled: false, listening: null });
   });
 
+  it("sets and clears the model every PC uses with an agent", async () => {
+    const { a } = await pair();
+    const set = await ok(
+      a.svc.handle({ op: "share_agent_model", agent: "claude", model: "  sonnet  " })
+    );
+    expect(set.share.agents.find((x) => x.id === "claude")?.model).toBe("sonnet");
+    const cleared = await ok(a.svc.handle({ op: "share_agent_model", agent: "claude", model: "" }));
+    expect(cleared.share.agents.find((x) => x.id === "claude")?.model).toBe("");
+  });
+
   it("tells the UI when the host's state changes", async () => {
     const { a } = await pair();
     await ok(a.svc.handle({ op: "invite_create", expiresMinutes: 5 }));
@@ -455,6 +465,14 @@ describe("request validation", () => {
     ],
     ["an odd invite lifetime", { op: "invite_create", expiresMinutes: 9999 as never }],
     ["an unknown agent to share", { op: "share_agent", agent: "evil" as never, enabled: true }],
+    [
+      "a host-wide model that looks like a flag",
+      { op: "share_agent_model", agent: "claude", model: "--dangerously-skip-permissions" },
+    ],
+    [
+      "a model for an unknown agent",
+      { op: "share_agent_model", agent: "evil" as never, model: "x" },
+    ],
     ["permissions for an unknown PC", { op: "device_grants", id: "nope", grants: defaultGrants() }],
     [
       "a zero time limit",
