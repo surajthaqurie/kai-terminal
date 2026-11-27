@@ -6,7 +6,6 @@ import {
   CircleCheck,
   Copy,
   Globe,
-  Lock,
   Play,
   Share2,
   Square,
@@ -28,6 +27,7 @@ import {
   disconnectDevice,
   getShareStatus,
   onSharedAgentEvent,
+  peekShareStatus,
   removeDevice,
   setAgentShared,
   setPublicUrl,
@@ -46,6 +46,7 @@ import {
   tokensUsed,
 } from "./sharedAgentViewModel";
 import { DevicePermissions, DeviceUsage } from "./SharedAgentDevice";
+import { SharedAgentProviders } from "./SharedAgentProviders";
 
 type DetailPanel = "usage" | "permissions";
 type DeviceFilter = "all" | "active" | "disconnected";
@@ -97,7 +98,7 @@ const useCopy = () => {
 
 /** "Share my agent": turn sharing on, pick agents, invite PCs, watch who is using them. */
 export const SharedAgentShare: FC<ShareProps> = ({ active }) => {
-  const [share, setShare] = useState<ShareStatus | null>(null);
+  const [share, setShare] = useState<ShareStatus | null>(peekShareStatus);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [minutes, setMinutes] = useState<InviteMinutes>(15);
@@ -291,6 +292,13 @@ export const SharedAgentShare: FC<ShareProps> = ({ active }) => {
   const portValue = parseSharePort(portText);
   const portInvalid = portText.trim() !== "" && portValue === null;
 
+  const agentsCard = (
+    <SharedAgentProviders
+      share={share}
+      onToggle={(id, enabled) => void run(() => setAgentShared(id, enabled))}
+    />
+  );
+
   return (
     <div className="sa-share">
       {error && (
@@ -364,8 +372,7 @@ export const SharedAgentShare: FC<ShareProps> = ({ active }) => {
             )
           ) : (
             <span className="sa-muted">
-              Start sharing to let PCs on your network chat with your agents. Sharing stays off when
-              Kai restarts.
+              Let PCs on your network chat with your agents. Stays off when Kai restarts.
             </span>
           )}
         </div>
@@ -385,6 +392,33 @@ export const SharedAgentShare: FC<ShareProps> = ({ active }) => {
             </div>
           </div>
         )}
+        <label
+          className="sa-hero-port"
+          title={
+            on
+              ? "Stop sharing to change the port. It is released as soon as sharing stops."
+              : "Other PCs connect to this port. Kai checks it is free before it starts, and releases it when you stop."
+          }
+        >
+          <span className="sa-field-label">Port</span>
+          <input
+            id="sa-port"
+            className="text-input sa-mono sa-port-input"
+            inputMode="numeric"
+            aria-label="Port"
+            aria-invalid={portInvalid}
+            aria-describedby="sa-port-note"
+            value={on ? String(share.listening?.port ?? share.port) : portText}
+            disabled={on || busy}
+            onChange={(e) => {
+              setPortText(e.target.value.replace(/[^0-9]/g, "").slice(0, 5));
+              setPortNote(null);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !on && portValue !== null && !busy) void start();
+            }}
+          />
+        </label>
         {on ? (
           <button
             type="button"
@@ -406,69 +440,115 @@ export const SharedAgentShare: FC<ShareProps> = ({ active }) => {
             Start sharing
           </button>
         )}
+        {(portInvalid || portNote) && (
+          <span
+            id="sa-port-note"
+            className={`sa-hero-note sa-port-note sa-port-note-${portInvalid ? "bad" : portNote!.tone}`}
+            role={portInvalid || portNote?.tone === "bad" ? "alert" : "status"}
+          >
+            {portInvalid || portNote?.tone === "bad" ? (
+              <CircleAlert size={13} aria-hidden="true" />
+            ) : portNote?.tone === "ok" ? (
+              <CircleCheck size={13} aria-hidden="true" />
+            ) : null}
+            {portInvalid
+              ? `Use a port number from ${MIN_SHARE_PORT} to ${MAX_SHARE_PORT}.`
+              : portNote!.text}
+          </span>
+        )}
       </section>
 
-      {/* Port: chosen while off, shown (read-only) while on. */}
-      <section className="sa-card" aria-labelledby="sa-port-title">
-        <h4 id="sa-port-title" className="sa-card-title">
-          Connection
-        </h4>
-        <form
-          className="sa-field"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (portValue !== null) void runPortCheck(portValue);
-          }}
-        >
-          <label htmlFor="sa-port" className="sa-field-label">
-            Port
-          </label>
-          <div className="sa-invite-row">
-            <input
-              id="sa-port"
-              className="text-input sa-mono sa-port-input"
-              inputMode="numeric"
-              aria-invalid={portInvalid}
-              aria-describedby="sa-port-help"
-              value={on ? String(share.listening?.port ?? share.port) : portText}
-              disabled={on || busy}
-              onChange={(e) => {
-                setPortText(e.target.value.replace(/[^0-9]/g, "").slice(0, 5));
-                setPortNote(null);
-              }}
-            />
-            {!on && (
-              <button
-                type="submit"
-                className="btn btn-secondary"
-                disabled={busy || portValue === null}
+      {/* Invites: only while sharing. One line: title, expiry, generate. */}
+      {on && (
+        <section className="sa-card sa-invite-card" aria-labelledby="sa-invite-title">
+          <div className="sa-invite-part">
+            <div className="sa-invite-row sa-invite-line">
+              <h4 id="sa-invite-title" className="sa-card-title">
+                Invite a PC
+              </h4>
+              <label htmlFor="sa-expiry" className="sa-field-label">
+                expires in
+              </label>
+              <select
+                id="sa-expiry"
+                className="select-input sa-expiry-select"
+                aria-label="Invite expires after"
+                value={minutes}
+                onChange={(e) => setMinutes(Number(e.target.value) as InviteMinutes)}
               >
-                Check port
+                {INVITE_MINUTES.map((m) => (
+                  <option key={m} value={m}>
+                    {MINUTE_LABELS[m]}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="btn btn-primary sa-invite-generate"
+                onClick={() => void makeInvite()}
+                disabled={busy}
+              >
+                Generate invite link
               </button>
+            </div>
+            {invite && (
+              <div className="sa-invite-box">
+                {(
+                  [
+                    ["lan", invite.link, "LAN"],
+                    ...(invite.internetLink
+                      ? [["internet", invite.internetLink, "WEB"] as const]
+                      : []),
+                  ] as const
+                ).map(([kind, text, tag]) => (
+                  <div key={kind} className="sa-link-line">
+                    <span className={`sa-badge ${kind === "internet" ? "sa-badge-accent" : ""}`}>
+                      {tag}
+                    </span>
+                    <code
+                      className="sa-invite-link"
+                      aria-label={kind === "lan" ? "Invite link" : "Internet invite link"}
+                    >
+                      {text}
+                    </code>
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-small"
+                      aria-label={kind === "internet" ? "Copy internet link" : "Copy invite link"}
+                      onClick={() => void copy(kind, text)}
+                    >
+                      {copied === kind ? <Check size={13} /> : <Copy size={13} />}
+                    </button>
+                  </div>
+                ))}
+                {invite.totalSeconds !== null && (
+                  <div className="sa-countdown" aria-hidden="true">
+                    <i
+                      style={{
+                        width: `${Math.max(0, Math.min(1, inviteLeft / invite.totalSeconds)) * 100}%`,
+                      }}
+                    />
+                  </div>
+                )}
+                <div className="sa-row">
+                  <span className="sa-muted">
+                    {invite.expiresAt === null
+                      ? "Shown once · works once · valid until you cancel it or stop sharing"
+                      : `Shown once · works once · expires in ${formatCountdown(inviteLeft)}`}
+                  </span>
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-small sa-danger"
+                    onClick={() => void run(() => cancelInvite(invite.id))}
+                  >
+                    Cancel invite
+                  </button>
+                </div>
+              </div>
             )}
           </div>
-          <span id="sa-port-help" className="sa-muted">
-            {portInvalid
-              ? `Use a number from ${MIN_SHARE_PORT} to ${MAX_SHARE_PORT}.`
-              : on
-                ? "Stop sharing to change the port. It is released as soon as sharing stops."
-                : "Other PCs connect to this port. Kai checks it is free before it starts, and releases it when you stop."}
-          </span>
-          {portNote && (
-            <span
-              className={`sa-port-note sa-port-note-${portNote.tone}`}
-              role={portNote.tone === "bad" ? "alert" : "status"}
-            >
-              {portNote.tone === "ok" ? (
-                <CircleCheck size={13} aria-hidden="true" />
-              ) : portNote.tone === "bad" ? (
-                <CircleAlert size={13} aria-hidden="true" />
-              ) : null}
-              {portNote.text}
-            </span>
-          )}
-        </form>
-      </section>
+        </section>
+      )}
 
       {noAddress && (
         <p className="sa-notice sa-notice-warn" role="alert">
@@ -476,186 +556,10 @@ export const SharedAgentShare: FC<ShareProps> = ({ active }) => {
         </p>
       )}
 
-      {!on && (
-        <ol className="sa-steps">
-          <li>
-            <b>1</b>
-            <strong>Pick a port and start sharing</strong>
-            <span className="sa-muted">Kai listens on your local network only.</span>
-          </li>
-          <li>
-            <b>2</b>
-            <strong>Send an invite link</strong>
-            <span className="sa-muted">
-              Works once. Expires after 5 to 60 minutes, or stays valid until you turn it off.
-            </span>
-          </li>
-          <li>
-            <b>3</b>
-            <strong>Watch and control</strong>
-            <span className="sa-muted">See tokens per PC, set limits, disconnect any time.</span>
-          </li>
-        </ol>
-      )}
-
       {on && (
         <div className="sa-share-grid">
           <div className="sa-col">
-            <section className="sa-card" aria-labelledby="sa-invite-title">
-              <h4 id="sa-invite-title" className="sa-card-title">
-                Invite a PC
-              </h4>
-              <label htmlFor="sa-expiry" className="sa-field-label">
-                Link expires
-              </label>
-              <div className="sa-invite-row">
-                <select
-                  id="sa-expiry"
-                  className="select-input sa-expiry-select"
-                  aria-label="Invite expires after"
-                  value={minutes}
-                  onChange={(e) => setMinutes(Number(e.target.value) as InviteMinutes)}
-                >
-                  {INVITE_MINUTES.map((m) => (
-                    <option key={m} value={m}>
-                      {MINUTE_LABELS[m]}
-                    </option>
-                  ))}
-                </select>
-                <button
-                  type="button"
-                  className="btn btn-primary sa-grow"
-                  onClick={() => void makeInvite()}
-                  disabled={busy}
-                >
-                  Generate invite link
-                </button>
-              </div>
-              {invite && (
-                <div className="sa-invite-box">
-                  {(
-                    [
-                      ["lan", invite.link, "LAN"],
-                      ...(invite.internetLink
-                        ? [["internet", invite.internetLink, "WEB"] as const]
-                        : []),
-                    ] as const
-                  ).map(([kind, text, tag]) => (
-                    <div key={kind} className="sa-link-line">
-                      <span className={`sa-badge ${kind === "internet" ? "sa-badge-accent" : ""}`}>
-                        {tag}
-                      </span>
-                      <code
-                        className="sa-invite-link"
-                        aria-label={kind === "lan" ? "Invite link" : "Internet invite link"}
-                      >
-                        {text}
-                      </code>
-                      <button
-                        type="button"
-                        className="btn btn-secondary btn-small"
-                        aria-label={kind === "internet" ? "Copy internet link" : "Copy invite link"}
-                        onClick={() => void copy(kind, text)}
-                      >
-                        {copied === kind ? <Check size={13} /> : <Copy size={13} />}
-                      </button>
-                    </div>
-                  ))}
-                  {invite.totalSeconds !== null && (
-                    <div className="sa-countdown" aria-hidden="true">
-                      <i
-                        style={{
-                          width: `${Math.max(0, Math.min(1, inviteLeft / invite.totalSeconds)) * 100}%`,
-                        }}
-                      />
-                    </div>
-                  )}
-                  <div className="sa-row">
-                    <span className="sa-muted">
-                      {invite.expiresAt === null
-                        ? "Shown once · works once · valid until you cancel it or stop sharing"
-                        : `Shown once · works once · expires in ${formatCountdown(inviteLeft)}`}
-                    </span>
-                    <button
-                      type="button"
-                      className="btn btn-secondary btn-small sa-danger"
-                      onClick={() => void run(() => cancelInvite(invite.id))}
-                    >
-                      Cancel invite
-                    </button>
-                  </div>
-                </div>
-              )}
-            </section>
-
-            <section className="sa-card" aria-labelledby="sa-agents-title">
-              <h4 id="sa-agents-title" className="sa-card-title">
-                Agents you share
-              </h4>
-              {share.agents.every((a) => !a.available) && !share.otherClis?.length && (
-                <span className="sa-muted sa-block">
-                  No coding agents found on this PC. Install Claude Code or OpenCode, then reopen
-                  this panel.
-                </span>
-              )}
-              {share.agents
-                .filter((a) => a.available)
-                .map((a) => (
-                  <div
-                    key={a.id}
-                    className={`sa-agent${a.available ? "" : " is-missing"}`}
-                    title={a.available ? undefined : a.error}
-                  >
-                    <span className={`sa-agent-logo sa-agent-${a.id}`} aria-hidden="true">
-                      {a.name.charAt(0)}
-                    </span>
-                    <span className="sa-grow">
-                      {a.name}
-                      <span className="sa-muted sa-block">
-                        {a.available ? `Found${a.version ? ` · ${a.version}` : ""}` : "Not found"}
-                      </span>
-                    </span>
-                    <label className="sa-switch">
-                      <input
-                        type="checkbox"
-                        role="switch"
-                        aria-label={`Share ${a.name}`}
-                        checked={a.enabled && a.available}
-                        disabled={!a.available}
-                        onChange={(e) => void run(() => setAgentShared(a.id, e.target.checked))}
-                      />
-                      <span aria-hidden="true" />
-                    </label>
-                  </div>
-                ))}
-              {(share.otherClis ?? []).map((o) => (
-                <div key={o.id} className="sa-agent is-unshareable" title={o.reason}>
-                  <span className={`sa-agent-logo sa-agent-${o.id}`} aria-hidden="true">
-                    {o.name.charAt(0)}
-                  </span>
-                  <span className="sa-grow">
-                    {o.name}
-                    <span className="sa-muted sa-block">Found · can't be shared: {o.reason}</span>
-                  </span>
-                  <label className="sa-switch">
-                    <input
-                      type="checkbox"
-                      role="switch"
-                      aria-label={`Share ${o.name} (not available)`}
-                      checked={false}
-                      disabled
-                      readOnly
-                    />
-                    <span aria-hidden="true" />
-                  </label>
-                </div>
-              ))}
-              <span className="sa-muted sa-note">
-                <Lock size={11} aria-hidden="true" />
-                Read-only: they chat in an empty folder and can't read your files, run commands or
-                use MCP tools.
-              </span>
-            </section>
+            {agentsCard}
 
             <details
               className="sa-card sa-fold"
@@ -816,6 +720,28 @@ export const SharedAgentShare: FC<ShareProps> = ({ active }) => {
                             {formatAgo(d.lastSeen, now)} · {d.usage.runs} request
                             {d.usage.runs === 1 ? "" : "s"}
                           </span>
+                          <span className="sa-agent-chips" aria-label="Agents this PC may use">
+                            {share.agents.map((a) => {
+                              const parentOff = !a.enabled || !a.available;
+                              const allowed = d.grants?.agents[a.id] !== false && !parentOff;
+                              return (
+                                <span
+                                  key={a.id}
+                                  className={`sa-badge ${allowed ? "sa-badge-accent" : ""}`}
+                                  title={
+                                    parentOff
+                                      ? `${a.name} is off for every PC`
+                                      : allowed
+                                        ? `${d.name} may use ${a.name}`
+                                        : `${d.name} may not use ${a.name}`
+                                  }
+                                >
+                                  {allowed ? "✓" : "✕"} {a.name}
+                                  {parentOff ? " · off for all" : ""}
+                                </span>
+                              );
+                            })}
+                          </span>
                         </div>
                         <div className="sa-device-tokens" title={tokenBreakdown(d.usage)}>
                           <b>{tokensUsed(d.usage)}</b>
@@ -864,7 +790,7 @@ export const SharedAgentShare: FC<ShareProps> = ({ active }) => {
                           aria-expanded={open === "permissions"}
                           onClick={() => toggleDetail(d.id, "permissions")}
                         >
-                          Permissions
+                          Agent settings
                         </button>
                       </div>
                       {open &&

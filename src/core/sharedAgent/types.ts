@@ -183,6 +183,25 @@ export const DEFAULT_RUN_MINUTES = 10;
 /** Tasks kept per PC in its history (its totals keep counting past this). */
 export const MAX_TASKS_PER_DEVICE = 100;
 
+/** Bounds of the per-agent daily token limit a host can set for one PC. */
+export const MIN_DAILY_TOKENS = 1_000;
+export const MAX_DAILY_TOKENS = 100_000_000;
+/**
+ * Most requests per hour a host can allow one PC with one agent. The hour is
+ * counted from the PC's task history, so it cannot exceed what that keeps.
+ */
+export const MAX_REQUESTS_PER_HOUR = MAX_TASKS_PER_DEVICE;
+
+/** One agent's limits for one PC. */
+export interface AgentLimits {
+  /** A run is stopped after this many minutes (1 to {@link MAX_RUN_MINUTES_LIMIT}). */
+  maxMinutes: number;
+  /** Tokens the PC may use with this agent per day (host's local day). null = no limit. */
+  dailyTokens: number | null;
+  /** Requests the PC may start with this agent in any hour. null = no limit. */
+  perHour: number | null;
+}
+
 /**
  * What one joined PC may do on this host. The host-wide agent switch still
  * applies on top: an agent turned off for everyone is off for every PC.
@@ -191,8 +210,13 @@ export interface DeviceGrants {
   agents: Record<SharedAgentId, boolean>;
   /** The model this PC's runs use, per agent. Empty / missing = the agent's default. */
   models: Partial<Record<SharedAgentId, string>>;
-  /** A run is stopped after this many minutes (1 to {@link MAX_RUN_MINUTES_LIMIT}). */
+  /**
+   * The time limit for an agent with no row in {@link limits} (permissions saved
+   * before limits were per agent). 1 to {@link MAX_RUN_MINUTES_LIMIT}.
+   */
   maxMinutes: number;
+  /** Each agent's own limits for this PC. Read through {@link limitsFor}. */
+  limits?: Partial<Record<SharedAgentId, AgentLimits>>;
 }
 
 export const defaultGrants = (): DeviceGrants => ({
@@ -203,6 +227,22 @@ export const defaultGrants = (): DeviceGrants => ({
   models: {},
   maxMinutes: DEFAULT_RUN_MINUTES,
 });
+
+/** One agent's limits for a PC, with the PC-wide time limit for anything not set. */
+export function limitsFor(grants: DeviceGrants, agent: SharedAgentId): AgentLimits {
+  const row = grants.limits?.[agent];
+  return {
+    maxMinutes: row?.maxMinutes ?? grants.maxMinutes,
+    dailyTokens: row?.dailyTokens ?? null,
+    perHour: row?.perHour ?? null,
+  };
+}
+
+/** What one PC has used of one agent: today's tokens and requests in the last hour. */
+export interface AgentUse {
+  tokens: number;
+  lastHour: number;
+}
 
 export class GrantsError extends Error {}
 
@@ -250,7 +290,47 @@ export function parseGrants(value: unknown): DeviceGrants {
     throw new GrantsError(`Time limit must be 1 to ${MAX_RUN_MINUTES_LIMIT} minutes.`);
   }
   out.maxMinutes = minutes;
+
+  const limits = v.limits ?? {};
+  if (!limits || typeof limits !== "object" || Array.isArray(limits)) {
+    throw new GrantsError("Invalid agent limits.");
+  }
+  for (const [id, raw] of Object.entries(limits)) {
+    if (!isSharedAgentId(id)) throw new GrantsError(`Unknown agent: ${id.slice(0, 40)}`);
+    if (raw === null || raw === undefined) continue;
+    if (typeof raw !== "object" || Array.isArray(raw)) {
+      throw new GrantsError(`Invalid limits for ${SHARED_AGENT_NAMES[id]}.`);
+    }
+    (out.limits ??= {})[id] = parseAgentLimits(raw as Record<string, unknown>, id, minutes);
+  }
   return out;
+}
+
+const isWhole = (n: unknown): n is number => typeof n === "number" && Number.isInteger(n);
+
+function parseAgentLimits(
+  v: Record<string, unknown>,
+  id: SharedAgentId,
+  fallbackMinutes: number
+): AgentLimits {
+  const name = SHARED_AGENT_NAMES[id];
+  const minutes = v.maxMinutes ?? fallbackMinutes;
+  if (!isWhole(minutes) || minutes < 1 || minutes > MAX_RUN_MINUTES_LIMIT) {
+    throw new GrantsError(`${name}: time limit must be 1 to ${MAX_RUN_MINUTES_LIMIT} minutes.`);
+  }
+  const daily = v.dailyTokens ?? null;
+  if (daily !== null && (!isWhole(daily) || daily < MIN_DAILY_TOKENS || daily > MAX_DAILY_TOKENS)) {
+    throw new GrantsError(
+      `${name}: daily token limit must be ${MIN_DAILY_TOKENS.toLocaleString("en-US")} to ${MAX_DAILY_TOKENS.toLocaleString("en-US")}, or empty for no limit.`
+    );
+  }
+  const perHour = v.perHour ?? null;
+  if (perHour !== null && (!isWhole(perHour) || perHour < 1 || perHour > MAX_REQUESTS_PER_HOUR)) {
+    throw new GrantsError(
+      `${name}: requests per hour must be 1 to ${MAX_REQUESTS_PER_HOUR}, or empty for no limit.`
+    );
+  }
+  return { maxMinutes: minutes, dailyTokens: daily, perHour };
 }
 
 export type TaskStatus = "completed" | "failed" | "stopped" | "timeout";
@@ -289,6 +369,8 @@ export interface ShareDevice {
   usage: UsageTotals;
   activeRunId: string | null;
   grants: DeviceGrants;
+  /** What it has used of each agent today and in the last hour (missing = older service). */
+  today?: Partial<Record<SharedAgentId, AgentUse>>;
 }
 
 export interface ShareRun {
@@ -312,6 +394,8 @@ export interface ShareStatus {
   agents: ShareAgentRow[];
   /** Other coding CLIs installed here that cannot be shared (missing = none found / older service). */
   otherClis?: ShareOtherCli[];
+  /** True while installed agents' versions are still being fetched (missing = older service). */
+  agentsChecking?: boolean;
   invites: ShareInvite[];
   devices: ShareDevice[];
   runs: ShareRun[];

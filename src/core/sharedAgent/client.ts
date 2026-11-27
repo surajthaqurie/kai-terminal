@@ -53,6 +53,13 @@ import {
   type UsageTotals,
 } from "./types";
 
+/** A reused connection the other side had already closed (Node's fetch: undici). */
+function isStaleSocket(e: unknown): boolean {
+  const cause = (e as { cause?: { code?: unknown } } | null)?.cause;
+  const code = typeof cause?.code === "string" ? cause.code : "";
+  return code === "UND_ERR_SOCKET" || code === "ECONNRESET" || code === "EPIPE";
+}
+
 export class ClientError extends Error {
   constructor(
     readonly code: SharedAgentErrorCode,
@@ -259,13 +266,24 @@ export class HostsClient {
     const onAbort = () => controller.abort();
     opts.signal?.addEventListener("abort", onAbort, { once: true });
     try {
-      const res = await this.fetchImpl(`${allowed.origin}${urlPath}`, {
-        method: "POST",
-        redirect: "manual",
-        signal: controller.signal,
-        headers: { [KAI_CLIENT_HEADER]: KAI_SERVICE, "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
+      const send = () =>
+        this.fetchImpl(`${allowed.origin}${urlPath}`, {
+          method: "POST",
+          redirect: "manual",
+          signal: controller.signal,
+          headers: { [KAI_CLIENT_HEADER]: KAI_SERVICE, "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+      let res: Response;
+      try {
+        res = await send();
+      } catch (e) {
+        // A kept-alive connection the host closed (it just restarted sharing) fails
+        // before the request is read. One fresh connection is enough; a request that
+        // did arrive is refused as a replay by the secure channel, never run twice.
+        if (controller.signal.aborted || !isStaleSocket(e)) throw e;
+        res = await send();
+      }
       if (res.headers.get(KAI_SERVICE_HEADER)?.trim().toLowerCase() !== KAI_SERVICE) {
         // A tunnel or proxy answering for a host that is down has no Kai header either.
         if (res.status >= 502 && res.status <= 504) throw new Error("gateway");

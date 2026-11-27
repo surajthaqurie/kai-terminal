@@ -325,20 +325,6 @@
   opacity: 0.4;
 }
 
-.sa-switch-lg {
-  width: 44px;
-  height: 24px;
-}
-
-.sa-switch-lg span::before {
-  width: 18px;
-  height: 18px;
-}
-
-.sa-switch-lg input:checked + span::before {
-  transform: translateX(20px);
-}
-
 /* ================= Use a shared agent ================= */
 .sa-receive {
   display: grid;
@@ -403,10 +389,6 @@
   padding: 0 8px 8px;
   overflow-y: auto;
   list-style: none;
-}
-
-.sa-rail-empty {
-  margin: 0 12px;
 }
 
 .sa-host {
@@ -481,16 +463,6 @@
 .sa-leave:focus-visible,
 .sa-leave[aria-label^="Confirm"] {
   opacity: 1;
-}
-
-.sa-rail-foot {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 0;
-  padding: 10px 14px;
-  border-top: 1px solid var(--border-subtle);
-  font-size: var(--text-xs);
 }
 
 /* chat */
@@ -983,37 +955,6 @@
   font-size: var(--text-xs);
 }
 
-.sa-steps {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.sa-steps li {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 14px;
-  background: var(--bg-surface-elevated);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-lg);
-}
-
-.sa-steps b {
-  display: inline-grid;
-  place-items: center;
-  width: 22px;
-  height: 22px;
-  margin-bottom: 4px;
-  border-radius: 50%;
-  background: var(--accent-subtle);
-  color: var(--accent-primary);
-  font-size: var(--text-xs);
-}
-
 .sa-share-grid {
   display: grid;
   grid-template-columns: 330px minmax(0, 1fr);
@@ -1043,13 +984,6 @@
   min-width: 150px;
 }
 
-.sa-field {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin: 0;
-}
-
 .sa-field-label {
   color: var(--text-secondary);
   font-size: var(--text-sm);
@@ -1057,7 +991,128 @@
 }
 
 .sa-port-input {
-  width: 110px;
+  width: 90px;
+}
+
+/* Port sits in the Start sharing line. */
+.sa-hero-port {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sa-hero-note {
+  flex-basis: 100%;
+}
+
+/* "Invite a PC · expires in [..] · Generate invite link" on one line. */
+.sa-invite-line {
+  flex-wrap: wrap;
+}
+
+.sa-invite-line .sa-card-title {
+  margin-right: 4px;
+}
+
+.sa-invite-generate {
+  margin-left: auto;
+}
+
+/* Which agents a PC may use, under its name. */
+.sa-agent-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+/* One agent's settings for one PC. */
+.sa-acfg-tools {
+  justify-content: flex-end;
+}
+
+.sa-acfg {
+  background: var(--bg-surface-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.sa-acfg.is-off .sa-agent-logo {
+  opacity: 0.5;
+}
+
+.sa-acfg.is-parent-off {
+  opacity: 0.7;
+}
+
+.sa-acfg-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+}
+
+.sa-acfg-toggle {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  background: none;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sa-acfg-toggle .sa-badge {
+  margin-left: 6px;
+}
+
+.sa-acfg-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.sa-acfg-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 10px;
+}
+
+.sa-fld {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.sa-num {
+  width: 6rem;
+}
+
+.sa-num-wide {
+  width: 8rem;
+}
+
+.sa-acfg-use {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sa-acfg-use .sa-meter {
+  width: 100%;
+}
+
+.sa-meter i.is-hot {
+  background: var(--color-warning);
+}
+
+.sa-link-ok {
+  color: var(--color-success);
 }
 
 .sa-port-note {
@@ -1408,33 +1463,6 @@
   gap: 6px;
 }
 
-.sa-perm-row {
-  display: grid;
-  grid-template-columns: minmax(11rem, auto) minmax(0, 1fr);
-  align-items: center;
-  gap: 8px 14px;
-}
-
-.sa-perm-agent {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.sa-perm-model {
-  font-family: var(--font-mono);
-}
-
-.sa-perm-minutes {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.sa-perm-minutes .text-input {
-  width: 6rem;
-}
-
 .sa-table {
   width: 100%;
   border-collapse: collapse;
@@ -1499,10 +1527,6 @@
     border-left: 0;
   }
 
-  .sa-steps {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
   .sa-trust {
     margin-left: 0;
   }
@@ -1521,8 +1545,52 @@
     grid-column: 2;
     justify-self: start;
   }
+}
 
-  .sa-perm-row {
-    grid-template-columns: minmax(0, 1fr);
+/* Agent CLIs list: grouped rows with an install badge and a checking hint. */
+.sa-providers {
+  gap: 6px;
+}
+
+.sa-group-label {
+  margin-top: 4px;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.sa-checking {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  font-size: var(--text-xs);
+}
+
+.sa-spin {
+  animation: sa-spin 0.9s linear infinite;
+}
+
+@keyframes sa-spin {
+  to {
+    transform: rotate(360deg);
   }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sa-spin {
+    animation: none;
+  }
+}
+
+/* "Invite a PC" lives inside the Connection card, under a divider. */
+.sa-invite-part {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
 }

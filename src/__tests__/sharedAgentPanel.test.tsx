@@ -31,6 +31,7 @@ const svc = vi.hoisted(() => ({
   getDeviceHistory: vi.fn(),
   onSharedAgentEvent: vi.fn(),
   setPublicUrl: vi.fn(),
+  peekShareStatus: vi.fn(() => null),
 }));
 vi.mock("../services/sharedAgentService", () => svc);
 
@@ -241,7 +242,7 @@ describe("Use a shared agent", () => {
     expect(receive.textContent).not.toContain("Loading…");
   });
 
-  it("validates a pasted invite link at once, trimming stray whitespace", async () => {
+  it("validates a pasted invite link at once, picking the link out of a message", async () => {
     await openReceive();
     const input = container.querySelector<HTMLInputElement>('input[aria-label="Invite link"]')!;
     const paste = (value: string) =>
@@ -252,16 +253,46 @@ describe("Use a shared agent", () => {
       });
 
     await paste("not a link");
-    expect(text()).toContain("not a valid invite link");
+    expect(text()).toContain("That is not an invite link");
     expect(input.getAttribute("aria-invalid")).toBe("true");
     expect(svc.joinHost).not.toHaveBeenCalled();
 
     const good = `http://192.168.1.50:8765/join#${"a".repeat(43)}.${"f".repeat(43)}`;
-    await paste(`  ${good}\n`);
-    expect(text()).not.toContain("not a valid invite link");
-    expect(text()).toContain("Valid invite link for http://192.168.1.50:8765");
+    // A whole chat message around the link, with a trailing full stop.
+    await paste(`  Join my agent: <${good}>.\n`);
+    expect(text()).not.toContain("That is not an invite link");
+    expect(text()).toContain("Invite for 192.168.1.50:8765 (same network). Press Join.");
     expect(input.value).toBe(good);
     expect(input.getAttribute("aria-invalid")).toBe("false");
+
+    // An older Kai's link (no host fingerprint) says what to do about it.
+    await paste(`http://192.168.1.50:8765/join#${"a".repeat(43)}`);
+    expect(text()).toContain("older Kai Terminal");
+  });
+
+  it("puts a link broken over two lines back together", async () => {
+    await openReceive();
+    const input = container.querySelector<HTMLInputElement>('input[aria-label="Invite link"]')!;
+    const good = `http://192.168.1.50:8765/join#${"a".repeat(43)}.${"f".repeat(43)}`;
+    await act(async () => {
+      const ev = new Event("paste", { bubbles: true, cancelable: true });
+      Object.assign(ev, {
+        clipboardData: { getData: () => `${good.slice(0, 60)}\n${good.slice(60)}` },
+      });
+      input.dispatchEvent(ev);
+    });
+    expect(input.value).toBe(good);
+    svc.joinHost.mockResolvedValue({ ok: true, value: office({ id: "h3", name: "Studio-PC" }) });
+    await click(buttonByText("Join"));
+    expect(svc.joinHost).toHaveBeenCalledWith(good);
+  });
+
+  it("offers Join again for a PC that is already joined", async () => {
+    await openReceive();
+    const input = container.querySelector<HTMLInputElement>('input[aria-label="Invite link"]')!;
+    await type(input, `http://192.168.1.20:8765/join#${"a".repeat(43)}.${"f".repeat(43)}`);
+    expect(text()).toContain("You already joined Office-PC");
+    expect(buttonByText("Join again")).toBeTruthy();
   });
 
   it("rejects a bad invite link without calling the service, and joins with a good one", async () => {
@@ -270,7 +301,7 @@ describe("Use a shared agent", () => {
     await type(input, "http://8.8.8.8:1/join#abcdefghij");
     await click(buttonByText("Join"));
     expect(svc.joinHost).not.toHaveBeenCalled();
-    expect(text()).toContain("not a valid invite link");
+    expect(text()).toContain("8.8.8.8 is not one");
 
     const good = `http://192.168.1.50:8765/join#${"a".repeat(43)}.${"f".repeat(43)}`;
     const studio = office({
@@ -531,19 +562,26 @@ describe("Share my agent", () => {
       }),
     });
     await openShare();
-    expect(text()).toContain("Start sharing to let PCs on your network");
-    expect(text()).not.toContain("Agents you share");
+    expect(text()).toContain("Let PCs on your network chat with your agents");
+    // Off: only the Start sharing line (with the port). Nothing else shows yet.
+    expect(text()).not.toContain("Agent CLIs on this PC");
+    expect(text()).not.toContain("Invite a PC");
+    expect(buttonByText("Check port")).toBeUndefined();
     expect(container.querySelector<HTMLInputElement>("#sa-port")!.value).toBe("8765");
     await click(buttonByText("Start sharing"));
     expect(svc.checkPort).toHaveBeenCalledWith(8765);
     expect(svc.setSharing).toHaveBeenCalledWith(true, 8765);
     expect(container.querySelector<HTMLInputElement>("#sa-port")!.disabled).toBe(true);
     expect(text()).toContain("Listening on http://192.168.1.20:8765");
-    expect(text()).toContain("Agents you share");
-    expect(text()).toContain("Found · 2.1.0");
-    // Only installed agents are listed: OpenCode is missing here, so it has no row.
-    expect(text()).not.toContain("Not found");
-    expect(container.querySelector('input[aria-label="Share OpenCode"]')).toBeNull();
+    expect(text()).toContain("Agent CLIs on this PC");
+    expect(text()).toContain("1 of 2 installed");
+    expect(text()).toContain("Invite a PC");
+    expect(text()).toContain("Installed · 2.1.0");
+    // A missing agent is still listed, marked missing, and can't be switched on.
+    expect(text()).toContain("Not installed");
+    expect(
+      container.querySelector<HTMLInputElement>('input[aria-label="Share OpenCode"]')!.disabled
+    ).toBe(true);
   });
 
   const on = shareStatus({
@@ -563,17 +601,16 @@ describe("Share my agent", () => {
     });
     await openShare();
     await type(container.querySelector<HTMLInputElement>("#sa-port")!, "9000");
-    await click(buttonByText("Check port"));
+    await click(buttonByText("Start sharing"));
     expect(svc.checkPort).toHaveBeenCalledWith(9000);
     expect(text()).toContain("Port 9000 is already in use by another program");
-    await click(buttonByText("Start sharing"));
     expect(svc.setSharing).not.toHaveBeenCalled();
   });
 
   it("rejects a port outside 1024-65535 before asking the service", async () => {
     await openShare();
     await type(container.querySelector<HTMLInputElement>("#sa-port")!, "80");
-    expect(text()).toContain("Use a number from 1024 to 65535.");
+    expect(text()).toContain("Use a port number from 1024 to 65535.");
     expect(buttonByText("Start sharing")!.disabled).toBe(true);
   });
 
@@ -758,47 +795,106 @@ describe("Share my agent", () => {
     ...over,
   });
 
-  it("edits one PC's permissions: agents, model and time limit", async () => {
-    svc.getShareStatus.mockResolvedValue({ ok: true, value: { ...on, devices: [amit()] } });
-    const saved = amit({
-      grants: {
-        agents: { claude: true, opencode: false },
-        models: { claude: "haiku" },
-        maxMinutes: 5,
+  it("edits each agent's own settings for one PC", async () => {
+    svc.getShareStatus.mockResolvedValue({
+      ok: true,
+      value: {
+        ...on,
+        devices: [amit({ today: { claude: { tokens: 12_400, lastHour: 3 } } })],
       },
     });
-    svc.setDeviceGrants.mockResolvedValue({ ok: true, value: { ...on, devices: [saved] } });
+    svc.setDeviceGrants.mockResolvedValue({ ok: true, value: { ...on, devices: [amit()] } });
     await openShare();
-    await click(buttonByText("Permissions"));
-    const panel = container.querySelector('[aria-label="Permissions for Amit-Laptop"]')!;
+    await click(buttonByText("Agent settings"));
+    const panel = container.querySelector('[aria-label="Agent settings for Amit-Laptop"]')!;
     expect(panel).not.toBeNull();
-    const minutes = panel.querySelector<HTMLInputElement>('input[type="number"]')!;
-    expect(minutes.value).toBe("10");
+    expect(panel.textContent).not.toContain("Copy settings");
 
-    // A bad value is caught before anything is sent.
+    // OpenCode is not installed here: its switch is off and locked for this PC.
+    const openSwitch = panel.querySelector<HTMLInputElement>('input[aria-label="Allow OpenCode"]')!;
+    expect(openSwitch.disabled).toBe(true);
+    expect(openSwitch.checked).toBe(false);
+
+    await click(buttonByText(/^Claude Code/));
+    const minutes = panel.querySelector<HTMLInputElement>(
+      'input[aria-label="Claude Code time limit in minutes"]'
+    )!;
+    expect(minutes.value).toBe("10");
+    expect(panel.textContent).toContain("Today: 12k tokens · 3 requests in the last hour");
+
+    // A bad value is caught before anything is sent, inside that agent's card.
     await type(minutes, "0");
     await click(buttonByText("Save"));
     expect(svc.setDeviceGrants).not.toHaveBeenCalled();
-    expect(panel.textContent).toContain("1 to 240 minutes");
+    expect(panel.textContent).toContain("minutes from 1 to 240");
 
     await type(minutes, "5");
-    await click(panel.querySelector('input[aria-label="Allow OpenCode"]')!);
-    // The model box of an agent the PC can't use is disabled.
-    expect(
-      panel.querySelector<HTMLInputElement>('input[aria-label="OpenCode model"]')!.disabled
-    ).toBe(true);
     await type(
       panel.querySelector<HTMLInputElement>('input[aria-label="Claude Code model"]')!,
       "haiku"
     );
+    await type(
+      panel.querySelector<HTMLInputElement>('input[aria-label="Claude Code daily token limit"]')!,
+      "50000"
+    );
+    await type(
+      panel.querySelector<HTMLInputElement>('input[aria-label="Claude Code requests per hour"]')!,
+      "20"
+    );
+    expect(panel.textContent).toContain("Unsaved changes");
     await click(buttonByText("Save"));
     expect(svc.setDeviceGrants).toHaveBeenCalledWith("d1", {
-      agents: { claude: true, opencode: false },
+      agents: { claude: true, opencode: true },
       models: { claude: "haiku" },
-      maxMinutes: 5,
+      maxMinutes: 10,
+      limits: {
+        claude: { maxMinutes: 5, dailyTokens: 50_000, perHour: 20 },
+        opencode: { maxMinutes: 10, dailyTokens: null, perHour: null },
+      },
     });
     // Saved: the panel closes.
-    expect(container.querySelector('[aria-label="Permissions for Amit-Laptop"]')).toBeNull();
+    expect(container.querySelector('[aria-label="Agent settings for Amit-Laptop"]')).toBeNull();
+  });
+
+  it("treats an agent switched off on this PC as off for every PC", async () => {
+    const agents = on.agents.map((a) => (a.id === "claude" ? { ...a, enabled: false } : a));
+    svc.getShareStatus.mockResolvedValue({
+      ok: true,
+      value: { ...on, agents, devices: [amit()] },
+    });
+    await openShare();
+    expect(container.querySelector(".sa-agent-chips")!.textContent).toContain(
+      "Claude Code · off for all"
+    );
+    await click(buttonByText("Agent settings"));
+    const panel = container.querySelector('[aria-label="Agent settings for Amit-Laptop"]')!;
+    const allow = panel.querySelector<HTMLInputElement>('input[aria-label="Allow Claude Code"]')!;
+    expect(allow.disabled).toBe(true);
+    expect(allow.checked).toBe(false);
+    expect(panel.textContent).toContain("Off for every PC");
+  });
+
+  it("can reset a PC's agent settings to the defaults", async () => {
+    const custom = amit({
+      grants: {
+        ...defaultGrants(),
+        models: { claude: "opus" },
+        limits: { claude: { maxMinutes: 30, dailyTokens: 5000, perHour: 2 } },
+      },
+    });
+    svc.getShareStatus.mockResolvedValue({ ok: true, value: { ...on, devices: [custom] } });
+    svc.setDeviceGrants.mockResolvedValue({ ok: true, value: { ...on, devices: [amit()] } });
+    await openShare();
+    await click(buttonByText("Agent settings"));
+    expect(text()).toContain("opus · 30 min per task · 5k tokens/day · 2 requests/hour");
+    await click(buttonByText("Reset to defaults"));
+    expect(text()).toContain("default model · 10 min per task · no daily limit");
+    await click(buttonByText("Save"));
+    expect(svc.setDeviceGrants.mock.calls[0][1].limits.claude).toEqual({
+      maxMinutes: 10,
+      dailyTokens: null,
+      perHour: null,
+    });
   });
 
   it("shows a PC's usage per agent and its recent tasks", async () => {

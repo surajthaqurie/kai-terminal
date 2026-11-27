@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AgentLocator } from "../core/sharedAgent/agentRunner";
 import { ClientError, HostsClient } from "../core/sharedAgent/client";
 import { HostServer, taskTitle, type HostServerOptions } from "../core/sharedAgent/hostServer";
-import { HostStore, grantsOf } from "../core/sharedAgent/hostStore";
+import { HostStore, grantsOf, localDay } from "../core/sharedAgent/hostStore";
 import { defaultGrants, type DeviceGrants } from "../core/sharedAgent/types";
 import { buildInviteLink, parseInviteLink } from "../core/sharedAgent/invite";
 import { fingerprint, generateKeyPair, seal } from "../core/sharedAgent/secureChannel";
@@ -711,6 +711,72 @@ describe("host server: per-PC permissions and history", () => {
     expect(run.init.maxMinutes).toBe(3);
     server.stopRun(runId);
     await run.done();
+  });
+
+  it("gives each agent its own time limit for a PC", async () => {
+    const host = await join();
+    const [device] = server.devices();
+    server.setDeviceGrants(
+      device.id,
+      grants({
+        maxMinutes: 10,
+        limits: {
+          claude: { maxMinutes: 4, dailyTokens: null, perHour: null },
+          opencode: { maxMinutes: 30, dailyTokens: null, perHour: null },
+        },
+      })
+    );
+    const me = await raw(host.id, "GET", "/me");
+    const rows = me.json.agents as Array<Record<string, unknown>>;
+    expect(rows.map((a) => [a.id, a.max_minutes])).toEqual([
+      ["claude", 4],
+      ["opencode", 30],
+    ]);
+    expect(me.json.max_minutes).toBe(30);
+    const { runId } = await client.startRun(host.id, { agent: "claude", message: "SLOW" });
+    const run = server.runs.get(runId)!;
+    expect(run.init.maxMinutes).toBe(4);
+    server.stopRun(runId);
+    await run.done();
+  });
+
+  it("refuses a run once a PC has used its daily tokens for that agent", async () => {
+    const host = await join();
+    const [device] = server.devices();
+    server.setDeviceGrants(
+      device.id,
+      grants({ limits: { claude: { maxMinutes: 10, dailyTokens: 1000, perHour: null } } })
+    );
+    store.write((d) => {
+      d.devices[device.id].daily = { day: localDay(), tokens: { claude: 1000 } };
+    });
+    await expect(
+      client.startRun(host.id, { agent: "claude", message: "hi" })
+    ).rejects.toMatchObject({ message: expect.stringContaining("today's Claude Code limit") });
+    // Another agent, and yesterday's count, do not count against it.
+    store.write((d) => {
+      d.devices[device.id].daily = { day: "2000-01-01", tokens: { claude: 5000 } };
+    });
+    const { runId } = await client.startRun(host.id, { agent: "claude", message: "hi" });
+    await server.runs.get(runId)!.done();
+    expect(server.devices()[0].today?.claude?.lastHour).toBe(1);
+  });
+
+  it("refuses a run past a PC's requests per hour for that agent", async () => {
+    const host = await join();
+    const [device] = server.devices();
+    server.setDeviceGrants(
+      device.id,
+      grants({ limits: { claude: { maxMinutes: 10, dailyTokens: null, perHour: 1 } } })
+    );
+    const { runId } = await client.startRun(host.id, { agent: "claude", message: "hi" });
+    await server.runs.get(runId)!.done();
+    await expect(
+      client.startRun(host.id, { agent: "claude", message: "again" })
+    ).rejects.toMatchObject({ message: expect.stringContaining("1 Claude Code request an hour") });
+    // OpenCode has no limit for this PC.
+    const other = await client.startRun(host.id, { agent: "opencode", message: "hi" });
+    await server.runs.get(other.runId)!.done();
   });
 
   it("stops a running task when the host takes that agent away from the PC", async () => {

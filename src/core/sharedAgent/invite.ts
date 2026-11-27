@@ -99,6 +99,86 @@ export function buildInviteLink(origin: string, key: string, fingerprint: string
   return `${origin.replace(/\/+$/, "")}/join#${key}.${fingerprint}`;
 }
 
+export type InviteReading =
+  { ok: true; link: string; target: InviteTarget } | { ok: false; reason: string };
+
+const URL_START_RE = /https?:\/\//i;
+/** Characters a link can contain: a token made of anything else is not part of it. */
+const LINK_CHARS_RE = /^[A-Za-z0-9._~:/?#@!$&'()*+,;=%[\]-]+$/;
+/** Brackets, quotes and sentence punctuation that chat apps and emails put around a link. */
+const LEADING_RE = /^[<("'`]+/;
+const TRAILING_RE = /[.,;:!?)\]}>'"`»”’]+$/;
+
+const fail = (reason: string): InviteReading => ({ ok: false, reason });
+
+/**
+ * Finds the invite link in pasted text: the bare link, a message around it, or a
+ * link an email client wrapped over several lines. Returns the link as
+ * {@link parseInviteLink} accepts it, or a reason the person can act on.
+ */
+export function readInviteLink(text: string): InviteReading {
+  const raw = text.trim();
+  if (!raw) return fail("Paste the invite link the other PC sent you.");
+
+  const start = raw.search(URL_START_RE);
+  if (start < 0) {
+    return fail(
+      /\/join#|^[\d.]+:\d+\//i.test(raw)
+        ? "The start of the link is missing. Copy the whole link: it begins with http:// or https://."
+        : "That is not an invite link. It looks like http://192.168.1.20:8765/join#… (same network) or https://<tunnel address>/join#… (internet)."
+    );
+  }
+
+  // A line break inside the #fragment means the link was wrapped: join the pieces back up.
+  const [first, ...rest] = raw.slice(start).split(/\s+/);
+  let link = first.replace(LEADING_RE, "");
+  for (const next of rest) {
+    const wrapped = link.includes("#") && LINK_CHARS_RE.test(next) && !URL_START_RE.test(next);
+    if (!wrapped || parseInviteLink(tidy(link))) break;
+    link += next;
+  }
+  link = tidy(link);
+
+  const target = parseInviteLink(link);
+  return target ? { ok: true, link, target } : fail(whyNotInvite(link));
+}
+
+/** Drops trailing punctuation, and the slash some apps add in `/join/#`. */
+const tidy = (link: string): string =>
+  link.replace(TRAILING_RE, "").replace(/\/join\/#/i, "/join#");
+
+function whyNotInvite(link: string): string {
+  let url: URL;
+  try {
+    url = new URL(link);
+  } catch {
+    return "The link is damaged. Copy the whole link again.";
+  }
+  if (url.username || url.password) {
+    return "That link has a user name in it, so it is not a Kai invite.";
+  }
+  if (!allowedOrigin(url.href)) {
+    return url.protocol === "http:"
+      ? `Kai only joins PCs on your own network over http (like 192.168.x.x or 10.x.x.x). ${url.hostname} is not one; across the internet the host needs an https tunnel address.`
+      : `Kai joins over the internet only through an https tunnel name (like my-pc.example.com), not ${url.hostname}.`;
+  }
+  if (url.pathname !== "/join" || url.search) {
+    return "That address is not an invite: an invite link has /join# in it.";
+  }
+  const hash = url.hash.replace(/^#/, "");
+  if (!hash) {
+    return "The secret part after # is missing. Some apps cut links at the #: copy the whole link again, or send it as plain text.";
+  }
+  const [key = "", fingerprint, ...extra] = hash.split(".");
+  if (KEY_RE.test(key) && fingerprint === undefined) {
+    return "This invite is from an older Kai Terminal. Ask the host to update Kai Terminal and send a new link.";
+  }
+  if (extra.length || !KEY_RE.test(key) || !FINGERPRINT_RE.test(fingerprint ?? "")) {
+    return "The link looks cut off or changed. Copy the whole link again.";
+  }
+  return "That is not a valid invite link.";
+}
+
 /** Parses a pasted link. Returns null for anything that is not a well-formed invite. */
 export function parseInviteLink(text: string): InviteTarget | null {
   let url: URL;

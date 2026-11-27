@@ -18,6 +18,7 @@ import {
   defaultGrants,
   emptyUsage,
   parseSharePort,
+  type AgentUse,
   type DeviceGrants,
   type DeviceTask,
   type SharedAgentId,
@@ -62,6 +63,8 @@ export interface DeviceRecord {
   lastUsedAt?: string;
   /** Oldest first, at most {@link MAX_TASKS_PER_DEVICE}. */
   tasks?: DeviceTask[];
+  /** Tokens used per agent on one day (host's local date), for the daily limits. */
+  daily?: { day: string; tokens: Partial<Record<SharedAgentId, number>> };
 }
 
 /** A PC's permissions, with defaults for anything missing (older files, new agents). */
@@ -73,7 +76,30 @@ export function grantsOf(device: Pick<DeviceRecord, "grants">): DeviceGrants {
     agents: { ...base.agents, ...g.agents },
     models: { ...g.models },
     maxMinutes: g.maxMinutes || base.maxMinutes,
+    ...(g.limits ? { limits: { ...g.limits } } : {}),
   };
+}
+
+/** The host's local date, `YYYY-MM-DD`: the day daily limits count in. */
+export function localDay(now = new Date()): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+}
+
+const HOUR_MS = 3_600_000;
+
+/** What a PC has used of one agent: tokens today, and requests started in the last hour. */
+export function agentUseOf(
+  device: Pick<DeviceRecord, "daily" | "tasks">,
+  agent: SharedAgentId,
+  now = Date.now()
+): AgentUse {
+  const tokens =
+    device.daily?.day === localDay(new Date(now)) ? (device.daily.tokens[agent] ?? 0) : 0;
+  const lastHour = (device.tasks ?? []).filter(
+    (t) => t.agent === agent && now - new Date(t.startedAt).getTime() < HOUR_MS
+  ).length;
+  return { tokens, lastHour };
 }
 
 export interface SessionRecord {

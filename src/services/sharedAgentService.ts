@@ -124,10 +124,30 @@ export async function stopChat(chatId: string): Promise<SharedResult<true>> {
 // Share: this PC as a host
 // ---------------------------------------------------------------------------
 
-const share = async (req: SharedAgentRequest) =>
-  pick<ShareStatus>(await sharedAgentRpc(req), "share");
+/** The last status the service sent, so reopening the tab paints at once instead of "Loading…". */
+let lastShare: ShareStatus | null = null;
+export const peekShareStatus = (): ShareStatus | null => lastShare;
+
+const share = async (req: SharedAgentRequest) => {
+  const res = pick<ShareStatus>(await sharedAgentRpc(req), "share");
+  if (res.ok) lastShare = res.value;
+  return res;
+};
 
 export const getShareStatus = (refresh = false) => share({ op: "share_status", refresh });
+
+let warming: Promise<unknown> | null = null;
+/**
+ * Starts the Shared Agent service and the agent lookup before the tab is shown
+ * (e.g. on hover), so the first paint does not wait for the service to boot.
+ * Safe to call often: one warm-up at a time, and nothing outside the desktop app.
+ */
+export function prefetchShareStatus(): void {
+  if (warming || lastShare || !isTauriAvailable()) return;
+  warming = getShareStatus(true).finally(() => {
+    warming = null;
+  });
+}
 export const setSharing = (enabled: boolean, port?: number) =>
   share(port === undefined ? { op: "share_set", enabled } : { op: "share_set", enabled, port });
 export const setAgentShared = (agent: SharedAgentId, enabled: boolean) =>
@@ -157,6 +177,7 @@ export async function createInvite(
   const b = res as { share?: ShareStatus; invite?: CreatedInvite };
   if (!b.share || !b.invite)
     return unavailable("The Shared Agent service returned an unexpected response.");
+  lastShare = b.share;
   return { ok: true, value: { share: b.share, invite: b.invite } };
 }
 

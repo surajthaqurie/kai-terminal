@@ -28,7 +28,7 @@ import {
 import { fromWireTokens, textOf } from "./events";
 import { HostStore, sharedAgentDir } from "./hostStore";
 import { HostServer, HttpError, PortInUseError, isPortFree } from "./hostServer";
-import { allowedOrigin, buildInviteLink, parseInviteLink, parsePublicUrl } from "./invite";
+import { allowedOrigin, buildInviteLink, parsePublicUrl, readInviteLink } from "./invite";
 import { lanAddresses, type LocalNetwork } from "./netcheck";
 import {
   INVITE_MINUTES,
@@ -171,9 +171,10 @@ export class SharedAgentService {
         return { ok: true, hosts: this.hostsView() };
       }
       case "host_join": {
-        const target = parseInviteLink(str(req.link, "link", 600));
-        if (!target) throw new BadRequest("That is not a valid invite link.");
-        const record = await this.client.join(target, req.name);
+        // The same reading as the panel: a link inside a message, or broken over lines, still joins.
+        const reading = readInviteLink(str(req.link, "link", 2000));
+        if (!reading.ok) throw new BadRequest(reading.reason);
+        const record = await this.client.join(reading.target, req.name);
         await this.checkOne(record.id);
         this.pushHosts();
         return { ok: true, host: this.viewOf(this.client.get(record.id) ?? record) };
@@ -191,12 +192,14 @@ export class SharedAgentService {
         return { ok: true };
       case "share_status":
         if (req.refresh) {
-          // Looking for installed agents runs each one's `--version` (seconds on Windows).
-          // Once they have been found, answer at once with what is known and push the
-          // re-check's result as a `share` event; only the very first look has to wait.
-          const check = this.host.refreshProbes(true).then(() => this.shareChanged());
-          if (this.host.probed) check.catch(() => {});
-          else await check.catch(() => {});
+          // Fetching versions runs each agent's `--version` (seconds on Windows), so it
+          // never holds up the answer: a PATH lookup lists what is installed at once
+          // (`agentsChecking` is true meanwhile) and the versions arrive as a `share` event.
+          if (!this.host.probed) this.host.quickProbe();
+          this.host.refreshProbes(true).then(
+            () => this.shareChanged(),
+            () => this.shareChanged()
+          );
         }
         return { ok: true, share: this.shareStatus() };
       case "share_set": {
@@ -668,6 +671,7 @@ export class SharedAgentService {
       publicUrl: this.host.publicUrl,
       agents: this.host.agentRows(),
       otherClis: this.host.otherClis(),
+      agentsChecking: this.host.checking,
       invites: this.host.openInvites(),
       devices: this.host.devices(),
       runs: this.host.activeRuns(),

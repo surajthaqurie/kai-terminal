@@ -139,7 +139,7 @@ afterEach(async () => {
 });
 
 describe("share_status refresh", () => {
-  it("waits for the first look at the installed agents, then answers at once and pushes the re-check", async () => {
+  it("never waits on `--version`: lists installed agents at once, then pushes the versions", async () => {
     let slow = false;
     const events: SharedAgentEvent[] = [];
     const svc = new SharedAgentService({
@@ -165,12 +165,18 @@ describe("share_status refresh", () => {
     sides.push({ svc, events });
     const claude = (s: ShareStatus) => s.agents.find((a) => a.id === "claude");
 
-    // The very first look has nothing to show yet, so it waits for the answer.
+    // The very first look answers from a PATH lookup: installed, version still coming.
     const first = await ok(svc.handle({ op: "share_status", refresh: true }));
-    expect(claude(first.share)).toMatchObject({ available: true, version: "fake-agent 1.0.0" });
+    expect(claude(first.share)).toMatchObject({ available: true, version: "" });
+    expect(first.share.agentsChecking).toBe(true);
+
+    // The versions arrive as a `share` event.
+    await waitFor(() => events.some((e) => e.event === "share"));
+    const checked = (await ok(svc.handle({ op: "share_status" }))).share;
+    expect(claude(checked)?.version).toBe("fake-agent 1.0.0");
+    expect(checked.agentsChecking).toBe(false);
 
     // Later looks answer at once with what is known...
-    await waitFor(() => events.some((e) => e.event === "share")); // the first look's own event
     events.length = 0;
     slow = true;
     const started = Date.now();

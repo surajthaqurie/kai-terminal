@@ -1,12 +1,20 @@
 import { FC, useEffect, useState } from "react";
 import {
   GrantsError,
+  MAX_DAILY_TOKENS,
+  MAX_REQUESTS_PER_HOUR,
   MAX_RUN_MINUTES_LIMIT,
   MAX_TASKS_PER_DEVICE,
+  MIN_DAILY_TOKENS,
+  MODEL_RE,
+  SHARED_AGENT_IDS,
   SHARED_AGENT_NAMES,
+  defaultGrants,
   isSharedAgentId,
+  limitsFor,
   parseGrants,
   type DeviceGrants,
+  type SharedAgentId,
   type DeviceHistory,
   type ShareAgentRow,
   type ShareDevice,
@@ -20,6 +28,7 @@ import {
 import {
   TASK_STATUS_LABELS,
   formatAgo,
+  formatCompact,
   formatCost,
   formatDuration,
   tokenBreakdown,
@@ -34,20 +43,150 @@ interface PermissionsProps {
   onClose: () => void;
 }
 
-/** What one PC may do: which agents, which model each uses, how long a run may take. */
+/** One agent's settings as typed (numbers stay text until Save checks them). */
+interface AgentDraft {
+  allowed: boolean;
+  model: string;
+  minutes: string;
+  dailyTokens: string;
+  perHour: string;
+}
+
+/** Model names offered while typing; any valid name may be entered. */
+const MODEL_SUGGESTIONS: Partial<Record<SharedAgentId, string[]>> = {
+  claude: ["sonnet", "opus", "haiku"],
+};
+
+const draftFrom = (grants: DeviceGrants): Record<SharedAgentId, AgentDraft> =>
+  Object.fromEntries(
+    SHARED_AGENT_IDS.map((id) => {
+      const l = limitsFor(grants, id);
+      return [
+        id,
+        {
+          allowed: grants.agents[id],
+          model: grants.models[id] ?? "",
+          minutes: String(l.maxMinutes),
+          dailyTokens: l.dailyTokens === null ? "" : String(l.dailyTokens),
+          perHour: l.perHour === null ? "" : String(l.perHour),
+        },
+      ];
+    })
+  ) as Record<SharedAgentId, AgentDraft>;
+
+const optionalNumber = (text: string): number | null => (text.trim() === "" ? null : Number(text));
+
+/** Checks one agent's typed settings: null when fine, otherwise what to fix. */
+function draftProblem(d: AgentDraft): string | null {
+  const minutes = Number(d.minutes);
+  if (!Number.isInteger(minutes) || minutes < 1 || minutes > MAX_RUN_MINUTES_LIMIT) {
+    return `Use a whole number of minutes from 1 to ${MAX_RUN_MINUTES_LIMIT}.`;
+  }
+  const daily = optionalNumber(d.dailyTokens);
+  if (
+    daily !== null &&
+    (!Number.isInteger(daily) || daily < MIN_DAILY_TOKENS || daily > MAX_DAILY_TOKENS)
+  ) {
+    return `Use at least ${MIN_DAILY_TOKENS.toLocaleString("en-US")} tokens a day, or leave it empty for no limit.`;
+  }
+  const perHour = optionalNumber(d.perHour);
+  if (
+    perHour !== null &&
+    (!Number.isInteger(perHour) || perHour < 1 || perHour > MAX_REQUESTS_PER_HOUR)
+  ) {
+    return `Use 1 to ${MAX_REQUESTS_PER_HOUR} requests an hour, or leave it empty for no limit.`;
+  }
+  if (d.model.trim() && !MODEL_RE.test(d.model.trim())) {
+    return "The model name has invalid characters.";
+  }
+  return null;
+}
+
+function draftSummary(d: AgentDraft): string {
+  if (!d.allowed) return "Not allowed for this PC";
+  const daily = optionalNumber(d.dailyTokens);
+  const perHour = optionalNumber(d.perHour);
+  return [
+    d.model.trim() || "default model",
+    `${d.minutes || "?"} min per task`,
+    daily ? `${formatCompact(daily)} tokens/day` : "no daily limit",
+    perHour ? `${perHour} requests/hour` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+/**
+ * Each agent CLI's own settings for one PC: allowed or not, the model, how long a
+ * task may run, and daily / hourly limits. "Agent CLIs on this PC" is the parent:
+ * an agent switched off there is off for every PC, and its settings here wait.
+ */
 export const DevicePermissions: FC<PermissionsProps> = ({ device, agents, apply, onClose }) => {
-  const [allowed, setAllowed] = useState<DeviceGrants["agents"]>({ ...device.grants.agents });
-  const [models, setModels] = useState<DeviceGrants["models"]>({ ...device.grants.models });
-  const [minutes, setMinutes] = useState(String(device.grants.maxMinutes));
+  const [draft, setDraft] = useState(() => draftFrom(device.grants));
+  const [open, setOpen] = useState<Set<SharedAgentId>>(() => new Set());
+  const [problems, setProblems] = useState<Partial<Record<SharedAgentId, string>>>({});
   const [error, setError] = useState<string | null>(null);
+  const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
 
+  const edit = (id: SharedAgentId, patch: Partial<AgentDraft>) => {
+    setDraft((d) => ({ ...d, [id]: { ...d[id], ...patch } }));
+    setProblems((p) => ({ ...p, [id]: undefined }));
+    setDirty(true);
+  };
+  const toggleOpen = (id: SharedAgentId) =>
+    setOpen((s) => {
+      const next = new Set(s);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const reset = () => {
+    setDraft(draftFrom(defaultGrants()));
+    setProblems({});
+    setError(null);
+    setDirty(true);
+  };
+
   const save = async () => {
+    // Only agents this PC may use are checked: a switched-off agent's leftovers never block Save.
+    const found: Partial<Record<SharedAgentId, string>> = {};
+    for (const a of agents) {
+      if (!draft[a.id].allowed) continue;
+      const problem = draftProblem(draft[a.id]);
+      if (problem) found[a.id] = problem;
+    }
+    const bad = Object.keys(found) as SharedAgentId[];
+    if (bad.length) {
+      setProblems(found);
+      setOpen((s) => new Set([...s, ...bad]));
+      return;
+    }
     let grants: DeviceGrants;
     try {
-      grants = parseGrants({ agents: allowed, models, maxMinutes: Number(minutes) });
+      grants = parseGrants({
+        agents: Object.fromEntries(SHARED_AGENT_IDS.map((id) => [id, draft[id].allowed])),
+        models: Object.fromEntries(SHARED_AGENT_IDS.map((id) => [id, draft[id].model])),
+        maxMinutes: device.grants.maxMinutes,
+        // A not-allowed agent with leftover bad numbers keeps its earlier limits.
+        limits: Object.fromEntries(
+          SHARED_AGENT_IDS.map((id) =>
+            draftProblem(draft[id]) === null
+              ? [
+                  id,
+                  {
+                    maxMinutes: Number(draft[id].minutes),
+                    dailyTokens: optionalNumber(draft[id].dailyTokens),
+                    perHour: optionalNumber(draft[id].perHour),
+                  },
+                ]
+              : [id, limitsFor(device.grants, id)]
+          )
+        ),
+      });
     } catch (e) {
-      setError(e instanceof GrantsError ? e.message : "Invalid permissions.");
+      setError(e instanceof GrantsError ? e.message : "Invalid settings.");
       return;
     }
     setSaving(true);
@@ -58,60 +197,186 @@ export const DevicePermissions: FC<PermissionsProps> = ({ device, agents, apply,
 
   const idBase = `sa-perm-${device.id}`;
   return (
-    <div className="sa-detail" role="group" aria-label={`Permissions for ${device.name}`}>
+    <div className="sa-detail" role="group" aria-label={`Agent settings for ${device.name}`}>
       <div className="sa-detail-head">
-        <strong>Permissions for {device.name}</strong>
-        <span className="sa-muted">Applies to this PC only, from its next message.</span>
-      </div>
-      {agents.map((a) => (
-        <div key={a.id} className="sa-perm-row">
-          <label className="sa-perm-agent">
-            <span className="sa-switch">
-              <input
-                type="checkbox"
-                role="switch"
-                aria-label={`Allow ${a.name}`}
-                checked={allowed[a.id]}
-                onChange={(e) => setAllowed((x) => ({ ...x, [a.id]: e.target.checked }))}
-              />
-              <span aria-hidden="true" />
-            </span>
-            <span>
-              {a.name}
-              {!a.enabled && <span className="sa-muted"> · off for every PC</span>}
-            </span>
-          </label>
-          <input
-            id={`${idBase}-${a.id}-model`}
-            className="text-input sa-perm-model"
-            aria-label={`${a.name} model`}
-            placeholder="Agent's default model"
-            maxLength={100}
-            spellCheck={false}
-            disabled={!allowed[a.id]}
-            value={models[a.id] ?? ""}
-            onChange={(e) => setModels((m) => ({ ...m, [a.id]: e.target.value }))}
-          />
-        </div>
-      ))}
-      <div className="sa-perm-row">
-        <label htmlFor={`${idBase}-minutes`} className="sa-perm-agent">
-          Stop a task after
-        </label>
-        <span className="sa-perm-minutes">
-          <input
-            id={`${idBase}-minutes`}
-            className="text-input"
-            type="number"
-            min={1}
-            max={MAX_RUN_MINUTES_LIMIT}
-            step={1}
-            value={minutes}
-            onChange={(e) => setMinutes(e.target.value)}
-          />
-          <span className="sa-muted">minutes</span>
+        <strong>Agent settings for {device.name}</strong>
+        <span className="sa-muted">
+          Each agent CLI has its own settings for this PC. Changes apply from its next message.
         </span>
       </div>
+      <div className="sa-row sa-acfg-tools">
+        <button type="button" className="btn btn-secondary btn-small" onClick={reset}>
+          Reset to defaults
+        </button>
+      </div>
+
+      {agents.map((a) => {
+        const d = draft[a.id];
+        const parentOff = !a.enabled || !a.available;
+        const on = d.allowed && !parentOff;
+        const expanded = open.has(a.id);
+        const use = device.today?.[a.id];
+        const daily = optionalNumber(d.dailyTokens);
+        const perHour = optionalNumber(d.perHour);
+        const pct = daily && use ? Math.min(100, (use.tokens / daily) * 100) : 0;
+        const fid = `${idBase}-${a.id}`;
+        return (
+          <div
+            key={a.id}
+            className={`sa-acfg${on ? "" : " is-off"}${parentOff ? " is-parent-off" : ""}`}
+          >
+            <div className="sa-acfg-head">
+              <span className={`sa-agent-logo sa-agent-${a.id}`} aria-hidden="true">
+                {a.name.charAt(0)}
+              </span>
+              <button
+                type="button"
+                className="sa-acfg-toggle"
+                aria-expanded={expanded}
+                aria-controls={`${fid}-body`}
+                onClick={() => toggleOpen(a.id)}
+              >
+                <strong>{a.name}</strong>
+                {parentOff && (
+                  <span className="sa-badge sa-badge-warn">
+                    {a.available ? "off for every PC" : "not installed"}
+                  </span>
+                )}
+                <span className="sa-muted sa-block">
+                  {parentOff
+                    ? a.available
+                      ? "Off for every PC · switch it on in Agent CLIs on this PC"
+                      : "Not installed on this PC"
+                    : draftSummary(d)}
+                </span>
+              </button>
+              <label className="sa-switch">
+                <input
+                  type="checkbox"
+                  role="switch"
+                  aria-label={`Allow ${a.name}`}
+                  checked={on}
+                  disabled={parentOff}
+                  onChange={(e) => edit(a.id, { allowed: e.target.checked })}
+                />
+                <span aria-hidden="true" />
+              </label>
+            </div>
+            {expanded && (
+              <div className="sa-acfg-body" id={`${fid}-body`}>
+                <div className="sa-acfg-grid">
+                  <label className="sa-fld" htmlFor={`${fid}-model`}>
+                    <span className="sa-field-label">Model</span>
+                    <input
+                      id={`${fid}-model`}
+                      className="text-input sa-mono"
+                      aria-label={`${a.name} model`}
+                      list={MODEL_SUGGESTIONS[a.id] ? `${fid}-models` : undefined}
+                      placeholder="Agent's default model"
+                      maxLength={100}
+                      spellCheck={false}
+                      disabled={!on}
+                      value={d.model}
+                      onChange={(e) => edit(a.id, { model: e.target.value })}
+                    />
+                    {MODEL_SUGGESTIONS[a.id] && (
+                      <datalist id={`${fid}-models`}>
+                        {MODEL_SUGGESTIONS[a.id]!.map((m) => (
+                          <option key={m} value={m} />
+                        ))}
+                      </datalist>
+                    )}
+                  </label>
+                  <label className="sa-fld" htmlFor={`${fid}-minutes`}>
+                    <span className="sa-field-label">Stop a task after</span>
+                    <span className="sa-row">
+                      <input
+                        id={`${fid}-minutes`}
+                        className="text-input sa-num"
+                        type="number"
+                        aria-label={`${a.name} time limit in minutes`}
+                        min={1}
+                        max={MAX_RUN_MINUTES_LIMIT}
+                        step={1}
+                        disabled={!on}
+                        value={d.minutes}
+                        onChange={(e) => edit(a.id, { minutes: e.target.value })}
+                      />
+                      <span className="sa-muted">minutes</span>
+                    </span>
+                  </label>
+                  <label className="sa-fld" htmlFor={`${fid}-daily`}>
+                    <span className="sa-field-label">Daily token limit</span>
+                    <span className="sa-row">
+                      <input
+                        id={`${fid}-daily`}
+                        className="text-input sa-num sa-num-wide"
+                        type="number"
+                        aria-label={`${a.name} daily token limit`}
+                        min={MIN_DAILY_TOKENS}
+                        max={MAX_DAILY_TOKENS}
+                        step={1000}
+                        placeholder="No limit"
+                        disabled={!on}
+                        value={d.dailyTokens}
+                        onChange={(e) => edit(a.id, { dailyTokens: e.target.value })}
+                      />
+                      <span className="sa-muted">tokens</span>
+                    </span>
+                  </label>
+                  <label className="sa-fld" htmlFor={`${fid}-hour`}>
+                    <span className="sa-field-label">Requests per hour</span>
+                    <span className="sa-row">
+                      <input
+                        id={`${fid}-hour`}
+                        className="text-input sa-num"
+                        type="number"
+                        aria-label={`${a.name} requests per hour`}
+                        min={1}
+                        max={MAX_REQUESTS_PER_HOUR}
+                        step={1}
+                        placeholder="No limit"
+                        disabled={!on}
+                        value={d.perHour}
+                        onChange={(e) => edit(a.id, { perHour: e.target.value })}
+                      />
+                      <span className="sa-muted">max</span>
+                    </span>
+                  </label>
+                </div>
+                {use && (
+                  <div className="sa-acfg-use">
+                    <span className="sa-muted">
+                      Today: <b>{formatCompact(use.tokens)}</b>
+                      {daily ? ` of ${formatCompact(daily)}` : ""} tokens · {use.lastHour} request
+                      {use.lastHour === 1 ? "" : "s"} in the last hour
+                      {perHour ? ` of ${perHour}` : ""}
+                    </span>
+                    {daily ? (
+                      <span className="sa-meter" aria-hidden="true">
+                        <i className={pct >= 90 ? "is-hot" : ""} style={{ width: `${pct}%` }} />
+                      </span>
+                    ) : null}
+                  </div>
+                )}
+                {parentOff && (
+                  <p className="sa-muted sa-line">
+                    {a.available
+                      ? `${a.name} is switched off in Agent CLIs on this PC, so no PC can use it. This PC's settings are kept for when you switch it back on.`
+                      : `${a.name} is not installed on this PC. Install it, then reopen this tab.`}
+                  </p>
+                )}
+                {problems[a.id] && (
+                  <p className="error-text sa-line" role="alert">
+                    {problems[a.id]}
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+
       {error && (
         <p className="error-text sa-line" role="alert">
           {error}
@@ -129,6 +394,7 @@ export const DevicePermissions: FC<PermissionsProps> = ({ device, agents, apply,
         <button type="button" className="btn btn-secondary btn-small" onClick={onClose}>
           Cancel
         </button>
+        {dirty && <span className="sa-badge sa-badge-warn">Unsaved changes</span>}
         <span className="sa-muted">Always read-only, in an empty folder.</span>
       </div>
     </div>

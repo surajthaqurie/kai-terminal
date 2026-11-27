@@ -29,6 +29,7 @@ import {
   addUsage,
   detectOtherClis,
   ensureChatDir,
+  locateAgent,
   probeAgent,
   type AgentLocator,
   type AgentProbe,
@@ -36,8 +37,10 @@ import {
   type Run,
 } from "./agentRunner";
 import {
+  agentUseOf,
   grantsOf,
   inviteExpired,
+  localDay,
   type DeviceRecord,
   type HostStore,
   newDeviceUsage,
@@ -83,6 +86,9 @@ import {
   SHARED_AGENT_NAMES,
   emptyUsage,
   isSharedAgentId,
+  limitsFor,
+  totalTokens,
+  type AgentUse,
   type DeviceGrants,
   type DeviceHistory,
   type DeviceState,
@@ -262,7 +268,13 @@ export class HostServer {
   async start(port: number, bindHost = "0.0.0.0"): Promise<number> {
     if (this.server) return this.boundPort;
     this.identity = await this.loadIdentity();
-    await this.refreshProbes(true);
+    // Starting never waits on each agent's `--version` (seconds on Windows): a PATH
+    // lookup says what is installed, and the versions follow in the background.
+    if (!this.probed) this.quickProbe();
+    void this.refreshProbes().then(
+      () => this.opts.onChange?.(),
+      () => {}
+    );
     const server = http.createServer((req, res) => void this.handle(req, res));
     server.headersTimeout = 15_000;
     server.requestTimeout = 60_000;
@@ -363,6 +375,34 @@ export class HostServer {
   /** True once the installed agents have been looked for at least once. */
   get probed(): boolean {
     return this.probedAt > 0;
+  }
+
+  /** True while the installed agents' versions are being fetched. */
+  get checking(): boolean {
+    return this.probing !== null;
+  }
+
+  /**
+   * Which agents are installed, from a PATH lookup only (no process started).
+   * Fills the list at once; {@link refreshProbes} adds versions later. Does not
+   * count as a full look, so the next refresh still fetches versions.
+   */
+  quickProbe(): void {
+    const known = this.probes;
+    this.probes = new Map(
+      SHARED_AGENT_IDS.map((a) => {
+        const { info } = locateAgent(a, this.opts.locate);
+        // Keep a version already fetched for an agent that is still there.
+        const prev = known.get(a);
+        if (info.available && prev?.available) info.version = prev.version;
+        return [a, info];
+      })
+    );
+    try {
+      this.others = (this.opts.detectOtherClis ?? detectOtherClis)();
+    } catch {
+      this.others = [];
+    }
   }
 
   /** A probe already running, so overlapping callers share it instead of spawning again. */
@@ -503,6 +543,9 @@ export class HostServer {
         usage: { ...x.usage },
         activeRunId: this.runs.activeFor(x.id)?.id ?? null,
         grants: grantsOf(x),
+        today: Object.fromEntries(
+          SHARED_AGENT_IDS.map((id) => [id, agentUseOf(x, id, now)])
+        ) as Record<SharedAgentId, AgentUse>,
       }))
       .sort(
         (a, b) =>
@@ -1002,10 +1045,16 @@ export class HostServer {
           available: a.available,
           model_hint: "",
           model: grants.models[a.id] ?? "",
+          max_minutes: limitsFor(grants, a.id).maxMinutes,
         })),
       workspaces: [],
       allow_connectors: false,
-      max_minutes: grants.maxMinutes,
+      max_minutes: Math.max(
+        1,
+        ...SHARED_AGENT_IDS.filter((id) => grants.agents[id]).map(
+          (id) => limitsFor(grants, id).maxMinutes
+        )
+      ),
       chat_workspace: "chat",
       host_name: this.opts.hostName,
       active_run: active ? { id: active.id, status: active.status } : null,
@@ -1023,6 +1072,24 @@ export class HostServer {
     }
     if (body.workspace !== "chat") {
       throw new HttpError(403, "Only plain chat is shared by this host");
+    }
+    // Checked when a run starts: one already going finishes even if it passes a limit.
+    const limits = limitsFor(grants, agent);
+    const use = agentUseOf(device, agent);
+    const name = SHARED_AGENT_NAMES[agent];
+    if (limits.dailyTokens !== null && use.tokens >= limits.dailyTokens) {
+      throw new HttpError(
+        429,
+        `This PC has used today's ${name} limit on this host (${limits.dailyTokens.toLocaleString("en-US")} tokens). It resets at midnight, host time.`,
+        "limit"
+      );
+    }
+    if (limits.perHour !== null && use.lastHour >= limits.perHour) {
+      throw new HttpError(
+        429,
+        `This PC may send ${limits.perHour} ${name} request${limits.perHour === 1 ? "" : "s"} an hour to this host. Try again a little later.`,
+        "limit"
+      );
     }
     const prompt = text(body.prompt, 1, MAX_PROMPT_CHARS, "prompt");
     // Only the host picks the model (its account pays): what the PC asks for is ignored.
@@ -1056,7 +1123,7 @@ export class HostServer {
         deviceName: device.name,
         resume,
         model,
-        maxMinutes: grants.maxMinutes,
+        maxMinutes: limits.maxMinutes,
         sessionKey: sessionId,
       });
     } catch (e) {
@@ -1194,6 +1261,10 @@ function recordTask(device: DeviceRecord, run: Run): void {
   device.usageByAgent ??= {};
   addUsage((device.usageByAgent[agent] ??= emptyUsage()), run);
   device.lastUsedAt = run.endedAt || new Date().toISOString();
+  // Counted on the day the run ends (today), so a run across midnight never resets today.
+  const day = localDay();
+  if (device.daily?.day !== day) device.daily = { day, tokens: {} };
+  device.daily.tokens[agent] = (device.daily.tokens[agent] ?? 0) + totalTokens(run.tokens);
   const tasks = (device.tasks ??= []);
   tasks.push({
     id: run.id,

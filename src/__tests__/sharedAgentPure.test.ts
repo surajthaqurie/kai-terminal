@@ -13,6 +13,7 @@ import {
   isPrivateIPv4,
   parseInviteLink,
   parsePublicUrl,
+  readInviteLink,
 } from "../core/sharedAgent/invite";
 import {
   classifyRequest,
@@ -22,7 +23,7 @@ import {
   normalizeRemote,
   tunnelClientIp,
 } from "../core/sharedAgent/netcheck";
-import { GrantsError, defaultGrants, parseGrants } from "../core/sharedAgent/types";
+import { GrantsError, defaultGrants, limitsFor, parseGrants } from "../core/sharedAgent/types";
 import { formatCost, formatDuration } from "../components/sharedAgentViewModel";
 
 /** A link's fragment is `<secret>.<host fingerprint>`; `key` below is the whole fragment. */
@@ -455,6 +456,95 @@ describe("per-PC permissions (parseGrants)", () => {
     ["fractional minutes", { maxMinutes: 1.5 }],
     ["minutes as text", { maxMinutes: "10" }],
     ["NaN minutes", { maxMinutes: Number.NaN }],
+  ])("refuses %s", (_name, value) => {
+    expect(() => parseGrants(value)).toThrow(GrantsError);
+  });
+});
+
+describe("reading a pasted invite (readInviteLink)", () => {
+  const link = buildInviteLink("http://192.168.1.20:8765", secret, fp);
+  const net = buildInviteLink("https://share.example.com", secret, fp);
+
+  it.each<[string, string]>([
+    ["the bare link", link],
+    ["spaces and a newline", `  ${link}\n`],
+    ["a message around it", `Join my agent: ${link} thanks!`],
+    ["angle brackets and a full stop", `<${link}>.`],
+    ["quotes", `"${link}"`],
+    ["a trailing slash after join", link.replace("/join#", "/join/#")],
+    ["a line break inside the secret", `${link.slice(0, 50)}\n${link.slice(50)}`],
+    ["a line break inside the fingerprint", `${link.slice(0, 90)}\r\n${link.slice(90)}`],
+    ["upper-case scheme", link.replace("http://", "HTTP://")],
+  ])("finds the link in %s", (_name, pasted) => {
+    const r = readInviteLink(pasted);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.target).toEqual(parseInviteLink(link));
+      expect(parseInviteLink(r.link)).toEqual(parseInviteLink(link));
+    }
+  });
+
+  it("reads an internet link", () => {
+    const r = readInviteLink(`Use this: ${net}`);
+    expect(r.ok && r.target.tunnel).toBe(true);
+  });
+
+  it.each<[string, string, string]>([
+    ["nothing", "   ", "Paste the invite link"],
+    ["plain text", "hello there", "That is not an invite link"],
+    [
+      "a link without its start",
+      `192.168.1.20:8765/join#${secret}.${fp}`,
+      "start of the link is missing",
+    ],
+    ["a cut-off link", "http://192.168.1.20:8765/join#", "secret part after # is missing"],
+    ["an older Kai's link", `http://192.168.1.20:8765/join#${secret}`, "older Kai Terminal"],
+    ["a damaged secret", `http://192.168.1.20:8765/join#abc.${fp}`, "cut off or changed"],
+    ["a public IP over http", `http://8.8.8.8:8765/join#${secret}.${fp}`, "8.8.8.8 is not one"],
+    ["https to an IP", `https://192.168.1.20/join#${secret}.${fp}`, "https tunnel name"],
+    ["another page", `http://192.168.1.20:8765/other#${secret}.${fp}`, "/join#"],
+  ])("explains %s", (_name, pasted, reason) => {
+    const r = readInviteLink(pasted);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toContain(reason);
+  });
+
+  it("takes the first link when two are pasted", () => {
+    const r = readInviteLink(`${link} ${net}`);
+    expect(r.ok && r.target.tunnel).toBe(false);
+  });
+});
+
+describe("per-agent limits", () => {
+  it("falls back to the PC-wide time limit, with no daily or hourly limit", () => {
+    expect(limitsFor({ ...defaultGrants(), maxMinutes: 7 }, "claude")).toEqual({
+      maxMinutes: 7,
+      dailyTokens: null,
+      perHour: null,
+    });
+  });
+
+  it("parses each agent's limits", () => {
+    const g = parseGrants({
+      maxMinutes: 12,
+      limits: {
+        claude: { maxMinutes: 5, dailyTokens: 50_000, perHour: 20 },
+        opencode: { dailyTokens: null },
+      },
+    });
+    expect(limitsFor(g, "claude")).toEqual({ maxMinutes: 5, dailyTokens: 50_000, perHour: 20 });
+    expect(limitsFor(g, "opencode")).toEqual({ maxMinutes: 12, dailyTokens: null, perHour: null });
+  });
+
+  it.each<[string, unknown]>([
+    ["limits for an unknown agent", { limits: { evil: {} } }],
+    ["limits that are not an object", { limits: { claude: 5 } }],
+    ["zero minutes", { limits: { claude: { maxMinutes: 0 } } }],
+    ["too few daily tokens", { limits: { claude: { dailyTokens: 999 } } }],
+    ["fractional daily tokens", { limits: { claude: { dailyTokens: 1500.5 } } }],
+    ["daily tokens as text", { limits: { claude: { dailyTokens: "5000" } } }],
+    ["zero requests an hour", { limits: { claude: { perHour: 0 } } }],
+    ["too many requests an hour", { limits: { claude: { perHour: 101 } } }],
   ])("refuses %s", (_name, value) => {
     expect(() => parseGrants(value)).toThrow(GrantsError);
   });

@@ -140,11 +140,14 @@ export interface AgentProbe {
   error: string;
 }
 
-/** Is the agent installed, and which version? Bounded, no shell, no network. */
-export async function probeAgent(
+/**
+ * Is the agent installed? A PATH lookup only (milliseconds): no process is
+ * started, so the panel can list agents at once while versions are fetched.
+ */
+export function locateAgent(
   agent: SharedAgentId,
   locate: AgentLocator = defaultLocator
-): Promise<AgentProbe> {
+): { info: AgentProbe; base: string[] | null } {
   const info: AgentProbe = {
     id: agent,
     name: SHARED_AGENT_NAMES[agent],
@@ -152,14 +155,23 @@ export async function probeAgent(
     version: "",
     error: "",
   };
-  let base: string[];
   try {
-    base = locate(agent);
+    const base = locate(agent);
+    info.available = true;
+    return { info, base };
   } catch (e) {
     info.error = e instanceof Error ? e.message : String(e);
-    return info;
+    return { info, base: null };
   }
-  info.available = true;
+}
+
+/** Is the agent installed, and which version? Bounded, no shell, no network. */
+export async function probeAgent(
+  agent: SharedAgentId,
+  locate: AgentLocator = defaultLocator
+): Promise<AgentProbe> {
+  const { info, base } = locateAgent(agent, locate);
+  if (!base) return info;
   try {
     const t = target(base, ["--version"]);
     info.version = await new Promise<string>((resolve) => {

@@ -1,6 +1,7 @@
-import { ClipboardEvent, FC, SubmitEvent, useEffect, useState } from "react";
-import { ExternalLink, Link2, PictureInPicture2 } from "lucide-react";
-import { parseInviteLink } from "../core/sharedAgent/invite";
+import { ClipboardEvent, FC, SubmitEvent, useEffect, useMemo, useState } from "react";
+import { ClipboardPaste, ExternalLink, Link2, PictureInPicture2 } from "lucide-react";
+import { readInviteLink } from "../core/sharedAgent/invite";
+import { readClipboardText } from "../services/clipboardService";
 import { joinHost, leaveHost } from "../services/sharedAgentService";
 import {
   closeChatWindow,
@@ -15,8 +16,17 @@ import { useJoinedHosts } from "../hooks/useJoinedHosts";
 import { SharedAgentChat } from "./SharedAgentChat";
 import { hostStatusPill, tokenBreakdown, tokensUsed } from "./sharedAgentViewModel";
 
-const BAD_LINK =
-  "That is not a valid invite link. It looks like http://192.168.1.20:8765/join#… (same network) or https://<tunnel address>/join#… (internet).";
+const IDLE_HINT =
+  "Links work once and expire. The secret stays in the #fragment and is never logged.";
+
+/** "192.168.1.20:8765" or "my-pc.example.com" for an origin. */
+const addressOf = (origin: string): string => {
+  try {
+    return new URL(origin).host;
+  } catch {
+    return origin;
+  }
+};
 
 interface ReceiveProps {
   /** True while this part of the panel is on screen: it loads and refreshes only then. */
@@ -28,6 +38,8 @@ export const SharedAgentReceive: FC<ReceiveProps> = ({ active }) => {
   const { hosts, setHosts, loaded, error: loadError, refresh } = useJoinedHosts(active);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [link, setLink] = useState("");
+  // Problems with the link show once it was pasted, left or submitted, not while it is typed.
+  const [checked, setChecked] = useState(false);
   const [joining, setJoining] = useState(false);
   const [joinError, setJoinError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -39,6 +51,7 @@ export const SharedAgentReceive: FC<ReceiveProps> = ({ active }) => {
     key: 0,
     snapshot: null,
   });
+  const reading = useMemo(() => (link.trim() ? readInviteLink(link) : null), [link]);
 
   // Pick a PC to talk to once there is one, and drop one that was left.
   useEffect(() => {
@@ -61,39 +74,50 @@ export const SharedAgentReceive: FC<ReceiveProps> = ({ active }) => {
   const onJoin = async (ev: SubmitEvent) => {
     ev.preventDefault();
     setNotice(null);
-    if (!parseInviteLink(link)) {
-      setJoinError(BAD_LINK);
-      return;
-    }
+    setChecked(true);
+    if (!reading?.ok || joining) return;
     setJoining(true);
     setJoinError(null);
-    const res = await joinHost(link.trim());
+    const res = await joinHost(reading.link);
     setJoining(false);
     if (!res.ok) {
       setJoinError(res.error.message);
       return;
     }
     setLink("");
+    setChecked(false);
     setNotice(`Joined ${res.value.name}.`);
     setHosts((hs) => [...hs.filter((h) => h.id !== res.value.id), res.value]);
     if (!busy) setActiveId(res.value.id);
   };
 
-  // A pasted link replaces the box (stray spaces and newlines dropped) and is checked at once,
-  // so a wrong one is flagged before Join is pressed.
-  const onPasteLink = (ev: ClipboardEvent<HTMLInputElement>) => {
-    const pasted = ev.clipboardData.getData("text").trim();
-    if (!pasted) return;
-    ev.preventDefault();
-    setLink(pasted);
-    const target = parseInviteLink(pasted);
-    if (!target) {
-      setNotice(null);
-      setJoinError(BAD_LINK);
-      return;
-    }
+  /** Keeps just the link from pasted text, so a whole message can be pasted. */
+  const takePasted = (pasted: string) => {
+    const text = pasted.trim();
+    if (!text) return;
+    const r = readInviteLink(text);
+    setLink(r.ok ? r.link : text);
+    setChecked(true);
     setJoinError(null);
-    setNotice(`Valid invite link for ${target.origin}. Press Join.`);
+    setNotice(null);
+  };
+
+  const onPasteLink = (ev: ClipboardEvent<HTMLInputElement>) => {
+    const pasted = ev.clipboardData.getData("text");
+    if (!pasted.trim()) return;
+    ev.preventDefault();
+    takePasted(pasted);
+  };
+
+  const pasteFromClipboard = async () => {
+    try {
+      takePasted(await readClipboardText());
+    } catch {
+      setChecked(true);
+      setJoinError(
+        "Kai could not read the clipboard. Paste the link into the box instead (Ctrl+V)."
+      );
+    }
   };
 
   const selectHost = (id: string) => {
@@ -116,6 +140,12 @@ export const SharedAgentReceive: FC<ReceiveProps> = ({ active }) => {
     void refresh();
   };
 
+  const sameHost =
+    reading?.ok === true
+      ? hosts.find((h) => h.connected && h.address === addressOf(reading.target.origin))
+      : undefined;
+  const linkProblem = checked && reading && !reading.ok ? reading.reason : null;
+
   const joinForm = (
     <form className="sa-join" onSubmit={(e) => void onJoin(e)}>
       <input
@@ -127,7 +157,7 @@ export const SharedAgentReceive: FC<ReceiveProps> = ({ active }) => {
         value={link}
         autoComplete="off"
         spellCheck={false}
-        aria-invalid={joinError === BAD_LINK}
+        aria-invalid={linkProblem !== null}
         onChange={(e) => {
           setLink(e.target.value);
           setJoinError(null);
@@ -135,30 +165,48 @@ export const SharedAgentReceive: FC<ReceiveProps> = ({ active }) => {
         }}
         onPaste={onPasteLink}
         onBlur={() => {
-          if (link.trim() && !parseInviteLink(link)) setJoinError(BAD_LINK);
+          if (link.trim()) setChecked(true);
         }}
       />
+      {!link.trim() && (
+        <button
+          type="button"
+          className="btn btn-secondary btn-small"
+          onClick={() => void pasteFromClipboard()}
+          title="Paste the invite link from the clipboard"
+        >
+          <ClipboardPaste size={13} aria-hidden="true" />
+          <span>Paste</span>
+        </button>
+      )}
       <button
         type="submit"
         className="btn btn-primary btn-small"
         disabled={!link.trim() || joining}
       >
-        {joining ? "Joining…" : "Join"}
+        {joining ? "Joining…" : sameHost ? "Join again" : "Join"}
       </button>
     </form>
   );
 
-  const joinMessage = joinError ? (
-    <p className="error-text sa-rail-msg" role="alert">
-      {joinError}
-    </p>
-  ) : notice ? (
-    <p className="sa-muted sa-rail-msg">{notice}</p>
-  ) : (
-    <p className="sa-muted sa-rail-msg">
-      Links work once and expire. The secret stays in the #fragment and is never logged.
-    </p>
-  );
+  const joinMessage =
+    joinError || linkProblem ? (
+      <p className="error-text sa-rail-msg" role="alert">
+        {joinError ?? linkProblem}
+      </p>
+    ) : notice ? (
+      <p className="sa-muted sa-rail-msg" role="status">
+        {notice}
+      </p>
+    ) : reading?.ok ? (
+      <p className="sa-muted sa-rail-msg sa-link-ok" role="status">
+        {sameHost
+          ? `You already joined ${sameHost.name}. Joining again pairs this PC with it anew.`
+          : `Invite for ${addressOf(reading.target.origin)} (${reading.target.tunnel ? "internet" : "same network"}). Press Join.`}
+      </p>
+    ) : (
+      <p className="sa-muted sa-rail-msg">{IDLE_HINT}</p>
+    );
 
   if (loaded && loadError && !hosts.length) {
     return (
@@ -181,7 +229,7 @@ export const SharedAgentReceive: FC<ReceiveProps> = ({ active }) => {
           <h4 id="sa-join-title">Join a shared agent</h4>
           <p className="sa-muted">
             {loaded
-              ? "Ask the other PC for an invite link (Share my agent → Create invite), paste it here, and chat with its agent."
+              ? "Ask the other PC for an invite link (Share my agent → Generate invite link), paste it here, and chat with its agent. Pasting the whole message it came in is fine."
               : "Loading…"}
           </p>
           {joinForm}

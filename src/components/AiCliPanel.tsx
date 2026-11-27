@@ -17,6 +17,7 @@ import {
 import { IntegrationsPanel } from "./IntegrationsPanel";
 import { Badge } from "./ui";
 import { SharedAgentPanel } from "./SharedAgentPanel";
+import { prefetchShareStatus } from "../services/sharedAgentService";
 import {
   getAiCliDetails,
   checkCustomAiCliPath,
@@ -249,6 +250,8 @@ export const AiCliPanel: FC<AiCliPanelProps> = ({
             type="button"
             id="ai-cli-tab-shared"
             className={`modal-tab-btn ${activeTab === "shared" ? "active" : ""}`}
+            onPointerEnter={prefetchShareStatus}
+            onFocus={prefetchShareStatus}
             onClick={() => {
               setSharedVisited(true);
               setActiveTab("shared");
