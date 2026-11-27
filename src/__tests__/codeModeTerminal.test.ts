@@ -49,3 +49,33 @@ describe("Code Mode signal through the real xterm parser", () => {
     term.dispose();
   });
 });
+
+describe("Code Mode signal next to the inline-image add-on (also on OSC 1337)", () => {
+  // The add-on loads lazily, AFTER TerminalView's handlers. xterm calls the newest
+  // handler first, and the add-on reports any payload it cannot parse as handled,
+  // so TerminalView registers its handlers again once the add-on is in.
+  it("the add-on loaded last swallows the signal (why TerminalView registers again)", async () => {
+    const { ImageAddon } = await import("@xterm/addon-image");
+    const seen: Array<string | null> = [];
+    const term = terminalReporting(seen);
+    term.loadAddon(new ImageAddon());
+    await write(term, buildCodeModeSignal("/p"));
+    expect(seen).toEqual([]);
+    term.dispose();
+  });
+
+  it("a handler registered after the add-on gets the signal", async () => {
+    const { ImageAddon } = await import("@xterm/addon-image");
+    const seen: Array<string | null> = [];
+    const term = new Terminal({ cols: 80, rows: 24, allowProposedApi: true });
+    term.loadAddon(new ImageAddon());
+    term.parser.registerOscHandler(CODE_MODE_OSC, (data) => {
+      const signal = parseCodeModeSignal(data);
+      if (signal) seen.push(signal.active ? signal.path : null);
+      return signal !== null;
+    });
+    await write(term, `${buildCodeModeSignal("/p")}${buildCodeModeSignal(null)}`);
+    expect(seen).toEqual(["/p", null]);
+    term.dispose();
+  });
+});

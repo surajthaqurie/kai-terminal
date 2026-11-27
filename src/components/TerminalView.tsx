@@ -726,11 +726,38 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
       // pictures people send. Guarded: if the add-on cannot start here, the
       // terminal works exactly as before and the chat falls back to links.
       // Fetched after the pane is up (see `xtermLazyAddons`): the terminal paints without it.
+      // Kai's own OSC 1337 signals, carried on this pane's output stream:
+      // - Code Mode: the `kai <agent>` CLI announces start/end on its stdout.
+      // - `kai teams` reports its unread count, for the tab badge.
+      // Each handler returns true only for its own payload, so anything else
+      // (an iTerm2 `File=` image) falls through to the next handler.
+      const registerKaiSignals = () => {
+        term.parser.registerOscHandler(CODE_MODE_OSC, (data) => {
+          const signal = parseCodeModeSignal(data);
+          if (signal) onCodeModeChangeRef.current?.(signal.active ? signal.path : null);
+          return signal !== null;
+        });
+        term.parser.registerOscHandler(TEAMS_OSC, (data) => {
+          const count = parseTeamsSignal(data);
+          if (count !== null) onTeamsUnreadChangeRef.current?.(count);
+          return count !== null;
+        });
+      };
       const addonEpoch = lazyAddonEpochRef.current;
       void loadImageAddon()
         .then((ImageAddon) => {
           if (lazyAddonEpochRef.current !== addonEpoch) return; // pane torn down meanwhile
           term.loadAddon(new ImageAddon({ storageLimit: 32 }));
+          // xterm calls the NEWEST OSC handler first, and the image add-on's
+          // OSC 1337 handler reports every payload it cannot parse as handled
+          // (IIPHandler.end returns true when aborted), so the add-on loading
+          // after the handlers above swallowed every Code Mode and Teams signal.
+          // Registering ours again puts them ahead of it.
+          try {
+            registerKaiSignals();
+          } catch {
+            // parser handler registration not supported in some mock environments
+          }
         })
         .catch((e: unknown) => console.warn("Inline images are unavailable:", e));
       try {
@@ -812,20 +839,7 @@ export const TerminalView = forwardRef<TerminalViewRef, TerminalViewProps>(
           return false;
         });
 
-        // Per-terminal Code Mode: the `kai <agent>` CLI announces start/end
-        // on its own stdout, i.e. on THIS pane's output stream.
-        term.parser.registerOscHandler(CODE_MODE_OSC, (data) => {
-          const signal = parseCodeModeSignal(data);
-          if (signal) onCodeModeChangeRef.current?.(signal.active ? signal.path : null);
-          return signal !== null;
-        });
-
-        // `kai teams` reports its unread count on this pane's output, for the tab badge.
-        term.parser.registerOscHandler(TEAMS_OSC, (data) => {
-          const count = parseTeamsSignal(data);
-          if (count !== null) onTeamsUnreadChangeRef.current?.(count);
-          return count !== null;
-        });
+        registerKaiSignals();
       } catch {
         // parser handler registration not supported in some mock environments
       }
