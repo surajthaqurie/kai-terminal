@@ -15,7 +15,7 @@ import {
 } from "../services/paneLayout";
 import { createDefaultTab, deriveTabStatus, tabFromPersisted } from "../services/tabFactory";
 import { tabFromSeed } from "../services/tabHandoff";
-import type { WindowSeed } from "../services/terminalWindows";
+import type { TabSeed, WindowSeed } from "../services/terminalWindows";
 import { isRestoreSeed } from "../services/windowLayouts";
 import type { SessionStatus, SplitDirection, TerminalTab } from "../types/terminal";
 import { useLatest } from "./useLatest";
@@ -367,9 +367,26 @@ export function useTabs({ effectiveShellPath, setLastError, initialSeed }: TabsO
     );
   }, []);
 
+  /**
+   * Tabs moved here from another window (dragged onto this one, or merged into it):
+   * appended in order, the last one shown. Running shells keep running.
+   */
+  const receiveTabs = useCallback(
+    (seeds: TabSeed[]) => {
+      const incoming = seeds.filter((s) => s.panes.length > 0).map(tabFromSeed);
+      if (incoming.length === 0) return;
+      applyTabsUpdate(tabsRef, setTabs, (prev) => [...prev, ...incoming]);
+      const last = incoming[incoming.length - 1].id;
+      activeTabIdRef.current = last;
+      setActiveTabId(last);
+    },
+    [tabsRef, activeTabIdRef]
+  );
+
   return {
     tabs,
     setTabs,
+    receiveTabs,
     activeTabId,
     setActiveTabId,
     tabsRef,

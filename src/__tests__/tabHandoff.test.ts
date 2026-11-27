@@ -188,3 +188,37 @@ describe("detachTab", () => {
     expect(d.settle).not.toHaveBeenCalled();
   });
 });
+
+describe("moveTabToWindow (merging back into an open window)", () => {
+  it("holds, captures, hands the tab to the target window, then lets go", async () => {
+    const { moveTabToWindow } = await import("../services/tabHandoff");
+    const t = terminal("pty-1");
+    const { d, calls } = deps({
+      send: vi.fn(async (target: string) => void calls.push(`send:${target}`)),
+    });
+    const result = await moveTabToWindow(tab(), { p1: t }, "main", d);
+    expect(result).toEqual({ ok: true, windowLabel: "main" });
+    expect(calls).toEqual(["begin:pty-1", "settle", "send:main"]);
+    expect(d.send).toHaveBeenCalledWith("main", expect.objectContaining({ title: "api" }), [
+      "pty-1",
+    ]);
+    expect(d.open).not.toHaveBeenCalled();
+    expect(t.handoffRelease).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the tab here with its held output when the target window is gone", async () => {
+    const { moveTabToWindow } = await import("../services/tabHandoff");
+    const t = terminal("pty-1");
+    const { d } = deps({
+      send: vi.fn(async () => {
+        throw new Error("That window is closed.");
+      }),
+    });
+    const result = await moveTabToWindow(tab(), { p1: t }, "term-3", d);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toMatch(/That window is closed/);
+    expect(t.handoffRelease).not.toHaveBeenCalled();
+    expect(d.finish).toHaveBeenCalledWith("pty-1");
+    expect(t.handoffResume).toHaveBeenCalledWith(none);
+  });
+});

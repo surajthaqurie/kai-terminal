@@ -9,6 +9,7 @@ import {
   Columns,
   Copy,
   Edit3,
+  Combine,
   FolderOpen,
   GitCompare,
   Keyboard,
@@ -45,6 +46,8 @@ export interface CommandActionContext {
   newWindow: () => void;
   /** Moves the active tab, running shells included, into a new window. */
   moveTabToNewWindow: () => void;
+  /** Moves every other window's tabs, running shells included, into this window. */
+  mergeAllWindows?: () => void;
   cycleTab: (step: 1 | -1) => void;
   focusNextPane: () => void;
   focusPrevPane: () => void;
@@ -100,6 +103,13 @@ export function buildCommandActions(ctx: CommandActionContext): CommandAction[] 
       category: "Terminal",
       icon: <SquareArrowOutUpRight size={16} />,
       perform: ctx.moveTabToNewWindow,
+    },
+    {
+      id: "merge-all-windows",
+      label: "Merge All Windows into This One",
+      category: "Terminal",
+      icon: <Combine size={16} />,
+      perform: () => ctx.mergeAllWindows?.(),
     },
     {
       id: "next-tab",

@@ -935,6 +935,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(pty_manager)
         .manage(terminal_windows::WindowSeeds::default())
+        .manage(terminal_windows::IncomingTabs::default())
         .manage(close_requests::CloseRequests::default())
         .manage(shared_agent::SharedAgentService::default())
         // Single-instance enforcement (Windows / Linux / macOS): a second
@@ -943,9 +944,10 @@ pub fn run() {
         // A `kai <path>` / `kai code` launch focuses a terminal window and
         // forwards the path via `kai-open-project` (the frontend re-syncs Code
         // Mode from the state file the CLI already wrote). A plain launch of
-        // the app (Start menu, Dock, desktop icon) opens one more window, the
-        // way an editor does, so the user can have several. The second process
-        // exits either way. The Node `isKaiAppRunning()` fast-path avoids the
+        // the app (Start menu, taskbar, desktop icon, sign-in autostart) only
+        // brings the running window back to the front: it never opens another
+        // terminal window (more windows come from the in-app "New Window").
+        // The second process exits either way. The Node `isKaiAppRunning()` fast-path avoids the
         // spawn in the common case; this is the authoritative cross-OS
         // guarantee that closes the check-then-launch race (two rapid
         // `kai code .` calls) and the process-name false-negative
@@ -953,18 +955,9 @@ pub fn run() {
         // `comm`).
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             if let Some(window) = terminal_windows::primary_terminal_window(app) {
-                if crate::cli_guard::is_bare_launch(&args) {
-                    // Off this callback's thread: building a window waits on the
-                    // main thread.
-                    let handle = app.clone();
-                    std::thread::spawn(move || {
-                        let _ = terminal_windows::open_window(&handle, None, &[], None);
-                    });
-                } else {
-                    let _ = window.unminimize();
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                }
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
                 if let Some(path) = crate::cli_guard::gui_path_from_args(&args) {
                     let _ = app.emit_to(
                         window.label(),
@@ -1053,6 +1046,8 @@ pub fn run() {
                 std::thread::spawn(move || {
                     app.state::<close_requests::CloseRequests>().forget(&label);
                     app.state::<terminal_windows::WindowSeeds>().discard(&label);
+                    app.state::<terminal_windows::IncomingTabs>()
+                        .discard(&label);
                     let pty: State<'_, PtyManager> = app.state();
                     pty.close_sessions_owned_by(&label);
                 });
@@ -1108,6 +1103,10 @@ pub fn run() {
             get_diagnostics,
             terminal_windows::open_terminal_window,
             terminal_windows::take_window_seed,
+            terminal_windows::terminal_window_at,
+            terminal_windows::send_tab_to_window,
+            terminal_windows::take_incoming_tabs,
+            terminal_windows::merge_terminal_windows,
             terminal_windows::pty_handoff_begin,
             terminal_windows::pty_handoff_finish,
             create_pty,

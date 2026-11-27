@@ -37,7 +37,7 @@ describe("TabBar tab tear-off", () => {
     document.body.innerHTML = "";
   });
 
-  async function renderBar(tabCount = 3, withHandler = true) {
+  async function renderBar(tabCount = 3, withHandler = true, extra: Record<string, unknown> = {}) {
     const React = await import("react");
     const { createRoot } = await import("react-dom/client");
     const { TabBar } = await import("../components/TabBar");
@@ -70,6 +70,7 @@ describe("TabBar tab tear-off", () => {
           onNewTab: () => {},
           onMoveTabToIndex,
           onDetachTab: withHandler ? onDetachTab : undefined,
+          ...extra,
         })
       );
     });
@@ -183,5 +184,48 @@ describe("TabBar tab tear-off", () => {
     });
     const labels = [...container.querySelectorAll('[role="menuitem"]')].map((e) => e.textContent);
     expect(labels).not.toContain("Move to new window");
+  });
+
+  it("with another window open, even the only tab can be dragged out (to merge it back)", async () => {
+    const { React, container, onDetachTab, fire } = await renderBar(1, true, {
+      otherWindows: ["main"],
+    });
+    const tabEl = container.querySelector('[data-tab-id="t1"]') as HTMLElement;
+    await React.act(async () => {
+      fire(tabEl, "pointerdown", 100, 10);
+      fire(window, "pointermove", 110, 200);
+    });
+    expect(tabEl.classList.contains("detach-armed")).toBe(true);
+    expect(container.querySelector(".tab-detach-hint")?.textContent).toMatch(/another Kai window/i);
+    await React.act(async () => {
+      fire(window, "pointerup", 110, 200);
+    });
+    expect(onDetachTab).toHaveBeenCalledWith("t1", 610, 500);
+  });
+
+  it("the tab's menu offers each other window and merging them all here", async () => {
+    const onMoveTabToWindow = vi.fn();
+    const onMergeAllWindows = vi.fn();
+    const { React, container } = await renderBar(1, true, {
+      otherWindows: ["main", "term-3"],
+      onMoveTabToWindow,
+      onMergeAllWindows,
+    });
+    const tabEl = container.querySelector('[data-tab-id="t1"]') as HTMLElement;
+    const openMenu = () =>
+      React.act(async () => {
+        tabEl.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+      });
+    const item = (label: string) =>
+      [...container.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+        (el) => el.textContent === label
+      );
+    await openMenu();
+    expect(item("Move to Window 3")).toBeDefined();
+    await React.act(async () => item("Move to Main window")!.click());
+    expect(onMoveTabToWindow).toHaveBeenCalledWith("t1", "main");
+    await openMenu();
+    await React.act(async () => item("Merge all windows here")!.click());
+    expect(onMergeAllWindows).toHaveBeenCalledTimes(1);
   });
 });

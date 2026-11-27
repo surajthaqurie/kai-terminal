@@ -643,7 +643,7 @@ fn js_from_shim_file(shim_path: &str) -> Option<String> {
 /// Drop Win32 verbatim prefixes (`\\?\C:\…`, `//?/C:/…`, `\\?\UNC\…`) that
 /// the installer bakes into shim contents: Node itself tolerates them, but
 /// agent-side spawning/config parsing frequently does not.
-fn strip_verbatim_prefix(p: &str) -> String {
+pub(crate) fn strip_verbatim_prefix(p: &str) -> String {
     if let Some(rest) = p
         .strip_prefix("\\\\?\\UNC\\")
         .or_else(|| p.strip_prefix("//?/UNC/"))

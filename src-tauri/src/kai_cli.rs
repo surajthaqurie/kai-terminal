@@ -219,18 +219,28 @@ fn find_on_path(cmd: &str) -> Option<String> {
     None
 }
 
+/// Shim paths without Win32 verbatim prefixes. Tauri's `resource_dir()` is
+/// canonicalized on Windows (`\\?\C:\…`), and cmd.exe cannot run a command
+/// from such a path ("The system cannot find the path specified"), so a
+/// `kai.cmd` carrying one fails in every cmd/Git Bash shell and for every
+/// tool that spawns `kai`, and Code Mode never starts.
+fn shim_paths(node_exe: &str, cli_js: &Path) -> (String, String) {
+    (
+        crate::ai_cli::strip_verbatim_prefix(node_exe),
+        crate::ai_cli::strip_verbatim_prefix(&cli_js.to_string_lossy()),
+    )
+}
+
 /// `kai.cmd` shim body. `node_exe` may be a full path or bare `node` (PATH
 /// lookup at call time, so installing Node later just works).
 pub fn build_cmd_shim(node_exe: &str, cli_js: &Path) -> String {
+    let (node_exe, cli_js) = shim_paths(node_exe, cli_js);
     let node = if node_exe.contains(' ') && !node_exe.starts_with('"') {
         format!("\"{node_exe}\"")
     } else {
-        node_exe.to_string()
+        node_exe
     };
-    format!(
-        "@echo off\r\n{node} \"{}\" %*\r\n",
-        cli_js.to_string_lossy()
-    )
+    format!("@echo off\r\n{node} \"{cli_js}\" %*\r\n")
 }
 
 /// PowerShell single-quoted literal (`'` is doubled; nothing is expanded).
@@ -247,10 +257,11 @@ fn sh_quote(s: &str) -> String {
 /// Node location is `C:\Program Files\nodejs\node.exe`, which an unquoted
 /// `& C:\Program Files\...` would split at the space.
 pub fn build_ps1_shim(node_exe: &str, cli_js: &Path) -> String {
+    let (node_exe, cli_js) = shim_paths(node_exe, cli_js);
     format!(
         "& {} {} @args\r\nexit $LASTEXITCODE\r\n",
-        ps_quote(node_exe),
-        ps_quote(&cli_js.to_string_lossy())
+        ps_quote(&node_exe),
+        ps_quote(&cli_js)
     )
 }
 
@@ -1136,6 +1147,20 @@ mod tests {
         );
         assert!(s.contains("exec '/Users/John Smith/.nvm/bin/node' "));
         assert!(s.contains("'/Users/John Smith/it'\\''s/cli/index.js'"));
+    }
+
+    #[test]
+    fn test_shims_drop_verbatim_prefixes() {
+        let node = "\\\\?\\C:\\Users\\me\\AppData\\Local\\kai\\resources\\node\\node.exe";
+        let js = Path::new("\\\\?\\C:\\Users\\me\\AppData\\Local\\kai\\_up_\\dist\\cli\\index.js");
+        let cmd = build_cmd_shim(node, js);
+        assert_eq!(
+            cmd,
+            "@echo off\r\nC:\\Users\\me\\AppData\\Local\\kai\\resources\\node\\node.exe \
+             \"C:\\Users\\me\\AppData\\Local\\kai\\_up_\\dist\\cli\\index.js\" %*\r\n"
+        );
+        let ps1 = build_ps1_shim(node, js);
+        assert!(!ps1.contains("\\\\?\\"), "{ps1}");
     }
 
     #[test]

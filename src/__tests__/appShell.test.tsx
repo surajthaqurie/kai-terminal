@@ -963,6 +963,7 @@ describe("App shell: settings, themes and terminal actions", () => {
       "new-tab",
       "new-window",
       "move-tab-to-new-window",
+      "merge-all-windows",
       "next-tab",
       "prev-tab",
       "next-pane",

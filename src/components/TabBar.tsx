@@ -6,6 +6,7 @@ import { PopupMenu, type MenuEntry } from "./PopupMenu";
 import { KaiMark } from "./KaiMark";
 import { WindowControls } from "./WindowControls";
 import { isTauriAvailable } from "../services/ptyService";
+import { terminalWindowName } from "../services/terminalWindows";
 import { useShortcutTitle } from "../hooks/useShortcutHints";
 import { isMacPlatform } from "../services/shortcuts";
 
@@ -37,6 +38,16 @@ interface TabBarProps {
    * window), and from the tab's menu (no position). Needs at least two tabs.
    */
   onDetachTab?: (id: string, screenX?: number, screenY?: number) => void;
+  /**
+   * The other open terminal windows (labels). A tab can be moved into one of them
+   * from its menu, or dragged out and dropped on it; with other windows open even
+   * the only tab can be dragged out (its window then closes).
+   */
+  otherWindows?: readonly string[];
+  /** Moves a tab, with its running shells, into another open window. */
+  onMoveTabToWindow?: (id: string, target: string) => void;
+  /** Moves every other window's tabs into this one. */
+  onMergeAllWindows?: () => void;
   /** Shell profiles for the "+ ▾" picker; the picker is hidden without them. */
   shells?: ShellProfile[];
   selectedShellId?: string;
@@ -44,6 +55,8 @@ interface TabBarProps {
   /** Right-hand header content, placed between the drag strip and the window controls. */
   children?: ReactNode;
 }
+
+const NO_WINDOWS: readonly string[] = [];
 
 /** Stored tab colour values (hex keys kept for saved sessions); painted per theme. */
 export const TAB_COLOR_PRESETS: ReadonlyArray<string> = TAB_COLORS.map((c) => c.key);
@@ -132,6 +145,9 @@ export const TabBar: FC<TabBarProps> = ({
   onMoveTabToIndex,
   onSetTabColor,
   onDetachTab,
+  otherWindows = NO_WINDOWS,
+  onMoveTabToWindow,
+  onMergeAllWindows,
   shells = [],
   selectedShellId,
   onNewTabWithShell,
@@ -166,6 +182,8 @@ export const TabBar: FC<TabBarProps> = ({
   // Tabs snapshot for pointer handlers (avoids stale closures on window listeners).
   const tabsRef = useRef(tabs);
   tabsRef.current = tabs;
+  const otherWindowsRef = useRef(otherWindows);
+  otherWindowsRef.current = otherWindows;
 
   const cancelDrag = useCallback(() => {
     pendingRef.current = null;
@@ -296,11 +314,15 @@ export const TabBar: FC<TabBarProps> = ({
           return;
         }
       }
-      // Dragged well clear of the strip: releasing here opens a new window, so
-      // stop offering a reorder slot and say what will happen instead. Needs a
-      // handler and a second tab (a window cannot be left with none).
+      // Dragged well clear of the strip: releasing here opens a new window (or
+      // merges into another Kai window under the pointer), so stop offering a
+      // reorder slot and say what will happen instead. Needs a handler, and a
+      // second tab or another window to drop it on (a window is never left empty
+      // unless its last tab went to another window).
       const container = containerRef.current;
-      const canDetach = Boolean(onDetachTabRef.current) && tabsRef.current.length > 1;
+      const canDetach =
+        Boolean(onDetachTabRef.current) &&
+        (tabsRef.current.length > 1 || otherWindowsRef.current.length > 0);
       const armed =
         canDetach &&
         isTearOffZone(
@@ -639,7 +661,15 @@ export const TabBar: FC<TabBarProps> = ({
                       startEditing(tab);
                     }}
                     title={`${tab.title} (${tab.status === "connecting" && !isActive ? "not started yet, starts when opened" : STATUS_TEXT[tab.status]}). Drag to reorder${
-                      onDetachTab && tabs.length > 1 ? " or out of the bar for a new window" : ""
+                      !onDetachTab
+                        ? ""
+                        : otherWindows.length > 0
+                          ? tabs.length > 1
+                            ? " or out of the bar for a new window (drop it on another Kai window to move it there)"
+                            : " onto another Kai window to move it there"
+                          : tabs.length > 1
+                            ? " or out of the bar for a new window"
+                            : ""
                     }; double-click or right-click to rename`}
                   >
                     {tab.title}
@@ -711,7 +741,11 @@ export const TabBar: FC<TabBarProps> = ({
 
       {detachArmed && (
         <div className="tab-detach-hint" role="status">
-          Release to open this tab in a new window
+          {otherWindows.length === 0
+            ? "Release to open this tab in a new window"
+            : tabs.length > 1
+              ? "Release for a new window, or over another Kai window to move it there"
+              : "Release over another Kai window to move this tab there"}
         </div>
       )}
 
@@ -809,6 +843,34 @@ export const TabBar: FC<TabBarProps> = ({
               }}
             >
               Move to new window
+            </button>
+          )}
+          {onMoveTabToWindow &&
+            otherWindows.map((label) => (
+              <button
+                key={label}
+                type="button"
+                role="menuitem"
+                className="tab-menu-item"
+                onClick={() => {
+                  setMenu(null);
+                  onMoveTabToWindow(menuTab.id, label);
+                }}
+              >
+                Move to {terminalWindowName(label)}
+              </button>
+            ))}
+          {onMergeAllWindows && otherWindows.length > 0 && (
+            <button
+              type="button"
+              role="menuitem"
+              className="tab-menu-item"
+              onClick={() => {
+                setMenu(null);
+                onMergeAllWindows();
+              }}
+            >
+              Merge all windows here
             </button>
           )}
           {tabs.length > 1 && (

@@ -20,6 +20,7 @@ import {
   handoffBegin,
   handoffFinish,
   openTerminalWindow,
+  sendTabToWindow,
   type HandoffRelease,
   type PaneSeed,
   type TabSeed,
@@ -49,6 +50,8 @@ export interface HandoffDeps {
   begin(ids: string[]): Promise<void>;
   finish(id: string): Promise<HandoffRelease>;
   open(seed: TabSeed, adopt: string[], at?: { x: number; y: number }): Promise<string>;
+  /** Hands the tab to a window that is already open (merging it back). */
+  send?: (target: string, seed: TabSeed, adopt: string[]) => Promise<void>;
   /** Waits for output the backend already emitted to reach this window. */
   settle(): Promise<void>;
 }
@@ -60,6 +63,7 @@ const defaultDeps: HandoffDeps = {
   begin: handoffBegin,
   finish: handoffFinish,
   open: (seed, adopt, at) => openTerminalWindow({ seed, adopt, at }),
+  send: sendTabToWindow,
   settle: () => new Promise((resolve) => setTimeout(resolve, SETTLE_MS)),
 };
 
@@ -126,6 +130,47 @@ export async function detachTab(
   at?: { x: number; y: number },
   deps: HandoffDeps = defaultDeps
 ): Promise<DetachResult> {
+  return handOver(
+    tab,
+    terminals,
+    deps,
+    (seed, adopt) => deps.open(seed, adopt, at),
+    "Could not open a new window"
+  );
+}
+
+/**
+ * Moves `tab` into another window that is already open (merging windows back
+ * together), shells and all. On failure the tab is left exactly as it was.
+ */
+export async function moveTabToWindow(
+  tab: TerminalTab,
+  terminals: Record<string, HandoffTerminal | null | undefined>,
+  target: string,
+  deps: HandoffDeps = defaultDeps
+): Promise<DetachResult> {
+  const send = deps.send;
+  if (!send) return { ok: false, reason: "Moving tabs between windows is not available." };
+  return handOver(
+    tab,
+    terminals,
+    deps,
+    async (seed, adopt) => {
+      await send(target, seed, adopt);
+      return target;
+    },
+    "Could not move the tab to that window"
+  );
+}
+
+/** The shared hand-over: hold output, snapshot, deliver, then let go (or roll back). */
+async function handOver(
+  tab: TerminalTab,
+  terminals: Record<string, HandoffTerminal | null | undefined>,
+  deps: HandoffDeps,
+  deliver: (seed: TabSeed, adopt: string[]) => Promise<string>,
+  failure: string
+): Promise<DetachResult> {
   // Panes whose shell is running right now; the others simply start fresh over there.
   const live = tab.panes.flatMap((pane) => {
     const term = terminals[pane.id];
@@ -167,16 +212,15 @@ export async function detachTab(
   }
 
   try {
-    const windowLabel = await deps.open(
+    const windowLabel = await deliver(
       buildTabSeed(tab, captures),
-      held.map((h) => h.id),
-      at
+      held.map((h) => h.id)
     );
-    // The new window owns the shells now: this one must not close them.
+    // The other window owns the shells now: this one must not close them.
     for (const { term } of held) term.handoffRelease();
     return { ok: true, windowLabel };
   } catch (err) {
     await resumeHere(held);
-    return { ok: false, reason: `Could not open a new window: ${message(err)}` };
+    return { ok: false, reason: `${failure}: ${message(err)}` };
   }
 }

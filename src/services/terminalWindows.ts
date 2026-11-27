@@ -95,3 +95,51 @@ export async function handoffFinish(id: string): Promise<HandoffRelease> {
   if (!isTauriAvailable()) return { data: [], exited: false, exit_code: null };
   return call<HandoffRelease>("pty_handoff_finish", { id });
 }
+
+/** The other terminal window under a screen point (logical pixels), or null. */
+export async function terminalWindowAt(x: number, y: number): Promise<string | null> {
+  if (!isTauriAvailable()) return null;
+  try {
+    return (await call<string | null>("terminal_window_at", { x, y })) ?? null;
+  } catch (err) {
+    console.warn("Could not find the window under the pointer:", err);
+    return null;
+  }
+}
+
+/**
+ * Hands a tab to another open terminal window (merging it back). `adopt` lists the running
+ * sessions that move with it. Rejects when the target is gone.
+ */
+export async function sendTabToWindow(
+  target: string,
+  seed: TabSeed,
+  adopt: string[]
+): Promise<void> {
+  if (!isTauriAvailable()) throw new Error("Extra windows need the desktop app.");
+  await call<void>("send_tab_to_window", { target, seed, adopt });
+}
+
+/** Tabs other windows handed to this one since it last asked, oldest first. */
+export async function takeIncomingTabs(): Promise<TabSeed[]> {
+  if (!isTauriAvailable()) return [];
+  try {
+    return (await call<TabSeed[]>("take_incoming_tabs")) ?? [];
+  } catch (err) {
+    console.warn("Could not read the tabs moved to this window:", err);
+    return [];
+  }
+}
+
+/** Asks every other terminal window to move its tabs into this one. Returns how many were asked. */
+export async function mergeTerminalWindows(): Promise<number> {
+  if (!isTauriAvailable()) return 0;
+  return call<number>("merge_terminal_windows");
+}
+
+/** A name for a terminal window in menus: "Main window", "Window 3". */
+export function terminalWindowName(label: string): string {
+  if (label === "main") return "Main window";
+  const n = /^term-(\d+)$/.exec(label)?.[1];
+  return n ? `Window ${n}` : label;
+}

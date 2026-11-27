@@ -41,6 +41,7 @@ import { useCloseGuard } from "./hooks/useCloseGuard";
 import { useSessionPersistence } from "./hooks/useSessionPersistence";
 import { useExtraWindowLayout } from "./hooks/useExtraWindowLayout";
 import { useTabDetach } from "./hooks/useTabDetach";
+import { useWindowMerge } from "./hooks/useWindowMerge";
 import { useTabs } from "./hooks/useTabs";
 import { useTeamsUnread } from "./hooks/useTeamsUnread";
 import { useTerminalConfig } from "./hooks/useTerminalConfig";
@@ -316,11 +317,17 @@ function App({ initialSeed = null }: { initialSeed?: WindowSeed | null }) {
       reportError(err instanceof Error ? err.message : "Could not open a new window.")
     );
   }, [reportError]);
-  /** Moves a tab, running shells included, into a new window. */
-  const detachTab = useTabDetach({
+  /** Moves tabs, running shells included, into a new window or back into another one. */
+  const tabMoves = useTabDetach({
     tabsRef,
     terminalRefs,
     removeTab: tabsState.closeTab,
+    notify,
+  });
+  /** Tabs arriving from other windows, and "Merge all windows". */
+  const windowMerge = useWindowMerge({
+    receiveTabs: tabsState.receiveTabs,
+    moveAllTo: tabMoves.moveAllTo,
     notify,
   });
 
@@ -466,7 +473,8 @@ function App({ initialSeed = null }: { initialSeed?: WindowSeed | null }) {
     musicCommand,
     renameActiveTab: () => setRenameTarget(activeTab),
     newWindow: openNewWindow,
-    moveTabToNewWindow: () => void detachTab(activeTabId),
+    moveTabToNewWindow: () => void tabMoves.detach(activeTabId),
+    mergeAllWindows: () => void windowMerge.mergeAllWindows(),
     openEditor: () => void project.openEditor(),
     showGitStatus: () => void project.showGit("status"),
     reviewChanges: () => project.reviewChanges(true),
@@ -502,7 +510,10 @@ function App({ initialSeed = null }: { initialSeed?: WindowSeed | null }) {
             onReorderTabs={tabsState.reorderTabs}
             onMoveTabToIndex={tabsState.moveTabToIndex}
             onSetTabColor={tabsState.setTabColor}
-            onDetachTab={(id, x, y) => void detachTab(id, x, y)}
+            onDetachTab={(id, x, y) => void tabMoves.detach(id, x, y)}
+            otherWindows={windowMerge.otherWindows}
+            onMoveTabToWindow={(id, target) => void tabMoves.moveTo(id, target)}
+            onMergeAllWindows={() => void windowMerge.mergeAllWindows()}
             shells={config.shells}
             selectedShellId={config.selectedShellId}
             onNewTabWithShell={newTabWithShell}
