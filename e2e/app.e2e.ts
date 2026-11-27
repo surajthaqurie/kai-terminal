@@ -5,7 +5,11 @@
  *
  * Commands are chosen to behave the same in cmd, PowerShell and bash (`echo`, `exit N`).
  */
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { buildCodeModeSignal } from "../src/core/codeModeSignal";
 import { DRIVER_URL, appPath } from "./globalSetup";
 import { Key, Session, killApp, waitFor } from "./webdriver";
 
@@ -146,6 +150,35 @@ describe("Kai end to end", () => {
     );
     expect(evalProbe.ran).toBe(false);
     expect(evalProbe.violations).toContain("script-src eval");
+  });
+
+  it("the footer shows Code Mode while a `kai <agent>` run announces it, and Terminal after", async () => {
+    // What `kai <agent>` writes on the pane's own output (src/cli/activeProject.ts), from a
+    // script so the escape bytes survive any shell's quoting.
+    const dir = mkdtempSync(join(tmpdir(), "kai-e2e-codemode-"));
+    const script = join(dir, "announce.cjs");
+    writeFileSync(
+      script,
+      [
+        `process.stdout.write(${JSON.stringify(buildCodeModeSignal(dir))} + "kai-e2e-code-start\\n");`,
+        `setTimeout(() => process.stdout.write(${JSON.stringify(buildCodeModeSignal(null))} + "kai-e2e-code-stop\\n"), 6000);`,
+      ].join("\n")
+    );
+    const pill = () =>
+      s.execute<string>(
+        "const p = document.querySelector('.status-mode-pill'); return p ? p.textContent : '';"
+      );
+    try {
+      await typeInTerminal(`node "${script}"${Key.Enter}`);
+      await expectSoon("the Code Mode pill", async () => (await pill()).includes("Code Mode"));
+      await expectSoon(
+        "the Terminal pill after the run",
+        async () =>
+          (await paneText()).includes("kai-e2e-code-stop") && (await pill()) === "Terminal"
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("a failed shell keeps its pane with the exit code, and Restart starts a new shell (FUNC-09)", async () => {
